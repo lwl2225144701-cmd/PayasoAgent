@@ -3,6 +3,7 @@
 import { chat, type ChatMessage } from "./llm.js";
 import { execute, getSchemas } from "./tools.js";
 import { createTrace, addEvent, printTrace } from "./trace.js";
+import { createState, updateState, printState } from "./state.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
 
@@ -17,8 +18,10 @@ function stripThink(text: string): string {
   return out.trim();
 }
 
-// Agent 核心循环（只新增 Trace 记录，不改 Loop 逻辑）
+// Agent 核心循环（只新增 State 记录，不改 Loop 逻辑）
 export async function runAgent(task: string): Promise<string> {
+  // State: 启动时创建
+  const state = createState(task);
   const trace = createTrace();
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -27,6 +30,8 @@ export async function runAgent(task: string): Promise<string> {
 
   try {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
+      // State: 进入循环，更新迭代次数
+      updateState(state, { iteration: i + 1, currentStep: "llm_call" });
       console.log(`\n--- 迭代 ${i + 1} ---`);
 
       // 1. 调用 LLM 判断下一步
@@ -54,6 +59,9 @@ export async function runAgent(task: string): Promise<string> {
           content: answer,
           totalSteps: i + 1,
         });
+        // State: 完成
+        updateState(state, { status: "completed", currentStep: "final_answer" });
+        printState(state);
         printTrace(trace);
         return answer;
       }
@@ -65,6 +73,8 @@ export async function runAgent(task: string): Promise<string> {
 
       // 3. 执行工具
       for (const call of assistantMsg.tool_calls) {
+        // State: 调用工具前
+        updateState(state, { currentStep: `tool_call:${call.function.name}` });
         console.log(`[Tool 调用] ${call.function.name}(${call.function.arguments})`);
         const args = JSON.parse(call.function.arguments);
 
@@ -75,6 +85,12 @@ export async function runAgent(task: string): Promise<string> {
         const result = await execute(call.function.name, args);
         const durationMs = Math.round((performance.now() - start) * 100) / 100;
         console.log(`[Tool 返回] ${result}`);
+
+        // State: 工具完成
+        updateState(state, {
+          toolCalls: state.toolCalls + 1,
+          currentStep: "tool_result",
+        });
 
         // Trace: 工具结果（含耗时）
         addEvent(trace, {
@@ -94,12 +110,18 @@ export async function runAgent(task: string): Promise<string> {
       // 5. 循环 → LLM 继续判断
     }
   } catch (err) {
+    // State: 失败
+    updateState(state, { status: "failed", currentStep: "error" });
+    printState(state);
     // Trace: 错误
     addEvent(trace, { type: "error", message: (err as Error).message });
     printTrace(trace);
     throw err;
   }
 
+  // 超出最大迭代次数
+  updateState(state, { status: "failed", currentStep: "error" });
+  printState(state);
   addEvent(trace, { type: "error", message: "超过最大循环次数限制" });
   printTrace(trace);
   throw new Error("超过最大循环次数限制");
