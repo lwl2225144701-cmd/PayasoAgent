@@ -44,6 +44,13 @@ export type TraceEvent =
       exhausted: boolean; // 是否已达到重试上限
     }
   | {
+      type: "context_trim";
+      step: number;
+      timestamp: string;
+      beforeMessages: number; // 裁剪前消息条数
+      afterMessages: number; // 裁剪后消息条数
+    }
+  | {
       type: "recovery_decision";
       step: number;
       timestamp: string;
@@ -88,6 +95,11 @@ export type TraceEventInput =
       error: string;
       attempt: number;
       exhausted: boolean;
+    }
+  | {
+      type: "context_trim";
+      beforeMessages: number;
+      afterMessages: number;
     }
   | {
       type: "recovery_decision";

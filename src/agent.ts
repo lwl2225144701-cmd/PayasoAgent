@@ -4,9 +4,11 @@ import { chat, type ChatMessage } from "./llm.js";
 import { execute, getSchemas } from "./tools.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
+import { ContextManager } from "./context.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
+const MAX_CONTEXT_TOKENS = 4000; // 发送给 LLM 的上下文上限（粗略字符数）
 
 const SYSTEM_PROMPT = `你是一个助手，可以使用工具帮助用户完成任务。
 遇到任何计算任务，必须调用 calculator 工具获取结果，禁止自行计算。
@@ -24,7 +26,8 @@ export async function runAgent(task: string): Promise<string> {
   // State: 启动时创建
   const state = createState(task);
   const trace = createTrace();
-  const messages: ChatMessage[] = [
+  const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
+  let messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: task },
   ];
@@ -36,6 +39,23 @@ export async function runAgent(task: string): Promise<string> {
       // State: 进入循环，更新迭代次数
       updateState(state, { iteration: i + 1, currentStep: "llm_call" });
       printStateSummary(state);
+
+      // 0. 上下文管理：裁剪发送给 LLM 的消息
+      const ctx = contextManager.process(messages);
+      messages = ctx.messages;
+      printEvent(
+        addEvent(trace, {
+          type: "context_trim",
+          beforeMessages: ctx.before,
+          afterMessages: ctx.after,
+        })
+      );
+      if (ctx.before !== ctx.after) {
+        console.log(`\n=== Context ===`);
+        console.log(`before:\n${ctx.before} messages`);
+        console.log(`after:\n${ctx.after} messages`);
+        console.log(`trimmed:\n${ctx.before - ctx.after}`);
+      }
 
       // 1. 调用 LLM 判断下一步
       const assistantMsg = await chat(messages, getSchemas());
