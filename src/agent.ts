@@ -86,8 +86,11 @@ export async function runAgent(task: string): Promise<string> {
 
       // 3. 执行工具（含重试）
       for (const call of assistantMsg.tool_calls) {
-        // State: 调用工具前
-        updateState(state, { currentStep: `tool_call:${call.function.name}` });
+        // State: 调用工具前（总调用次数 +1）
+        updateState(state, {
+          currentStep: `tool_call:${call.function.name}`,
+          toolCalls: state.toolCalls + 1,
+        });
         printStateSummary(state);
 
         console.log(`[Tool 调用] ${call.function.name}(${call.function.arguments})`);
@@ -106,9 +109,9 @@ export async function runAgent(task: string): Promise<string> {
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
 
-            // State: 工具完成
+            // State: 工具成功
             updateState(state, {
-              toolCalls: state.toolCalls + 1,
+              successfulToolCalls: state.successfulToolCalls + 1,
               currentStep: "tool_result",
             });
             printStateSummary(state);
@@ -154,6 +157,10 @@ export async function runAgent(task: string): Promise<string> {
               console.log(
                 `[恢复] 工具 ${call.function.name} 重试 ${MAX_RETRY} 次仍失败，将错误返回 LLM 由其决策`
               );
+              // State: 工具失败（仅当所有重试均失败）
+              updateState(state, {
+                failedToolCalls: state.failedToolCalls + 1,
+              });
               printEvent(
                 addEvent(trace, {
                   type: "recovery_decision",

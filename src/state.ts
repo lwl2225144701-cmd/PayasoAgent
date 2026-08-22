@@ -8,7 +8,9 @@ export interface AgentState {
   status: AgentStatus; // 当前状态
   iteration: number; // 当前迭代次数
   currentStep: string; // 当前执行步骤描述
-  toolCalls: number; // 已调用工具次数
+  toolCalls: number; // 总工具调用次数（每次 LLM 发起 tool_call 计 1）
+  successfulToolCalls: number; // 成功执行次数
+  failedToolCalls: number; // 失败次数
   startTime: string; // 启动时间
   error?: string; // 失败时的错误信息
 }
@@ -22,6 +24,8 @@ export function createState(task: string): AgentState {
     iteration: 0,
     currentStep: "start",
     toolCalls: 0,
+    successfulToolCalls: 0,
+    failedToolCalls: 0,
     startTime: new Date().toISOString(),
     error: undefined,
   };
@@ -45,7 +49,7 @@ export function getState(state: AgentState): AgentState {
 export function printStateSummary(state: AgentState): void {
   const err = state.error ? ` | error=${state.error}` : "";
   console.log(
-    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}${err}`
+    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}(ok:${state.successfulToolCalls}/fail:${state.failedToolCalls})${err}`
   );
 }
 
