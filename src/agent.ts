@@ -67,8 +67,12 @@ export async function runAgent(task: string): Promise<string> {
           })
         );
 
-        // State: 完成
-        updateState(state, { status: "completed", currentStep: "final_answer" });
+        // State: 完成（清空可能存在的错误残留）
+        updateState(state, {
+          status: "completed",
+          currentStep: "final_answer",
+          error: undefined,
+        });
         printStateSummary(state);
         printState(state);
         printTrace(trace);
@@ -94,12 +98,11 @@ export async function runAgent(task: string): Promise<string> {
           addEvent(trace, { type: "tool_call", tool: call.function.name, args })
         );
 
-        // 工具执行 + 重试（最多 MAX_RETRY 次）
-        let result = "";
+        // 工具执行 + 重试（最多 MAX_RETRY 次）；重试耗尽进入失败恢复
         for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
           try {
             const start = performance.now();
-            result = await execute(call.function.name, args);
+            const result = await execute(call.function.name, args);
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
 
@@ -134,8 +137,11 @@ export async function runAgent(task: string): Promise<string> {
             // Trace: 工具错误事件
             printEvent(
               addEvent(trace, {
-                type: "error",
-                message: `tool ${call.function.name} 失败 (尝试 ${attempt}/${MAX_RETRY + 1}): ${msg}`,
+                type: "tool_error",
+                tool: call.function.name,
+                error: msg,
+                attempt,
+                exhausted: attempt > MAX_RETRY,
               })
             );
 
@@ -144,14 +150,23 @@ export async function runAgent(task: string): Promise<string> {
             printStateSummary(state);
 
             if (attempt > MAX_RETRY) {
-              // 超过重试次数 → 任务失败
-              updateState(state, { status: "failed", error: msg });
-              printStateSummary(state);
-              printState(state);
-              printTrace(trace);
-              throw new Error(
-                `工具 ${call.function.name} 执行失败，已超过最大重试次数 ${MAX_RETRY}: ${msg}`
+              // 重试耗尽 → 失败恢复：将错误作为消息返回 LLM，由其决策
+              console.log(
+                `[恢复] 工具 ${call.function.name} 重试 ${MAX_RETRY} 次仍失败，将错误返回 LLM 由其决策`
               );
+              printEvent(
+                addEvent(trace, {
+                  type: "recovery_decision",
+                  tool: call.function.name,
+                  decision: `工具 ${call.function.name} 重试 ${MAX_RETRY} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
+                })
+              );
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: `工具 ${call.function.name} 执行失败（重试 ${MAX_RETRY} 次）：${msg}`,
+              });
+              break; // 跳出重试，外层循环继续 → LLM 重新决策
             }
             console.log(
               `[重试 ${attempt}/${MAX_RETRY}] 工具 ${call.function.name} 失败，正在重试...`

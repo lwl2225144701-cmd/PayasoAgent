@@ -35,6 +35,22 @@ export type TraceEvent =
       totalSteps: number; // 总执行步骤数（LLM 迭代轮数）
     }
   | {
+      type: "tool_error";
+      step: number;
+      timestamp: string;
+      tool: string; // 失败的工具名
+      error: string; // 错误信息
+      attempt: number; // 第几次尝试（从 1 开始）
+      exhausted: boolean; // 是否已达到重试上限
+    }
+  | {
+      type: "recovery_decision";
+      step: number;
+      timestamp: string;
+      tool: string; // 触发恢复的工具名
+      decision: string; // 恢复决策描述（交还 LLM 决策）
+    }
+  | {
       type: "error";
       step: number;
       timestamp: string;
@@ -65,6 +81,18 @@ export type TraceEventInput =
       type: "final_answer";
       content: string;
       totalSteps: number;
+    }
+  | {
+      type: "tool_error";
+      tool: string;
+      error: string;
+      attempt: number;
+      exhausted: boolean;
+    }
+  | {
+      type: "recovery_decision";
+      tool: string;
+      decision: string;
     }
   | {
       type: "error";
