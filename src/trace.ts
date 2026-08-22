@@ -63,7 +63,7 @@ export type TraceEvent =
       timestamp: string;
       currentStep: string; // 当前/最近执行步骤
       completedSteps: number; // 已完成步骤数
-      lastToolResult: string; // 最近一次工具结果
+      lastResult: string; // 最近一次工具结果
     }
   | {
       type: "error";
@@ -118,7 +118,7 @@ export type TraceEventInput =
       type: "scratchpad_update";
       currentStep: string;
       completedSteps: number;
-      lastToolResult: string;
+      lastResult: string;
     }
   | {
       type: "error";

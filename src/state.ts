@@ -2,6 +2,20 @@
 
 export type AgentStatus = "running" | "completed" | "failed";
 
+// 当前待执行的动作（LLM 已决定、尚未成功）
+export interface PendingAction {
+  tool: string;
+  input: string;
+}
+
+// 最近一次工具失败信息
+export interface ToolErrorInfo {
+  tool: string; // 失败的工具
+  input: string; // 失败时的参数
+  error: string; // 错误信息
+  retries: number; // 已失败尝试次数（从 1 开始）
+}
+
 export interface AgentState {
   runId: string; // 本次运行 ID
   task: string; // 用户任务
@@ -13,6 +27,8 @@ export interface AgentState {
   failedToolCalls: number; // 失败次数
   startTime: string; // 启动时间
   error?: string; // 失败时的错误信息
+  pendingAction?: PendingAction; // 当前待执行动作（失败恢复时引导 LLM 的依据）
+  lastToolError?: ToolErrorInfo; // 最近一次工具失败信息
 }
 
 // ---- 创建初始 State ----
@@ -48,8 +64,14 @@ export function getState(state: AgentState): AgentState {
 // ---- 实时打印状态摘要（单行紧凑，每步输出）----
 export function printStateSummary(state: AgentState): void {
   const err = state.error ? ` | error=${state.error}` : "";
+  const pending = state.pendingAction
+    ? ` | pending=${state.pendingAction.tool}(${state.pendingAction.input})`
+    : "";
+  const lastErr = state.lastToolError
+    ? ` | lastErr=${state.lastToolError.tool}(${state.lastToolError.input})x${state.lastToolError.retries}`
+    : "";
   console.log(
-    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}(ok:${state.successfulToolCalls}/fail:${state.failedToolCalls})${err}`
+    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}(ok:${state.successfulToolCalls}/fail:${state.failedToolCalls})${err}${pending}${lastErr}`
   );
 }
 

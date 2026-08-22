@@ -1,0 +1,183 @@
+<svg viewBox="0 0 680 726" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15171d"/>
+      <stop offset="1" stop-color="#0d0f13"/>
+    </linearGradient>
+    <linearGradient id="loopbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#222e46"/>
+      <stop offset="1" stop-color="#141a28"/>
+    </linearGradient>
+    <linearGradient id="llmcore" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1e5a8a"/>
+      <stop offset="1" stop-color="#14354f"/>
+    </linearGradient>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a8ab8"/>
+    </marker>
+    <marker id="arO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f0b35c"/>
+    </marker>
+    <marker id="arG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5fd08c"/>
+    </marker>
+    <marker id="arC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4fc3f7"/>
+    </marker>
+  </defs>
+
+  <rect width="680" height="726" fill="url(#bg)" rx="12"/>
+
+  
+  <text x="340" y="28" text-anchor="middle" fill="#e8ecf4" font-size="21" font-weight="700">PayasoAgent v1.0 Architecture</text>
+  <text x="340" y="48" text-anchor="middle" fill="#8b94a8" font-size="11">从最小 Agent Loop 演进出的 Runtime 骨架</text>
+
+  <rect x="132" y="58" width="96" height="22" rx="11" fill="#1d3d5c" stroke="#3a6ea5" stroke-width="1"/>
+  <text x="180" y="73" text-anchor="middle" fill="#8ec9ff" font-size="10" font-weight="600">Agent Loop</text>
+  <rect x="236" y="58" width="104" height="22" rx="11" fill="#2d2140" stroke="#6b4a9e" stroke-width="1"/>
+  <text x="288" y="73" text-anchor="middle" fill="#c9a6f0" font-size="10" font-weight="600">Runtime State</text>
+  <rect x="348" y="58" width="82" height="22" rx="11" fill="#3a2d1d" stroke="#8a6d3a" stroke-width="1"/>
+  <text x="389" y="73" text-anchor="middle" fill="#f0c48a" font-size="10" font-weight="600">Recovery</text>
+  <rect x="438" y="58" width="110" height="22" rx="11" fill="#1d3333" stroke="#3a7d7d" stroke-width="1"/>
+  <text x="493" y="73" text-anchor="middle" fill="#8ae0e0" font-size="10" font-weight="600">Checkpoint</text>
+
+  
+
+  
+  <text x="16" y="94" fill="#aeb6c8" font-size="11.5" font-weight="700">Agent Runtime</text>
+
+  
+  <rect x="12" y="102" width="218" height="340" rx="10" fill="none" stroke="#39435c" stroke-width="1.4" stroke-dasharray="5,4"/>
+
+  
+  <rect x="24" y="114" width="194" height="58" rx="8" fill="#1c2230" stroke="#3d4a6b" stroke-width="1.2"/>
+  <text x="36" y="131" fill="#7fc8ff" font-size="10" font-weight="700">① Execution Core</text>
+  <text x="36" y="148" fill="#8b94a8" font-size="9.5">agent.ts</text>
+  <text x="36" y="164" fill="#e8ecf4" font-size="10">Agent Loop 驱动</text>
+
+  
+  <rect x="24" y="182" width="194" height="66" rx="8" fill="#1c2230" stroke="#3d4a6b" stroke-width="1.2"/>
+  <text x="36" y="199" fill="#7fc8ff" font-size="10" font-weight="700">② Runtime State</text>
+  <text x="36" y="216" fill="#8b94a8" font-size="9.5">state · scratchpad · trace</text>
+  <text x="36" y="234" fill="#e8ecf4" font-size="10">执行状态 · 工作记忆 · 轨迹</text>
+
+  
+  <rect x="24" y="258" width="194" height="58" rx="8" fill="#1c2230" stroke="#3d4a6b" stroke-width="1.2"/>
+  <text x="36" y="275" fill="#7fc8ff" font-size="10" font-weight="700">③ Context Management</text>
+  <text x="36" y="292" fill="#8b94a8" font-size="9.5">context.ts</text>
+  <text x="36" y="308" fill="#e8ecf4" font-size="10">历史消息裁剪</text>
+
+  
+  <rect x="24" y="326" width="194" height="58" rx="8" fill="#12302f" stroke="#2e7d7a" stroke-width="1.3"/>
+  <text x="36" y="343" fill="#8ae0e0" font-size="10" font-weight="700">④ Persistence</text>
+  <text x="36" y="360" fill="#8b94a8" font-size="9.5">checkpoint.ts</text>
+  <text x="36" y="376" fill="#e8ecf4" font-size="10">Runtime State 保存与恢复</text>
+
+  
+  <text x="121" y="408" text-anchor="middle" fill="#6d7689" font-size="9">Loop · State · Context · Persistence</text>
+
+  
+  <text x="16" y="466" fill="#8b94a8" font-size="10" font-weight="600">External Capability</text>
+  <rect x="24" y="474" width="194" height="58" rx="8" fill="#20262f" stroke="#4a5568" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="36" y="491" fill="#b8c4d8" font-size="10" font-weight="700">⑤ Model &amp; Tool</text>
+  <text x="36" y="508" fill="#8b94a8" font-size="9.5">llm.ts · tools.ts</text>
+  <text x="36" y="524" fill="#9aa4ba" font-size="10">模型调用 · 工具执行</text>
+
+  
+  <rect x="252" y="84" width="412" height="446" rx="14" fill="url(#loopbg)" stroke="#3d4d78" stroke-width="1.6"/>
+  <text x="458" y="104" text-anchor="middle" fill="#9fb4e0" font-size="12" font-weight="700">Agent Loop · 循环决策引擎</text>
+  <text x="458" y="119" text-anchor="middle" fill="#6d7689" font-size="9.5">Agent = LLM Decision + Runtime Loop + Tools</text>
+
+  
+  <rect x="292" y="130" width="332" height="30" rx="8" fill="#232c3d" stroke="#3d4a6b" stroke-width="1"/>
+  <text x="458" y="150" text-anchor="middle" fill="#e8ecf4" font-size="11.5" font-weight="600">User Task</text>
+  <path d="M458,160 L458,172" stroke="#7a8ab8" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  
+  <rect x="292" y="174" width="332" height="44" rx="8" fill="url(#llmcore)" stroke="#4fc3f7" stroke-width="2.2"/>
+  <text x="458" y="192" text-anchor="middle" fill="#e8ecf4" font-size="11.5" font-weight="700">LLM Decision</text>
+  <text x="458" y="209" text-anchor="middle" fill="#9aa4ba" font-size="10">Messages + <tspan fill="#c9a6f0" font-weight="600">Scratchpad</tspan></text>
+
+  
+  <rect x="292" y="228" width="332" height="58" rx="8" fill="#2d2140" stroke="#6b4a9e" stroke-width="1.4"/>
+  <text x="308" y="245" fill="#c9a6f0" font-size="9.5" font-weight="700">Scratchpad = Agent Working Memory</text>
+  <text x="308" y="262" fill="#8b94a8" font-size="9">Messages：短期上下文，可被 Context Manager 裁剪</text>
+  <text x="308" y="273" fill="#8b94a8" font-size="9">Scratchpad：任务执行状态，不随消息裁剪丢失</text>
+  <text x="530" y="245" text-anchor="middle" fill="#6b4a9e" font-size="9">Context 压缩</text>
+  <text x="530" y="258" text-anchor="middle" fill="#6b4a9e" font-size="9">不影响任务进度</text>
+  <path d="M624,196 C648,204 650,222 634,228" fill="none" stroke="#8a6bb8" stroke-width="1.1" stroke-dasharray="3,3"/>
+
+  <path d="M458,286 L458,298" stroke="#7a8ab8" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  
+  <polygon points="458,302 512,318 458,334 404,318" fill="#2a3550" stroke="#5a6a95" stroke-width="1.5"/>
+  <text x="458" y="322" text-anchor="middle" fill="#e8ecf4" font-size="10.5" font-weight="600">tool_call?</text>
+
+  
+  <path d="M404,318 L366,318 L366,366" fill="none" stroke="#5fd08c" stroke-width="1.8" marker-end="url(#arG)"/>
+  <text x="377" y="310" fill="#5fd08c" font-size="9.5" font-weight="600">No</text>
+  <rect x="312" y="366" width="108" height="44" rx="8" fill="#1d2a22" stroke="#3d6b4f" stroke-width="1.4"/>
+  <text x="366" y="384" text-anchor="middle" fill="#e8ecf4" font-size="11" font-weight="600">Final Answer</text>
+  <text x="366" y="400" text-anchor="middle" fill="#8b94a8" font-size="9">completed</text>
+
+  
+  <path d="M512,318 L598,318 L598,366" fill="none" stroke="#f0b35c" stroke-width="1.8" marker-end="url(#arO)"/>
+  <text x="576" y="310" fill="#f0b35c" font-size="9.5" font-weight="600">Yes</text>
+  <rect x="540" y="366" width="116" height="44" rx="8" fill="#3a2d1d" stroke="#8a6d3a" stroke-width="1.4"/>
+  <text x="598" y="384" text-anchor="middle" fill="#e8ecf4" font-size="11" font-weight="600">Tool Execution</text>
+  <text x="598" y="400" text-anchor="middle" fill="#c9b08a" font-size="9">Retry · Recovery</text>
+  <path d="M598,410 L598,424" stroke="#f0b35c" stroke-width="1.6" marker-end="url(#arO)"/>
+
+  
+  <rect x="540" y="426" width="116" height="40" rx="8" fill="#3a2d1d" stroke="#8a6d3a" stroke-width="1.4"/>
+  <text x="598" y="443" text-anchor="middle" fill="#e8ecf4" font-size="10.5" font-weight="600">Tool Result / Error</text>
+  <text x="598" y="459" text-anchor="middle" fill="#8b94a8" font-size="9">失败 → Recovery</text>
+  <path d="M598,466 L598,480" stroke="#7a8ab8" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  
+  <rect x="540" y="482" width="116" height="40" rx="8" fill="#232c3d" stroke="#4a5a85" stroke-width="1.4"/>
+  <text x="598" y="500" text-anchor="middle" fill="#e8ecf4" font-size="10.5" font-weight="600">State Update</text>
+  <text x="598" y="516" text-anchor="middle" fill="#4dd0e1" font-size="8.5">Trace · Checkpoint</text>
+
+  
+  <path d="M566,522 L566,528 L300,528 L300,220" fill="none" stroke="#4fc3f7" stroke-width="2.6" marker-end="url(#arC)" stroke-dasharray="8,5"/>
+  <text x="452" y="523" text-anchor="middle" fill="#4fc3f7" font-size="10.5" font-weight="700">⟳ Loop Back</text>
+
+  
+  <text x="340" y="556" text-anchor="middle" fill="#aeb6c8" font-size="11.5" font-weight="700">Runtime 关键机制</text>
+
+  
+  <rect x="18" y="568" width="202" height="84" rx="9" fill="#1a202c" stroke="#3a6ea5" stroke-width="1.3"/>
+  <text x="119" y="588" text-anchor="middle" fill="#8ec9ff" font-size="10.5" font-weight="700">① Context Management</text>
+  <text x="119" y="610" text-anchor="middle" fill="#e8ecf4" font-size="10">messages 可裁剪</text>
+  <text x="119" y="627" text-anchor="middle" fill="#e8ecf4" font-size="10">Scratchpad 保留执行进度</text>
+  <text x="119" y="644" text-anchor="middle" fill="#8b94a8" font-size="9">Context 压缩不影响任务进度</text>
+
+  
+  <rect x="238" y="568" width="202" height="84" rx="9" fill="#1a202c" stroke="#8a6d3a" stroke-width="1.3"/>
+  <text x="339" y="588" text-anchor="middle" fill="#f0c48a" font-size="10.5" font-weight="700">② Failure Recovery</text>
+  <text x="339" y="610" text-anchor="middle" fill="#e8ecf4" font-size="10">Tool Error → Retry</text>
+  <text x="339" y="627" text-anchor="middle" fill="#e8ecf4" font-size="10">→ Recovery Decision → Continue</text>
+  <text x="339" y="644" text-anchor="middle" fill="#8b94a8" font-size="9">Failed Action Protection：同参数禁调</text>
+
+  
+  <rect x="458" y="568" width="204" height="84" rx="9" fill="#1a202c" stroke="#3a7d7d" stroke-width="1.3"/>
+  <text x="560" y="588" text-anchor="middle" fill="#8ae0e0" font-size="10.5" font-weight="700">③ Checkpoint Resume</text>
+  <text x="560" y="610" text-anchor="middle" fill="#e8ecf4" font-size="10">State → Save → Interrupt</text>
+  <text x="560" y="627" text-anchor="middle" fill="#e8ecf4" font-size="10">→ Restore State → Resume Loop</text>
+  <text x="560" y="644" text-anchor="middle" fill="#8b94a8" font-size="9">保存的是 Runtime State，非聊天记录</text>
+
+  
+  <rect x="18" y="668" width="644" height="52" rx="10" fill="#161c26" stroke="#39435c" stroke-width="1.2"/>
+  <text x="340" y="686" text-anchor="middle" fill="#7fc8ff" font-size="11" font-weight="700">Agent Runtime Evaluation · 验证行为轨迹，不仅验证最终答案</text>
+  <rect x="60" y="694" width="98" height="20" rx="10" fill="#232c3d" stroke="#3d4a6b" stroke-width="1"/>
+  <text x="109" y="708" text-anchor="middle" fill="#9aa4ba" font-size="9">Tool Calling</text>
+  <rect x="168" y="694" width="104" height="20" rx="10" fill="#232c3d" stroke="#3d4a6b" stroke-width="1"/>
+  <text x="220" y="708" text-anchor="middle" fill="#9aa4ba" font-size="9">Multi-step Task</text>
+  <rect x="282" y="694" width="104" height="20" rx="10" fill="#232c3d" stroke="#3d4a6b" stroke-width="1"/>
+  <text x="334" y="708" text-anchor="middle" fill="#9aa4ba" font-size="9">Error Recovery</text>
+  <rect x="396" y="694" width="120" height="20" rx="10" fill="#232c3d" stroke="#3d4a6b" stroke-width="1"/>
+  <text x="456" y="708" text-anchor="middle" fill="#9aa4ba" font-size="9">Context Management</text>
+  <rect x="526" y="694" width="120" height="20" rx="10" fill="#232c3d" stroke="#3d4a6b" stroke-width="1"/>
+  <text x="586" y="708" text-anchor="middle" fill="#9aa4ba" font-size="9">Checkpoint Resume</text>
+</svg>

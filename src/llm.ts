@@ -23,10 +23,24 @@ export interface ToolSchema {
 }
 
 // 调用 LLM，返回 assistant 消息（可能含 tool_calls）
+// ---- 模拟中断开关（测试用，已注释）----
+// 需要模拟"任务执行中途网络中断"时，取消注释下面 4 行，并带 SIMULATE_INTERRUPT=1 运行：
+//   SIMULATE_INTERRUPT=1 npx tsx --env-file=.env src/agent.ts "任务"
+// 第 2 次 LLM 调用会抛网络错误，用于验证 checkpoint --resume 恢复链路。
+// let __callCount = 0;
+// export async function chat(
+//   messages: ChatMessage[],
+//   tools?: ToolSchema[]
+// ): Promise<ChatMessage> {
+//   __callCount++;
+//   if (process.env.SIMULATE_INTERRUPT === "1" && __callCount === 2) {
+//     throw new Error("Simulated network interruption: fetch failed (ECONNRESET)");
+//   }
 export async function chat(
   messages: ChatMessage[],
   tools?: ToolSchema[]
 ): Promise<ChatMessage> {
+
   const body: Record<string, unknown> = { model: MODEL, messages };
   if (tools?.length) body.tools = tools;
 

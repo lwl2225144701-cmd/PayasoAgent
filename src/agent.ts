@@ -5,9 +5,14 @@ import { execute, getSchemas } from "./tools.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
+import { saveCheckpoint, loadCheckpoint } from "./checkpoint.js";
 import {
   createScratchpad,
-  updateScratchpad,
+  setNextStep,
+  completeStep,
+  recordFailure,
+  isBlocked,
+  clearFailure,
   toSystemText,
   printScratchpad,
 } from "./scratchpad.js";
@@ -27,20 +32,48 @@ function stripThink(text: string): string {
   return out.trim();
 }
 
-// Agent 核心循环（只新增 State/Trace 记录，不改 Loop 逻辑）
-export async function runAgent(task: string): Promise<string> {
-  // State: 启动时创建
-  const state = createState(task);
+// Agent 核心循环（只新增 State/Trace/Checkpoint 记录，不改 Loop 逻辑）
+// resume: 传入 checkpoint 则从中断点恢复执行（State/Scratchpad/Messages 一并恢复）
+export async function runAgent(
+  task: string,
+  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState> }
+): Promise<string> {
+  // State: 新建或从 checkpoint 恢复
+  const state = resume ? resume.state : createState(task);
   const trace = createTrace();
   const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
-  const scratchpad = createScratchpad(task);
-  let messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task },
-  ];
+  const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
+  let messages: ChatMessage[] = resume
+    ? resume.messages
+    : [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: task },
+      ];
+  // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
+  const startIter = resume ? Math.max(0, resume.iteration - 1) : 0;
+
+  // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
+  const save = (status?: string) => {
+    const file = saveCheckpoint({
+      runId: state.runId,
+      task: state.task,
+      status: status ?? state.status,
+      iteration: state.iteration,
+      scratchpad,
+      messages,
+      state,
+    });
+    console.log(`[Checkpoint] saved → ${file}`);
+  };
+
+  if (resume) {
+    console.log(
+      `[恢复] 从 checkpoint 继续: runId=${resume.runId} 已完成 ${scratchpad.completedSteps.length} 步, 重跑迭代 ${startIter + 1}`
+    );
+  }
 
   try {
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
+    for (let i = startIter; i < MAX_ITERATIONS; i++) {
       console.log(`\n--- 迭代 ${i + 1} ---`);
 
       // State: 进入循环，更新迭代次数
@@ -107,6 +140,8 @@ export async function runAgent(task: string): Promise<string> {
           error: undefined,
         });
         printStateSummary(state);
+        // Checkpoint: 完成时保存
+        save("completed");
         printState(state);
         printTrace(trace);
         return answer;
@@ -117,35 +152,71 @@ export async function runAgent(task: string): Promise<string> {
         .join(", ");
       console.log(`[LLM 决策] 选择工具: ${toolNames}`);
 
-      // 3. 执行工具（含重试）
+      // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
       for (const call of assistantMsg.tool_calls) {
-        // State: 调用工具前（总调用次数 +1）
+        const toolName = call.function.name;
+        const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+        const input =
+          "expression" in args ? String(args.expression) : call.function.arguments;
+
+        // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
+        if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
+          const blockMsg = `工具 ${toolName} 参数 "${input}" 已失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明失败原因。`;
+          console.log(`[Blocked] ${blockMsg}`);
+
+          // State: 记录被禁状态（不推进步骤）
+          updateState(state, {
+            currentStep: "tool_blocked",
+            lastToolError: {
+              tool: toolName,
+              input,
+              error: "重复失败被禁止调用",
+              retries: MAX_RETRY + 1,
+            },
+          });
+          printStateSummary(state);
+
+          // 将禁止消息返回 LLM，由其重新决策
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: blockMsg,
+          });
+          continue;
+        }
+
+        // State: 调用工具前（总调用次数 +1，记录待执行动作）
         updateState(state, {
-          currentStep: `tool_call:${call.function.name}`,
+          currentStep: `tool_call:${toolName}`,
           toolCalls: state.toolCalls + 1,
+          pendingAction: { tool: toolName, input },
         });
         printStateSummary(state);
 
-        console.log(`[Tool 调用] ${call.function.name}(${call.function.arguments})`);
-        const args = JSON.parse(call.function.arguments);
+        console.log(`[Tool 调用] ${toolName}(${call.function.arguments})`);
+
+        // Scratchpad: 记录计划执行的下一步（未完成，不进 completedSteps）
+        setNextStep(scratchpad, { tool: toolName, input });
 
         // Trace: 工具调用前
         printEvent(
-          addEvent(trace, { type: "tool_call", tool: call.function.name, args })
+          addEvent(trace, { type: "tool_call", tool: toolName, args })
         );
 
         // 工具执行 + 重试（最多 MAX_RETRY 次）；重试耗尽进入失败恢复
         for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
           try {
             const start = performance.now();
-            const result = await execute(call.function.name, args);
+            const result = await execute(toolName, args);
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
 
-            // State: 工具成功
+            // State: 工具成功（清空待执行动作与失败信息）
             updateState(state, {
               successfulToolCalls: state.successfulToolCalls + 1,
               currentStep: "tool_result",
+              pendingAction: undefined,
+              lastToolError: undefined,
             });
             printStateSummary(state);
 
@@ -153,21 +224,24 @@ export async function runAgent(task: string): Promise<string> {
             printEvent(
               addEvent(trace, {
                 type: "tool_result",
-                tool: call.function.name,
+                tool: toolName,
                 result,
                 durationMs,
               })
             );
 
-            // Scratchpad: 工具结果后更新执行进度（解决上下文裁剪后丢失步骤记忆）
-            updateScratchpad(scratchpad, `tool_call:${call.function.name}`, result);
+            // Scratchpad: 工具成功 → 当前步骤移入 completedSteps，清空 nextStep，并解禁该参数
+            completeStep(scratchpad, result);
+            clearFailure(scratchpad, toolName, input);
             printScratchpad(scratchpad);
             printEvent(
               addEvent(trace, {
                 type: "scratchpad_update",
-                currentStep: scratchpad.currentStep,
+                currentStep: scratchpad.nextStep
+                  ? `${scratchpad.nextStep.tool}(${scratchpad.nextStep.input})`
+                  : "(等待 LLM 决策)",
                 completedSteps: scratchpad.completedSteps.length,
-                lastToolResult: scratchpad.lastToolResult,
+                lastResult: scratchpad.lastResult,
               })
             );
 
@@ -177,30 +251,41 @@ export async function runAgent(task: string): Promise<string> {
               tool_call_id: call.id,
               content: result,
             });
+            // Checkpoint: 工具成功后保存
+            save();
             break; // 成功，跳出重试
           } catch (err) {
             const msg = (err as Error).message;
-            console.log(`[Tool 错误] ${call.function.name}: ${msg}`);
+            console.log(`[Tool 错误] ${toolName}: ${msg}`);
+
+            // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）
+            recordFailure(scratchpad, { tool: toolName, input, error: msg });
 
             // Trace: 工具错误事件
             printEvent(
               addEvent(trace, {
                 type: "tool_error",
-                tool: call.function.name,
+                tool: toolName,
                 error: msg,
                 attempt,
                 exhausted: attempt > MAX_RETRY,
               })
             );
 
-            // State: 错误状态
-            updateState(state, { currentStep: "tool_error", error: msg });
+            // State: 错误状态（记录失败信息与参数，不推进步骤）
+            updateState(state, {
+              currentStep: "tool_error",
+              error: msg,
+              lastToolError: { tool: toolName, input, error: msg, retries: attempt },
+            });
             printStateSummary(state);
+            // Checkpoint: 工具失败后保存
+            save();
 
             if (attempt > MAX_RETRY) {
               // 重试耗尽 → 失败恢复：将错误作为消息返回 LLM，由其决策
               console.log(
-                `[恢复] 工具 ${call.function.name} 重试 ${MAX_RETRY} 次仍失败，将错误返回 LLM 由其决策`
+                `[恢复] 工具 ${toolName} 重试 ${MAX_RETRY} 次仍失败，将错误返回 LLM 由其决策`
               );
               // State: 工具失败（仅当所有重试均失败）
               updateState(state, {
@@ -209,19 +294,19 @@ export async function runAgent(task: string): Promise<string> {
               printEvent(
                 addEvent(trace, {
                   type: "recovery_decision",
-                  tool: call.function.name,
-                  decision: `工具 ${call.function.name} 重试 ${MAX_RETRY} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
+                  tool: toolName,
+                  decision: `工具 ${toolName} 重试 ${MAX_RETRY} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
                 })
               );
               messages.push({
                 role: "tool",
                 tool_call_id: call.id,
-                content: `工具 ${call.function.name} 执行失败（重试 ${MAX_RETRY} 次）：${msg}`,
+                content: `工具 ${toolName} 参数 "${input}" 执行失败（重试 ${MAX_RETRY} 次）：${msg}。禁止再次使用相同参数调用，请修正参数或换其他方法。`,
               });
               break; // 跳出重试，外层循环继续 → LLM 重新决策
             }
             console.log(
-              `[重试 ${attempt}/${MAX_RETRY}] 工具 ${call.function.name} 失败，正在重试...`
+              `[重试 ${attempt}/${MAX_RETRY}] 工具 ${toolName} 失败，正在重试...`
             );
           }
         }
@@ -232,6 +317,8 @@ export async function runAgent(task: string): Promise<string> {
     // State: 失败
     updateState(state, { status: "failed", currentStep: "error" });
     printStateSummary(state);
+    // Checkpoint: 失败时保存（含错误状态，可 resume）
+    save("failed");
     printState(state);
     // Trace: 错误
     printEvent(
@@ -244,6 +331,8 @@ export async function runAgent(task: string): Promise<string> {
   // 超出最大迭代次数
   updateState(state, { status: "failed", currentStep: "error" });
   printStateSummary(state);
+  // Checkpoint: 超限时保存
+  save("failed");
   printState(state);
   printEvent(addEvent(trace, { type: "error", message: "超过最大循环次数限制" }));
   printTrace(trace);
@@ -251,12 +340,35 @@ export async function runAgent(task: string): Promise<string> {
 }
 
 // ---- 入口 ----
-const task = process.argv[2] || "帮我计算 15 * 37";
-console.log(`任务: ${task}`);
-try {
-  const answer = await runAgent(task);
-  console.log(`\n最终答案: ${answer}`);
-} catch (err) {
-  console.error(`\n[Error] ${(err as Error).message}`);
-  process.exit(1);
+// 用法:
+//   npm start "任务"            正常执行
+//   npm start -- --resume <runId>   从 checkpoint 恢复执行
+const args = process.argv.slice(2);
+const resumeIdx = args.indexOf("--resume");
+const resumeId = resumeIdx >= 0 ? args[resumeIdx + 1] : undefined;
+
+if (resumeId) {
+  const cp = loadCheckpoint(resumeId);
+  if (!cp) {
+    console.error(`[Error] checkpoint 不存在: .checkpoints/${resumeId}.json`);
+    process.exit(1);
+  }
+  console.log(`任务: ${cp.task}（恢复执行）`);
+  try {
+    const answer = await runAgent(cp.task, cp);
+    console.log(`\n最终答案: ${answer}`);
+  } catch (err) {
+    console.error(`\n[Error] ${(err as Error).message}`);
+    process.exit(1);
+  }
+} else {
+  const task = args[0] || "帮我计算 15 * 37";
+  console.log(`任务: ${task}`);
+  try {
+    const answer = await runAgent(task);
+    console.log(`\n最终答案: ${answer}`);
+  } catch (err) {
+    console.error(`\n[Error] ${(err as Error).message}`);
+    process.exit(1);
+  }
 }
