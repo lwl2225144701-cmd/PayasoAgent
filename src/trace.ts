@@ -81,13 +81,20 @@ export function createTrace(): Trace {
   return { run_id: crypto.randomUUID(), events: [] };
 }
 
-// ---- 追加事件（自动编号 step、打时间戳）----
-export function addEvent(trace: Trace, ev: TraceEventInput): void {
-  trace.events.push({
+// ---- 追加事件（自动编号 step、打时间戳），返回事件便于实时打印 ----
+export function addEvent(trace: Trace, ev: TraceEventInput): TraceEvent {
+  const event = {
     ...ev,
     step: trace.events.length + 1,
     timestamp: new Date().toISOString(),
-  } as TraceEvent); // union spread 后 TS 无法精确推断，此处断言
+  } as TraceEvent; // union spread 后 TS 无法精确推断，此处断言
+  trace.events.push(event);
+  return event;
+}
+
+// ---- 实时打印单条事件（每步输出）----
+export function printEvent(ev: TraceEvent): void {
+  console.log(`[Trace] ${JSON.stringify(ev)}`);
 }
 
 // ---- 打印 Trace ----

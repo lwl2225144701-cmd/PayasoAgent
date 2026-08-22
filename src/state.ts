@@ -39,6 +39,13 @@ export function getState(state: AgentState): AgentState {
   return { ...state };
 }
 
+// ---- 实时打印状态摘要（单行紧凑，每步输出）----
+export function printStateSummary(state: AgentState): void {
+  console.log(
+    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}`
+  );
+}
+
 // ---- 打印当前 State ----
 export function printState(state: AgentState): void {
   console.log("\n=== Agent State ===");

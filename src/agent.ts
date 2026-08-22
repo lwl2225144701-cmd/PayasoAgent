@@ -2,8 +2,8 @@
 
 import { chat, type ChatMessage } from "./llm.js";
 import { execute, getSchemas } from "./tools.js";
-import { createTrace, addEvent, printTrace } from "./trace.js";
-import { createState, updateState, printState } from "./state.js";
+import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
+import { createState, updateState, printState, printStateSummary } from "./state.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
 
@@ -18,7 +18,7 @@ function stripThink(text: string): string {
   return out.trim();
 }
 
-// Agent 核心循环（只新增 State 记录，不改 Loop 逻辑）
+// Agent 核心循环（只新增 State/Trace 记录，不改 Loop 逻辑）
 export async function runAgent(task: string): Promise<string> {
   // State: 启动时创建
   const state = createState(task);
@@ -30,22 +30,26 @@ export async function runAgent(task: string): Promise<string> {
 
   try {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
+      console.log(`\n--- 迭代 ${i + 1} ---`);
+
       // State: 进入循环，更新迭代次数
       updateState(state, { iteration: i + 1, currentStep: "llm_call" });
-      console.log(`\n--- 迭代 ${i + 1} ---`);
+      printStateSummary(state);
 
       // 1. 调用 LLM 判断下一步
       const assistantMsg = await chat(messages, getSchemas());
       messages.push(assistantMsg);
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
-      addEvent(trace, {
-        type: "llm_call",
-        messageCount: messages.length,
-        iteration: i + 1,
-        response: assistantMsg.content,
-        hasToolCalls: !!assistantMsg.tool_calls?.length,
-      });
+      printEvent(
+        addEvent(trace, {
+          type: "llm_call",
+          messageCount: messages.length,
+          iteration: i + 1,
+          response: assistantMsg.content,
+          hasToolCalls: !!assistantMsg.tool_calls?.length,
+        })
+      );
 
       // 2. LLM 决策日志：是否选择工具
       if (!assistantMsg.tool_calls?.length) {
@@ -54,13 +58,17 @@ export async function runAgent(task: string): Promise<string> {
         const answer = stripThink(assistantMsg.content);
 
         // Trace: 最终答案 + 总执行步骤数
-        addEvent(trace, {
-          type: "final_answer",
-          content: answer,
-          totalSteps: i + 1,
-        });
+        printEvent(
+          addEvent(trace, {
+            type: "final_answer",
+            content: answer,
+            totalSteps: i + 1,
+          })
+        );
+
         // State: 完成
         updateState(state, { status: "completed", currentStep: "final_answer" });
+        printStateSummary(state);
         printState(state);
         printTrace(trace);
         return answer;
@@ -75,11 +83,15 @@ export async function runAgent(task: string): Promise<string> {
       for (const call of assistantMsg.tool_calls) {
         // State: 调用工具前
         updateState(state, { currentStep: `tool_call:${call.function.name}` });
+        printStateSummary(state);
+
         console.log(`[Tool 调用] ${call.function.name}(${call.function.arguments})`);
         const args = JSON.parse(call.function.arguments);
 
         // Trace: 工具调用前
-        addEvent(trace, { type: "tool_call", tool: call.function.name, args });
+        printEvent(
+          addEvent(trace, { type: "tool_call", tool: call.function.name, args })
+        );
 
         const start = performance.now();
         const result = await execute(call.function.name, args);
@@ -91,14 +103,17 @@ export async function runAgent(task: string): Promise<string> {
           toolCalls: state.toolCalls + 1,
           currentStep: "tool_result",
         });
+        printStateSummary(state);
 
         // Trace: 工具结果（含耗时）
-        addEvent(trace, {
-          type: "tool_result",
-          tool: call.function.name,
-          result,
-          durationMs,
-        });
+        printEvent(
+          addEvent(trace, {
+            type: "tool_result",
+            tool: call.function.name,
+            result,
+            durationMs,
+          })
+        );
 
         // 4. 将工具结果返回给 LLM
         messages.push({
@@ -112,17 +127,21 @@ export async function runAgent(task: string): Promise<string> {
   } catch (err) {
     // State: 失败
     updateState(state, { status: "failed", currentStep: "error" });
+    printStateSummary(state);
     printState(state);
     // Trace: 错误
-    addEvent(trace, { type: "error", message: (err as Error).message });
+    printEvent(
+      addEvent(trace, { type: "error", message: (err as Error).message })
+    );
     printTrace(trace);
     throw err;
   }
 
   // 超出最大迭代次数
   updateState(state, { status: "failed", currentStep: "error" });
+  printStateSummary(state);
   printState(state);
-  addEvent(trace, { type: "error", message: "超过最大循环次数限制" });
+  printEvent(addEvent(trace, { type: "error", message: "超过最大循环次数限制" }));
   printTrace(trace);
   throw new Error("超过最大循环次数限制");
 }
