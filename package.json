@@ -1,0 +1,14 @@
+{
+  "name": "payaso-agent",
+  "version": "1.0.0",
+  "description": "Minimal runnable Agent: LLM-driven tool-calling loop",
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file=.env src/agent.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
