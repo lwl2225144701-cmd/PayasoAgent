@@ -5,6 +5,12 @@ import { execute, getSchemas } from "./tools.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
+import {
+  createScratchpad,
+  updateScratchpad,
+  toSystemText,
+  printScratchpad,
+} from "./scratchpad.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
@@ -27,6 +33,7 @@ export async function runAgent(task: string): Promise<string> {
   const state = createState(task);
   const trace = createTrace();
   const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
+  const scratchpad = createScratchpad(task);
   let messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: task },
@@ -40,7 +47,13 @@ export async function runAgent(task: string): Promise<string> {
       updateState(state, { iteration: i + 1, currentStep: "llm_call" });
       printStateSummary(state);
 
-      // 0. 上下文管理：裁剪发送给 LLM 的消息
+      // 0. 将 Scratchpad 注入 system（独立对象，不随 messages 裁剪丢失）
+      messages[0] = {
+        role: "system",
+        content: SYSTEM_PROMPT + "\n\n" + toSystemText(scratchpad),
+      };
+
+      // 0.5 上下文裁剪（Scratchpad 不在 messages 中，裁剪不影响其完整性）
       const ctx = contextManager.process(messages);
       messages = ctx.messages;
       printEvent(
@@ -143,6 +156,18 @@ export async function runAgent(task: string): Promise<string> {
                 tool: call.function.name,
                 result,
                 durationMs,
+              })
+            );
+
+            // Scratchpad: 工具结果后更新执行进度（解决上下文裁剪后丢失步骤记忆）
+            updateScratchpad(scratchpad, `tool_call:${call.function.name}`, result);
+            printScratchpad(scratchpad);
+            printEvent(
+              addEvent(trace, {
+                type: "scratchpad_update",
+                currentStep: scratchpad.currentStep,
+                completedSteps: scratchpad.completedSteps.length,
+                lastToolResult: scratchpad.lastToolResult,
               })
             );
 

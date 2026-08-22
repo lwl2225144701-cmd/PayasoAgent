@@ -58,6 +58,14 @@ export type TraceEvent =
       decision: string; // 恢复决策描述（交还 LLM 决策）
     }
   | {
+      type: "scratchpad_update";
+      step: number;
+      timestamp: string;
+      currentStep: string; // 当前/最近执行步骤
+      completedSteps: number; // 已完成步骤数
+      lastToolResult: string; // 最近一次工具结果
+    }
+  | {
       type: "error";
       step: number;
       timestamp: string;
@@ -105,6 +113,12 @@ export type TraceEventInput =
       type: "recovery_decision";
       tool: string;
       decision: string;
+    }
+  | {
+      type: "scratchpad_update";
+      currentStep: string;
+      completedSteps: number;
+      lastToolResult: string;
     }
   | {
       type: "error";
