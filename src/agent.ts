@@ -6,6 +6,7 @@ import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
+const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
 
 const SYSTEM_PROMPT = `你是一个助手，可以使用工具帮助用户完成任务。
 遇到任何计算任务，必须调用 calculator 工具获取结果，禁止自行计算。
@@ -79,7 +80,7 @@ export async function runAgent(task: string): Promise<string> {
         .join(", ");
       console.log(`[LLM 决策] 选择工具: ${toolNames}`);
 
-      // 3. 执行工具
+      // 3. 执行工具（含重试）
       for (const call of assistantMsg.tool_calls) {
         // State: 调用工具前
         updateState(state, { currentStep: `tool_call:${call.function.name}` });
@@ -93,34 +94,70 @@ export async function runAgent(task: string): Promise<string> {
           addEvent(trace, { type: "tool_call", tool: call.function.name, args })
         );
 
-        const start = performance.now();
-        const result = await execute(call.function.name, args);
-        const durationMs = Math.round((performance.now() - start) * 100) / 100;
-        console.log(`[Tool 返回] ${result}`);
+        // 工具执行 + 重试（最多 MAX_RETRY 次）
+        let result = "";
+        for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
+          try {
+            const start = performance.now();
+            result = await execute(call.function.name, args);
+            const durationMs = Math.round((performance.now() - start) * 100) / 100;
+            console.log(`[Tool 返回] ${result}`);
 
-        // State: 工具完成
-        updateState(state, {
-          toolCalls: state.toolCalls + 1,
-          currentStep: "tool_result",
-        });
-        printStateSummary(state);
+            // State: 工具完成
+            updateState(state, {
+              toolCalls: state.toolCalls + 1,
+              currentStep: "tool_result",
+            });
+            printStateSummary(state);
 
-        // Trace: 工具结果（含耗时）
-        printEvent(
-          addEvent(trace, {
-            type: "tool_result",
-            tool: call.function.name,
-            result,
-            durationMs,
-          })
-        );
+            // Trace: 工具结果（含耗时）
+            printEvent(
+              addEvent(trace, {
+                type: "tool_result",
+                tool: call.function.name,
+                result,
+                durationMs,
+              })
+            );
 
-        // 4. 将工具结果返回给 LLM
-        messages.push({
-          role: "tool",
-          tool_call_id: call.id,
-          content: result,
-        });
+            // 4. 将工具结果返回给 LLM
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: result,
+            });
+            break; // 成功，跳出重试
+          } catch (err) {
+            const msg = (err as Error).message;
+            console.log(`[Tool 错误] ${call.function.name}: ${msg}`);
+
+            // Trace: 工具错误事件
+            printEvent(
+              addEvent(trace, {
+                type: "error",
+                message: `tool ${call.function.name} 失败 (尝试 ${attempt}/${MAX_RETRY + 1}): ${msg}`,
+              })
+            );
+
+            // State: 错误状态
+            updateState(state, { currentStep: "tool_error", error: msg });
+            printStateSummary(state);
+
+            if (attempt > MAX_RETRY) {
+              // 超过重试次数 → 任务失败
+              updateState(state, { status: "failed", error: msg });
+              printStateSummary(state);
+              printState(state);
+              printTrace(trace);
+              throw new Error(
+                `工具 ${call.function.name} 执行失败，已超过最大重试次数 ${MAX_RETRY}: ${msg}`
+              );
+            }
+            console.log(
+              `[重试 ${attempt}/${MAX_RETRY}] 工具 ${call.function.name} 失败，正在重试...`
+            );
+          }
+        }
       }
       // 5. 循环 → LLM 继续判断
     }

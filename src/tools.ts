@@ -16,12 +16,13 @@ export function register(tool: Tool): void {
   registry.set(tool.name, tool);
 }
 
+// 执行工具；工具不存在或执行抛错时向上抛出（由调用方捕获重试）
 export async function execute(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
   const tool = registry.get(name);
-  if (!tool) return `Error: tool "${name}" not found`;
+  if (!tool) throw new Error(`tool "${name}" not found`);
   return tool.execute(args);
 }
 
@@ -38,6 +39,7 @@ export function getSchemas(): ToolSchema[] {
 }
 
 // ---- 示例工具: calculator ----
+// 失败时直接抛异常（由 agent 捕获并重试），不再返回 Error 字符串
 register({
   name: "calculator",
   description: "计算数学表达式，支持加减乘除和括号",
@@ -52,13 +54,13 @@ register({
     const expr = String(args.expression || "");
     // 安全检查：仅允许数字与运算符
     if (!/^[0-9+\-*/().\s]+$/.test(expr)) {
-      return "Error: 表达式包含非法字符";
+      throw new Error("表达式包含非法字符");
     }
     try {
       const result = Function(`"use strict"; return (${expr})`)();
       return `计算结果: ${expr} = ${result}`;
     } catch {
-      return "Error: 表达式无法计算";
+      throw new Error("表达式无法计算");
     }
   },
 });

@@ -10,6 +10,7 @@ export interface AgentState {
   currentStep: string; // 当前执行步骤描述
   toolCalls: number; // 已调用工具次数
   startTime: string; // 启动时间
+  error?: string; // 失败时的错误信息
 }
 
 // ---- 创建初始 State ----
@@ -22,6 +23,7 @@ export function createState(task: string): AgentState {
     currentStep: "start",
     toolCalls: 0,
     startTime: new Date().toISOString(),
+    error: undefined,
   };
 }
 
@@ -41,8 +43,9 @@ export function getState(state: AgentState): AgentState {
 
 // ---- 实时打印状态摘要（单行紧凑，每步输出）----
 export function printStateSummary(state: AgentState): void {
+  const err = state.error ? ` | error=${state.error}` : "";
   console.log(
-    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}`
+    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}${err}`
   );
 }
 
