@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx --env-file=.env src/cli.ts",
-    "test": "tsx --env-file=.env tests/agent.test.ts"
+    "test": "tsx --env-file=.env tests/agent.test.ts",
+    "test:sandbox": "tsx tests/sandbox-manager.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
