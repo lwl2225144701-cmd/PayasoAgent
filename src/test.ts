@@ -101,6 +101,14 @@ const TASKS: TestCase[] = [
     expectTools: ["getWeather"],
     expectNoTools: ["calculator"],
   },
+  {
+    name: "15. Tool 成功但结果无效（NaN）",
+    prompt:
+      "请必须先用 calculator 工具计算 0/0，再把结果加 10，告诉我最终答案。注意：如果结果无效（如 NaN），不要编造数值，直接说明。",
+    // LLM 输出不依赖工具返回行：只断言数学解释中的稳定词"未定义"
+    expect: ["未定义"],
+    expectTools: ["calculator"],
+  },
 ];
 
 // 运行单个子进程命令，返回 stdout（含 stderr 合并，避免 execFileSync 抛错吞掉输出）
