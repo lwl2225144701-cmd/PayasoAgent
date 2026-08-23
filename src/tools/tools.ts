@@ -1,12 +1,21 @@
 // 模块 2: 工具注册与执行
+// 契约（安全边界）：
+// - LLM 永远不能控制 runId：runId 不出现在任何 Tool Schema 中，由 Runtime 通过 ToolContext 注入。
+// - 工具只接收"相对路径"参数；文件类工具必须用 SandboxManager.resolvePath(context.runId, path) 解析真实路径。
+// - 模型决定"做什么"，Runtime 决定"在哪里执行"。
 
 import type { ToolSchema } from "../llm/llm.js";
+
+// Runtime 注入的工具上下文（LLM 不可见、不可传入）
+export interface ToolContext {
+  runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
+}
 
 export interface Tool {
   name: string;
   description: string;
-  parameters: object; // JSON Schema
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  parameters: object; // JSON Schema（严禁包含 runId 等 Runtime 内部字段）
+  execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>;
   // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
   // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
   validateResult?: (result: unknown) => boolean | { valid: boolean; reason?: string };
@@ -20,13 +29,15 @@ export function register(tool: Tool): void {
 }
 
 // 执行工具；工具不存在或执行抛错时向上抛出（由调用方捕获重试）
+// context 由 Runtime 注入（含 runId），工具的路径类参数必须以相对路径表达
 export async function execute(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context: ToolContext
 ): Promise<string> {
   const tool = registry.get(name);
   if (!tool) throw new Error(`tool "${name}" not found`);
-  return tool.execute(args);
+  return tool.execute(args, context);
 }
 
 // 导出为 OpenAI tools 参数格式
@@ -66,7 +77,7 @@ register({
     },
     required: ["expression"],
   },
-  execute: async (args) => {
+  execute: async (args, _context) => {
     const expr = String(args.expression || "");
     // 安全检查：仅允许数字与运算符
     if (!/^[0-9+\-*/().\s]+$/.test(expr)) {
@@ -108,7 +119,7 @@ register({
     },
     required: ["city"],
   },
-  execute: async (args) => {
+  execute: async (args, _context) => {
     const city = String(args.city || "").trim();
     if (!city) throw new Error("缺少城市参数 city");
     const w = WEATHER_MOCK[city];

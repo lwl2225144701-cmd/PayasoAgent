@@ -216,7 +216,8 @@ export async function runAgent(
         for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
           try {
             const start = performance.now();
-            const result = await execute(toolName, args);
+            // ToolContext 由 Runtime 注入：runId 只来自 State，LLM 不可见、不可通过 args 覆盖
+            const result = await execute(toolName, args, { runId: state.runId });
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
 
