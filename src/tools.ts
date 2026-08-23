@@ -38,7 +38,7 @@ export function getSchemas(): ToolSchema[] {
   }));
 }
 
-// ---- 示例工具: calculator ----
+// ---- 工具: calculator ----
 // 失败时直接抛异常（由 agent 捕获并重试），不再返回 Error 字符串
 register({
   name: "calculator",
@@ -62,5 +62,31 @@ register({
     } catch {
       throw new Error("表达式无法计算");
     }
+  },
+});
+
+// ---- 工具: getWeather（mock 数据）----
+// 固定城市温度表，未收录城市返回默认值；city 缺失时抛异常（走 Recovery）
+const WEATHER_MOCK: Record<string, { temp: number; cond: string }> = {
+  深圳: { temp: 28, cond: "晴" },
+  北京: { temp: 15, cond: "多云" },
+  上海: { temp: 22, cond: "小雨" },
+};
+
+register({
+  name: "getWeather",
+  description: "查询指定城市的当前天气（温度与天气状况）",
+  parameters: {
+    type: "object",
+    properties: {
+      city: { type: "string", description: "城市名称，如 深圳" },
+    },
+    required: ["city"],
+  },
+  execute: async (args) => {
+    const city = String(args.city || "").trim();
+    if (!city) throw new Error("缺少城市参数 city");
+    const w = WEATHER_MOCK[city] ?? { temp: 25, cond: "晴" };
+    return `天气: ${city} ${w.temp}°C, ${w.cond}`;
   },
 });

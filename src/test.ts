@@ -9,6 +9,7 @@ interface TestCase {
   name: string; // 测试名
   prompt: string; // 用户任务
   expect: string[]; // 最终答案需包含的关键词（任一命中即 PASS）
+  expectTools?: string[]; // 期望按顺序出现的工具调用（校验 [Tool 调用] 行）
   env?: Record<string, string>; // 额外环境变量（如模拟中断）
   resume?: boolean; // 中断恢复任务：先中断运行，再从 checkpoint 恢复
   noTool?: boolean; // 纯对话任务：期望不调用工具
@@ -19,6 +20,7 @@ const TASKS: TestCase[] = [
     name: "1. 基础计算（单步）",
     prompt: "帮我计算 15*37",
     expect: ["555"],
+    expectTools: ["calculator"],
   },
   {
     name: "2. 多步骤计算（串行依赖）",
@@ -72,6 +74,24 @@ const TASKS: TestCase[] = [
     expect: [],
     noTool: true,
   },
+  {
+    name: "11. getWeather（只调用天气工具）",
+    prompt: "深圳天气怎么样",
+    expect: ["28°C", "天气: 深圳"],
+    expectTools: ["getWeather"],
+  },
+  {
+    name: "12. 工具选择（计算只走 calculator）",
+    prompt: "帮我计算 15*37",
+    expect: ["555"],
+    expectTools: ["calculator"],
+  },
+  {
+    name: "13. 工具串联（天气 → 计算）",
+    prompt: "查询深圳温度，再把温度加10",
+    expect: ["38"],
+    expectTools: ["getWeather", "calculator"],
+  },
 ];
 
 // 运行单个子进程命令，返回 stdout（含 stderr 合并，避免 execFileSync 抛错吞掉输出）
@@ -101,6 +121,17 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   const missing = tc.expect.filter((k) => !out.includes(k));
   if (missing.length > 0) {
     return { pass: false, reason: `答案缺少关键词: ${missing.join(", ")}` };
+  }
+  // 工具调用顺序校验（按出现顺序匹配 [Tool 调用] 行）
+  if (tc.expectTools?.length) {
+    const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
+    const idx = tc.expectTools.map((t) => calls.indexOf(t));
+    if (idx.includes(-1)) {
+      return { pass: false, reason: `工具调用缺失: ${tc.expectTools.join(" → ")}（实际: ${calls.join(" → ") || "(无)"}）` };
+    }
+    if (idx.some((v, i) => i > 0 && v <= idx[i - 1])) {
+      return { pass: false, reason: `工具调用顺序错误: 期望 ${tc.expectTools.join(" → ")}（实际: ${calls.join(" → ") || "(无)"}）` };
+    }
   }
   return { pass: true, reason: "" };
 }
