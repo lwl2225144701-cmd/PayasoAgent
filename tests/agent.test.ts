@@ -1,9 +1,12 @@
-// 模块: 能力测试集 — 端到端跑 19 个真实 Agent 任务，校验输出并汇总 PASS/FAIL
+// 模块: 能力测试集 — 端到端跑 21 个真实 Agent 任务，校验输出并汇总 PASS/FAIL
 // 用法: npx tsx --env-file=.env tests/agent.test.ts
 // 说明: 每个任务以独立子进程运行（真实调用 LLM + 工具），避免状态互相干扰
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { rmSync } from "node:fs";
+import { createWorkspace, cleanupWorkspace } from "../src/sandbox/sandbox-manager.js";
 
 interface TestCase {
   name: string; // 测试名
@@ -18,6 +21,9 @@ interface TestCase {
   env?: Record<string, string>; // 额外环境变量（如模拟中断）
   resume?: boolean; // 中断恢复任务：先中断运行，再从 checkpoint 恢复
   noTool?: boolean; // 纯对话任务：期望不调用工具
+  cliArgs?: string[]; // 额外 CLI 参数（如 --run-id <id>，置于任务串之前）
+  setup?: () => void; // 运行前准备（如预置沙箱工作区文件）
+  teardown?: () => void; // 运行后清理
 }
 
 const TASKS: TestCase[] = [
@@ -157,6 +163,35 @@ const TASKS: TestCase[] = [
       "请查询北京今天的实时股票价格，并告诉我价格。必须通过可用工具获取真实数据，不允许猜测。",
     expect: [],
   },
+  // ---- 只读沙箱文件工具（listDir / readFile）----
+  // 预置 sandbox/workspaces/e2e-demo 工作区（--run-id 固定），Agent 通过只读工具查看/读取
+  {
+    name: "20. 只读沙箱 listDir（查看 work 目录）",
+    prompt: "请查看 work 目录中有哪些文件",
+    expect: ["a.txt"],
+    expectTools: ["listDir"],
+    cliArgs: ["--run-id", "e2e-demo"],
+    setup: () => {
+      const r = createWorkspace("e2e-demo");
+      fs.writeFileSync(path.join(r, "work", "a.txt"), "aaa");
+      fs.mkdirSync(path.join(r, "work", "sub"), { recursive: true });
+      fs.writeFileSync(path.join(r, "input", "demo.txt"), "hello sandbox");
+    },
+    teardown: () => cleanupWorkspace("e2e-demo"),
+  },
+  {
+    name: "21. 只读沙箱 readFile（读取 input/demo.txt）",
+    prompt: "请读取 input/demo.txt，并告诉我里面写了什么",
+    expect: ["hello sandbox"],
+    expectTools: ["readFile"],
+    cliArgs: ["--run-id", "e2e-demo"],
+    setup: () => {
+      const r = createWorkspace("e2e-demo");
+      fs.writeFileSync(path.join(r, "input", "demo.txt"), "hello sandbox");
+      fs.writeFileSync(path.join(r, "work", "a.txt"), "aaa");
+    },
+    teardown: () => cleanupWorkspace("e2e-demo"),
+  },
 ];
 
 // 运行单个子进程命令，返回 stdout（含 stderr 合并，避免 execFileSync 抛错吞掉输出）
@@ -265,10 +300,11 @@ async function main(): Promise<void> {
 
     let out = "";
     try {
+      tc.setup?.(); // 运行前准备（如预置沙箱工作区文件）
       if (tc.resume) {
         // 1) 中断运行（第2次 LLM 调用时网络中断）
         console.log("  [阶段1] 运行并模拟中断...");
-        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", tc.prompt], tc.env);
+        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", ...(tc.cliArgs ?? []), tc.prompt], tc.env);
         // 提取 checkpoint runId（从 saved 路径）
         const m = out.match(/\.checkpoints\/([0-9a-f-]+)\.json/);
         if (!m) {
@@ -278,12 +314,14 @@ async function main(): Promise<void> {
         }
         const runId = m[1];
         console.log(`  [阶段2] 从 checkpoint 恢复 (runId=${runId.slice(0, 8)}...)...`);
-        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", "--resume", runId]);
+        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", ...(tc.cliArgs ?? []), "--resume", runId]);
       } else {
-        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", tc.prompt], tc.env);
+        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", ...(tc.cliArgs ?? []), tc.prompt], tc.env);
       }
     } catch (err) {
       out += `\n[test runner error] ${(err as Error).message}`;
+    } finally {
+      tc.teardown?.(); // 运行后清理（continue 路径也会执行）
     }
 
     const { pass, reason } = assert(tc, out);

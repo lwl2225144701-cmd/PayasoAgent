@@ -2,6 +2,8 @@
 
 import { chat, type ChatMessage } from "../llm/llm.js";
 import { execute, getSchemas, validateToolResult } from "../tools/tools.js";
+import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）
+import { createWorkspace } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
@@ -35,12 +37,17 @@ function stripThink(text: string): string {
 
 // Agent 核心循环（只新增 State/Trace/Checkpoint 记录，不改 Loop 逻辑）
 // resume: 传入 checkpoint 则从中断点恢复执行（State/Scratchpad/Messages 一并恢复）
+// opts.runId: 可选，供测试固定 runId（默认仍随机生成；resume 时忽略，沿用 checkpoint 的 runId）
 export async function runAgent(
   task: string,
-  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState> }
+  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState> },
+  opts?: { runId?: string }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
-  const runId = resume ? resume.state.runId : crypto.randomUUID();
+  const runId = resume ? resume.state.runId : (opts?.runId ?? crypto.randomUUID());
+
+  // Sandbox: 确保当前 runId 工作区存在（input/work/output）；resume 沿用原工作区（幂等复用，不做 cleanup）
+  createWorkspace(runId);
 
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
