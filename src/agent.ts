@@ -162,8 +162,10 @@ export async function runAgent(
       for (const call of assistantMsg.tool_calls) {
         const toolName = call.function.name;
         const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+        // 规范化输入：calculator 用表达式原文；其余工具用规范化 JSON（消除 LLM 序列化空白差异，
+        // 否则同参数换空格写法可绕过 isBlocked 的防重调/防死循环判定）
         const input =
-          "expression" in args ? String(args.expression) : call.function.arguments;
+          "expression" in args ? String(args.expression) : JSON.stringify(args);
 
         // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
         if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
