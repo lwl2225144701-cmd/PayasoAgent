@@ -4,7 +4,8 @@
   "description": "Minimal runnable Agent: LLM-driven tool-calling loop",
   "type": "module",
   "scripts": {
-    "start": "tsx --env-file=.env src/agent.ts"
+    "start": "tsx --env-file=.env src/cli.ts",
+    "test": "tsx --env-file=.env tests/agent.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

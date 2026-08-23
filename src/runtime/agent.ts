@@ -1,11 +1,11 @@
-// 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（含入口）
+// 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
-import { chat, type ChatMessage } from "./llm.js";
-import { execute, getSchemas, validateToolResult } from "./tools.js";
+import { chat, type ChatMessage } from "../llm/llm.js";
+import { execute, getSchemas, validateToolResult } from "../tools/tools.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
-import { saveCheckpoint, loadCheckpoint } from "./checkpoint.js";
+import { saveCheckpoint } from "./checkpoint.js";
 import {
   createScratchpad,
   setNextStep,
@@ -394,38 +394,4 @@ export async function runAgent(
   printEvent(addEvent(trace, { type: "error", message: "超过最大循环次数限制" }));
   printTrace(trace);
   throw new Error("超过最大循环次数限制");
-}
-
-// ---- 入口 ----
-// 用法:
-//   npm start "任务"            正常执行
-//   npm start -- --resume <runId>   从 checkpoint 恢复执行
-const args = process.argv.slice(2);
-const resumeIdx = args.indexOf("--resume");
-const resumeId = resumeIdx >= 0 ? args[resumeIdx + 1] : undefined;
-
-if (resumeId) {
-  const cp = loadCheckpoint(resumeId);
-  if (!cp) {
-    console.error(`[Error] checkpoint 不存在: .checkpoints/${resumeId}.json`);
-    process.exit(1);
-  }
-  console.log(`任务: ${cp.task}（恢复执行）`);
-  try {
-    const answer = await runAgent(cp.task, cp);
-    console.log(`\n最终答案: ${answer}`);
-  } catch (err) {
-    console.error(`\n[Error] ${(err as Error).message}`);
-    process.exit(1);
-  }
-} else {
-  const task = args[0] || "帮我计算 15 * 37";
-  console.log(`任务: ${task}`);
-  try {
-    const answer = await runAgent(task);
-    console.log(`\n最终答案: ${answer}`);
-  } catch (err) {
-    console.error(`\n[Error] ${(err as Error).message}`);
-    process.exit(1);
-  }
 }

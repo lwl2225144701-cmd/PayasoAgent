@@ -1,6 +1,6 @@
 // 模块 2: 工具注册与执行
 
-import type { ToolSchema } from "./llm.js";
+import type { ToolSchema } from "../llm/llm.js";
 
 export interface Tool {
   name: string;

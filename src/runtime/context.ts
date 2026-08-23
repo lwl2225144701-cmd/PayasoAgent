@@ -1,6 +1,6 @@
 // Context 模块 — 最小上下文管理（仅控制发送给 LLM 的消息规模，无 Memory / 无数据库）
 
-import type { ChatMessage } from "./llm.js";
+import type { ChatMessage } from "../llm/llm.js";
 
 // 默认上下文上限（粗略字符数估计，非真实 token 数）
 const DEFAULT_MAX_LENGTH = 4000;

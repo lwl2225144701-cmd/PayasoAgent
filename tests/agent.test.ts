@@ -1,5 +1,5 @@
-// 模块: 能力测试集 — 端到端跑 10 个真实 Agent 任务，校验输出并汇总 PASS/FAIL
-// 用法: npx tsx --env-file=.env src/test.ts
+// 模块: 能力测试集 — 端到端跑 19 个真实 Agent 任务，校验输出并汇总 PASS/FAIL
+// 用法: npx tsx --env-file=.env tests/agent.test.ts
 // 说明: 每个任务以独立子进程运行（真实调用 LLM + 工具），避免状态互相干扰
 
 import { execFileSync } from "node:child_process";
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
       if (tc.resume) {
         // 1) 中断运行（第2次 LLM 调用时网络中断）
         console.log("  [阶段1] 运行并模拟中断...");
-        out = run("npx", ["tsx", "--env-file=.env", "src/agent.ts", tc.prompt], tc.env);
+        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", tc.prompt], tc.env);
         // 提取 checkpoint runId（从 saved 路径）
         const m = out.match(/\.checkpoints\/([0-9a-f-]+)\.json/);
         if (!m) {
@@ -278,9 +278,9 @@ async function main(): Promise<void> {
         }
         const runId = m[1];
         console.log(`  [阶段2] 从 checkpoint 恢复 (runId=${runId.slice(0, 8)}...)...`);
-        out = run("npx", ["tsx", "--env-file=.env", "src/agent.ts", "--resume", runId]);
+        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", "--resume", runId]);
       } else {
-        out = run("npx", ["tsx", "--env-file=.env", "src/agent.ts", tc.prompt], tc.env);
+        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", tc.prompt], tc.env);
       }
     } catch (err) {
       out += `\n[test runner error] ${(err as Error).message}`;

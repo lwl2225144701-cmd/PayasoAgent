@@ -4,7 +4,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { Scratchpad } from "./scratchpad.js";
-import type { ChatMessage } from "./llm.js";
+import type { ChatMessage } from "../llm/llm.js";
 import type { AgentState } from "./state.js";
 
 // checkpoint 保存目录（项目根 .checkpoints/，已加入 .gitignore）
