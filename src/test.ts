@@ -11,6 +11,10 @@ interface TestCase {
   expect: string[]; // 最终答案需包含的关键词（任一命中即 PASS）
   expectTools?: string[]; // 期望按顺序出现的工具调用（校验 [Tool 调用] 行）
   expectNoTools?: string[]; // 期望完全不出现在 [Tool 调用] 行中的工具
+  expectToolCount?: Record<string, number>; // 期望各工具精确调用次数（校验 [Tool 调用] 行计数）
+  expectInvalid?: { tool: string; count: number }; // 期望出现 N 次 tool_result_invalid（指定工具）
+  expectState?: Record<string, string | number>; // 期望最终 State JSON 含 key:value
+  expectCompletedEmpty?: boolean; // 期望最终 Scratchpad 的 completedSteps 为空（invalid 不应进入）
   env?: Record<string, string>; // 额外环境变量（如模拟中断）
   resume?: boolean; // 中断恢复任务：先中断运行，再从 checkpoint 恢复
   noTool?: boolean; // 纯对话任务：期望不调用工具
@@ -102,12 +106,26 @@ const TASKS: TestCase[] = [
     expectNoTools: ["calculator"],
   },
   {
-    name: "15. Tool 成功但结果无效（NaN）",
-    prompt:
-      "请必须先用 calculator 工具计算 0/0，再把结果加 10，告诉我最终答案。注意：如果结果无效（如 NaN），不要编造数值，直接说明。",
-    // LLM 输出不依赖工具返回行：只断言数学解释中的稳定词"未定义"
-    expect: ["未定义"],
-    expectTools: ["calculator"],
+    name: "15. Tool Result Invalid（getWeather temperature=null）",
+    prompt: "查询深圳当前温度，再把温度加 10，告诉我最终结果。",
+    // v1.2 验证：getWeather 执行成功但 temperature=null → 结果无效
+    // 不增加额外提示词，观察 Runtime 自然处理（INVALID_WEATHER=1 让数据源返回 null）
+    expect: [],
+    env: { INVALID_WEATHER: "1" },
+    expectToolCount: { getWeather: 1, calculator: 0 },
+    expectInvalid: { tool: "getWeather", count: 1 },
+    expectState: { invalidToolResults: 1 },
+    expectCompletedEmpty: true,
+  },
+  {
+    name: "16. calculator NaN Result Invalid（0/0 → NaN）",
+    prompt: "先用 calculator 计算 0/0，再把结果加 10。",
+    // v1.2 验证：0/0 → NaN → execute 成功 → 结果无效（不进入 completedSteps，不继续把 NaN 当有效数值执行）
+    expect: ["NaN", "无效", "未定义"],
+    expectToolCount: { calculator: 1 },
+    expectInvalid: { tool: "calculator", count: 1 },
+    expectState: { invalidToolResults: 1 },
+    expectCompletedEmpty: true,
   },
 ];
 
@@ -135,13 +153,17 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
     if (!hasAnswer) return { pass: false, reason: "缺少 [最终答案]" };
     return { pass: true, reason: "" };
   }
+  // 基线：非纯对话任务也必须给出最终答案（防止 Agent 崩溃 / 超迭代静默失败）
+  if (!out.includes("最终答案")) {
+    return { pass: false, reason: "缺少 [最终答案]，Agent 可能崩溃或超过最大迭代次数" };
+  }
   const missing = tc.expect.filter((k) => !out.includes(k));
   if (missing.length > 0) {
     return { pass: false, reason: `答案缺少关键词: ${missing.join(", ")}` };
   }
+  const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
   // 工具调用顺序校验（按出现顺序匹配 [Tool 调用] 行）
   if (tc.expectTools?.length) {
-    const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
     const idx = tc.expectTools.map((t) => calls.indexOf(t));
     if (idx.includes(-1)) {
       return { pass: false, reason: `工具调用缺失: ${tc.expectTools.join(" → ")}（实际: ${calls.join(" → ") || "(无)"}）` };
@@ -152,10 +174,44 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   }
   // 不应出现的工具调用（如依赖失败后下游工具必须为 0 次）
   if (tc.expectNoTools?.length) {
-    const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
     const forbidden = tc.expectNoTools.filter((t) => calls.includes(t));
     if (forbidden.length > 0) {
       return { pass: false, reason: `工具不应被调用: ${forbidden.join(", ")}（实际调用: ${calls.join(" → ") || "(无)"}）` };
+    }
+  }
+  // 精确调用次数（v1.2: 如 getWeather 必须恰好 1 次、calculator 必须 0 次）
+  if (tc.expectToolCount) {
+    for (const [tool, n] of Object.entries(tc.expectToolCount)) {
+      const got = calls.filter((t) => t === tool).length;
+      if (got !== n) {
+        return { pass: false, reason: `工具 ${tool} 调用次数=${got}，期望 ${n}` };
+      }
+    }
+  }
+  // tool_result_invalid 事件（v1.2: 每行一条 Trace 事件，结果 JSON 内嵌不影响行匹配）
+  if (tc.expectInvalid) {
+    const inv = tc.expectInvalid; // 闭包内收窄失效，先取局部常量
+    const lines = out
+      .split("\n")
+      .filter((l) => l.includes('"type":"tool_result_invalid"') && l.includes(`"tool":"${inv.tool}"`));
+    if (lines.length !== inv.count) {
+      return { pass: false, reason: `tool_result_invalid(${inv.tool}) 次数=${lines.length}，期望 ${inv.count}` };
+    }
+  }
+  // State 字段校验（最终 printState 的 JSON 输出，如 "invalidToolResults": 1）
+  if (tc.expectState) {
+    for (const [k, v] of Object.entries(tc.expectState)) {
+      if (!out.includes(`"${k}": ${v}`)) {
+        return { pass: false, reason: `State 缺少 "${k}": ${v}` };
+      }
+    }
+  }
+  // completedSteps 必须为空（v1.2: invalid 结果不应进入 completedSteps）
+  if (tc.expectCompletedEmpty) {
+    const blocks = out.split("=== Scratchpad ===");
+    const last = blocks[blocks.length - 1] ?? "";
+    if (!/"completedSteps":\s*\[\]/.test(last)) {
+      return { pass: false, reason: "最终 Scratchpad 的 completedSteps 非空（invalid 不应进入 completedSteps）" };
     }
   }
   return { pass: true, reason: "" };

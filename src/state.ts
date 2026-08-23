@@ -23,8 +23,9 @@ export interface AgentState {
   iteration: number; // 当前迭代次数
   currentStep: string; // 当前执行步骤描述
   toolCalls: number; // 总工具调用次数（每次 LLM 发起 tool_call 计 1）
-  successfulToolCalls: number; // 成功执行次数
-  failedToolCalls: number; // 失败次数
+  successfulToolCalls: number; // 成功执行次数（execute 维度：未抛异常）
+  failedToolCalls: number; // 失败次数（execute 抛异常）
+  invalidToolResults: number; // 执行成功但结果无效次数（结果有效性维度，与成功/失败正交）
   startTime: string; // 启动时间
   currentError?: string; // 当前正在处理的错误（工具成功后清空，不保留历史）
   pendingAction?: PendingAction; // 当前待执行动作（失败恢复时引导 LLM 的依据）
@@ -42,6 +43,7 @@ export function createState(task: string, runId: string): AgentState {
     toolCalls: 0,
     successfulToolCalls: 0,
     failedToolCalls: 0,
+    invalidToolResults: 0,
     startTime: new Date().toISOString(),
     currentError: undefined,
   };
@@ -71,7 +73,7 @@ export function printStateSummary(state: AgentState): void {
     ? ` | lastErr=${state.lastToolError.tool}(${state.lastToolError.input})x${state.lastToolError.retries}`
     : "";
   console.log(
-    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}(ok:${state.successfulToolCalls}/fail:${state.failedToolCalls})${err}${pending}${lastErr}`
+    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}(ok:${state.successfulToolCalls}/fail:${state.failedToolCalls}/invalid:${state.invalidToolResults})${err}${pending}${lastErr}`
   );
 }
 

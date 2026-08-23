@@ -1,7 +1,7 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（含入口）
 
 import { chat, type ChatMessage } from "./llm.js";
-import { execute, getSchemas } from "./tools.js";
+import { execute, getSchemas, validateToolResult } from "./tools.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
@@ -13,6 +13,7 @@ import {
   recordFailure,
   isBlocked,
   clearFailure,
+  recordInvalid,
   toSystemText,
   printScratchpad,
 } from "./scratchpad.js";
@@ -147,6 +148,7 @@ export async function runAgent(
         // Checkpoint: 完成时保存
         save("completed");
         printState(state);
+        printScratchpad(scratchpad);
         printTrace(trace);
         return answer;
       }
@@ -165,17 +167,17 @@ export async function runAgent(
 
         // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
         if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
-          const blockMsg = `工具 ${toolName} 参数 "${input}" 已失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明失败原因。`;
+          const blockMsg = `工具 ${toolName} 参数 "${input}" 已产生无效结果或失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明原因。`;
           console.log(`[Blocked] ${blockMsg}`);
 
           // State: 记录被禁状态（不推进步骤）
           updateState(state, {
             currentStep: "tool_blocked",
-            currentError: "重复失败被禁止调用",
+            currentError: "重复无效/失败被禁止调用",
             lastToolError: {
               tool: toolName,
               input,
-              error: "重复失败被禁止调用",
+              error: "重复无效/失败被禁止调用",
               retries: MAX_RETRY + 1,
             },
           });
@@ -216,7 +218,7 @@ export async function runAgent(
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
 
-            // State: 工具成功（清空当前错误与待执行动作；lastToolError 保留历史）
+            // State: 工具执行成功（execute 维度，先于结果有效性判定）
             updateState(state, {
               successfulToolCalls: state.successfulToolCalls + 1,
               currentStep: "tool_result",
@@ -225,7 +227,55 @@ export async function runAgent(
             });
             printStateSummary(state);
 
-            // Trace: 工具结果（含耗时）
+            // ---- v1.2 Tool Result Validation：执行成功 ≠ 结果有效 ----
+            const vr = validateToolResult(toolName, result);
+            if (!vr.valid) {
+              // 结果无效：不进 completedSteps、不计入失败，单独计入 invalidToolResults
+              updateState(state, {
+                invalidToolResults: state.invalidToolResults + 1,
+                currentStep: "tool_result_invalid",
+                currentError: `结果无效: ${vr.reason ?? ""}`,
+              });
+              printStateSummary(state);
+
+              // Trace: 结果无效事件（区别于 tool_result / tool_error）
+              printEvent(
+                addEvent(trace, {
+                  type: "tool_result_invalid",
+                  tool: toolName,
+                  result,
+                  reason: vr.reason ?? "结果无效",
+                })
+              );
+
+              // Scratchpad: 记录无效结果（不进 completedSteps）
+              recordInvalid(scratchpad, {
+                tool: toolName,
+                input,
+                result,
+                reason: vr.reason ?? "结果无效",
+              });
+              printScratchpad(scratchpad);
+
+              // 将"执行成功但结果无效"作为恢复消息回传 LLM，由其业务决策
+              const recoveryMsg =
+                `工具 ${toolName} 执行成功，但返回结果不可用于后续任务。\n` +
+                `工具：${toolName}\n` +
+                `结果：${typeof result === "string" ? result : JSON.stringify(result)}\n` +
+                `原因：${vr.reason ?? "结果无效"}\n` +
+                `请根据当前任务决定：1) 是否重新调用工具（如更换参数）；2) 是否换其他方法；` +
+                `3) 是否停止依赖该结果的后续步骤；4) 是否向用户说明无法继续。`;
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: recoveryMsg,
+              });
+              // Checkpoint: 结果无效时保存
+              save();
+              break; // 工具本身未抛错，无需重试
+            }
+
+            // Trace: 工具结果（含耗时，仅结果有效时记录 tool_result）
             printEvent(
               addEvent(trace, {
                 type: "tool_result",

@@ -7,6 +7,9 @@ export interface Tool {
   description: string;
   parameters: object; // JSON Schema
   execute: (args: Record<string, unknown>) => Promise<string>;
+  // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
+  // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
+  validateResult?: (result: unknown) => boolean | { valid: boolean; reason?: string };
 }
 
 // ---- 工具注册表 ----
@@ -38,6 +41,19 @@ export function getSchemas(): ToolSchema[] {
   }));
 }
 
+// v1.2: 运行 Tool 的 validateResult（若存在）；无声明默认结果有效。
+// 返回 { valid, reason? }，供 Agent Loop 区分"执行成功"与"结果有效"两个维度。
+export function validateToolResult(
+  name: string,
+  result: unknown
+): { valid: boolean; reason?: string } {
+  const tool = registry.get(name);
+  if (!tool || !tool.validateResult) return { valid: true };
+  const r = tool.validateResult(result);
+  if (typeof r === "boolean") return { valid: r };
+  return r;
+}
+
 // ---- 工具: calculator ----
 // 失败时直接抛异常（由 agent 捕获并重试），不再返回 Error 字符串
 register({
@@ -62,6 +78,15 @@ register({
     } catch {
       throw new Error("表达式无法计算");
     }
+  },
+  // v1.2: 结果有效性校验（NaN / Infinity / -Infinity 视为无效结果，但 execute 本身成功）
+  validateResult: (result) => {
+    const m = String(result).match(/= (.+)$/);
+    const val = m ? m[1].trim() : String(result);
+    if (val === "NaN" || val === "Infinity" || val === "-Infinity") {
+      return { valid: false, reason: `计算结果无效: ${val}` };
+    }
+    return true;
   },
 });
 
@@ -88,6 +113,29 @@ register({
     if (!city) throw new Error("缺少城市参数 city");
     const w = WEATHER_MOCK[city];
     if (!w) throw new Error("城市不存在或天气数据获取失败");
+    // v1.2 验证场景：数据源返回 temperature=null（Tool 执行成功，但业务结果无效）
+    // 由 validateResult 判定为 invalid，不抛异常、不进 completedSteps
+    if (process.env.INVALID_WEATHER === "1") {
+      return JSON.stringify({ city, temperature: null });
+    }
     return `天气: ${city} ${w.temp}°C, ${w.cond}`;
+  },
+  // v1.2: 校验返回温度是否为有效数值（null/undefined/非数字 视为无效）
+  validateResult: (result) => {
+    try {
+      const json = JSON.parse(String(result));
+      if (json && (json.temperature === null || json.temperature === undefined)) {
+        return { valid: false, reason: "temperature 缺失或为空" };
+      }
+      if (typeof json.temperature !== "number" || !isFinite(json.temperature)) {
+        return { valid: false, reason: "temperature 不是有效数值" };
+      }
+      return true;
+    } catch {
+      // 非 JSON 文本（如 "天气: 深圳 28°C, 晴"）：从文本提取温度
+      const m = String(result).match(/(\d+(?:\.\d+)?)°C/);
+      if (!m) return { valid: false, reason: "无法解析温度" };
+      return true;
+    }
   },
 });

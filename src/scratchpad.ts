@@ -22,10 +22,19 @@ export interface FailedStep {
   retries: number; // 已失败尝试次数
 }
 
+// 无效结果记录（v1.2）：Tool 执行成功，但返回结果不可用
+export interface InvalidStep {
+  tool: string; // 调用的工具
+  input: string; // 传入参数
+  result: unknown; // 返回结果（无效）
+  reason: string; // 无效原因
+}
+
 export interface Scratchpad {
   task: string; // 用户任务
-  completedSteps: ScratchpadStep[]; // 已完成的步骤（结构化）
-  failedSteps: FailedStep[]; // 失败的步骤（不推进进度）
+  completedSteps: ScratchpadStep[]; // 已完成的步骤（执行成功 + 结果有效）
+  failedSteps: FailedStep[]; // 失败的步骤（执行抛异常，不推进进度）
+  invalidSteps: InvalidStep[]; // 无效结果（执行成功但结果不可用，不进 completedSteps）
   nextStep: NextStep | null; // 下一步动作（null = 等待 LLM 决策）
   lastResult: string; // 最近一次工具结果
 }
@@ -36,6 +45,7 @@ export function createScratchpad(task: string): Scratchpad {
     task,
     completedSteps: [],
     failedSteps: [],
+    invalidSteps: [],
     nextStep: null,
     lastResult: "",
   };
@@ -79,7 +89,7 @@ export function recordFailure(
   }
 }
 
-// 防死循环：相同 tool + 相同 input 失败次数超过 maxRetries 时禁止再次调用
+// 防死循环：相同 tool + 相同 input 失败次数超过 maxRetries，或已产生过无效结果时禁止再次调用
 export function isBlocked(
   pad: Scratchpad,
   tool: string,
@@ -87,7 +97,10 @@ export function isBlocked(
   maxRetries: number
 ): boolean {
   const f = pad.failedSteps.find((s) => s.tool === tool && s.input === input);
-  return !!f && f.retries > maxRetries;
+  if (!!f && f.retries > maxRetries) return true;
+  // v1.2: 相同 tool+input 已记录为"结果无效"→ 重复调用仍将无效，禁止相同参数再调（防死循环）
+  // 记录语义仍独立（invalidSteps 与 failedSteps 分开），仅复用"禁调"这一防失控机制
+  return pad.invalidSteps.some((s) => s.tool === tool && s.input === input);
 }
 
 // 工具成功后解禁（清除该 tool+input 的失败记录）
@@ -99,6 +112,15 @@ export function clearFailure(
   pad.failedSteps = pad.failedSteps.filter(
     (f) => !(f.tool === tool && f.input === input)
   );
+}
+
+// v1.2: 工具执行成功但结果无效时调用：记录无效结果（不进 completedSteps，不进 failedSteps）
+export function recordInvalid(
+  pad: Scratchpad,
+  invalid: { tool: string; input: string; result: unknown; reason: string }
+): void {
+  pad.invalidSteps.push({ ...invalid });
+  pad.lastResult = typeof invalid.result === "string" ? invalid.result : JSON.stringify(invalid.result);
 }
 
 // 序列化为文本，注入 system prompt。
@@ -122,6 +144,15 @@ export function toSystemText(pad: Scratchpad): string {
   const next = pad.nextStep
     ? `  ${pad.nextStep.tool}("${pad.nextStep.input}")`
     : "  (等待 LLM 决策，请判断是否需要继续调用工具)";
+  const invalids =
+    pad.invalidSteps.length > 0
+      ? pad.invalidSteps
+          .map(
+            (s) =>
+              `  - ${s.tool}("${s.input}") 结果无效: ${s.reason}（已记录，不要重复依赖该结果）`
+          )
+          .join("\n")
+      : "  (无)";
   return [
     "[执行进度 Scratchpad]",
     `任务: ${pad.task}`,
@@ -129,10 +160,12 @@ export function toSystemText(pad: Scratchpad): string {
     steps,
     `失败记录:`,
     fails,
+    `无效结果记录:`,
+    invalids,
     `下一步:`,
     next,
     `上次结果: ${pad.lastResult || "(暂无)"}`,
-    `请基于以上进度继续：不要重复已完成的步骤，禁止重复调用失败记录中的相同参数，优先参考"下一步"。`,
+    `请基于以上进度继续：不要重复已完成的步骤，禁止重复调用失败记录中的相同参数，已记录为"无效结果"的步骤不要重复依赖，优先参考"下一步"。`,
   ].join("\n");
 }
 

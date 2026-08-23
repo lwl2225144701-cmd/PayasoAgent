@@ -28,6 +28,14 @@ export type TraceEvent =
       durationMs: number; // 执行耗时
     }
   | {
+      type: "tool_result_invalid";
+      step: number;
+      timestamp: string;
+      tool: string; // 工具名称
+      result: unknown; // 返回结果（无效）
+      reason: string; // 无效原因
+    }
+  | {
       type: "final_answer";
       step: number;
       timestamp: string;
@@ -91,6 +99,12 @@ export type TraceEventInput =
       tool: string;
       result: string;
       durationMs: number;
+    }
+  | {
+      type: "tool_result_invalid";
+      tool: string;
+      result: unknown;
+      reason: string;
     }
   | {
       type: "final_answer";
