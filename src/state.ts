@@ -26,15 +26,15 @@ export interface AgentState {
   successfulToolCalls: number; // 成功执行次数
   failedToolCalls: number; // 失败次数
   startTime: string; // 启动时间
-  error?: string; // 失败时的错误信息
+  currentError?: string; // 当前正在处理的错误（工具成功后清空，不保留历史）
   pendingAction?: PendingAction; // 当前待执行动作（失败恢复时引导 LLM 的依据）
-  lastToolError?: ToolErrorInfo; // 最近一次工具失败信息
+  lastToolError?: ToolErrorInfo; // 最近一次工具失败信息（历史，不随成功清空）
 }
 
-// ---- 创建初始 State ----
-export function createState(task: string): AgentState {
+// ---- 创建初始 State（runId 由外部统一生成，保证 State/Trace/Checkpoint 一致）----
+export function createState(task: string, runId: string): AgentState {
   return {
-    runId: crypto.randomUUID(),
+    runId,
     task,
     status: "running",
     iteration: 0,
@@ -43,7 +43,7 @@ export function createState(task: string): AgentState {
     successfulToolCalls: 0,
     failedToolCalls: 0,
     startTime: new Date().toISOString(),
-    error: undefined,
+    currentError: undefined,
   };
 }
 
@@ -63,7 +63,7 @@ export function getState(state: AgentState): AgentState {
 
 // ---- 实时打印状态摘要（单行紧凑，每步输出）----
 export function printStateSummary(state: AgentState): void {
-  const err = state.error ? ` | error=${state.error}` : "";
+  const err = state.currentError ? ` | curErr=${state.currentError}` : "";
   const pending = state.pendingAction
     ? ` | pending=${state.pendingAction.tool}(${state.pendingAction.input})`
     : "";

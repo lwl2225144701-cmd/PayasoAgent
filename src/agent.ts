@@ -38,9 +38,12 @@ export async function runAgent(
   task: string,
   resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState> }
 ): Promise<string> {
+  // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
+  const runId = resume ? resume.state.runId : crypto.randomUUID();
+
   // State: 新建或从 checkpoint 恢复
-  const state = resume ? resume.state : createState(task);
-  const trace = createTrace();
+  const state = resume ? resume.state : createState(task, runId);
+  const trace = createTrace(runId);
   const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   let messages: ChatMessage[] = resume
@@ -55,7 +58,7 @@ export async function runAgent(
   // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
   const save = (status?: string) => {
     const file = saveCheckpoint({
-      runId: state.runId,
+      runId,
       task: state.task,
       status: status ?? state.status,
       iteration: state.iteration,
@@ -133,11 +136,12 @@ export async function runAgent(
           })
         );
 
-        // State: 完成（清空可能存在的错误残留）
+        // State: 完成（清空当前错误与待执行动作；历史错误保留在 lastToolError / failedSteps / Trace）
         updateState(state, {
           status: "completed",
           currentStep: "final_answer",
-          error: undefined,
+          currentError: undefined,
+          pendingAction: undefined,
         });
         printStateSummary(state);
         // Checkpoint: 完成时保存
@@ -167,6 +171,7 @@ export async function runAgent(
           // State: 记录被禁状态（不推进步骤）
           updateState(state, {
             currentStep: "tool_blocked",
+            currentError: "重复失败被禁止调用",
             lastToolError: {
               tool: toolName,
               input,
@@ -211,12 +216,12 @@ export async function runAgent(
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
 
-            // State: 工具成功（清空待执行动作与失败信息）
+            // State: 工具成功（清空当前错误与待执行动作；lastToolError 保留历史）
             updateState(state, {
               successfulToolCalls: state.successfulToolCalls + 1,
               currentStep: "tool_result",
               pendingAction: undefined,
-              lastToolError: undefined,
+              currentError: undefined,
             });
             printStateSummary(state);
 
@@ -272,10 +277,10 @@ export async function runAgent(
               })
             );
 
-            // State: 错误状态（记录失败信息与参数，不推进步骤）
+            // State: 错误状态（当前错误 + 失败历史 lastToolError，不推进步骤）
             updateState(state, {
               currentStep: "tool_error",
-              error: msg,
+              currentError: msg,
               lastToolError: { tool: toolName, input, error: msg, retries: attempt },
             });
             printStateSummary(state);

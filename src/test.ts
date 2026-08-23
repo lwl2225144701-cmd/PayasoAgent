@@ -10,6 +10,7 @@ interface TestCase {
   prompt: string; // 用户任务
   expect: string[]; // 最终答案需包含的关键词（任一命中即 PASS）
   expectTools?: string[]; // 期望按顺序出现的工具调用（校验 [Tool 调用] 行）
+  expectNoTools?: string[]; // 期望完全不出现在 [Tool 调用] 行中的工具
   env?: Record<string, string>; // 额外环境变量（如模拟中断）
   resume?: boolean; // 中断恢复任务：先中断运行，再从 checkpoint 恢复
   noTool?: boolean; // 纯对话任务：期望不调用工具
@@ -92,6 +93,14 @@ const TASKS: TestCase[] = [
     expect: ["38"],
     expectTools: ["getWeather", "calculator"],
   },
+  {
+    name: "14. 上游 Tool 失败，下游依赖中止",
+    prompt:
+      "查询“不存在的城市”的天气，再把温度加10。如果天气查询失败，不要调用 calculator，不要编造温度，直接说明无法完成后续计算。",
+    expect: ["天气查询失败", "无法", "失败"],
+    expectTools: ["getWeather"],
+    expectNoTools: ["calculator"],
+  },
 ];
 
 // 运行单个子进程命令，返回 stdout（含 stderr 合并，避免 execFileSync 抛错吞掉输出）
@@ -131,6 +140,14 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
     }
     if (idx.some((v, i) => i > 0 && v <= idx[i - 1])) {
       return { pass: false, reason: `工具调用顺序错误: 期望 ${tc.expectTools.join(" → ")}（实际: ${calls.join(" → ") || "(无)"}）` };
+    }
+  }
+  // 不应出现的工具调用（如依赖失败后下游工具必须为 0 次）
+  if (tc.expectNoTools?.length) {
+    const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
+    const forbidden = tc.expectNoTools.filter((t) => calls.includes(t));
+    if (forbidden.length > 0) {
+      return { pass: false, reason: `工具不应被调用: ${forbidden.join(", ")}（实际调用: ${calls.join(" → ") || "(无)"}）` };
     }
   }
   return { pass: true, reason: "" };

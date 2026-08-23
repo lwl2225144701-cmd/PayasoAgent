@@ -66,7 +66,7 @@ register({
 });
 
 // ---- 工具: getWeather（mock 数据）----
-// 固定城市温度表，未收录城市返回默认值；city 缺失时抛异常（走 Recovery）
+// 固定城市温度表；未收录城市抛异常（模拟数据源失败，走 Recovery）
 const WEATHER_MOCK: Record<string, { temp: number; cond: string }> = {
   深圳: { temp: 28, cond: "晴" },
   北京: { temp: 15, cond: "多云" },
@@ -75,7 +75,7 @@ const WEATHER_MOCK: Record<string, { temp: number; cond: string }> = {
 
 register({
   name: "getWeather",
-  description: "查询指定城市的当前天气（温度与天气状况）",
+  description: "查询指定城市的当前天气（温度与天气状况），仅支持已收录城市",
   parameters: {
     type: "object",
     properties: {
@@ -86,7 +86,8 @@ register({
   execute: async (args) => {
     const city = String(args.city || "").trim();
     if (!city) throw new Error("缺少城市参数 city");
-    const w = WEATHER_MOCK[city] ?? { temp: 25, cond: "晴" };
+    const w = WEATHER_MOCK[city];
+    if (!w) throw new Error("城市不存在或天气数据获取失败");
     return `天气: ${city} ${w.temp}°C, ${w.cond}`;
   },
 });

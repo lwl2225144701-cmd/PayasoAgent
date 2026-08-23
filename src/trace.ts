@@ -130,9 +130,9 @@ export interface Trace {
   events: TraceEvent[];
 }
 
-// ---- 创建 Trace ----
-export function createTrace(): Trace {
-  return { run_id: crypto.randomUUID(), events: [] };
+// ---- 创建 Trace（runId 由外部统一生成，保证 State/Trace/Checkpoint 一致）----
+export function createTrace(runId: string): Trace {
+  return { run_id: runId, events: [] };
 }
 
 // ---- 追加事件（自动编号 step、打时间戳），返回事件便于实时打印 ----
