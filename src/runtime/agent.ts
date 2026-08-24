@@ -1,13 +1,20 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
 import { chat, type ChatMessage } from "../llm/llm.js";
-import { execute, getSchemas, validateToolResult } from "../tools/tools.js";
+import { execute, getTool, getSchemas, validateToolResult } from "../tools/tools.js";
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）
 import { createWorkspace } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
 import { saveCheckpoint } from "./checkpoint.js";
+import {
+  createSideEffectGuard,
+  getReplay,
+  markExecuted,
+  operationIdentity,
+  type ExecutedOperation,
+} from "./side-effect.js";
 import {
   createScratchpad,
   setNextStep,
@@ -40,7 +47,7 @@ function stripThink(text: string): string {
 // opts.runId: 可选，供测试固定 runId（默认仍随机生成；resume 时忽略，沿用 checkpoint 的 runId）
 export async function runAgent(
   task: string,
-  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState> },
+  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; sideEffects?: ExecutedOperation[] },
   opts?: { runId?: string }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
@@ -54,6 +61,8 @@ export async function runAgent(
   const trace = createTrace(runId);
   const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
+  // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
+  const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
   let messages: ChatMessage[] = resume
     ? resume.messages
     : [
@@ -73,6 +82,7 @@ export async function runAgent(
       scratchpad,
       messages,
       state,
+      sideEffects: sideEffectGuard.snapshot(),
     });
     console.log(`[Checkpoint] saved → ${file}`);
   };
@@ -174,6 +184,29 @@ export async function runAgent(
         const input =
           "expression" in args ? String(args.expression) : JSON.stringify(args);
 
+        const toolDef = getTool(toolName);
+
+        // v1.3 Side-Effect Safety：non_idempotent 已成功执行过的操作 → 回放首次结果，绝不重复执行副作用。
+        // 置于防死循环判定之前：已成功 ≠ 已失败/无效，两者互不冲突，均不重新执行。
+        if (toolDef) {
+          const replay = getReplay(sideEffectGuard, toolDef, args);
+          if (replay !== undefined) {
+            console.log(
+              `[Side-Effect Skip] ${toolName} 操作已执行过（同一 canonical operation key），回放结果，不重复执行副作用`
+            );
+            printEvent(
+              addEvent(trace, {
+                type: "side_effect_skip",
+                tool: toolName,
+                key: operationIdentity(toolDef, args),
+                replayed: true,
+              })
+            );
+            messages.push({ role: "tool", tool_call_id: call.id, content: replay });
+            continue;
+          }
+        }
+
         // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
         if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
           const blockMsg = `工具 ${toolName} 参数 "${input}" 已产生无效结果或失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明原因。`;
@@ -227,6 +260,9 @@ export async function runAgent(
             const result = await execute(toolName, args, { runId: state.runId });
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
             console.log(`[Tool 返回] ${result}`);
+
+            // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（防重放/防双写）
+            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result);
 
             // State: 工具执行成功（execute 维度，先于结果有效性判定）
             updateState(state, {

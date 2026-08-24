@@ -8,7 +8,9 @@
     "test": "tsx --env-file=.env tests/agent.test.ts",
     "test:sandbox": "tsx tests/sandbox-manager.test.ts",
     "test:contract": "tsx tests/tool-contract.test.ts",
-    "test:tools": "tsx tests/filesystem-tools.test.ts"
+    "test:tools": "tsx tests/filesystem-tools.test.ts",
+    "test:operation-identity": "tsx tests/operation-identity.test.ts",
+    "test:side-effect": "tsx tests/side-effect.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

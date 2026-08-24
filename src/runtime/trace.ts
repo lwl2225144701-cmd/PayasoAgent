@@ -66,6 +66,14 @@ export type TraceEvent =
       decision: string; // 恢复决策描述（交还 LLM 决策）
     }
   | {
+      type: "side_effect_skip";
+      step: number;
+      timestamp: string;
+      tool: string; // 工具名称
+      key: string; // canonical operation key（operationIdentity）
+      replayed: boolean; // 是否回放首次成功结果（恒为 true）
+    }
+  | {
       type: "scratchpad_update";
       step: number;
       timestamp: string;
@@ -127,6 +135,12 @@ export type TraceEventInput =
       type: "recovery_decision";
       tool: string;
       decision: string;
+    }
+  | {
+      type: "side_effect_skip";
+      tool: string;
+      key: string;
+      replayed: boolean;
     }
   | {
       type: "scratchpad_update";

@@ -11,10 +11,22 @@ export interface ToolContext {
   runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
 }
 
+// v1.3 契约收紧：Tool 副作用类别声明
+// - read: 纯读取，无副作用
+// - idempotent: 可安全重复执行（同参数 → 等价结果）
+// - non_idempotent: 高风险副作用，重复执行可能产生不同结果/不可逆影响
+export type ToolEffect = "read" | "idempotent" | "non_idempotent";
+
 export interface Tool {
   name: string;
   description: string;
   parameters: object; // JSON Schema（严禁包含 runId 等 Runtime 内部字段）
+  // v1.3 契约收紧：声明副作用类别（必填）
+  effect: ToolEffect;
+  // v1.3 契约收紧：显式定义"什么叫同一个操作"（canonical operation key）。
+  // non_idempotent 必填（注册期强制校验），禁止回退到 JSON.stringify(args) 猜测；
+  // read / idempotent 可省略，回退到 JSON.stringify(args)。
+  getOperationKey?: (args: Record<string, unknown>) => string;
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>;
   // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
   // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
@@ -25,7 +37,23 @@ export interface Tool {
 const registry = new Map<string, Tool>();
 
 export function register(tool: Tool): void {
+  // v1.3 契约收紧：non_idempotent（高风险副作用）必须显式声明"什么叫同一个操作"。
+  // 不能依赖默认 JSON.stringify(args) 猜测操作身份 → 注册期直接失败（fail-fast）。
+  if (
+    tool.effect === "non_idempotent" &&
+    typeof tool.getOperationKey !== "function"
+  ) {
+    throw new Error(
+      `Tool "${tool.name}" 声明为 non_idempotent（高风险副作用）但未实现 getOperationKey，注册失败。` +
+        `non_idempotent 必须显式定义 canonical operation key，禁止回退到 JSON.stringify(args)。`
+    );
+  }
   registry.set(tool.name, tool);
+}
+
+// 按名称取工具定义（供 Runtime 读取 effect / getOperationKey 等契约字段）
+export function getTool(name: string): Tool | undefined {
+  return registry.get(name);
 }
 
 // 执行工具；工具不存在或执行抛错时向上抛出（由调用方捕获重试）
@@ -65,11 +93,28 @@ export function validateToolResult(
   return r;
 }
 
+// v1.3 契约收紧：解析一次工具调用的 canonical operation key（"什么叫同一个操作"）。
+// - 显式 getOperationKey → 使用它（canonical key，权威身份）
+// - read / idempotent     → 允许回退 JSON.stringify(args)
+// - non_idempotent        → 禁止回退；无 getOperationKey 直接抛错（注册期已拦截，此处防御兜底）
+export function resolveOperationKey(
+  tool: Tool,
+  args: Record<string, unknown>
+): string {
+  if (tool.getOperationKey) return tool.getOperationKey(args);
+  if (tool.effect !== "non_idempotent") return JSON.stringify(args);
+  throw new Error(
+    `Tool "${tool.name}" 为 non_idempotent 但未实现 getOperationKey，禁止回退到 JSON.stringify(args)`
+  );
+}
+
 // ---- 工具: calculator ----
 // 失败时直接抛异常（由 agent 捕获并重试），不再返回 Error 字符串
 register({
   name: "calculator",
   description: "计算数学表达式，支持加减乘除和括号",
+  // 纯函数：同表达式 → 同结果，重复执行安全
+  effect: "idempotent",
   parameters: {
     type: "object",
     properties: {
@@ -112,6 +157,8 @@ const WEATHER_MOCK: Record<string, { temp: number; cond: string }> = {
 register({
   name: "getWeather",
   description: "查询指定城市的当前天气（温度与天气状况），仅支持已收录城市",
+  // 只读查询 mock 数据，无副作用
+  effect: "read",
   parameters: {
     type: "object",
     properties: {

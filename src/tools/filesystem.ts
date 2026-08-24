@@ -46,6 +46,8 @@ register({
   name: "listDir",
   description:
     "列出沙箱工作区内目录的条目（名称与类型 file/directory），不递归。path 为工作区内相对路径，如 work",
+  // 只读目录枚举，无副作用
+  effect: "read",
   parameters: {
     type: "object",
     properties: {
@@ -85,6 +87,8 @@ register({
   name: "readFile",
   description:
     "读取沙箱工作区内文本文件内容（UTF-8，最大 1MB，不支持二进制）。path 为工作区内相对路径，如 input/demo.txt",
+  // 只读文件读取，无副作用
+  effect: "read",
   parameters: {
     type: "object",
     properties: {
