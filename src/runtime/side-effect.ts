@@ -8,18 +8,20 @@
 // read / idempotent 可安全重复执行，不进入本生命周期。
 // 核心原则：对 non_idempotent 操作，Runtime 一旦无法确认"没有执行过"，就不能再次自动执行。
 
-import type { Tool } from "../tools/tools.js";
+import type { Tool, ToolContext } from "../tools/tools.js";
 import { resolveOperationKey } from "../tools/tools.js";
 
 // 操作状态：executing / succeeded / uncertain
 export type OperationState = "executing" | "succeeded" | "uncertain";
 
 // 完整操作身份：`toolName::canonicalOpKey`（跨工具命名空间隔离，避免不同工具同参冲突）
+// context 可选：路径类工具用它做路径归一化（./work/a.txt 与 work/a.txt → 同一 key）。
 export function operationIdentity(
   tool: Tool,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): string {
-  return `${tool.name}::${resolveOperationKey(tool, args)}`;
+  return `${tool.name}::${resolveOperationKey(tool, args, context)}`;
 }
 
 // 持久化的操作记录（checkpoint / resume 种子）
@@ -87,10 +89,11 @@ export type OperationDisposition =
 export function resolveOperation(
   guard: SideEffectGuard,
   tool: Tool,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): OperationDisposition {
   if (tool.effect !== "non_idempotent") return { kind: "start" };
-  const key = operationIdentity(tool, args);
+  const key = operationIdentity(tool, args, context);
   const state = guard.getState(key);
   if (state === "succeeded") {
     return { kind: "replay", result: guard.replay(key)! };
@@ -105,10 +108,11 @@ export function resolveOperation(
 export function getReplay(
   guard: SideEffectGuard,
   tool: Tool,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): string | undefined {
   if (tool.effect !== "non_idempotent") return undefined;
-  return guard.replay(operationIdentity(tool, args));
+  return guard.replay(operationIdentity(tool, args, context));
 }
 
 // 非幂等 execute 成功后记录 succeeded（read/idempotent 不记录）
@@ -116,8 +120,9 @@ export function markExecuted(
   guard: SideEffectGuard,
   tool: Tool,
   args: Record<string, unknown>,
-  result: string
+  result: string,
+  context?: ToolContext
 ): void {
   if (tool.effect !== "non_idempotent") return;
-  guard.succeed(operationIdentity(tool, args), result);
+  guard.succeed(operationIdentity(tool, args, context), result);
 }

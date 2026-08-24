@@ -1,12 +1,17 @@
-// 模块: 只读 Sandbox 文件工具（listDir / readFile）
+// 模块: Sandbox 文件工具（只读 listDir / readFile + 受控写入 writeFile）
 // 安全契约：LLM 只传工作区内相对路径；真实路径由 Runtime 注入的 ToolContext.runId +
 // SandboxManager.resolvePath / assertInsideWorkspace 解析与校验。
 // 核心原则：模型决定读取什么，Runtime 决定在哪里读取。
-// 阶段目标：Agent 获得"看得到，但改不了"的工作区能力（无 writeFile/deleteFile/shell）。
+// v1.5 融合身份机制：路径类工具用 canonicalPathKey 做 operation key 归一化（不暴露宿主绝对路径）。
 
 import fs from "node:fs";
+import path from "node:path";
 import { register, type ToolContext } from "./tools.js";
-import { resolvePath, assertInsideWorkspace } from "../sandbox/sandbox-manager.js";
+import {
+  resolvePath,
+  assertInsideWorkspace,
+  getSandboxRoot,
+} from "../sandbox/sandbox-manager.js";
 
 // 最大读取限制：超过则返回 invalid result，不把大文件塞进 Context
 export const MAX_READ_BYTES = 1024 * 1024; // 1MB
@@ -30,6 +35,24 @@ function guardPath(context: ToolContext, rel: string): string {
   }
 }
 
+// v1.5: 归一化相对路径为稳定的 operation key（用于 getOperationKey）。
+// 内部先做 resolvePath 安全解析，再剥离工作区根前缀，返回以 "/" 分隔的相对路径。
+// 这样 ./work/a.txt 与 work/a.txt（含 ./ 多余段）归一化为同一 key，且不暴露宿主绝对路径。
+// 若路径非法（穿越/绝对），返回 null，由调用方回退保守处理。
+export function canonicalPathKey(context: ToolContext, rel: string): string | null {
+  try {
+    const real = resolvePath(context.runId, rel);
+    assertInsideWorkspace(context.runId, real);
+    const wsRoot = path.join(getSandboxRoot(), "workspaces", context.runId);
+    const relKey = path.relative(wsRoot, real);
+    // 统一分隔符为 "/"（跨平台稳定）；剥离头部 "./"
+    const norm = relKey.split(path.sep).join("/").replace(/^\.\//, "");
+    return norm === "" ? "/" : norm;
+  } catch {
+    return null;
+  }
+}
+
 // 简单二进制检测：NUL 字节或大量不可打印控制字符（UTF-8 多字节 >0x7F 不误判）
 function isProbablyBinary(buf: Buffer): boolean {
   const sample = buf.length > 8192 ? buf.subarray(0, 8192) : buf;
@@ -48,6 +71,12 @@ register({
     "列出沙箱工作区内目录的条目（名称与类型 file/directory），不递归。path 为工作区内相对路径，如 work",
   // 只读目录枚举，无副作用
   effect: "read",
+  // 路径类工具：归一化相对路径为操作 key（./ 与根段 → 同一 key，不暴露宿主绝对路径）
+  getOperationKey: (args, context) => {
+    const rel = String(args.path ?? "").trim();
+    const key = context ? canonicalPathKey(context, rel) : null;
+    return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
+  },
   parameters: {
     type: "object",
     properties: {
@@ -89,6 +118,12 @@ register({
     "读取沙箱工作区内文本文件内容（UTF-8，最大 1MB，不支持二进制）。path 为工作区内相对路径，如 input/demo.txt",
   // 只读文件读取，无副作用
   effect: "read",
+  // 路径类工具：归一化相对路径为操作 key
+  getOperationKey: (args, context) => {
+    const rel = String(args.path ?? "").trim();
+    const key = context ? canonicalPathKey(context, rel) : null;
+    return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
+  },
   parameters: {
     type: "object",
     properties: {
@@ -127,6 +162,114 @@ register({
   validateResult: (result) => {
     if (typeof result === "string" && result.startsWith("[sandbox-tool-invalid]")) {
       return { valid: false, reason: "文件过大或二进制，结果不可用" };
+    }
+    return true;
+  },
+});
+
+// ---- 可写区权限（writeFile / createDir / moveFile / deleteFile 共用）----
+export const MAX_WRITE_BYTES = 1024 * 1024; // 1MB
+
+// 可写顶层目录白名单（权限规则：input/ 只读，仅 work/ 与 output/ 可写）
+const WRITABLE_TOP_LEVEL = new Set(["work", "output"]);
+
+// 权限规则的字符串级首段校验：禁止写入 input/，也禁止任何非白名单顶层目录
+export function assertWritableZone(rel: string): void {
+  const first = String(rel).split(/[\\/]+/)[0];
+  if (!first || !WRITABLE_TOP_LEVEL.has(first)) {
+    throw new Error(
+      `路径被拒绝（仅允许写入工作区内 work/ 与 output/ 目录，禁止写入 input/）: ${rel}`
+    );
+  }
+}
+
+// ---- writeFile ----
+// effect: idempotent —— 覆盖写文件重复执行结果等价（同一 path+content 内核不变），可安全重试 / 重放。
+// identity: 同一 path 归一化后归一于同一 key；不同 content → 不同 operation（避免不同内容被误判为重放）。
+register({
+  name: "writeFile",
+  description:
+    "向沙箱工作区内写文本文件（UTF-8，仅允许写入 work/ 与 output/，禁止写入 input/，单次≤1MB，原子写入）。path 为工作区内相对路径，如 work/note.txt；父目录必须已存在。",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "工作区内相对文件路径，仅允许 work/ 或 output/ 开头，如 work/note.txt" },
+      content: { type: "string", description: "要写入的 UTF-8 文本内容" },
+    },
+    required: ["path", "content"],
+  },
+  effect: "idempotent",
+  getOperationKey: (args, context) => {
+    const rel = String(args.path ?? "").trim();
+    const key = context ? canonicalPathKey(context, rel) : null;
+    const content = String(args.content ?? "");
+    // 用长度+简单校验和区分不同内容（不嵌入全文，避免 key 过大）
+    let sum = 0;
+    for (let i = 0; i < content.length; i++) sum = (sum + content.charCodeAt(i)) % 1_000_000;
+    const pathPart = key !== null ? key : JSON.stringify(rel);
+    return `path:${pathPart}:contentLen:${Buffer.byteLength(content, "utf8")}:sum:${sum}`;
+  },
+  execute: async (args, context) => {
+    const rel = String(args.path ?? "").trim();
+    const content = args.content;
+    if (!rel) throw new Error("缺少参数 path");
+    if (typeof content !== "string") throw new Error("content 必须是字符串（仅支持 UTF-8 文本）");
+
+    // 权限规则①：仅允许写入 work/ 与 output/，禁止 input/ 及其他目录
+    assertWritableZone(rel);
+
+    // 单次写入限制：超限直接拒绝，不产生文件（同 readFile 的"结果不可用"模式，避免无谓重试）
+    if (Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) {
+      return `[sandbox-tool-invalid] 内容过大，超过单次写入限制 ${MAX_WRITE_BYTES} 字节，未写入: ${rel}`;
+    }
+
+    // 权限规则②：resolvePath（字符串级：禁止 ../、绝对路径）+ assertInsideWorkspace（真实路径级：symlink 逃逸）双重校验
+    const real = guardPath(context, rel);
+
+    // 父目录必须已存在（暂不自动创建任意目录）
+    let dirSt: fs.Stats;
+    try {
+      dirSt = fs.lstatSync(path.dirname(real));
+    } catch {
+      throw new Error(`父目录不存在，无法写入（暂不支持自动创建目录）: ${rel}`);
+    }
+    if (!dirSt.isDirectory()) {
+      throw new Error(`父路径不是目录，无法写入: ${rel}`);
+    }
+
+    // 目标存在且为目录 → 拒绝；目标不存在或为普通文件 → 允许（覆盖写入）
+    try {
+      const tst = fs.lstatSync(real);
+      if (tst.isDirectory()) throw new Error(`是目录，无法作为文件写入: ${rel}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      // ENOENT：目标不存在，允许新建
+    }
+
+    // 原子写入：同目录临时文件 → rename（覆盖已有文件也是原子替换，避免进程中断产生半文件）
+    const tmp = path.join(
+      path.dirname(real),
+      `.${path.basename(real)}.payaso-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`
+    );
+    try {
+      fs.writeFileSync(tmp, content, "utf8");
+      fs.renameSync(tmp, real);
+    } catch (err) {
+      // 清理残留临时文件；错误仅回显相对路径，不泄露宿主机绝对路径
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* 忽略清理失败 */
+      }
+      throw new Error(`写入失败: ${rel}`);
+    }
+
+    return `写入成功: ${rel}`;
+  },
+  // 内容超限 → 工具"执行"完成但未产生有效写入 → tool_result_invalid
+  validateResult: (result) => {
+    if (typeof result === "string" && result.startsWith("[sandbox-tool-invalid]")) {
+      return { valid: false, reason: "内容过大，未写入" };
     }
     return true;
   },

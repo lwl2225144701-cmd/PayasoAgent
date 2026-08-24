@@ -26,7 +26,9 @@ export interface Tool {
   // v1.3 契约收紧：显式定义"什么叫同一个操作"（canonical operation key）。
   // non_idempotent 必填（注册期强制校验），禁止回退到 JSON.stringify(args) 猜测；
   // read / idempotent 可省略，回退到 JSON.stringify(args)。
-  getOperationKey?: (args: Record<string, unknown>) => string;
+  // v1.5 融合身份机制：getOperationKey 可选接收 ToolContext（运行时注入，含 runId），
+  //   路径类工具用它做路径归一化（canonicalPathKey），使 ./work/a.txt 与 work/a.txt 归一为同一 key 且不暴露宿主绝对路径。
+  getOperationKey?: (args: Record<string, unknown>, context?: ToolContext) => string;
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>;
   // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
   // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
@@ -94,14 +96,15 @@ export function validateToolResult(
 }
 
 // v1.3 契约收紧：解析一次工具调用的 canonical operation key（"什么叫同一个操作"）。
-// - 显式 getOperationKey → 使用它（canonical key，权威身份）
+// - 显式 getOperationKey → 使用它（canonical key，权威身份；context 可选透传给路径归一化工具）
 // - read / idempotent     → 允许回退 JSON.stringify(args)
 // - non_idempotent        → 禁止回退；无 getOperationKey 直接抛错（注册期已拦截，此处防御兜底）
 export function resolveOperationKey(
   tool: Tool,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext
 ): string {
-  if (tool.getOperationKey) return tool.getOperationKey(args);
+  if (tool.getOperationKey) return tool.getOperationKey(args, context);
   if (tool.effect !== "non_idempotent") return JSON.stringify(args);
   throw new Error(
     `Tool "${tool.name}" 为 non_idempotent 但未实现 getOperationKey，禁止回退到 JSON.stringify(args)`

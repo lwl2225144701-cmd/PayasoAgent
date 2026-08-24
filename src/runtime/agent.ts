@@ -2,7 +2,8 @@
 
 import { chat, type ChatMessage } from "../llm/llm.js";
 import { execute, getTool, getSchemas, validateToolResult } from "../tools/tools.js";
-import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）
+import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
+import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
 import { createWorkspace } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
@@ -193,7 +194,8 @@ export async function runAgent(
         //   start      → 正常开始（execute 前持久化 executing，见下）
         // 置于防死循环判定之前。
         if (toolDef?.effect === "non_idempotent") {
-          const disposition = resolveOperation(sideEffectGuard, toolDef, args);
+          // 注入 ToolContext（含 runId）供路径类工具做 operation identity 归一化（./ 与根段 → 同一 key）
+          const disposition = resolveOperation(sideEffectGuard, toolDef, args, { runId: state.runId });
           if (disposition.kind === "replay") {
             console.log(
               `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`
@@ -202,7 +204,7 @@ export async function runAgent(
               addEvent(trace, {
                 type: "side_effect_skip",
                 tool: toolName,
-                key: operationIdentity(toolDef, args),
+                key: operationIdentity(toolDef, args, { runId: state.runId }),
                 replayed: true,
               })
             );
@@ -211,7 +213,7 @@ export async function runAgent(
           }
           if (disposition.kind === "uncertain") {
             const uncertainMsg =
-              `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args)}）` +
+              `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, { runId: state.runId })}）` +
               `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
               `请勿再次使用相同参数调用；请修正参数、换其他方法或向用户说明。`;
             console.log(`[Side-Effect Uncertain] ${uncertainMsg}`);
@@ -219,7 +221,7 @@ export async function runAgent(
               addEvent(trace, {
                 type: "side_effect_uncertain",
                 tool: toolName,
-                key: operationIdentity(toolDef, args),
+                key: operationIdentity(toolDef, args, { runId: state.runId }),
               })
             );
             messages.push({ role: "tool", tool_call_id: call.id, content: uncertainMsg });
@@ -279,7 +281,7 @@ export async function runAgent(
         // v1.3.2：non_idempotent 开始执行前先持久化 executing 状态；
         //   persist(executing) 失败 → 禁止 execute，作为 Runtime 错误处理（防止无保护的副作用执行）。
         if (toolDef?.effect === "non_idempotent") {
-          const opKey = operationIdentity(toolDef, args);
+          const opKey = operationIdentity(toolDef, args, { runId: state.runId });
           sideEffectGuard.begin(opKey);
           try {
             save();
@@ -316,7 +318,7 @@ export async function runAgent(
             console.log(`[Tool 返回] ${result}`);
 
             // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）
-            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result);
+            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, { runId: state.runId });
 
             // State: 工具执行成功（execute 维度，先于结果有效性判定）
             updateState(state, {
@@ -414,7 +416,7 @@ export async function runAgent(
             // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
             // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
             if (toolDef?.effect === "non_idempotent") {
-              sideEffectGuard.markUncertain(operationIdentity(toolDef, args));
+              sideEffectGuard.markUncertain(operationIdentity(toolDef, args, { runId: state.runId }));
             }
 
             // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）
