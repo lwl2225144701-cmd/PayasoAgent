@@ -6,6 +6,8 @@
   "scripts": {
     "start": "tsx --env-file=.env src/cli.ts",
     "test": "tsx --env-file=.env tests/agent.test.ts",
+    "test:all": "tsx tests/run-all.ts",
+    "test:stress": "tsx --env-file=.env tests/stress.test.ts",
     "test:sandbox": "tsx tests/sandbox-manager.test.ts",
     "test:contract": "tsx tests/tool-contract.test.ts",
     "test:tools": "tsx tests/filesystem-tools.test.ts",

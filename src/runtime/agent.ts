@@ -10,8 +10,8 @@ import { ContextManager } from "./context.js";
 import { saveCheckpoint } from "./checkpoint.js";
 import {
   createSideEffectGuard,
-  getReplay,
   markExecuted,
+  resolveOperation,
   operationIdentity,
   type ExecutedOperation,
 } from "./side-effect.js";
@@ -186,13 +186,16 @@ export async function runAgent(
 
         const toolDef = getTool(toolName);
 
-        // v1.3 Side-Effect Safety：non_idempotent 已成功执行过的操作 → 回放首次结果，绝不重复执行副作用。
-        // 置于防死循环判定之前：已成功 ≠ 已失败/无效，两者互不冲突，均不重新执行。
-        if (toolDef) {
-          const replay = getReplay(sideEffectGuard, toolDef, args);
-          if (replay !== undefined) {
+        // v1.3.2 Side-Effect Safety：non_idempotent 操作生命周期 ——
+        //   succeeded  → 回放首次结果，不执行
+        //   executing / uncertain → 不执行，返回明确 uncertain recovery 信息（不伪造成功）
+        //   start      → 正常开始（execute 前持久化 executing，见下）
+        // 置于防死循环判定之前。
+        if (toolDef?.effect === "non_idempotent") {
+          const disposition = resolveOperation(sideEffectGuard, toolDef, args);
+          if (disposition.kind === "replay") {
             console.log(
-              `[Side-Effect Skip] ${toolName} 操作已执行过（同一 canonical operation key），回放结果，不重复执行副作用`
+              `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`
             );
             printEvent(
               addEvent(trace, {
@@ -202,7 +205,23 @@ export async function runAgent(
                 replayed: true,
               })
             );
-            messages.push({ role: "tool", tool_call_id: call.id, content: replay });
+            messages.push({ role: "tool", tool_call_id: call.id, content: disposition.result });
+            continue;
+          }
+          if (disposition.kind === "uncertain") {
+            const uncertainMsg =
+              `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args)}）` +
+              `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
+              `请勿再次使用相同参数调用；请修正参数、换其他方法或向用户说明。`;
+            console.log(`[Side-Effect Uncertain] ${uncertainMsg}`);
+            printEvent(
+              addEvent(trace, {
+                type: "side_effect_uncertain",
+                tool: toolName,
+                key: operationIdentity(toolDef, args),
+              })
+            );
+            messages.push({ role: "tool", tool_call_id: call.id, content: uncertainMsg });
             continue;
           }
         }
@@ -253,7 +272,24 @@ export async function runAgent(
         );
 
         // 工具执行 + 重试（最多 MAX_RETRY 次）；重试耗尽进入失败恢复
-        for (let attempt = 1; attempt <= MAX_RETRY + 1; attempt++) {
+        // v1.3.1 修复：non_idempotent（高风险副作用）禁止自动 Retry ——
+        // execute 一旦开始执行，throw 时无法判定副作用是否已发生；盲目重跑会导致同一副作用重复执行。
+        // 首次失败直接进入 Recovery，由 LLM 决策。read / idempotent 保持原重试行为。
+        // v1.3.2：non_idempotent 开始执行前先持久化 executing 状态；
+        //   persist(executing) 失败 → 禁止 execute，作为 Runtime 错误处理（防止无保护的副作用执行）。
+        if (toolDef?.effect === "non_idempotent") {
+          const opKey = operationIdentity(toolDef, args);
+          sideEffectGuard.begin(opKey);
+          try {
+            save();
+          } catch (persistErr) {
+            const persistMsg = `[Side-Effect Persist Failed] 无法持久化 operation executing 状态（${opKey}），禁止执行 non_idempotent 工具: ${(persistErr as Error).message}`;
+            console.log(persistMsg);
+            throw new Error(persistMsg);
+          }
+        }
+        const effectiveRetries = toolDef?.effect === "non_idempotent" ? 0 : MAX_RETRY;
+        for (let attempt = 1; attempt <= effectiveRetries + 1; attempt++) {
           try {
             const start = performance.now();
             // ToolContext 由 Runtime 注入：runId 只来自 State，LLM 不可见、不可通过 args 覆盖
@@ -359,6 +395,12 @@ export async function runAgent(
             const msg = (err as Error).message;
             console.log(`[Tool 错误] ${toolName}: ${msg}`);
 
+            // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
+            // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
+            if (toolDef?.effect === "non_idempotent") {
+              sideEffectGuard.markUncertain(operationIdentity(toolDef, args));
+            }
+
             // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）
             recordFailure(scratchpad, { tool: toolName, input, error: msg });
 
@@ -369,7 +411,7 @@ export async function runAgent(
                 tool: toolName,
                 error: msg,
                 attempt,
-                exhausted: attempt > MAX_RETRY,
+                exhausted: attempt > effectiveRetries,
               })
             );
 
@@ -383,10 +425,10 @@ export async function runAgent(
             // Checkpoint: 工具失败后保存
             save();
 
-            if (attempt > MAX_RETRY) {
+            if (attempt > effectiveRetries) {
               // 重试耗尽 → 失败恢复：将错误作为消息返回 LLM，由其决策
               console.log(
-                `[恢复] 工具 ${toolName} 重试 ${MAX_RETRY} 次仍失败，将错误返回 LLM 由其决策`
+                `[恢复] 工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，将错误返回 LLM 由其决策`
               );
               // State: 工具失败（仅当所有重试均失败）
               updateState(state, {
@@ -396,18 +438,18 @@ export async function runAgent(
                 addEvent(trace, {
                   type: "recovery_decision",
                   tool: toolName,
-                  decision: `工具 ${toolName} 重试 ${MAX_RETRY} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
+                  decision: `工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
                 })
               );
               messages.push({
                 role: "tool",
                 tool_call_id: call.id,
-                content: `工具 ${toolName} 参数 "${input}" 执行失败（重试 ${MAX_RETRY} 次）：${msg}。禁止再次使用相同参数调用，请修正参数或换其他方法。`,
+                content: `工具 ${toolName} 参数 "${input}" 执行失败（重试 ${effectiveRetries} 次）：${msg}。禁止再次使用相同参数调用，请修正参数或换其他方法。`,
               });
               break; // 跳出重试，外层循环继续 → LLM 重新决策
             }
             console.log(
-              `[重试 ${attempt}/${MAX_RETRY}] 工具 ${toolName} 失败，正在重试...`
+              `[重试 ${attempt}/${effectiveRetries}] 工具 ${toolName} 失败，正在重试...`
             );
           }
         }

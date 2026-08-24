@@ -1,6 +1,6 @@
-// 套件: Side-Effect Safety — 验证 non_idempotent 操作的去重/防重放行为
+// 套件: Side-Effect Safety — 验证 non_idempotent 操作的去重/防重放行为 + v1.3.2 生命周期（executing/succeeded/uncertain）
 // 覆盖：guard 记录/回放/快照恢复（resume 种子）；getReplay/markExecuted 只作用于 non_idempotent；
-//       循环级"同 key 只执行一次，重复请求回放首次结果"；不同 key 正常执行。
+//       循环级"同 key 只执行一次，重复请求回放首次结果"；不同 key 正常执行；executing/uncertain 不重放。
 
 import assert from "node:assert/strict";
 import { register, execute, getTool, type ToolContext } from "../src/tools/tools.js";
@@ -9,6 +9,7 @@ import {
   getReplay,
   markExecuted,
   operationIdentity,
+  resolveOperation,
   type SideEffectGuard,
 } from "../src/runtime/side-effect.js";
 
@@ -42,14 +43,14 @@ test("guard：record 后 isExecuted/replay 命中，未执行返回 undefined", 
   assert.equal(g.isExecuted(key), false);
   assert.equal(g.replay(key), undefined);
 
-  g.record(key, "R1");
+  g.succeed(key, "R1");
   assert.equal(g.isExecuted(key), true);
   assert.equal(g.replay(key), "R1");
 });
 
 test("guard：不同 canonical key 相互独立", () => {
   const g = createSideEffectGuard();
-  g.record(operationIdentity(appendTool(), { bucket: "a", content: "x" }), "R1");
+  g.succeed(operationIdentity(appendTool(), { bucket: "a", content: "x" }), "R1");
   assert.equal(g.isExecuted(operationIdentity(appendTool(), { bucket: "b", content: "y" })), false);
   assert.equal(g.replay(operationIdentity(appendTool(), { bucket: "b", content: "y" })), undefined);
 });
@@ -60,10 +61,10 @@ test("guard：snapshot/seed 往返（模拟 resume 防重放）", () => {
   const keyB = operationIdentity(appendTool(), { bucket: "b", content: "y" });
 
   const g1 = createSideEffectGuard();
-  g1.record(keyA, "R1");
+  g1.succeed(keyA, "R1");
   const snapshot = g1.snapshot();
   assert.equal(snapshot.length, 1);
-  assert.deepEqual(snapshot, [{ key: keyA, result: "R1" }]);
+  assert.deepEqual(snapshot, [{ key: keyA, state: "succeeded", result: "R1" }]);
 
   // 恢复：用 checkpoint 持久化的快照重建 guard
   const g2 = createSideEffectGuard(snapshot);
@@ -76,7 +77,7 @@ test("guard：snapshot/seed 往返（模拟 resume 防重放）", () => {
 test("getReplay：read/idempotent 即使 key 命中也绝不回放（不做去重）", () => {
   const g = createSideEffectGuard();
   const readT = getTool("getWeather")!;
-  g.record(operationIdentity(readT, { city: "北京" }), "cached");
+  g.succeed(operationIdentity(readT, { city: "北京" }), "cached");
   assert.equal(getReplay(g, readT, { city: "北京" }), undefined);
 });
 
@@ -90,8 +91,73 @@ test("markExecuted：read/idempotent 不记录（无副作用可安全重跑）"
 test("getReplay：non_idempotent 已执行 → 回放缓存结果", () => {
   const g = createSideEffectGuard();
   const t = appendTool();
-  g.record(operationIdentity(t, { bucket: "a", content: "x" }), "R1");
+  g.succeed(operationIdentity(t, { bucket: "a", content: "x" }), "R1");
   assert.equal(getReplay(g, t, { bucket: "a", content: "x" }), "R1");
+});
+
+// ---- 3.5 v1.3.2 生命周期：executing / uncertain 不重放 ----
+test("生命周期：begin → executing；succeed → succeeded；markUncertain → uncertain", () => {
+  const g = createSideEffectGuard();
+  const t = appendTool();
+  const key = operationIdentity(t, { bucket: "a", content: "x" });
+
+  assert.equal(g.getState(key), undefined);
+  assert.equal(resolveOperation(g, t, { bucket: "a", content: "x" }).kind, "start");
+
+  g.begin(key); // 开始执行 → executing
+  assert.equal(g.getState(key), "executing");
+  assert.equal(g.replay(key), undefined); // executing 不伪造成功
+  assert.equal(resolveOperation(g, t, { bucket: "a", content: "x" }).kind, "uncertain");
+
+  g.succeed(key, "R1"); // 成功 → succeeded
+  assert.equal(g.getState(key), "succeeded");
+  assert.equal(g.replay(key), "R1");
+  assert.deepEqual(resolveOperation(g, t, { bucket: "a", content: "x" }), {
+    kind: "replay",
+    result: "R1",
+  });
+});
+
+test("生命周期：markUncertain 后同 key 不重放（不伪造成功）", () => {
+  const g = createSideEffectGuard();
+  const t = appendTool();
+  const key = operationIdentity(t, { bucket: "a", content: "x" });
+
+  g.begin(key);
+  g.markUncertain(key); // execute throw → uncertain
+  assert.equal(g.getState(key), "uncertain");
+  assert.equal(g.replay(key), undefined);
+  assert.equal(resolveOperation(g, t, { bucket: "a", content: "x" }).kind, "uncertain");
+});
+
+test("生命周期：snapshot 携带 state，seed 恢复后状态保持（resume 遇 uncertain 不重放）", () => {
+  const t = appendTool();
+  const keyA = operationIdentity(t, { bucket: "a", content: "x" });
+  const keyB = operationIdentity(t, { bucket: "b", content: "y" });
+
+  const g1 = createSideEffectGuard();
+  g1.begin(keyA);
+  g1.markUncertain(keyA);
+  g1.succeed(keyB, "RB");
+  const snap = g1.snapshot();
+
+  const g2 = createSideEffectGuard(snap);
+  assert.equal(g2.getState(keyA), "uncertain");
+  assert.equal(resolveOperation(g2, t, { bucket: "a", content: "x" }).kind, "uncertain");
+  assert.equal(g2.getState(keyB), "succeeded");
+  assert.deepEqual(resolveOperation(g2, t, { bucket: "b", content: "y" }), {
+    kind: "replay",
+    result: "RB",
+  });
+});
+
+test("resolveOperation：read/idempotent 一律 start（不参与生命周期）", () => {
+  const g = createSideEffectGuard();
+  const readT = getTool("getWeather")!;
+  assert.equal(resolveOperation(g, readT, { city: "北京" }).kind, "start");
+  g.begin(operationIdentity(readT, { city: "北京" }));
+  // read 工具即使被误记录，resolveOperation 仍视为 start（不会因生命周期被阻断）
+  assert.equal(resolveOperation(g, readT, { city: "北京" }).kind, "start");
 });
 
 // ---- 4. 循环级：同 key 只执行一次，重复请求回放（副作用不重复发生）----

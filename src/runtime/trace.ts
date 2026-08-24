@@ -74,6 +74,13 @@ export type TraceEvent =
       replayed: boolean; // 是否回放首次成功结果（恒为 true）
     }
   | {
+      type: "side_effect_uncertain";
+      step: number;
+      timestamp: string;
+      tool: string; // 工具名称
+      key: string; // canonical operation key（operationIdentity）
+    }
+  | {
       type: "scratchpad_update";
       step: number;
       timestamp: string;
@@ -141,6 +148,11 @@ export type TraceEventInput =
       tool: string;
       key: string;
       replayed: boolean;
+    }
+  | {
+      type: "side_effect_uncertain";
+      tool: string;
+      key: string;
     }
   | {
       type: "scratchpad_update";

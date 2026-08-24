@@ -3,6 +3,8 @@ node_modules/
 .DS_Store
 .workbuddy/
 .checkpoints/
+# 压测现场日志（保留本地，不进版本库）
+.stress-logs/
 # Sandbox 工作区：按 runId 隔离，运行时生成的内容不进版本库；保留目录占位
 sandbox/workspaces/*
 !sandbox/workspaces/.gitkeep
