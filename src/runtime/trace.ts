@@ -182,11 +182,16 @@ export type TraceEventInput =
 export interface Trace {
   run_id: string;
   events: TraceEvent[];
+  // 可选观测回调（Host API 通过 runAgent opts.onTrace 注入）；
+  // 每次 addEvent 时触发，供 Host 把 Runtime Trace 实时推给浏览器。
+  // 这是纯观测出口，不改变 Runtime 纪录语义（events 照常写入）。
+  onEvent?: (ev: TraceEvent) => void;
 }
 
 // ---- 创建 Trace（runId 由外部统一生成，保证 State/Trace/Checkpoint 一致）----
-export function createTrace(runId: string): Trace {
-  return { run_id: runId, events: [] };
+// onEvent: 可选订阅，addEvent 后同步触发（供 Host/SSE 使用）
+export function createTrace(runId: string, onEvent?: (ev: TraceEvent) => void): Trace {
+  return { run_id: runId, events: [], onEvent };
 }
 
 // ---- 追加事件（自动编号 step、打时间戳），返回事件便于实时打印 ----
@@ -197,6 +202,7 @@ export function addEvent(trace: Trace, ev: TraceEventInput): TraceEvent {
     timestamp: new Date().toISOString(),
   } as TraceEvent; // union spread 后 TS 无法精确推断，此处断言
   trace.events.push(event);
+  trace.onEvent?.(event);
   return event;
 }
 

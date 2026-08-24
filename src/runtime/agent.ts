@@ -5,7 +5,7 @@ import { execute, getTool, getSchemas, validateToolResult } from "../tools/tools
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
 import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
 import { createWorkspace } from "../sandbox/sandbox-manager.js";
-import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
+import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
 import { guardToolOutput } from "./output-guard.js";
@@ -50,7 +50,7 @@ function stripThink(text: string): string {
 export async function runAgent(
   task: string,
   resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; sideEffects?: ExecutedOperation[] },
-  opts?: { runId?: string }
+  opts?: { runId?: string; onTrace?: (ev: TraceEvent) => void; isCancelled?: () => boolean }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
   const runId = resume ? resume.state.runId : (opts?.runId ?? crypto.randomUUID());
@@ -60,7 +60,7 @@ export async function runAgent(
 
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
-  const trace = createTrace(runId);
+  const trace = createTrace(runId, opts?.onTrace);
   const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
@@ -97,6 +97,12 @@ export async function runAgent(
 
   try {
     for (let i = startIter; i < MAX_ITERATIONS; i++) {
+      // v1.4 Host stop 支持（受限）：仅在迭代边界检查取消。
+      // 无法打断进行中的单个 LLM await；stop 生效于当前迭代结束、下一轮开始前。
+      // 通过 opts.isCancelled（公开边界）注入，不改 Loop 语义。
+      if (opts?.isCancelled?.()) {
+        throw new Error("[cancelled] run stopped by host");
+      }
       console.log(`\n--- 迭代 ${i + 1} ---`);
 
       // State: 进入循环，更新迭代次数

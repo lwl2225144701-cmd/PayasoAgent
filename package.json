@@ -12,7 +12,9 @@
     "test:contract": "tsx tests/tool-contract.test.ts",
     "test:tools": "tsx tests/filesystem-tools.test.ts",
     "test:operation-identity": "tsx tests/operation-identity.test.ts",
-    "test:side-effect": "tsx tests/side-effect.test.ts"
+    "test:side-effect": "tsx tests/side-effect.test.ts",
+    "host": "tsx --env-file=.env src/host/index.ts",
+    "test:host": "tsx --env-file=.env tests/host.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
