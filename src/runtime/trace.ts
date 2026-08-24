@@ -81,6 +81,14 @@ export type TraceEvent =
       key: string; // canonical operation key（operationIdentity）
     }
   | {
+      type: "tool_output_truncated";
+      step: number;
+      timestamp: string;
+      tool: string; // 工具名称
+      originalBytes: number; // 原始 UTF-8 字节数
+      returnedBytes: number; // 截断后 UTF-8 字节数
+    }
+  | {
       type: "scratchpad_update";
       step: number;
       timestamp: string;
@@ -153,6 +161,12 @@ export type TraceEventInput =
       type: "side_effect_uncertain";
       tool: string;
       key: string;
+    }
+  | {
+      type: "tool_output_truncated";
+      tool: string;
+      originalBytes: number;
+      returnedBytes: number;
     }
   | {
       type: "scratchpad_update";

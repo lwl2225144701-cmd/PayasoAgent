@@ -7,6 +7,7 @@ import { createWorkspace } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
+import { guardToolOutput } from "./output-guard.js";
 import { saveCheckpoint } from "./checkpoint.js";
 import {
   createSideEffectGuard,
@@ -293,11 +294,28 @@ export async function runAgent(
           try {
             const start = performance.now();
             // ToolContext 由 Runtime 注入：runId 只来自 State，LLM 不可见、不可通过 args 覆盖
-            const result = await execute(toolName, args, { runId: state.runId });
+            const rawResult = await execute(toolName, args, { runId: state.runId });
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
+
+            // ---- v1.2 Tool Result Validation：执行成功 ≠ 结果有效（validateResult 必须看到完整 raw）----
+            const vr = validateToolResult(toolName, rawResult);
+
+            // ---- v1.3.3 Tool Output Guard：validation 之后，任何进入 Runtime 状态 / LLM Context 的内容一律受限 ----
+            const guarded = guardToolOutput(rawResult);
+            if (guarded.truncated) {
+              printEvent(
+                addEvent(trace, {
+                  type: "tool_output_truncated",
+                  tool: toolName,
+                  originalBytes: guarded.originalBytes,
+                  returnedBytes: guarded.returnedBytes,
+                })
+              );
+            }
+            const result = guarded.content; // 后续所有使用处（trace/scratchpad/messages/recovery）均为受限结果
             console.log(`[Tool 返回] ${result}`);
 
-            // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（防重放/防双写）
+            // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）
             if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result);
 
             // State: 工具执行成功（execute 维度，先于结果有效性判定）
@@ -309,8 +327,6 @@ export async function runAgent(
             });
             printStateSummary(state);
 
-            // ---- v1.2 Tool Result Validation：执行成功 ≠ 结果有效 ----
-            const vr = validateToolResult(toolName, result);
             if (!vr.valid) {
               // 结果无效：不进 completedSteps、不计入失败，单独计入 invalidToolResults
               updateState(state, {
