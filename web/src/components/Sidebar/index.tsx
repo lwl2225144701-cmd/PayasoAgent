@@ -52,20 +52,34 @@ export function Sidebar({
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
       <div className={styles.logoRow}>
-        <div className={styles.brand}>
-          <img className={styles.logoImage} src="/payaso-mark-light.png" alt="Payaso" />
-          <span className={styles.logoText}>Payaso</span>
-        </div>
-        <button
-          className={styles.collapseBtn}
-          type="button"
-          title={collapsed ? '展开侧栏' : '收起侧栏'}
-          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
-          aria-pressed={collapsed}
-          onClick={onToggleCollapsed}
-        >
-          <PanelLeftIcon size={18} />
-        </button>
+        {collapsed ? (
+          <button
+            className={styles.collapsedLogoBtn}
+            type="button"
+            title="展开侧栏"
+            aria-label="展开侧栏"
+            onClick={onToggleCollapsed}
+          >
+            <img className={styles.logoImage} src="/payaso-mark-light.png" alt="" />
+          </button>
+        ) : (
+          <>
+            <div className={styles.brand}>
+              <img className={styles.logoImage} src="/payaso-mark-light.png" alt="Payaso" />
+              <span className={styles.logoText}>Payaso</span>
+            </div>
+            <button
+              className={styles.collapseBtn}
+              type="button"
+              title="收起侧栏"
+              aria-label="收起侧栏"
+              aria-pressed={false}
+              onClick={onToggleCollapsed}
+            >
+              <PanelLeftIcon size={18} />
+            </button>
+          </>
+        )}
       </div>
 
       <div className={styles.newTaskWrap}>

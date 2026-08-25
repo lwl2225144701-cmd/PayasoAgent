@@ -73,7 +73,6 @@
   padding: 20px 0;
 }
 
-.collapsed .brand,
 .collapsed .newTaskWrap,
 .collapsed .workspaceHeading,
 .collapsed .runList,
@@ -81,8 +80,18 @@
   display: none;
 }
 
-.collapsed .collapseBtn {
-  transform: rotate(180deg);
+.collapsedLogoBtn {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  transition: background 0.12s ease;
+}
+
+.collapsedLogoBtn:hover {
+  background: var(--bg-hover);
 }
 
 .collapseBtn:hover,
