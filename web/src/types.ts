@@ -28,6 +28,7 @@ export interface LlmCallEvent extends TraceEventBase {
   messageCount: number;
   iteration: number;
   response: string;
+  reasoning?: string;
   hasToolCalls: boolean;
 }
 

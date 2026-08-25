@@ -10,6 +10,7 @@ export type TraceEvent =
       messageCount: number; // 调用时输入消息数量
       iteration: number; // 当前迭代次数
       response: string; // LLM 返回内容
+      reasoning?: string; // 部分推理模型单独返回的思考内容
       hasToolCalls: boolean; // 是否产生 tool_call
     }
   | {
@@ -110,6 +111,7 @@ export type TraceEventInput =
       messageCount: number;
       iteration: number;
       response: string;
+      reasoning?: string;
       hasToolCalls: boolean;
     }
   | {

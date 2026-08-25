@@ -15,6 +15,7 @@ export interface ChatMessage {
   content: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  reasoning_content?: string;
 }
 
 export interface ToolSchema {
@@ -63,5 +64,6 @@ export async function chat(
     role: "assistant",
     content: msg.content ?? "",
     tool_calls: msg.tool_calls,
+    reasoning_content: typeof msg.reasoning_content === "string" ? msg.reasoning_content : undefined,
   };
 }

@@ -1,0 +1,84 @@
+.block {
+  width: 100%;
+  margin: 2px 0 12px;
+}
+
+.toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: #69717d;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.iconSlot {
+  position: relative;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.atomIcon,
+.hoverIcon {
+  position: absolute;
+  inset: 0;
+  width: 18px;
+  height: 18px;
+  color: #898f98;
+  transition: opacity 0.12s ease;
+}
+
+.hoverIcon {
+  opacity: 0;
+}
+
+.toggle:hover .atomIcon,
+.toggle[aria-expanded='true'] .atomIcon {
+  opacity: 0;
+}
+
+.toggle:hover .hoverIcon,
+.toggle[aria-expanded='true'] .hoverIcon {
+  opacity: 1;
+}
+
+.label {
+  flex: 0 0 auto;
+  color: #59616d;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.separator {
+  flex: 0 0 auto;
+  color: #a3a9b2;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.preview {
+  min-width: 0;
+  overflow: hidden;
+  color: #8a919b;
+  font-size: 15px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content {
+  max-width: 920px;
+  margin: 4px 0 0 27px;
+  color: #858c97;
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

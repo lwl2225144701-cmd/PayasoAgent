@@ -13,6 +13,7 @@ import { useEventStream } from '../../hooks/useEventStream';
 import { listFiles } from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
+import { ThinkBlock } from './ThinkBlock';
 import { ToolActionRow } from './ToolActionRow';
 import styles from './Timeline.module.css';
 
@@ -145,13 +146,16 @@ export function Timeline({ run }: TimelineProps) {
               return (
                 <div key={`step-${grp.step}-${grpIdx}`} className={styles.stepBlock}>
                   {/* Tool rows. */}
+                  {reasoning?.thinkingDetail && (
+                    <ThinkBlock text={reasoning.thinkingDetail} />
+                  )}
+
                   {grp.tools.length > 0 && (
                     <ul className={styles.toolList} aria-label="工具">
                       {grp.tools.map(t => (
                         <ToolActionRow
                           key={t.operationKey ?? `${t.tool}-${t.startedAt}`}
                           data={t}
-                          reasoning={reasoning?.thinkingDetail ?? null}
                         />
                       ))}
                     </ul>
@@ -309,7 +313,12 @@ function buildStructure(
       const llmCalls = stepEvents.filter((e): e is LlmCallEvent => e.type === 'llm_call');
       const llm = llmCalls[llmCalls.length - 1];
       if (llm) {
-        const { visible, thinking } = stripThinkTags(llm.response ?? '');
+        const parsedResponse = stripThinkTags(llm.response ?? '');
+        const parsedReasoning = stripThinkTags(llm.reasoning ?? '');
+        const thinkingParts = [parsedResponse.thinking, parsedReasoning.thinking ?? parsedReasoning.visible]
+          .filter((part): part is string => Boolean(part?.trim()));
+        const thinking = thinkingParts.join('\n\n') || null;
+        const visible = parsedResponse.visible;
         if (thinking) globalThinkingAcc += `${globalThinkingAcc ? '\n\n' : ''}${thinking}`;
         // status line is computed once globally, not per step (no multi-line states).
         reasoning = {

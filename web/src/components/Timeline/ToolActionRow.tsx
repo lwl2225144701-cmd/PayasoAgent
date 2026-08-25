@@ -6,8 +6,6 @@ import styles from './Timeline.module.css';
 
 interface ToolActionRowProps {
   data: ToolCallData;
-  /** If the step-level reasoning bucket contains detail thinking, attach it to disclosure. */
-  reasoning: string | null;
 }
 
 /**
@@ -21,7 +19,7 @@ interface ToolActionRowProps {
  * Click expands an inline "技术详情" section with tool name / args / result /
  * error / duration / operationKey / reasoning.
  */
-export function ToolActionRow({ data, reasoning }: ToolActionRowProps) {
+export function ToolActionRow({ data }: ToolActionRowProps) {
   const [open, setOpen] = useState(false);
   const toolName = displayToolName(data.tool);
   const argsPreview = previewArgs(data.args);
@@ -72,11 +70,6 @@ export function ToolActionRow({ data, reasoning }: ToolActionRowProps) {
           )}
           {typeof data.operationKey === 'string' && (
             <DetailRow label="操作键"><code className={styles.kbd}>{data.operationKey}</code></DetailRow>
-          )}
-          {reasoning && (
-            <DetailRow label="思考过程">
-              <pre className={styles.pre}>{reasoning}</pre>
-            </DetailRow>
           )}
           {data.result != null && (
             <DetailRow label="结果">

@@ -134,7 +134,9 @@ export async function runAgent(
 
       // 1. 调用 LLM 判断下一步
       const assistantMsg = await chat(messages, getSchemas());
-      messages.push(assistantMsg);
+      // 思考内容只用于 trace 展示，不写回下一轮上下文，避免污染模型消息。
+      const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;
+      messages.push(assistantHistoryMessage);
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
       printEvent(
@@ -143,6 +145,7 @@ export async function runAgent(
           messageCount: messages.length,
           iteration: i + 1,
           response: assistantMsg.content,
+          reasoning: reasoning_content,
           hasToolCalls: !!assistantMsg.tool_calls?.length,
         })
       );

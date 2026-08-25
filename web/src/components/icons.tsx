@@ -50,6 +50,18 @@ export function SparklesIcon({ size, ...p }: IconProps) {
   );
 }
 
+export function ThinkIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <ellipse cx="12" cy="12" rx="11.2" ry="4.4" transform="rotate(45 12 12)" />
+      <ellipse cx="12" cy="12" rx="11.2" ry="4.4" transform="rotate(-45 12 12)" />
+      <circle cx="12" cy="12" r="1.45" fill="currentColor" stroke="none" />
+    </>,
+    { ...p, strokeWidth: 1.7 },
+  );
+}
+
 export function WrenchIcon({ size, ...p }: IconProps) {
   return base(
     size,
