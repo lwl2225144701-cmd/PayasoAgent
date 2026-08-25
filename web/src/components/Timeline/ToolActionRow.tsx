@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ToolCallData } from './index';
-import { describeTool, formatDurationMs, TOOL_STATUS_LABELS } from '../../format';
+import { formatDurationMs, previewArgs, TOOL_STATUS_LABELS } from '../../format';
 import { ChevronRightIcon } from '../icons';
 import styles from './Timeline.module.css';
 
@@ -23,7 +23,9 @@ interface ToolActionRowProps {
  */
 export function ToolActionRow({ data, reasoning }: ToolActionRowProps) {
   const [open, setOpen] = useState(false);
-  const description = describeTool(data.tool, data.args);
+  const toolName = displayToolName(data.tool);
+  const argsPreview = previewArgs(data.args);
+  const statusLabel = TOOL_STATUS_LABELS[data.status];
   const statusClass =
     data.status === 'running' ? styles.trRunning :
     data.status === 'failed' ? styles.trFailed : styles.trDone;
@@ -35,32 +37,19 @@ export function ToolActionRow({ data, reasoning }: ToolActionRowProps) {
         onClick={() => setOpen(v => !v)}
         aria-expanded={open}
         className={styles.toolRowClickable}
-        aria-label={`${TOOL_STATUS_LABELS[data.status]}：${description}`}
+        aria-label={`${toolName}：${argsPreview}，${statusLabel}`}
       >
-        <span className={`${styles.trIcon} ${styles[`tri${data.status[0].toUpperCase()}${data.status.slice(1)}`]}`}>
-          <StatusGlyph status={data.status} />
+        <span className={styles.toolCallSummary}>
+          <span className={styles.toolName}>{toolName}</span>
+          {argsPreview && <code className={styles.toolArgs}>{argsPreview}</code>}
         </span>
 
-        <span className={styles.trDesc}>
-          {/* For running state, turn description into "正在…" prose. */}
-          {data.status === 'running' ? (
-            <>
-              <span className={styles.trDescRunningLead}>正在</span>
-              <span>{stripLeadingAction(description)}</span>
-              <span className={styles.trEllipsis}>…</span>
-            </>
-          ) : data.status === 'failed' ? (
-            <>
-              <span className={styles.trDescFailedLead}>未完成 · </span>
-              <span>{description}</span>
-            </>
-          ) : (
-            description
-          )}
-        </span>
-
-        {/* User-level inline failure hint. Light text. */}
-        {data.status === 'failed' && <UserHint error={data.error} />}
+        {data.status !== 'completed' && (
+          <span className={styles.toolStatus}>
+            <span className={styles[`toolStatus${data.status[0].toUpperCase()}${data.status.slice(1)}`]} aria-hidden="true" />
+            <span>{statusLabel}</span>
+          </span>
+        )}
 
         <span className={styles.trChevron}>
           <ChevronRightIcon size={14} className={`${styles.chev} ${open ? styles.chevOpen : ''}`} />
@@ -107,6 +96,17 @@ export function ToolActionRow({ data, reasoning }: ToolActionRowProps) {
   );
 }
 
+function displayToolName(tool: string): string {
+  const normalized = tool.toLowerCase();
+  if (/(exec|run|shell|command|bash)/.test(normalized)) return 'Shell';
+  if (/(read|file)/.test(normalized)) return 'Read';
+  if (/(write|save)/.test(normalized)) return 'Write';
+  if (/(list|dir|glob)/.test(normalized)) return 'List';
+  if (/(search|query)/.test(normalized)) return 'Search';
+  if (/(calculate|calc|compute)/.test(normalized)) return 'Calculator';
+  return tool;
+}
+
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className={styles.detailRow}>
@@ -114,54 +114,6 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
       <div className={styles.detailValue}>{children}</div>
     </div>
   );
-}
-
-function StatusGlyph({ status }: { status: ToolCallData['status'] }) {
-  if (status === 'completed') {
-    // BLUE check (not green)
-    return (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <polyline points="20 6 9 17 4 12" />
-      </svg>
-    );
-  }
-  if (status === 'failed') {
-    return (
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-    );
-  }
-  // running: animated blue ring.
-  return (
-    <span className={styles.trSpinner} aria-hidden="true">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-      </svg>
-    </span>
-  );
-}
-
-function UserHint({ error }: { error: unknown }) {
-  const raw = (typeof error === 'string' ? error : String(error ?? '')).trim();
-  if (!raw) return null;
-  const firstLine = raw.split(/\r?\n/)[0].slice(0, 80);
-  const cleaned = firstLine.replace(/^(Error|Exception|TypeError|ReferenceError|SyntaxError|RuntimeError|ENOENT|EACCES|EPERM)[^a-zA-Z\u4e00-\u9fa5]*/i, '');
-  if (!cleaned) return null;
-  const truncated = cleaned.length >= 80 ? `${cleaned.slice(0, 78)}…` : cleaned;
-  return <span className={styles.trHint}>{truncated}</span>;
-}
-
-/**
- * For a running state we want "读取 package.json" → "读取 package.json"
- * rephrased as "正在读取 package.json…".  The leading verb is duplicated
- * if we prepend "正在" blindly (e.g. 正在正在读取…).  Strip the leading
- * action verb produced by describeTool() so we can re-compose cleanly.
- */
-function stripLeadingAction(desc: string): string {
-  // 读取 / 写入 / 检查 / 获取 / 执行 / 查询 / 计算 / 搜索 / 解析 / 生成图表 / 创建 / 删除 / 复制 / 移动 / 转换 / 调用
-  return desc.replace(/^(读取|写入|检查|获取|执行|查询|计算|搜索|解析|生成图表|创建|删除|复制|移动|转换|调用)\s*/, '');
 }
 
 function prettyResult(result: unknown): string {

@@ -1,4 +1,4 @@
-import { CSSProperties, useState } from 'react';
+import { Fragment, type CSSProperties, type ReactNode, useState } from 'react';
 import styles from './CollapsibleText.module.css';
 
 interface CollapsibleTextProps {
@@ -29,7 +29,7 @@ export function CollapsibleText({ text, maxChars = 800, maxLinesSoft }: Collapsi
 
   return (
     <div className={styles.root}>
-      <div className={styles.text} style={lineClampStyle}>{display}</div>
+      <div className={styles.text} style={lineClampStyle}>{renderInlineMarkdown(display)}</div>
       {text.length > maxChars && (
         <button
           type="button"
@@ -42,4 +42,16 @@ export function CollapsibleText({ text, maxChars = 800, maxLinesSoft }: Collapsi
       )}
     </div>
   );
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code className={styles.inlineCode} key={index}>{part.slice(1, -1)}</code>;
+    }
+    return <Fragment key={index}>{part}</Fragment>;
+  });
 }

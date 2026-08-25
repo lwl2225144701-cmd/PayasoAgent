@@ -41,7 +41,8 @@
 /* ===== Message direction: user on the right, AI on the left ===== */
 
 .userBlock {
-  width: min(62%, 940px);
+  width: fit-content;
+  max-width: min(62%, 940px);
   margin: 0 0 34px;
   align-self: flex-end;
   text-align: right;
@@ -49,8 +50,11 @@
 
 .userText {
   margin: 0;
+  padding: 9px 14px;
+  background: #edf4ff;
+  border-radius: 10px;
   color: var(--text-primary);
-  font-size: 14.5px;
+  font-size: 16px;
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.01em;
@@ -69,17 +73,6 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-}
-
-.agentKicker {
-  align-self: flex-start;
-  margin: 0 0 16px;
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--accent-blue);
-  text-align: left;
 }
 
 /* ===== Global running banner (shown only before first tool starts) ===== */
@@ -127,14 +120,14 @@
 
 .toolList {
   list-style: none;
-  margin: 6px 0 8px;
+  margin: 7px 0 12px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 6px;
 }
 
-/* ===== ToolActionRow — one light line ===== */
+/* ===== ToolActionRow — selected tool + argument preview ===== */
 
 .toolRow {
   padding: 0;
@@ -144,102 +137,81 @@
 .toolRowClickable {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 8px;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 3px 0;
   text-align: left;
   background: transparent;
   color: inherit;
-  border-radius: 6px;
-  transition: background 0.12s ease, color 0.12s ease;
+  border: 0;
+  border-radius: 0;
+  transition: color 0.12s ease;
   cursor: pointer;
-  border: none;
   font: inherit;
 }
 .toolRowClickable:hover {
-  background: rgba(148,163,184,0.08);
+  background: transparent;
 }
 .toolRowClickable:focus-visible {
   outline: 2px solid rgba(37,99,235,0.35);
   outline-offset: 1px;
 }
 
-/* Status icon — BLUE for running/completed, RED for failed. NO green. */
-.trIcon {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  line-height: 0;
-}
-.triRunning { background: var(--accent-blue-bg); color: var(--accent-blue); }
-.triCompleted { background: rgba(37,99,235,0.10); color: var(--accent-blue); }
-.triFailed { background: rgba(220,38,38,0.08); color: #dc2626; }
-
-.trSpinner {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 13px;
-  height: 13px;
-  animation: spin 0.9s linear infinite;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Description. */
-.trDesc {
-  flex: 1;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--text-primary);
+.toolCallSummary {
   min-width: 0;
+  flex: 0 1 auto;
   display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 1px;
+  align-items: center;
+  gap: 10px;
 }
-.trDescRunningLead {
-  color: var(--accent-blue);
-  font-weight: 600;
-  margin-right: 2px;
-}
-.trDescFailedLead {
-  color: #dc2626;
+.toolName {
+  flex-shrink: 0;
+  color: #1e293b;
+  font-size: 15px;
   font-weight: 600;
 }
-.trRunning .trDesc { color: var(--text-primary); }
-.trFailed .trDesc { color: #7f1d1d; }
-.trEllipsis {
-  color: var(--text-muted);
-  margin-left: 1px;
+.toolArgs {
+  min-width: 0;
+  max-width: min(720px, 58vw);
+  overflow: hidden;
+  color: #7c8491;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Failure inline hint. Light red, small. */
-.trHint {
-  display: inline-block;
-  margin-left: auto;
-  padding: 3px 9px;
-  background: #fff5f5;
-  border: 1px solid #ffe1e1;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #b91c1c;
-  max-width: min(360px, 45%);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.toolStatus {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.toolStatusRunning,
+.toolStatusCompleted,
+.toolStatusFailed {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+}
+.toolStatusRunning {
+  animation: thinkPulse 1.6s ease-in-out infinite;
+}
+.toolStatusFailed {
+  background: #dc2626;
 }
 
 /* Chevron: extremely subtle, rotation on expand. */
 .trChevron {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -252,6 +224,9 @@
   opacity: 1;
   color: var(--text-secondary);
 }
+.toolRowClickable:hover .toolArgs {
+  color: #4b5563;
+}
 .chev {
   transition: transform 0.18s ease;
 }
@@ -263,7 +238,7 @@
 
 /* Detail disclosure pane. */
 .toolDetail {
-  margin: 2px 0 8px 30px;
+  margin: 6px 0 10px;
   padding: 10px 14px 12px;
   background: #fbfcfd;
   border: 1px solid #e2e8f0;
@@ -339,20 +314,11 @@
   margin-top: 2px;
 }
 
-/* ===== Final result block. NO card. NO green. NO badge. Just heading + body. ===== */
+/* ===== Final answer flows naturally after the tool messages. ===== */
 
 .finalBlock {
-  margin-top: 32px;
+  margin-top: 14px;
   padding: 8px 0 0;
-}
-
-.finalHeading {
-  margin: 0 0 14px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--accent-blue);
 }
 
 .finalError {
@@ -420,12 +386,12 @@
     max-width: 100%;
     padding: 28px 18px 48px;
   }
-  .userBlock,
   .agentBlock {
     width: 100%;
   }
-  .userText {
-    font-size: 20px;
+  .userBlock {
+    width: fit-content;
+    max-width: 88%;
   }
   .toolDetail {
     margin-left: 22px;

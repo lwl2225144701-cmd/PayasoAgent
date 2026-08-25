@@ -128,8 +128,6 @@ export function Timeline({ run }: TimelineProps) {
 
         {hasAnyWork ? (
           <section className={styles.agentBlock}>
-            <h2 className={styles.agentKicker}>Payaso</h2>
-
             {/* Extremely light temporary global status. Only shown if no running tool exists yet. */}
             {showGlobalRunningBanner && (
               <div className={styles.globalRunning}>
@@ -173,7 +171,6 @@ export function Timeline({ run }: TimelineProps) {
             {/* Final result — exactly once, no card, no success badge. */}
             {finalAnswer && (
               <div className={styles.finalBlock}>
-                <h3 className={styles.finalHeading}>结果</h3>
                 <CollapsibleText text={finalAnswer} />
                 {finalError && run.status !== 'running' && (
                   <div className={styles.finalError}>
