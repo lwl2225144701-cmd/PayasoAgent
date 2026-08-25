@@ -101,22 +101,22 @@
 }
 
 .newTaskWrap {
-  padding: 0 16px 26px;
+  padding: 0 14px 18px;
 }
 
 .newTaskBtn {
   width: 100%;
-  height: 48px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  font-size: 15px;
+  gap: 7px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 14px;
+  border-radius: 10px;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
@@ -129,9 +129,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 18px 10px 20px;
+  padding: 0 15px 8px 17px;
   color: var(--text-secondary);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -142,14 +142,14 @@
 }
 
 .workspaceActions button {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 
 .runList {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 10px 12px;
+  padding: 2px 8px 10px;
 }
 
 .empty {
@@ -163,13 +163,13 @@
   position: relative;
   width: 100%;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
-  column-gap: 10px;
+  column-gap: 8px;
   align-items: center;
-  padding: 10px 12px;
-  margin-bottom: 4px;
-  border-radius: 12px;
+  padding: 7px 10px;
+  margin-bottom: 2px;
+  border-radius: 9px;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
   color: var(--text-secondary);
@@ -196,9 +196,9 @@
   content: '';
   position: absolute;
   left: 0;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
   border-radius: 2px;
   background: #60a5fa;
 }
@@ -211,8 +211,8 @@
 
 .runTitle {
   width: 100%;
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.4;
   color: var(--text-primary);
   font-weight: 500;
 }
@@ -224,24 +224,24 @@
 
 .runTime {
   grid-column: 2 / span 2;
-  font-size: 11.5px;
+  font-size: 10.5px;
   color: var(--text-muted);
 }
 
 .activeDot {
   position: absolute;
-  right: 10px;
+  right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: #60a5fa;
 }
 
 .footer {
   border-top: 1px solid var(--border-light);
-  padding: 12px 16px;
+  padding: 9px 13px;
   display: flex;
   justify-content: stretch;
 }
@@ -250,11 +250,11 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 10px;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 8px;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 12.5px;
   transition: background 0.12s ease, color 0.12s ease;
 }
 

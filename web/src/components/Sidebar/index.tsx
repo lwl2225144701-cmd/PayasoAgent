@@ -84,7 +84,7 @@ export function Sidebar({
 
       <div className={styles.newTaskWrap}>
         <button className={styles.newTaskBtn} onClick={onNewTask}>
-          <PlusIcon size={17} />
+          <PlusIcon size={15} />
           <span>新建任务</span>
         </button>
       </div>
@@ -92,7 +92,7 @@ export function Sidebar({
       <div className={styles.workspaceHeading}>
         <span>工作区</span>
         <div className={styles.workspaceActions}>
-          <button type="button" title="新建工作区" aria-label="新建工作区"><FolderPlusIcon size={19} /></button>
+          <button type="button" title="新建工作区" aria-label="新建工作区"><FolderPlusIcon size={16} /></button>
         </div>
       </div>
 
@@ -110,7 +110,7 @@ export function Sidebar({
                   className={`${styles.runItem} ${active ? styles.active : ''}`}
                   onClick={() => onSelectRun(run.runId)}
                 >
-                  <FolderIcon size={20} />
+                  <FolderIcon size={17} />
                   <span className={`${styles.runTitle} truncate`}>{run.task || '未命名任务'}</span>
                   <span className={styles.runTime}>{formatTime(run.createdAt)}</span>
                   {active && <span className={styles.activeDot} />}
@@ -123,7 +123,7 @@ export function Sidebar({
 
       <div className={styles.footer}>
         <button className={styles.settingsBtn} title="设置" type="button">
-          <SettingsIcon size={21} />
+          <SettingsIcon size={18} />
           <span>设置</span>
         </button>
       </div>

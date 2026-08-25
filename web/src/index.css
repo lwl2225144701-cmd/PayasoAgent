@@ -59,7 +59,7 @@
   --font-size-xxl: 26px;
 
   /* Layout */
-  --sidebar-width: 280px;
+  --sidebar-width: 260px;
   --topbar-height: 64px;
 }
 
@@ -144,5 +144,4 @@ body > :not(#root):not(script):not(style):not(link):not(meta):not(title):not(bas
 #root *:is([class*="mascot" i], [class*="doll" i], [class*="NULL" i], [id*="mascot" i], [id*="doll" i]) {
   display: none !important;
 }
-
 
