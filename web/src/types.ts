@@ -98,6 +98,17 @@ export interface ToolOutputTruncatedEvent extends TraceEventBase {
   returnedBytes: number;
 }
 
+export interface ShellSandboxStartedEvent extends TraceEventBase {
+  type: "shell_sandbox_started";
+  platform: "macos";
+}
+
+export interface ShellSandboxDeniedEvent extends TraceEventBase {
+  type: "shell_sandbox_denied";
+  platform: "macos";
+  reason: "workspace_policy";
+}
+
 export interface ScratchpadUpdateEvent extends TraceEventBase {
   type: "scratchpad_update";
   currentStep: string;
@@ -149,6 +160,8 @@ export type TraceEvent =
   | SideEffectSkipEvent
   | SideEffectUncertainEvent
   | ToolOutputTruncatedEvent
+  | ShellSandboxStartedEvent
+  | ShellSandboxDeniedEvent
   | ScratchpadUpdateEvent
   | ErrorEvent;
 

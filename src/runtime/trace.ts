@@ -90,6 +90,19 @@ export type TraceEvent =
       returnedBytes: number; // 截断后 UTF-8 字节数
     }
   | {
+      type: "shell_sandbox_started";
+      step: number;
+      timestamp: string;
+      platform: "macos";
+    }
+  | {
+      type: "shell_sandbox_denied";
+      step: number;
+      timestamp: string;
+      platform: "macos";
+      reason: "workspace_policy";
+    }
+  | {
       type: "scratchpad_update";
       step: number;
       timestamp: string;
@@ -169,6 +182,15 @@ export type TraceEventInput =
       tool: string;
       originalBytes: number;
       returnedBytes: number;
+    }
+  | {
+      type: "shell_sandbox_started";
+      platform: "macos";
+    }
+  | {
+      type: "shell_sandbox_denied";
+      platform: "macos";
+      reason: "workspace_policy";
     }
   | {
       type: "scratchpad_update";

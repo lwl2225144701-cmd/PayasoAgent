@@ -9,7 +9,13 @@ import type { ToolSchema } from "../llm/llm.js";
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
   runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
+  // Runtime-only observation hook; never included in an LLM Tool Schema.
+  onSandboxEvent?: (event: ToolSandboxEvent) => void;
 }
+
+export type ToolSandboxEvent =
+  | { type: "shell_sandbox_started"; platform: "macos" }
+  | { type: "shell_sandbox_denied"; platform: "macos"; reason: "workspace_policy" };
 
 // v1.3 契约收紧：Tool 副作用类别声明
 // - read: 纯读取，无副作用

@@ -1,7 +1,7 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
 import { chat, type ChatMessage } from "../llm/llm.js";
-import { execute, getTool, getSchemas, validateToolResult } from "../tools/tools.js";
+import { execute, getTool, getSchemas, validateToolResult, type ToolSandboxEvent } from "../tools/tools.js";
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
 import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
 import { createWorkspace } from "../sandbox/sandbox-manager.js";
@@ -305,7 +305,23 @@ export async function runAgent(
           try {
             const start = performance.now();
             // ToolContext 由 Runtime 注入：runId 只来自 State，LLM 不可见、不可通过 args 覆盖
-            const rawResult = await execute(toolName, args, { runId: state.runId });
+            const rawResult = await execute(toolName, args, {
+              runId: state.runId,
+              onSandboxEvent: (event: ToolSandboxEvent) => {
+                if (event.type === "shell_sandbox_started") {
+                  printEvent(addEvent(trace, {
+                    type: "shell_sandbox_started",
+                    platform: event.platform,
+                  }));
+                } else {
+                  printEvent(addEvent(trace, {
+                    type: "shell_sandbox_denied",
+                    platform: event.platform,
+                    reason: event.reason,
+                  }));
+                }
+              },
+            });
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
             // ---- v1.2 Tool Result Validation：执行成功 ≠ 结果有效（validateResult 必须看到完整 raw）----

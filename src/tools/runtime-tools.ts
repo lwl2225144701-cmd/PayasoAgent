@@ -2,23 +2,18 @@
 // 安全契约与 filesystem.ts 一致：
 // - LLM 只传工作区内相对路径；真实路径由 ToolContext.runId + resolvePath/assertInsideWorkspace 双重校验
 // - 全部显式声明 effect（副作用语义必须明确）
-// - shell 仅以当前 runId/work 为 cwd，拒绝宿主绝对路径，隐藏宿主环境变量，timeout + stdout/stderr 限幅
+// - shell 仅以当前 runId/work 为 cwd；文件系统边界由 macOS OS Sandbox 强制执行
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
 import { register, type ToolContext } from "./tools.js";
 import { resolvePath, assertInsideWorkspace, getSandboxRoot } from "../sandbox/sandbox-manager.js";
+import { MacOSSandbox } from "../sandbox/macos-sandbox.js";
 import { canonicalPathKey, assertWritableZone } from "./filesystem.js";
 
 // 与 filesystem.ts 保持一致的最大限幅
 const MAX_TEXT_BYTES = 1024 * 1024; // 1MB
-// shell 单次输出限幅（stdout+stderr 合计）
-const MAX_SHELL_OUTPUT = 64 * 1024; // 64KB
-// shell 命令超时
-const SHELL_TIMEOUT_MS = 10_000; // 10s
-
 // 拒绝路径的统一脱敏消息（不泄露宿主机绝对路径）
 function rejectPath(rel: string): never {
   throw new Error(
@@ -271,62 +266,57 @@ register({
 
 // ---- ⑤ shell ----
 // effect: non_idempotent —— 命令副作用无法可靠静态判断，最保守声明。
-// 注意：远端 register() 对 non_idempotent 强制要求 getOperationKey，此处用命令文本作为 canonical key。
-// cwd = 当前 runId/work；禁止读取宿主绝对路径；隐藏宿主环境变量；timeout + 输出限幅
+// 静态命令过滤不是安全边界；真正边界由 macOS sandbox-exec 强制执行。
 register({
   name: "shell",
   description:
-    "在当前沙箱工作区的 work 目录下执行一条 shell 命令（非交互，单条，timeout 10s，输出限 64KB）。注意：命令副作用无法静态分类，重试/重放可能重复执行副作用。禁止访问工作区外路径。",
+    "在当前沙箱工作区的 work 目录下执行一条 shell 命令（macOS OS Sandbox，非交互，timeout 10s，输出限 64KB）。命令及其子进程只能读写当前 workspace。",
   effect: "non_idempotent",
   getOperationKey: (args) => `cmd:${String(args.command ?? "").trim()}`,
   parameters: {
     type: "object",
     properties: {
-      command: { type: "string", description: "要在 work 目录执行的 shell 命令（单条，禁止 cd 到工作区外）" },
+      command: { type: "string", description: "要在 work 目录执行的 shell 命令" },
     },
     required: ["command"],
   },
   execute: async (args, context) => {
     const cmd = String(args.command ?? "").trim();
     if (!cmd) throw new Error("缺少参数 command");
-    // 禁止命令中显式访问工作区外绝对路径 / 穿越
-    if (/\.\.[/\\]/.test(cmd) || /~\//.test(cmd) || /(^|[;|&])\s*cd\s+\.\./.test(cmd)) {
-      throw new Error(`命令被拒绝（禁止工作区外路径 / cd 逃逸）: ${cmd.slice(0, 80)}`);
-    }
-    // cwd = 当前 runId/work（不存在则指向工作区根）
-    const workDir = path.join(getSandboxRoot(), "workspaces", context.runId, "work");
-    let cwd = workDir;
-    try {
-      if (!fs.lstatSync(workDir).isDirectory()) cwd = path.join(getSandboxRoot(), "workspaces", context.runId);
-    } catch {
-      cwd = path.join(getSandboxRoot(), "workspaces", context.runId);
+
+    const workspaceRoot = path.join(getSandboxRoot(), "workspaces", context.runId);
+    const workDir = path.join(workspaceRoot, "work");
+    const home = path.join(workDir, ".home");
+    const tmpdir = path.join(workDir, ".tmp");
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(tmpdir, { recursive: true });
+
+    const sandbox = MacOSSandbox.forWorkspace(workspaceRoot);
+    const result = await sandbox.run(cmd, {
+      cwd: workDir,
+      home,
+      tmpdir,
+      onEvent: (event) => {
+        if (event === "started") {
+          context.onSandboxEvent?.({ type: "shell_sandbox_started", platform: "macos" });
+        } else {
+          context.onSandboxEvent?.({
+            type: "shell_sandbox_denied",
+            platform: "macos",
+            reason: "workspace_policy",
+          });
+        }
+      },
+    });
+
+    if (result.denied) {
+      // Do not expose stderr or host paths to the LLM/context.
+      throw new Error("Shell operation denied by workspace sandbox.");
     }
 
-    // 用 execFile 的 shell 模式跑，隐藏宿主环境变量（仅保留 PATH=/usr/bin:/bin:/usr/sbin:/sbin）
-    const result = await new Promise<string>((resolve) => {
-      const child = execFile("/bin/sh", ["-c", cmd], {
-        cwd,
-        timeout: SHELL_TIMEOUT_MS,
-        killSignal: "SIGKILL",
-        maxBuffer: MAX_SHELL_OUTPUT * 2,
-        env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
-      }, (err, so, se) => {
-        const stdout = so ?? "";
-        const stderr = se ?? "";
-        const isTimeout = !!(err && (err as { killed?: boolean }).killed);
-        const code = isTimeout
-          ? null
-          : (err && (err as { code?: number }).code != null ? (err as { code?: number }).code : (err ? -1 : 0));
-        let head = isTimeout
-          ? `[shell-timeout] 命令超时(${SHELL_TIMEOUT_MS}ms)或强制终止\n`
-          : `[shell-exit-${code}]\n`;
-        let body = (head + stdout + stderr).trim();
-        const truncated = body.length > MAX_SHELL_OUTPUT;
-        if (truncated) body = body.slice(0, MAX_SHELL_OUTPUT) + `\n...[输出已截断 ${body.length} 字符合计]`;
-        resolve(body);
-      });
-      void child;
-    });
-    return result;
+    const head = result.timedOut
+      ? "[shell-timeout] 命令超时(10000ms)或强制终止\n"
+      : `[shell-exit-${result.exitCode ?? -1}]\n`;
+    return (head + result.stdout + result.stderr).trim();
   },
 });

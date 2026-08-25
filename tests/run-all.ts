@@ -20,6 +20,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: "operation-replay", file: "tests/operation-replay.test.ts" },
   { name: "output-guard", file: "tests/output-guard.test.ts" },
   { name: "runtime-tools", file: "tests/runtime-tools.test.ts" },
+  { name: "os-sandbox", file: "tests/os-sandbox.test.ts" },
   { name: "side-effect", file: "tests/side-effect.test.ts" },
 ];
 
