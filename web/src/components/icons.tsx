@@ -287,6 +287,40 @@ export function SearchIcon({ size, ...p }: IconProps) {
   );
 }
 
+export function FolderIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" />
+    </>,
+    p,
+  );
+}
+
+export function FolderPlusIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v2" />
+      <path d="M3 8v9.5A2.5 2.5 0 0 0 5.5 20h8" />
+      <path d="M17 14v7" />
+      <path d="M13.5 17.5h7" />
+    </>,
+    p,
+  );
+}
+
+export function PanelLeftIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <path d="M9 4v16" />
+    </>,
+    p,
+  );
+}
+
 export function SummaryIcon({ size, ...p }: IconProps) {
   return base(
     size,
@@ -363,4 +397,3 @@ export function CloseIcon({ size, ...p }: IconProps) {
     p,
   );
 }
-

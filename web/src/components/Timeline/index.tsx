@@ -121,7 +121,6 @@ export function Timeline({ run }: TimelineProps) {
   return (
     <div ref={scrollRef} onScroll={onScroll} className={styles.timelineWrap}>
       <div className={styles.timeline}>
-        {/* ── User task (document flow, single instance, LEFT aligned, NO bubble) ── */}
         <article className={styles.userBlock}>
           <p className={styles.userText}>{run.task}</p>
           <time className={styles.time}>{formatTime(runStarted?.timestamp ?? run.createdAt)}</time>

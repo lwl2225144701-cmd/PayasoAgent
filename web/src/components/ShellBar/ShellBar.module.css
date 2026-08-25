@@ -33,6 +33,18 @@
   letter-spacing: -0.15px;
 }
 
+.taskTitle {
+  min-width: 0;
+  max-width: min(720px, 62vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
 .right {
   display: flex;
   align-items: center;

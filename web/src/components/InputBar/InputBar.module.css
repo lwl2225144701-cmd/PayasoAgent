@@ -1,5 +1,5 @@
 .inputBar {
-  padding: 10px var(--space-6) 18px;
+  padding: 10px 0 18px;
   background: var(--bg-primary);
   flex-shrink: 0;
 }
@@ -12,7 +12,8 @@
   border: 1px solid var(--border-color);
   border-radius: 14px;
   padding: 8px var(--space-3) 8px var(--space-4);
-  max-width: 1040px;
+  width: 80%;
+  max-width: 80%;
   margin: 0 auto;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -109,4 +110,11 @@
 
 .inputWrapper:focus-within .kbdHint {
   display: flex;
+}
+
+@media (max-width: 780px) {
+  .inputWrapper {
+    width: calc(100% - 36px);
+    max-width: none;
+  }
 }

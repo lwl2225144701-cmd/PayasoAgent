@@ -18,6 +18,7 @@ export default function App() {
   const [viewingFile, setViewingFile] = useState<FileEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { events } = useEventStream(currentRunId);
@@ -116,6 +117,8 @@ export default function App() {
         currentRunId={currentRunId}
         onSelectRun={handleSelectRun}
         onNewTask={handleNewTask}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed(value => !value)}
       />
 
       <div className={styles.main}>

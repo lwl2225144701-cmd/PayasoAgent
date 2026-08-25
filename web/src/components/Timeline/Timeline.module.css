@@ -13,9 +13,9 @@
 
 .timeline {
   width: 100%;
-  max-width: 960px;
+  max-width: 80%;
   margin: 0 auto;
-  padding: 42px 32px 60px;
+  padding: 30px 32px 60px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -30,7 +30,7 @@
 }
 
 .empty {
-  max-width: 960px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 100px 32px;
   color: var(--text-muted);
@@ -38,43 +38,48 @@
   font-size: 14.5px;
 }
 
-/* ===== User block: left-aligned natural heading. NO bubble. ===== */
+/* ===== Message direction: user on the right, AI on the left ===== */
 
 .userBlock {
-  padding: 0 0 28px;
-  border-bottom: 1px solid var(--border-color);
-  margin-bottom: 28px;
+  width: min(62%, 940px);
+  margin: 0 0 34px;
+  align-self: flex-end;
+  text-align: right;
 }
 
 .userText {
   margin: 0;
-  font-size: 23px;
-  font-weight: 700;
-  line-height: 1.35;
   color: var(--text-primary);
+  font-size: 14.5px;
+  font-weight: 400;
+  line-height: 1.5;
   letter-spacing: -0.01em;
   word-break: break-word;
 }
 
 .userBlock .time {
-  margin-top: 10px;
+  margin-top: 9px;
 }
 
-/* ===== Agent block ===== */
+/* AI content stays document-like: no chat bubble, card, or filled container. */
 
 .agentBlock {
+  width: min(82%, 1280px);
+  margin-right: auto;
   display: flex;
   flex-direction: column;
   gap: 0;
 }
 
 .agentKicker {
+  align-self: flex-start;
   margin: 0 0 16px;
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--accent-blue);
+  text-align: left;
 }
 
 /* ===== Global running banner (shown only before first tool starts) ===== */
@@ -86,6 +91,7 @@
   padding: 4px 4px 16px;
   color: var(--text-secondary);
   width: fit-content;
+  align-self: flex-start;
 }
 
 .runDot {
@@ -322,10 +328,11 @@
 /* ===== Assistant reasoning text block ===== */
 
 .assistantTextBlock {
-  padding: 4px 2px 4px 30px;
+  padding: 4px 2px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  text-align: left;
 }
 
 .assistantTextBlock > * + .time {
@@ -336,8 +343,7 @@
 
 .finalBlock {
   margin-top: 32px;
-  padding: 22px 0 0;
-  border-top: 1px solid var(--border-color);
+  padding: 8px 0 0;
 }
 
 .finalHeading {
@@ -411,7 +417,12 @@
 /* ===== Responsive ===== */
 @media (max-width: 780px) {
   .timeline {
+    max-width: 100%;
     padding: 28px 18px 48px;
+  }
+  .userBlock,
+  .agentBlock {
+    width: 100%;
   }
   .userText {
     font-size: 20px;

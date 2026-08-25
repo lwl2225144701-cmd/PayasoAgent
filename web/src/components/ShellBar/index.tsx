@@ -34,8 +34,16 @@ export function ShellBar({ run, onOpenSummary }: ShellBarProps) {
   return (
     <div className={styles.bar}>
       <div className={styles.left}>
-        <span className={styles.logoMark}>P</span>
-        <span className={styles.logoText}>Payaso</span>
+        {run ? (
+          <span className={styles.taskTitle} title={run.task}>
+            {run.task}
+          </span>
+        ) : (
+          <>
+            <span className={styles.logoMark}>P</span>
+            <span className={styles.logoText}>Payaso</span>
+          </>
+        )}
       </div>
 
       <div className={styles.right}>
