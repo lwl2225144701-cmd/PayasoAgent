@@ -137,6 +137,8 @@ export function Timeline({ run }: TimelineProps) {
               </div>
             )}
 
+            {globalThinking && <ThinkBlock text={globalThinking} />}
+
             {toolSteps.map((grp, grpIdx) => {
               const reasoning = grp.reasoning;
               const showVisible = reasoning
@@ -146,10 +148,6 @@ export function Timeline({ run }: TimelineProps) {
               return (
                 <div key={`step-${grp.step}-${grpIdx}`} className={styles.stepBlock}>
                   {/* Tool rows. */}
-                  {reasoning?.thinkingDetail && (
-                    <ThinkBlock text={reasoning.thinkingDetail} />
-                  )}
-
                   {grp.tools.length > 0 && (
                     <ul className={styles.toolList} aria-label="工具">
                       {grp.tools.map(t => (

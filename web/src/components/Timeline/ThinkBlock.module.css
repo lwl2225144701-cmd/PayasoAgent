@@ -20,17 +20,17 @@
 .iconSlot {
   position: relative;
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
 }
 
 .atomIcon,
 .hoverIcon {
   position: absolute;
   inset: 0;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   color: #898f98;
   transition: opacity 0.12s ease;
 }
@@ -52,14 +52,14 @@
 .label {
   flex: 0 0 auto;
   color: #59616d;
-  font-size: 15px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .separator {
   flex: 0 0 auto;
   color: #a3a9b2;
-  font-size: 15px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -67,7 +67,7 @@
   min-width: 0;
   overflow: hidden;
   color: #8a919b;
-  font-size: 15px;
+  font-size: 12px;
   line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;

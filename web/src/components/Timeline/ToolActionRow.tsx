@@ -56,20 +56,12 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
 
       {open && (
         <div className={styles.toolDetail}>
-          <DetailRow label="工具">{data.tool}</DetailRow>
           {data.args != null && (
             <DetailRow label="参数">
               <pre className={styles.pre}>
                 {typeof data.args === 'string' ? data.args : JSON.stringify(data.args, null, 2)}
               </pre>
             </DetailRow>
-          )}
-          <DetailRow label="状态">{TOOL_STATUS_LABELS[data.status]}</DetailRow>
-          {typeof data.durationMs === 'number' && (
-            <DetailRow label="耗时">{formatDurationMs(data.durationMs)}</DetailRow>
-          )}
-          {typeof data.operationKey === 'string' && (
-            <DetailRow label="操作键"><code className={styles.kbd}>{data.operationKey}</code></DetailRow>
           )}
           {data.result != null && (
             <DetailRow label="结果">
@@ -83,6 +75,10 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
               </pre>
             </DetailRow>
           )}
+          <div className={styles.detailMeta}>
+            <span>{TOOL_STATUS_LABELS[data.status]}</span>
+            {typeof data.durationMs === 'number' && <span>{formatDurationMs(data.durationMs)}</span>}
+          </div>
         </div>
       )}
     </li>
