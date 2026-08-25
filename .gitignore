@@ -8,3 +8,6 @@ node_modules/
 # Sandbox 工作区：按 runId 隔离，运行时生成的内容不进版本库；保留目录占位
 sandbox/workspaces/*
 !sandbox/workspaces/.gitkeep
+# 前端构建产物
+web/dist/
+*.tsbuildinfo

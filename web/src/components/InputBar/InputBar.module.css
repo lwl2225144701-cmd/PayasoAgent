@@ -1,0 +1,112 @@
+.inputBar {
+  padding: 10px var(--space-6) 18px;
+  background: var(--bg-primary);
+  flex-shrink: 0;
+}
+
+.inputWrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 8px var(--space-3) 8px var(--space-4);
+  max-width: 1040px;
+  margin: 0 auto;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.inputWrapper:focus-within {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+}
+
+.attachBtn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.attachBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.input {
+  flex: 1;
+  min-height: 24px;
+  max-height: 132px;
+  resize: none;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  line-height: 1.55;
+  padding: 5px 2px;
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:disabled {
+  opacity: 0.6;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.sendBtn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, transform 0.15s, opacity 0.15s;
+}
+
+.sendBtn:hover:not(:disabled) {
+  background: var(--accent-blue);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.sendBtn:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.kbdHint {
+  color: var(--text-muted);
+  display: none;
+  align-items: center;
+  padding-right: var(--space-1);
+  opacity: 0.85;
+}
+
+.inputWrapper:focus-within .kbdHint {
+  display: flex;
+}
