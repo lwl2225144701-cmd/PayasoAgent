@@ -1,0 +1,429 @@
+/* ===================================================================
+   TIMELINE — document-flow workspace.
+   Visual system: white + blue (#2563eb) + neutral grey + error red.
+   NO green, NO chat bubbles, NO cards for regular content.
+   =================================================================== */
+
+.timelineWrap {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+  scrollbar-gutter: stable;
+}
+
+.timeline {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 42px 32px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.time {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1;
+}
+
+.empty {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 100px 32px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 14.5px;
+}
+
+/* ===== User block: left-aligned natural heading. NO bubble. ===== */
+
+.userBlock {
+  padding: 0 0 28px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 28px;
+}
+
+.userText {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+
+.userBlock .time {
+  margin-top: 10px;
+}
+
+/* ===== Agent block ===== */
+
+.agentBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.agentKicker {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-blue);
+}
+
+/* ===== Global running banner (shown only before first tool starts) ===== */
+
+.globalRunning {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 16px;
+  color: var(--text-secondary);
+  width: fit-content;
+}
+
+.runDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.16);
+  animation: thinkPulse 1.6s ease-in-out infinite;
+}
+@keyframes thinkPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.runText {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* ===== Step block ===== */
+
+.stepBlock {
+  padding: 0;
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ===== Tool list: native <ul>. No borders/cards. ===== */
+
+.toolList {
+  list-style: none;
+  margin: 6px 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ===== ToolActionRow — one light line ===== */
+
+.toolRow {
+  padding: 0;
+  background: transparent;
+}
+
+.toolRowClickable {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  transition: background 0.12s ease, color 0.12s ease;
+  cursor: pointer;
+  border: none;
+  font: inherit;
+}
+.toolRowClickable:hover {
+  background: rgba(148,163,184,0.08);
+}
+.toolRowClickable:focus-visible {
+  outline: 2px solid rgba(37,99,235,0.35);
+  outline-offset: 1px;
+}
+
+/* Status icon — BLUE for running/completed, RED for failed. NO green. */
+.trIcon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+.triRunning { background: var(--accent-blue-bg); color: var(--accent-blue); }
+.triCompleted { background: rgba(37,99,235,0.10); color: var(--accent-blue); }
+.triFailed { background: rgba(220,38,38,0.08); color: #dc2626; }
+
+.trSpinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Description. */
+.trDesc {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  min-width: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1px;
+}
+.trDescRunningLead {
+  color: var(--accent-blue);
+  font-weight: 600;
+  margin-right: 2px;
+}
+.trDescFailedLead {
+  color: #dc2626;
+  font-weight: 600;
+}
+.trRunning .trDesc { color: var(--text-primary); }
+.trFailed .trDesc { color: #7f1d1d; }
+.trEllipsis {
+  color: var(--text-muted);
+  margin-left: 1px;
+}
+
+/* Failure inline hint. Light red, small. */
+.trHint {
+  display: inline-block;
+  margin-left: auto;
+  padding: 3px 9px;
+  background: #fff5f5;
+  border: 1px solid #ffe1e1;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #b91c1c;
+  max-width: min(360px, 45%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+/* Chevron: extremely subtle, rotation on expand. */
+.trChevron {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #cbd5e1;
+  transition: transform 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+  opacity: 0.7;
+}
+.toolRowClickable:hover .trChevron {
+  opacity: 1;
+  color: var(--text-secondary);
+}
+.chev {
+  transition: transform 0.18s ease;
+}
+.chevOpen {
+  transform: rotate(90deg);
+  color: var(--accent-blue);
+  opacity: 1;
+}
+
+/* Detail disclosure pane. */
+.toolDetail {
+  margin: 2px 0 8px 30px;
+  padding: 10px 14px 12px;
+  background: #fbfcfd;
+  border: 1px solid #e2e8f0;
+  border-left: 2px solid var(--accent-blue);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.detailRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.detailLabel {
+  width: 66px;
+  flex-shrink: 0;
+  padding-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.detailValue {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: #1e293b;
+  word-break: break-all;
+}
+.pre, .preErr {
+  margin: 0;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #1e293b;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+.preErr {
+  background: #fff6f6;
+  border-color: #fecaca;
+  color: #7f1d1d;
+}
+
+/* ===== Assistant reasoning text block ===== */
+
+.assistantTextBlock {
+  padding: 4px 2px 4px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.assistantTextBlock > * + .time {
+  margin-top: 2px;
+}
+
+/* ===== Final result block. NO card. NO green. NO badge. Just heading + body. ===== */
+
+.finalBlock {
+  margin-top: 32px;
+  padding: 22px 0 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.finalHeading {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-blue);
+}
+
+.finalError {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.attachList {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.attachList li {
+  padding: 0;
+}
+.attachBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.attachBtn:hover {
+  border-color: rgba(37,99,235,0.35);
+  background: rgba(37,99,235,0.04);
+}
+.attachBtn svg {
+  color: var(--accent-blue);
+  flex-shrink: 0;
+}
+.attachName {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachSize {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 780px) {
+  .timeline {
+    padding: 28px 18px 48px;
+  }
+  .userText {
+    font-size: 20px;
+  }
+  .toolDetail {
+    margin-left: 22px;
+    padding: 10px 12px;
+  }
+  .detailLabel {
+    width: 56px;
+  }
+  .trHint {
+    max-width: 60%;
+  }
+}
