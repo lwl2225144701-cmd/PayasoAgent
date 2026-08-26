@@ -124,7 +124,7 @@
 
 .newTaskBtn:hover {
   background: var(--bg-hover);
-  border-color: #d1d5db;
+  border-color: var(--color-border-strong);
 }
 
 .workspaceSection {
@@ -232,7 +232,7 @@
   bottom: 7px;
   width: 2px;
   border-radius: 2px;
-  background: #60a5fa;
+  background: var(--color-brand);
 }
 
 .runItem > svg {
@@ -268,7 +268,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #60a5fa;
+  background: var(--color-brand);
 }
 
 .footer {
@@ -296,7 +296,7 @@
 }
 
 .runList::-webkit-scrollbar-thumb {
-  background: #d8dbe0;
+  background: var(--color-border-strong);
 }
 
 .runList::-webkit-scrollbar-thumb:hover {

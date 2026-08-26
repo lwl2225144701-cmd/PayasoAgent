@@ -1,0 +1,77 @@
+/* Payaso dark theme — the single source of truth for product colors. */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --color-canvas: #0f1115;
+  --color-surface: #15181e;
+  --color-surface-subtle: #1a1e26;
+  --color-surface-raised: #20252e;
+  --color-surface-hover: #252b35;
+  --color-surface-selected: #202839;
+
+  /* Text */
+  --color-text-primary: #f1f4f8;
+  --color-text-secondary: #bcc3cf;
+  --color-text-tertiary: #8993a3;
+  --color-text-muted: #606b7a;
+  --color-text-on-brand: #ffffff;
+
+  /* Borders */
+  --color-border-subtle: #202630;
+  --color-border-default: #2a313c;
+  --color-border-strong: #3a4452;
+
+  /* Brand */
+  --color-brand: #5b8def;
+  --color-brand-hover: #70a0f8;
+  --color-brand-soft: rgba(91, 141, 239, 0.12);
+  --color-brand-border: rgba(91, 141, 239, 0.24);
+  --color-brand-ring: rgba(91, 141, 239, 0.2);
+
+  /* Component surfaces */
+  --color-message-user: #1b222c;
+  --color-message-user-border: #29323e;
+  --color-composer: #1b1f26;
+  --color-composer-control: #252b34;
+  --color-code: #181c23;
+  --color-overlay: rgba(4, 6, 10, 0.68);
+  --color-header-glass: rgba(15, 17, 21, 0.78);
+  --color-canvas-glow: rgba(61, 82, 119, 0.13);
+
+  /* Status */
+  --color-danger: #f47b7b;
+  --color-danger-text: #f7aaaa;
+  --color-danger-soft: rgba(244, 123, 123, 0.12);
+  --color-danger-border: rgba(244, 123, 123, 0.3);
+  --color-warning: #f2b84b;
+  --color-warning-soft: rgba(242, 184, 75, 0.13);
+
+  /* Effects */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.28);
+  --shadow-lg: 0 22px 64px rgba(0, 0, 0, 0.44);
+  --shadow-overlay: 0 20px 52px rgba(0, 0, 0, 0.52);
+
+  /* Compatibility aliases used by existing components. */
+  --bg-primary: var(--color-canvas);
+  --bg-secondary: var(--color-surface);
+  --bg-tertiary: var(--color-surface-subtle);
+  --bg-hover: var(--color-surface-hover);
+  --bg-active: var(--color-surface-selected);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary: var(--color-text-tertiary);
+  --text-muted: var(--color-text-muted);
+  --border-color: var(--color-border-default);
+  --border-light: var(--color-border-subtle);
+  --accent-blue: var(--color-brand);
+  --accent-blue-hover: var(--color-brand-hover);
+  --accent-blue-light: var(--color-brand-border);
+  --accent-blue-bg: var(--color-brand-soft);
+  --accent-red: var(--color-danger);
+  --accent-red-light: var(--color-danger-soft);
+  --accent-orange: #f29a58;
+  --accent-orange-light: rgba(242, 154, 88, 0.13);
+  --accent-yellow: var(--color-warning);
+}

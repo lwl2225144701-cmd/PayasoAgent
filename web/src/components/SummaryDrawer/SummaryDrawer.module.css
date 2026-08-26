@@ -1,7 +1,7 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.28);
+  background: var(--color-overlay);
   z-index: 80;
   animation: fadeIn 0.18s ease-out;
 }
@@ -17,8 +17,9 @@
   right: 0;
   height: 100vh;
   width: min(360px, 100vw);
-  background: #fff;
-  box-shadow: -12px 0 32px -18px rgba(15, 23, 42, 0.24);
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  box-shadow: var(--shadow-overlay);
   display: flex;
   flex-direction: column;
   animation: slideIn 0.22s cubic-bezier(.2,.8,.2,1);
@@ -97,7 +98,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.16);
+  box-shadow: 0 0 0 3px var(--color-brand-ring);
 }
 
 .task {
@@ -114,7 +115,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 8px 0;
-  border-bottom: 1px dashed #eef0f3;
+  border-bottom: 1px dashed var(--border-color);
 }
 .row:last-child {
   border-bottom: none;
@@ -158,7 +159,7 @@
   transition: background 0.12s ease, color 0.12s ease;
 }
 .ghostBtn:hover {
-  background: #e5e7eb;
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -174,14 +175,14 @@
   gap: 6px;
   padding: 10px 14px;
   border-radius: 10px;
-  background: #fff;
-  border: 1.5px solid #fee2e2;
-  color: #dc2626;
+  background: transparent;
+  border: 1.5px solid var(--color-danger-border);
+  color: var(--accent-red);
   font-size: 13px;
   font-weight: 600;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .stopBtn:hover {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: var(--accent-red-light);
+  border-color: var(--color-danger);
 }

@@ -1,31 +1,8 @@
+@import './theme.css';
+
 /* ===== PayasoAgent Design System ===== */
 
 :root {
-  /* Colors */
-  --bg-primary: #ffffff;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f9fafb;
-  --bg-hover: #f3f4f6;
-  --bg-active: #eff4ff;
-
-  --text-primary: #111827;
-  --text-secondary: #374151;
-  --text-tertiary: #6b7280;
-  --text-muted: #9ca3af;
-
-  --border-color: #e5e7eb;
-  --border-light: #f0f1f3;
-
-  --accent-blue: #2563eb;
-  --accent-blue-hover: #1d4ed8;
-  --accent-blue-light: #e8effd;
-  --accent-blue-bg: #eff4ff;
-  --accent-red: #dc2626;
-  --accent-red-light: #fee2e2;
-  --accent-orange: #ea580c;
-  --accent-orange-light: #ffedd5;
-  --accent-yellow: #d97706;
-
   /* Spacing */
   --space-1: 4px;
   --space-2: 8px;
@@ -41,11 +18,6 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
-
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 4px 16px rgba(16, 24, 40, 0.1);
-  --shadow-lg: 0 12px 40px rgba(16, 24, 40, 0.16);
 
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
@@ -83,6 +55,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  color-scheme: dark;
 }
 
 button {
@@ -114,11 +87,11 @@ code, pre {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d8dbe0;
+  background: var(--color-border-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--color-text-muted);
 }
 
 /* ===== Utility classes ===== */
@@ -144,4 +117,3 @@ body > :not(#root):not(script):not(style):not(link):not(meta):not(title):not(bas
 #root *:is([class*="mascot" i], [class*="doll" i], [class*="NULL" i], [id*="mascot" i], [id*="doll" i]) {
   display: none !important;
 }
-

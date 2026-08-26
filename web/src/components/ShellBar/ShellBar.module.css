@@ -11,7 +11,7 @@
 .landingBar {
   height: 64px;
   padding: 0 32px;
-  background: rgba(18, 19, 21, 0.72);
+  background: var(--color-header-glass);
   border-bottom-color: transparent;
   backdrop-filter: blur(18px);
 }
@@ -30,7 +30,7 @@
   justify-content: center;
   font-size: 17px;
   font-weight: 800;
-  color: #ffffff;
+  color: var(--color-text-on-brand);
   background: var(--accent-blue);
   border-radius: 9px;
   letter-spacing: -0.5px;
@@ -76,7 +76,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  box-shadow: 0 0 0 3px var(--color-brand-ring);
   animation: shellPulse 1.6s ease-in-out infinite;
 }
 

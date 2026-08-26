@@ -1,6 +1,6 @@
 /* ===================================================================
    TIMELINE — document-flow workspace.
-   Visual system: white + blue (#2563eb) + neutral grey + error red.
+   Visual system: deep neutral + Payaso blue + error red.
    NO green, NO chat bubbles, NO cards for regular content.
    =================================================================== */
 
@@ -51,7 +51,8 @@
 .userText {
   margin: 0;
   padding: 9px 14px;
-  background: #edf4ff;
+  background: var(--color-message-user);
+  border: 1px solid var(--color-message-user-border);
   border-radius: 10px;
   color: var(--text-primary);
   font-size: 16px;
@@ -92,7 +93,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.16);
+  box-shadow: 0 0 0 3px var(--color-brand-ring);
   animation: thinkPulse 1.6s ease-in-out infinite;
 }
 @keyframes thinkPulse {
@@ -155,7 +156,7 @@
   background: transparent;
 }
 .toolRowClickable:focus-visible {
-  outline: 2px solid rgba(37,99,235,0.35);
+  outline: 2px solid var(--color-brand-border);
   outline-offset: 1px;
 }
 
@@ -168,7 +169,7 @@
 }
 .toolName {
   flex-shrink: 0;
-  color: #59616d;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 550;
 }
@@ -176,7 +177,7 @@
   min-width: 0;
   max-width: min(720px, 58vw);
   overflow: hidden;
-  color: #7c8491;
+  color: var(--text-tertiary);
   font-family: inherit;
   font-size: 12px;
   font-weight: 400;
@@ -205,7 +206,7 @@
   animation: thinkPulse 1.6s ease-in-out infinite;
 }
 .toolStatusFailed {
-  background: #dc2626;
+  background: var(--accent-red);
 }
 
 /* Chevron: extremely subtle, rotation on expand. */
@@ -216,7 +217,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #cbd5e1;
+  color: var(--text-muted);
   transition: transform 0.18s ease, color 0.18s ease, opacity 0.18s ease;
   opacity: 0.7;
 }
@@ -225,14 +226,14 @@
   color: var(--text-secondary);
 }
 .toolRowClickable:hover .toolArgs {
-  color: #4b5563;
+  color: var(--text-secondary);
 }
 .chev {
   transition: transform 0.18s ease;
 }
 .chevOpen {
   transform: rotate(90deg);
-  color: #8a919b;
+  color: var(--text-tertiary);
   opacity: 1;
 }
 
@@ -243,7 +244,7 @@
   padding: 7px 0 5px 18px;
   background: transparent;
   border: 0;
-  border-left: 1px solid #dfe4ea;
+  border-left: 1px solid var(--border-color);
   border-radius: 0;
   display: flex;
   flex-direction: column;
@@ -272,21 +273,21 @@
 .pre, .preErr {
   margin: 0;
   padding: 8px 10px;
-  background: #f6f7f9;
+  background: var(--color-code);
   border: 0;
   border-radius: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
   line-height: 1.55;
-  color: #1e293b;
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 320px;
   overflow: auto;
 }
 .preErr {
-  background: #fff6f6;
-  color: #7f1d1d;
+  background: var(--color-danger-soft);
+  color: var(--color-danger-text);
 }
 
 .detailMeta {
@@ -321,10 +322,10 @@
 .finalError {
   margin-top: 14px;
   padding: 10px 14px;
-  background: #fff5f5;
-  border: 1px solid #fecaca;
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
   border-radius: 8px;
-  color: #991b1b;
+  color: var(--color-danger-text);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -347,7 +348,7 @@
   width: 100%;
   padding: 8px 12px;
   background: transparent;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   text-align: left;
   color: var(--text-primary);
@@ -355,8 +356,8 @@
   transition: border-color 0.12s ease, background 0.12s ease;
 }
 .attachBtn:hover {
-  border-color: rgba(37,99,235,0.35);
-  background: rgba(37,99,235,0.04);
+  border-color: var(--color-brand-border);
+  background: var(--color-brand-soft);
 }
 .attachBtn svg {
   color: var(--accent-blue);
