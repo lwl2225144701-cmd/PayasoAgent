@@ -1,9 +1,8 @@
 import { useMemo } from 'react';
-import type { HostRun } from '../../types';
+import type { HostRun, WorkspaceView } from '../../types';
 import { formatTime, dayLabel } from '../../format';
 import {
   FolderIcon,
-  FolderPlusIcon,
   PanelLeftIcon,
   PlusIcon,
   SettingsIcon,
@@ -17,6 +16,9 @@ interface SidebarProps {
   onNewTask: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  workspace: WorkspaceView | null;
+  openingWorkspace: boolean;
+  onOpenWorkspace: () => void;
 }
 
 interface RunGroup {
@@ -31,6 +33,9 @@ export function Sidebar({
   onNewTask,
   collapsed,
   onToggleCollapsed,
+  workspace,
+  openingWorkspace,
+  onOpenWorkspace,
 }: SidebarProps) {
   const groups = useMemo<RunGroup[]>(() => {
     const sorted = [...runs].sort(
@@ -89,11 +94,30 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className={styles.workspaceHeading}>
-        <span>工作区</span>
-        <div className={styles.workspaceActions}>
-          <button type="button" title="新建工作区" aria-label="新建工作区"><FolderPlusIcon size={16} /></button>
-        </div>
+      <div className={styles.workspaceSection}>
+        <span className={styles.workspaceLabel}>工作区</span>
+        <button
+          className={styles.workspaceBtn}
+          type="button"
+          onClick={onOpenWorkspace}
+          disabled={openingWorkspace}
+          title={workspace ? '更换文件夹' : '打开文件夹'}
+        >
+          <FolderIcon size={16} />
+          <span className="truncate">
+            {workspace ? workspace.name : openingWorkspace ? '正在打开…' : '打开文件夹'}
+          </span>
+        </button>
+        {workspace && (
+          <button
+            className={styles.changeWorkspaceBtn}
+            type="button"
+            onClick={onOpenWorkspace}
+            disabled={openingWorkspace}
+          >
+            {openingWorkspace ? '正在打开…' : '更换文件夹'}
+          </button>
+        )}
       </div>
 
       <nav className={styles.runList} aria-label="工作区任务">

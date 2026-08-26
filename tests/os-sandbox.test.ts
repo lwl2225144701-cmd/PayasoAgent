@@ -2,6 +2,11 @@
 // These tests intentionally use absolute paths and shell indirection. They do
 // not rely on the removed command-string blacklist; the filesystem outcome is
 // the assertion.
+//
+// Capability-conditional: sandbox-exec is deprecated and on some macOS
+// releases (e.g. macOS 26) it cannot apply any profile. When the primitive is
+// unavailable, the shell tool must refuse to run (fail-closed) — we verify the
+// refusal path instead of the containment matrix.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -9,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { execute, type ToolContext, type ToolSandboxEvent } from "../src/tools/tools.js";
 import "../src/tools/runtime-tools.js";
+import { probeSandboxAvailability } from "../src/sandbox/macos-sandbox.js";
 import { createWorkspace, cleanupWorkspace } from "../src/sandbox/sandbox-manager.js";
 
 if (process.platform !== "darwin") {
@@ -31,6 +37,7 @@ function shQuote(value: string): string {
 async function shell(command: string, events?: ToolSandboxEvent[]): Promise<string> {
   return execute("shell", { command }, {
     runId: RUN,
+    workspaceRoot: work,
     onSandboxEvent: events ? (event) => events.push(event) : undefined,
   });
 }
@@ -46,7 +53,8 @@ async function expectDenied(command: string, events?: ToolSandboxEvent[]): Promi
   );
 }
 
-try {
+// Containment matrix: only valid when the OS sandbox primitive actually works.
+async function runMatrix(): Promise<void> {
   // Workspace operations: cwd, read, create, write, modify, and delete.
   const startEvents: ToolSandboxEvent[] = [];
   const pwd = await shell("pwd", startEvents);
@@ -96,6 +104,23 @@ try {
   console.log("  workspace-external absolute read/write/delete: DENIED");
   console.log("  /tmp write: DENIED");
   console.log("  child shell inheritance: DENIED");
+}
+
+try {
+  if (!(await probeSandboxAvailability())) {
+    // Fail-closed: shell must refuse rather than run unsandboxed.
+    let refused = false;
+    try {
+      await shell("pwd");
+    } catch (err) {
+      refused = err instanceof Error && /unavailable/i.test(err.message);
+    }
+    assert.ok(refused, "shell 应在 sandbox-exec 不可用时拒绝执行（fail-closed，绝不跑无沙箱 shell）");
+    console.log("macOS OS sandbox tests: SKIPPED — sandbox-exec 无法应用（该 macOS/受限环境）");
+    console.log("  fail-closed check: shell refused, no unsandboxed run: PASS");
+  } else {
+    await runMatrix();
+  }
 } finally {
   fs.rmSync(tmpOutside, { force: true });
   cleanupWorkspace(RUN);

@@ -18,7 +18,7 @@ function test(name: string, fn: () => void | Promise<void>) {
   tests.push({ name, fn });
 }
 
-const ctx: ToolContext = { runId: "side-effect-test" };
+const ctx: ToolContext = { runId: "side-effect-test", workspaceRoot: process.cwd() };
 
 // 非幂等测试工具：每次 execute 真实执行副作用（计数器 +1），并返回执行次数
 let appendCount = 0;

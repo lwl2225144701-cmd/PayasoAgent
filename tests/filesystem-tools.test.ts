@@ -14,8 +14,8 @@ const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-fs-test-"));
 process.env.SANDBOX_ROOT = TEST_ROOT;
 
 const RUN = "fs-test";
-const ctx: ToolContext = { runId: RUN };
 const root = createWorkspace(RUN);
+const ctx: ToolContext = { runId: RUN, workspaceRoot: root };
 
 // ---- 预置工作区内容 ----
 fs.writeFileSync(path.join(root, "input", "demo.txt"), "hello sandbox");

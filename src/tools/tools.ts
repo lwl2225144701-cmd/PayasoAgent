@@ -1,7 +1,7 @@
 // 模块 2: 工具注册与执行
 // 契约（安全边界）：
-// - LLM 永远不能控制 runId：runId 不出现在任何 Tool Schema 中，由 Runtime 通过 ToolContext 注入。
-// - 工具只接收"相对路径"参数；文件类工具必须用 SandboxManager.resolvePath(context.runId, path) 解析真实路径。
+// - LLM 永远不能控制 runId/workspaceRoot：两者不出现在任何 Tool Schema 中，由 Runtime 注入。
+// - 工具只接收"相对路径"参数；文件类工具必须相对 context.workspaceRoot 解析真实路径。
 // - 模型决定"做什么"，Runtime 决定"在哪里执行"。
 
 import type { ToolSchema } from "../llm/llm.js";
@@ -9,6 +9,7 @@ import type { ToolSchema } from "../llm/llm.js";
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
   runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
+  workspaceRoot: string; // Host/Runtime 授权并 canonicalize 的真实工作根，LLM 不可见不可覆盖
   // Runtime-only observation hook; never included in an LLM Tool Schema.
   onSandboxEvent?: (event: ToolSandboxEvent) => void;
 }
@@ -32,7 +33,7 @@ export interface Tool {
   // v1.3 契约收紧：显式定义"什么叫同一个操作"（canonical operation key）。
   // non_idempotent 必填（注册期强制校验），禁止回退到 JSON.stringify(args) 猜测；
   // read / idempotent 可省略，回退到 JSON.stringify(args)。
-  // v1.5 融合身份机制：getOperationKey 可选接收 ToolContext（运行时注入，含 runId），
+  // v1.5 融合身份机制：getOperationKey 可选接收 ToolContext（运行时注入，含 runId/workspaceRoot），
   //   路径类工具用它做路径归一化（canonicalPathKey），使 ./work/a.txt 与 work/a.txt 归一为同一 key 且不暴露宿主绝对路径。
   getOperationKey?: (args: Record<string, unknown>, context?: ToolContext) => string;
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>;

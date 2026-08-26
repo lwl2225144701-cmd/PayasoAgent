@@ -698,8 +698,8 @@ scenarios["sandbox-traversal"] = {
   e2e: false,
   run: async (ctx) => {
     const runId = ctx.runId;
-    createWorkspace(runId);
-    const ctx2: ToolContext = { runId };
+    const workspaceRoot = createWorkspace(runId);
+    const ctx2: ToolContext = { runId, workspaceRoot };
     const errs: string[] = [];
     const checks: [string, () => Promise<unknown>][] = [
       ["readFile ../x", () => execute("readFile", { path: "../x" }, ctx2)],
@@ -740,8 +740,8 @@ scenarios["sandbox-absolute"] = {
   e2e: false,
   run: async (ctx) => {
     const runId = ctx.runId;
-    createWorkspace(runId);
-    const ctx2: ToolContext = { runId };
+    const workspaceRoot = createWorkspace(runId);
+    const ctx2: ToolContext = { runId, workspaceRoot };
     const errs: string[] = [];
     const checks: [string, () => Promise<unknown>][] = [
       ["readFile /etc/passwd", () => execute("readFile", { path: "/etc/passwd" }, ctx2)],
@@ -786,7 +786,7 @@ scenarios["sandbox-symlink"] = {
   run: async (ctx) => {
     const runId = ctx.runId;
     const ws = createWorkspace(runId);
-    const ctx2: ToolContext = { runId };
+    const ctx2: ToolContext = { runId, workspaceRoot: ws };
     const hostFile = path.join(os.tmpdir(), `stress-host-${runId}.txt`);
     const hostDir = path.join(os.tmpdir(), `stress-hostdir-${runId}`);
     fs.writeFileSync(hostFile, "TOP-SECRET-HOST-98765");

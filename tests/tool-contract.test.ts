@@ -35,7 +35,9 @@ register({
   execute: async (args, context) =>
     JSON.stringify({
       gotRunId: context.runId,
+      gotWorkspace: context.workspaceRoot,
       argRunId: (args.runId as string) ?? null,
+      argWorkspace: (args.workspaceRoot as string) ?? null,
     }),
 });
 
@@ -45,17 +47,22 @@ console.log("Tool 调用契约单元测试\n");
 test("Tool Schema 中不存在 runId（LLM 不可见）", () => {
   const json = JSON.stringify(getSchemas());
   assert.ok(!json.includes("runId"), 'Schema 中出现 "runId"');
+  assert.ok(!json.includes("workspaceRoot"), 'Schema 中出现 "workspaceRoot"');
 });
+
+const TEST_WORKSPACE = process.cwd();
 
 // ---- 2. Runtime execute 时 Tool 能拿到正确 runId ----
 test("execute 注入正确 runId（Tool 从 context 获取）", async () => {
-  const res = await execute("probeRunId", {}, { runId: "RUN-ABC-123" });
-  assert.deepEqual(JSON.parse(res), { gotRunId: "RUN-ABC-123", argRunId: null });
+  const res = await execute("probeRunId", {}, { runId: "RUN-ABC-123", workspaceRoot: TEST_WORKSPACE });
+  assert.deepEqual(JSON.parse(res), {
+    gotRunId: "RUN-ABC-123", gotWorkspace: TEST_WORKSPACE, argRunId: null, argWorkspace: null,
+  });
 });
 
 test("不同 runId 注入正确（每次调用独立）", async () => {
-  const a = await execute("probeRunId", {}, { runId: "run-a" });
-  const b = await execute("probeRunId", {}, { runId: "run-b" });
+  const a = await execute("probeRunId", {}, { runId: "run-a", workspaceRoot: TEST_WORKSPACE });
+  const b = await execute("probeRunId", {}, { runId: "run-b", workspaceRoot: TEST_WORKSPACE });
   assert.equal(JSON.parse(a).gotRunId, "run-a");
   assert.equal(JSON.parse(b).gotRunId, "run-b");
 });
@@ -63,14 +70,20 @@ test("不同 runId 注入正确（每次调用独立）", async () => {
 // ---- 3. LLM 无法通过 args 覆盖 Runtime runId ----
 test("args 携带 runId 无法覆盖 context.runId", async () => {
   // 即使 LLM（或恶意构造的 tool_call）在 args 里塞了 runId，工具看到的仍必须是 context 注入值
-  const res = await execute("probeRunId", { runId: "HACKED" }, { runId: "RUN-REAL" });
+  const res = await execute(
+    "probeRunId",
+    { runId: "HACKED", workspaceRoot: "/tmp/HACKED" },
+    { runId: "RUN-REAL", workspaceRoot: TEST_WORKSPACE }
+  );
   const parsed = JSON.parse(res);
   assert.equal(parsed.gotRunId, "RUN-REAL"); // 工具契约：只信 context
   assert.equal(parsed.argRunId, "HACKED"); // args 里的 runId 只是普通数据，不被当作身份
+  assert.equal(parsed.gotWorkspace, TEST_WORKSPACE);
+  assert.equal(parsed.argWorkspace, "/tmp/HACKED");
 });
 
 // ---- 4. 现有 calculator / getWeather 行为不变 ----
-const ctx: ToolContext = { runId: "behavior-run" };
+const ctx: ToolContext = { runId: "behavior-run", workspaceRoot: TEST_WORKSPACE };
 
 test("calculator 行为不变（15*37 → 555）", async () => {
   const res = await execute("calculator", { expression: "15*37" }, ctx);

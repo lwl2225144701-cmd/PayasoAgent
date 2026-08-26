@@ -14,6 +14,7 @@
     "test:tools": "tsx tests/filesystem-tools.test.ts",
     "test:operation-identity": "tsx tests/operation-identity.test.ts",
     "test:side-effect": "tsx tests/side-effect.test.ts",
+    "test:workspace": "tsx tests/workspace.test.ts",
     "host": "tsx --env-file=.env src/host/index.ts",
     "test:host": "tsx --env-file=.env tests/host.test.ts",
     "dev:web": "cd web && npm run dev",

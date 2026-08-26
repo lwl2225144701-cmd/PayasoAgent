@@ -10,6 +10,11 @@ export interface HostRun {
   updatedAt: string;
   result?: string;
   error?: string;
+  workspace?: WorkspaceView;
+}
+
+export interface WorkspaceView {
+  name: string;
 }
 
 export interface FileEntry {

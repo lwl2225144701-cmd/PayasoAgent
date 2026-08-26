@@ -20,8 +20,8 @@ const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-runtime-tools-")
 process.env.SANDBOX_ROOT = TEST_ROOT;
 
 const RUN = "runtime-tools-test";
-const ctx: ToolContext = { runId: RUN };
 const root = createWorkspace(RUN);
+const ctx: ToolContext = { runId: RUN, workspaceRoot: root };
 
 const tests: { name: string; fn: () => void | Promise<void> }[] = [];
 function test(name: string, fn: () => void | Promise<void>) {

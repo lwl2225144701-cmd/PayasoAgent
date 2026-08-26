@@ -1,5 +1,7 @@
 # PayasoAgent Runtime Kernel Freeze Baseline
 
+> **⚠️ 本文档已过时（Superseded）。** 描述的是 v1.3.3 Kernel Freeze 基线；代码已演进到 v1.5 + Host API + Web UI（写工具 / shell / workspace 均已实现，Freeze 声明已实际被打破）。**当前架构以 [architecture-current.md](./architecture-current.md) 为准**。本文件仅保留作为 Freeze 基线的历史记录。
+
 > 文档定位：Kernel 阶段总结 — 以 `src/runtime/` 代码与现有测试为准，梳理"这个 Runtime 现在能保证什么"，并明确 Kernel / Harness 的分层边界。
 >
 > 核心原则：**不证明 Runtime 很强，只说它已验证过的边界；不夸大能力，不脑补未实现特性。**

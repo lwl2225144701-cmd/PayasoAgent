@@ -1,6 +1,6 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
 // 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: tool-contract / filesystem-tools / sandbox-manager / operation-identity / side-effect
+// 覆盖: 12 个无 LLM 套件，含 Workspace/Host、LLM transport mock 与 docs contract
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
 //   2. 以子进程退出码判定套件通过与否（各套件内部已实现 失败 → 非 0 退出）
@@ -21,6 +21,9 @@ const SUITES: { name: string; file: string }[] = [
   { name: "output-guard", file: "tests/output-guard.test.ts" },
   { name: "runtime-tools", file: "tests/runtime-tools.test.ts" },
   { name: "os-sandbox", file: "tests/os-sandbox.test.ts" },
+  { name: "workspace", file: "tests/workspace.test.ts" },
+  { name: "llm", file: "tests/llm.test.ts" },
+  { name: "docs-contract", file: "tests/docs-contract.test.ts" },
   { name: "side-effect", file: "tests/side-effect.test.ts" },
 ];
 

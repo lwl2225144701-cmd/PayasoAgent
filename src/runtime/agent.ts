@@ -4,7 +4,7 @@ import { chat, type ChatMessage } from "../llm/llm.js";
 import { execute, getTool, getSchemas, validateToolResult, type ToolSandboxEvent } from "../tools/tools.js";
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
 import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
-import { createWorkspace } from "../sandbox/sandbox-manager.js";
+import { createWorkspace, canonicalizeWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
@@ -49,14 +49,18 @@ function stripThink(text: string): string {
 // opts.runId: 可选，供测试固定 runId（默认仍随机生成；resume 时忽略，沿用 checkpoint 的 runId）
 export async function runAgent(
   task: string,
-  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; sideEffects?: ExecutedOperation[] },
-  opts?: { runId?: string; onTrace?: (ev: TraceEvent) => void; isCancelled?: () => boolean }
+  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; sideEffects?: ExecutedOperation[] },
+  opts?: { runId?: string; workspaceRoot?: string; onTrace?: (ev: TraceEvent) => void; isCancelled?: () => boolean }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
   const runId = resume ? resume.state.runId : (opts?.runId ?? crypto.randomUUID());
 
   // Sandbox: 确保当前 runId 工作区存在（input/work/output）；resume 沿用原工作区（幂等复用，不做 cleanup）
-  createWorkspace(runId);
+  const legacyWorkspaceRoot = createWorkspace(runId);
+  const workspaceRoot = canonicalizeWorkspaceRoot(
+    resume?.workspaceRoot ?? opts?.workspaceRoot ?? legacyWorkspaceRoot
+  );
+  const toolContext = { runId, workspaceRoot };
 
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
@@ -84,6 +88,7 @@ export async function runAgent(
       scratchpad,
       messages,
       state,
+      workspaceRoot,
       sideEffects: sideEffectGuard.snapshot(),
     });
     console.log(`[Checkpoint] saved → ${file}`);
@@ -134,8 +139,10 @@ export async function runAgent(
 
       // 1. 调用 LLM 判断下一步
       const assistantMsg = await chat(messages, getSchemas());
-      // 思考内容只用于 trace 展示，不写回下一轮上下文，避免污染模型消息。
+      // Provider reasoning_content and inline <think> blocks are trace/display
+      // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;
+      assistantHistoryMessage.content = stripThink(assistantHistoryMessage.content);
       messages.push(assistantHistoryMessage);
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
@@ -153,7 +160,6 @@ export async function runAgent(
       // 2. LLM 决策日志：是否选择工具
       if (!assistantMsg.tool_calls?.length) {
         console.log("[LLM 决策] 未选择工具 → 生成最终答案");
-        // 历史消息保留原始 content（维持推理链），仅展示时去除 think 标签
         const answer = stripThink(assistantMsg.content);
 
         // Trace: 最终答案 + 总执行步骤数
@@ -203,8 +209,8 @@ export async function runAgent(
         //   start      → 正常开始（execute 前持久化 executing，见下）
         // 置于防死循环判定之前。
         if (toolDef?.effect === "non_idempotent") {
-          // 注入 ToolContext（含 runId）供路径类工具做 operation identity 归一化（./ 与根段 → 同一 key）
-          const disposition = resolveOperation(sideEffectGuard, toolDef, args, { runId: state.runId });
+          // 注入 ToolContext（runId + workspaceRoot）供路径工具归一化 identity；LLM 不可覆盖
+          const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext);
           if (disposition.kind === "replay") {
             console.log(
               `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`
@@ -213,7 +219,7 @@ export async function runAgent(
               addEvent(trace, {
                 type: "side_effect_skip",
                 tool: toolName,
-                key: operationIdentity(toolDef, args, { runId: state.runId }),
+                key: operationIdentity(toolDef, args, toolContext),
                 replayed: true,
               })
             );
@@ -222,7 +228,7 @@ export async function runAgent(
           }
           if (disposition.kind === "uncertain") {
             const uncertainMsg =
-              `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, { runId: state.runId })}）` +
+              `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, toolContext)}）` +
               `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
               `请勿再次使用相同参数调用；请修正参数、换其他方法或向用户说明。`;
             console.log(`[Side-Effect Uncertain] ${uncertainMsg}`);
@@ -230,7 +236,7 @@ export async function runAgent(
               addEvent(trace, {
                 type: "side_effect_uncertain",
                 tool: toolName,
-                key: operationIdentity(toolDef, args, { runId: state.runId }),
+                key: operationIdentity(toolDef, args, toolContext),
               })
             );
             messages.push({ role: "tool", tool_call_id: call.id, content: uncertainMsg });
@@ -290,7 +296,7 @@ export async function runAgent(
         // v1.3.2：non_idempotent 开始执行前先持久化 executing 状态；
         //   persist(executing) 失败 → 禁止 execute，作为 Runtime 错误处理（防止无保护的副作用执行）。
         if (toolDef?.effect === "non_idempotent") {
-          const opKey = operationIdentity(toolDef, args, { runId: state.runId });
+          const opKey = operationIdentity(toolDef, args, toolContext);
           sideEffectGuard.begin(opKey);
           try {
             save();
@@ -304,9 +310,9 @@ export async function runAgent(
         for (let attempt = 1; attempt <= effectiveRetries + 1; attempt++) {
           try {
             const start = performance.now();
-            // ToolContext 由 Runtime 注入：runId 只来自 State，LLM 不可见、不可通过 args 覆盖
+            // ToolContext 由 Runtime 注入：runId/workspaceRoot 均不可见、不可通过 args 覆盖
             const rawResult = await execute(toolName, args, {
-              runId: state.runId,
+              ...toolContext,
               onSandboxEvent: (event: ToolSandboxEvent) => {
                 if (event.type === "shell_sandbox_started") {
                   printEvent(addEvent(trace, {
@@ -343,7 +349,7 @@ export async function runAgent(
             console.log(`[Tool 返回] ${result}`);
 
             // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）
-            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, { runId: state.runId });
+            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, toolContext);
 
             // State: 工具执行成功（execute 维度，先于结果有效性判定）
             updateState(state, {
@@ -441,7 +447,7 @@ export async function runAgent(
             // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
             // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
             if (toolDef?.effect === "non_idempotent") {
-              sideEffectGuard.markUncertain(operationIdentity(toolDef, args, { runId: state.runId }));
+              sideEffectGuard.markUncertain(operationIdentity(toolDef, args, toolContext));
             }
 
             // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）

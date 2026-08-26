@@ -7,6 +7,9 @@
 import { runAgent } from "../runtime/agent.js";
 import { loadCheckpoint } from "../runtime/checkpoint.js";
 import { sseEncode, type HostEvent } from "./run-events.js";
+import { getWorkspace, workspacePublicView } from "./workspace.js";
+import path from "node:path";
+import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 
 export type HostRunStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -18,12 +21,14 @@ export interface HostRun {
   updatedAt: string;
   result?: string;
   error?: string;
+  workspace?: { name: string };
 }
 
 // 内部 run 记录（含事件缓冲 + 取消标记，不对外暴露）
 interface InternalRun extends HostRun {
   events: HostEvent[];
   cancelled: boolean;
+  workspaceRoot?: string;
 }
 
 // SSE 订阅者：持有下游响应写入（由 server 层提供）
@@ -43,6 +48,7 @@ export class RunManager {
   create(task: string): string {
     const runId = crypto.randomUUID();
     const now = new Date().toISOString();
+    const workspace = getWorkspace();
     const run: InternalRun = {
       runId,
       task,
@@ -51,6 +57,8 @@ export class RunManager {
       updatedAt: now,
       events: [],
       cancelled: false,
+      workspace: workspacePublicView(workspace) ?? undefined,
+      workspaceRoot: workspace?.rootPath ?? getRunWorkspaceRoot(runId),
     };
     this.runs.set(runId, run);
     this.counters.set(runId, 0);
@@ -59,6 +67,7 @@ export class RunManager {
     // 启动后台 Run（不 await，立即返回）
     void runAgent(task, undefined, {
       runId,
+      workspaceRoot: run.workspaceRoot,
       onTrace: (ev) => this.record(run, ev),
       isCancelled: () => run.cancelled,
     })
@@ -87,9 +96,16 @@ export class RunManager {
 
   // ---- 复用 Checkpoint/Resume 恢复 Run（该 runId 需有 checkpoint）----
   resume(runId: string): boolean {
+    // A single Host process may only have one active executor for a runId.
+    // Check this before loading/replacing the in-memory record so two agents
+    // can never race on the same checkpoint and Workspace.
+    if (this.runs.get(runId)?.status === "running") return false;
     const cp = loadCheckpoint(runId);
     if (!cp) return false;
     const now = new Date().toISOString();
+    const workspace = cp.workspaceRoot
+      ? { rootPath: cp.workspaceRoot, name: path.basename(cp.workspaceRoot) || cp.workspaceRoot }
+      : null;
     const run: InternalRun = {
       runId,
       task: cp.task,
@@ -98,6 +114,8 @@ export class RunManager {
       updatedAt: now,
       events: [],
       cancelled: false,
+      workspace: workspacePublicView(workspace) ?? undefined,
+      workspaceRoot: cp.workspaceRoot ?? getRunWorkspaceRoot(runId),
     };
     this.runs.set(runId, run);
     this.counters.set(runId, 0);
@@ -132,8 +150,6 @@ export class RunManager {
       return true;
     }
     run.cancelled = true;
-    run.status = "stopped";
-    run.updatedAt = new Date().toISOString();
     this.finish(run, "stopped");
     return true;
   }
@@ -161,6 +177,10 @@ export class RunManager {
     return this.runs.get(runId);
   }
 
+  getWorkspaceRoot(runId: string): string | null {
+    return this.runs.get(runId)?.workspaceRoot ?? null;
+  }
+
   private publicView(r: InternalRun): HostRun {
     return {
       runId: r.runId,
@@ -170,6 +190,7 @@ export class RunManager {
       updatedAt: r.updatedAt,
       result: r.result,
       error: r.error,
+      workspace: r.workspace,
     };
   }
 

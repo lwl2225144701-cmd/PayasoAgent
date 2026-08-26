@@ -6,8 +6,8 @@ import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
 import { SummaryDrawer } from './components/SummaryDrawer';
 import { useEventStream } from './hooks/useEventStream';
-import { createRun, listRuns, listFiles, stopRun } from './api';
-import type { FileEntry, HostRun } from './types';
+import { createRun, getWorkspace, listRuns, listFiles, openWorkspace, stopRun } from './api';
+import type { FileEntry, HostRun, WorkspaceView } from './types';
 import styles from './App.module.css';
 
 export default function App() {
@@ -19,6 +19,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
+  const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { events } = useEventStream(currentRunId);
@@ -37,6 +39,7 @@ export default function App() {
 
   useEffect(() => {
     refreshRuns();
+    getWorkspace().then(resp => setWorkspace(resp.workspace)).catch(() => {});
     pollTimerRef.current = setInterval(refreshRuns, 2000);
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
@@ -107,6 +110,19 @@ export default function App() {
     }, 50);
   }, []);
 
+  const handleOpenWorkspace = useCallback(async () => {
+    if (openingWorkspace) return;
+    setOpeningWorkspace(true);
+    try {
+      const resp = await openWorkspace();
+      if (!resp.cancelled) setWorkspace(resp.workspace);
+    } catch (err) {
+      console.error('Failed to open workspace:', err);
+    } finally {
+      setOpeningWorkspace(false);
+    }
+  }, [openingWorkspace]);
+
   void online;
   void loading;
 
@@ -119,6 +135,9 @@ export default function App() {
         onNewTask={handleNewTask}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed(value => !value)}
+        workspace={workspace}
+        openingWorkspace={openingWorkspace}
+        onOpenWorkspace={handleOpenWorkspace}
       />
 
       <div className={styles.main}>

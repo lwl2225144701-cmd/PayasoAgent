@@ -7,13 +7,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { RunManager, type SseSink } from "./run-manager.js";
 import {
-  resolvePath,
-  assertInsideWorkspace,
-  getSandboxRoot,
+  resolveWorkspacePath,
+  assertInsideRoot,
 } from "../sandbox/sandbox-manager.js";
+import {
+  clearWorkspace,
+  getWorkspace,
+  openWorkspacePicker,
+  workspacePublicView,
+} from "./workspace.js";
 
 const MAX_FILE_BYTES = 1024 * 1024; // 读文件大小上限
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
+const MAX_BODY_BYTES = 64 * 1024; // Host JSON 请求体上限
 const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 const WORKSPACE_DIRS = ["input", "work", "output"];
 
@@ -128,15 +134,32 @@ function segs(req: IncomingMessage): string[] {
   return (req.url ?? "/").split("?")[0].split("/").filter(Boolean).map(decodeURIComponent);
 }
 
+class RequestBodyTooLargeError extends Error {}
+
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let data = "";
-  for await (const chunk of req) data += chunk;
+  const declared = Number(req.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    // Drain the request so the HTTP connection can still receive the 413.
+    req.resume();
+    throw new RequestBodyTooLargeError("request body too large");
+  }
+
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let tooLarge = false;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += buf.length;
+    if (bytes > MAX_BODY_BYTES) {
+      tooLarge = true;
+      continue; // Keep draining, but never retain bytes beyond the limit.
+    }
+    chunks.push(buf);
+  }
+  if (tooLarge) throw new RequestBodyTooLargeError("request body too large");
+  const data = Buffer.concat(chunks).toString("utf8");
   if (!data) return {};
   try { return JSON.parse(data) as Record<string, unknown>; } catch { return {}; }
-}
-
-function workspaceRoot(runId: string): string {
-  return path.join(getSandboxRoot(), "workspaces", runId);
 }
 
 // 递归列文件（相对路径 + 大小），限制深度与数量避免超大工作区
@@ -149,7 +172,7 @@ function listFiles(root: string, rel = "", depth = 0, out: { name: string; size:
     if (out.length >= limit) break;
     const child = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) listFiles(root, child, depth + 1, out, limit);
-    else {
+    else if (e.isFile()) {
       try { out.push({ name: child, size: fs.statSync(path.join(root, child)).size }); }
       catch { /* 忽略不可读 */ }
     }
@@ -175,12 +198,12 @@ function sinkOf(res: ServerResponse): SseSink {
   return { write: (c) => res.write(c), end: () => res.end(), closed: () => res.writableEnded };
 }
 
-// 文件读取：仅允许访问当前 runId workspace 内路径（resolvePath + assertInsideWorkspace 双重校验）
-function readFileChecked(runId: string, rel: string): { ok: true; content: string; name: string } | { ok: false; error: string } {
+// 文件读取：仅允许访问该 Run 绑定的 Workspace Root（字符串 + realpath 双重校验）
+function readFileChecked(root: string, rel: string): { ok: true; content: string; name: string } | { ok: false; error: string } {
   try {
     if (rel === "" || rel === "." || rel.includes("..")) return { ok: false, error: "非法相对路径" };
-    const real = resolvePath(runId, rel);
-    assertInsideWorkspace(runId, real);
+    const real = resolveWorkspacePath(root, rel);
+    assertInsideRoot(root, real);
     const st = fs.statSync(real);
     if (st.isDirectory()) return { ok: false, error: "是目录，非文件" };
     if (st.size > MAX_FILE_BYTES) return { ok: false, error: "文件过大" };
@@ -200,7 +223,31 @@ export async function handleRequest(
   const s = segs(req);
   const method = req.method ?? "GET";
 
-  // 非 /runs/* → 静态文件服务（含 SPA fallback）
+  // Current Workspace: the native picker is Host-owned because browsers do
+  // not reveal arbitrary absolute local paths. Normal responses expose name only.
+  if (s[0] === "workspace") {
+    if (s.length === 1 && method === "GET") {
+      return sendJson(res, 200, { workspace: workspacePublicView(getWorkspace()) });
+    }
+    if (s.length === 1 && method === "DELETE") {
+      clearWorkspace();
+      return sendJson(res, 200, { workspace: null });
+    }
+    if (s.length === 2 && s[1] === "open" && method === "POST") {
+      try {
+        const workspace = await openWorkspacePicker();
+        return sendJson(res, 200, {
+          workspace: workspacePublicView(workspace ?? getWorkspace()),
+          cancelled: workspace === null,
+        });
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    return notFound(res);
+  }
+
+  // 非 /runs/* /workspace → 静态文件服务（含 SPA fallback）
   if (s[0] !== "runs") {
     // 仅 GET/HEAD 允许访问静态文件
     if (method !== "GET" && method !== "HEAD") { res.writeHead(405); res.end("method not allowed"); return; }
@@ -211,7 +258,15 @@ export async function handleRequest(
   if (s.length === 1) {
     if (method === "GET") return sendJson(res, 200, { runs: manager.list() });
     if (method === "POST") {
-      const body = await readBody(req);
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
       const task = typeof body.task === "string" ? body.task.trim() : "";
       if (!task) return bad(res, "缺少 task");
       const newRunId = manager.create(task);
@@ -250,12 +305,16 @@ export async function handleRequest(
       if (s.length === 3) {
         const run = manager.get(runId);
         if (!run) return notFound(res);
-        const files = listFiles(workspaceRoot(runId));
+        const root = manager.getWorkspaceRoot(runId);
+        if (!root) return notFound(res);
+        const files = listFiles(root);
         return sendJson(res, 200, { runId, files });
       }
       // GET /runs/:id/files/<rel> → 读文件
       const rel = s.slice(3).join("/");
-      const read = readFileChecked(runId, rel);
+      const root = manager.getWorkspaceRoot(runId);
+      if (!root) return notFound(res);
+      const read = readFileChecked(root, rel);
       return read.ok ? sendJson(res, 200, { runId, name: read.name, content: read.content }) : bad(res, read.error);
     }
     default:

@@ -30,15 +30,32 @@ function assertSafeRunId(runId: string): void {
 }
 
 // 当前 runId 的 workspace 根绝对路径：<sandboxRoot>/workspaces/<runId>
-function workspaceRoot(runId: string): string {
+export function getRunWorkspaceRoot(runId: string): string {
   assertSafeRunId(runId);
   return path.join(getSandboxRoot(), "workspaces", runId);
+}
+
+// Canonicalize an explicitly authorized workspace root. This is the only
+// representation carried by Host/Runtime after a user selects a directory.
+export function canonicalizeWorkspaceRoot(rootPath: string): string {
+  const raw = String(rootPath ?? "").trim();
+  if (!raw || !path.isAbsolute(raw)) {
+    throw new Error("Workspace 路径必须是绝对路径");
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(raw);
+  } catch {
+    throw new Error("Workspace 目录不存在或不可访问");
+  }
+  if (!stat.isDirectory()) throw new Error("Workspace 路径必须指向目录");
+  return fs.realpathSync.native(raw);
 }
 
 // ---- 1. createWorkspace ----
 // 创建 input/work/output 三个子目录；已存在时安全复用（recursive）
 export function createWorkspace(runId: string): string {
-  const root = workspaceRoot(runId);
+  const root = getRunWorkspaceRoot(runId);
   for (const sub of ["input", "work", "output"]) {
     fs.mkdirSync(path.join(root, sub), { recursive: true });
   }
@@ -48,7 +65,13 @@ export function createWorkspace(runId: string): string {
 // ---- 2. resolvePath ----
 // 只解析到当前 runId workspace 内；禁止绝对路径 / .. 穿越 / Windows 盘符；返回规范化绝对路径
 export function resolvePath(runId: string, relativePath: string): string {
-  const root = workspaceRoot(runId);
+  return resolveWorkspacePath(getRunWorkspaceRoot(runId), relativePath);
+}
+
+// Resolve an LLM-provided relative path against a Runtime-authorized root.
+// The root itself never comes from Tool args.
+export function resolveWorkspacePath(rootPath: string, relativePath: string): string {
+  const root = path.resolve(rootPath);
   const p = String(relativePath ?? "");
   if (p.length === 0) throw new Error("相对路径不能为空");
   if (path.isAbsolute(p) || /^[a-zA-Z]:[\\/]/.test(p)) {
@@ -85,7 +108,14 @@ function realpathOfNearestExisting(p: string): string {
 // 校验"最终真实路径"不能逃出 workspace（含 symlink 解析）；
 // 目标不存在时向上找最近存在的祖先做 realpath 校验，保证父路径仍在 sandbox 内。
 export function assertInsideWorkspace(runId: string, targetPath: string): void {
-  const root = workspaceRoot(runId);
+  assertInsideRoot(getRunWorkspaceRoot(runId), targetPath);
+}
+
+// Real-path containment check shared by legacy per-run sandboxes and real
+// user-selected workspaces. Non-existing targets are checked via their nearest
+// existing ancestor; symlink traversal remains fail-closed.
+export function assertInsideRoot(rootPath: string, targetPath: string): void {
+  const root = path.resolve(rootPath);
   const abs = path.resolve(String(targetPath));
 
   // 3.1 字符串级：绝对路径必须位于 root 之下（快速失败，拒绝明显的逃逸）
@@ -143,7 +173,7 @@ export function assertInsideWorkspace(runId: string, targetPath: string): void {
 export function cleanupWorkspace(runId: string): void {
   const sandboxRoot = getSandboxRoot();
   const workspacesDir = path.join(sandboxRoot, "workspaces");
-  const root = workspaceRoot(runId); // runId 已校验（禁止 .. / 分隔符 / 绝对路径）
+  const root = getRunWorkspaceRoot(runId); // runId 已校验（禁止 .. / 分隔符 / 绝对路径）
 
   // 防御：root 必须是 workspaces 下的单个 runId 段（单层，无分隔符）
   const rel = path.relative(workspacesDir, root);

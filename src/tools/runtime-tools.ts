@@ -1,15 +1,15 @@
 // 模块: Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
 // 安全契约与 filesystem.ts 一致：
-// - LLM 只传工作区内相对路径；真实路径由 ToolContext.runId + resolvePath/assertInsideWorkspace 双重校验
+// - LLM 只传工作区内相对路径；真实路径由 ToolContext.workspaceRoot + 双重路径校验
 // - 全部显式声明 effect（副作用语义必须明确）
-// - shell 仅以当前 runId/work 为 cwd；文件系统边界由 macOS OS Sandbox 强制执行
+// - shell 以当前 context.workspaceRoot 为 cwd；文件系统边界由 macOS OS Sandbox 强制执行
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
 
 import fs from "node:fs";
 import path from "node:path";
 import { register, type ToolContext } from "./tools.js";
-import { resolvePath, assertInsideWorkspace, getSandboxRoot } from "../sandbox/sandbox-manager.js";
-import { MacOSSandbox } from "../sandbox/macos-sandbox.js";
+import { resolveWorkspacePath, assertInsideRoot } from "../sandbox/sandbox-manager.js";
+import { MacOSSandbox, probeSandboxAvailability, type MacOSSandboxResult } from "../sandbox/macos-sandbox.js";
 import { canonicalPathKey, assertWritableZone } from "./filesystem.js";
 
 // 与 filesystem.ts 保持一致的最大限幅
@@ -23,8 +23,8 @@ function rejectPath(rel: string): never {
 
 function guardPath(context: ToolContext, rel: string): string {
   try {
-    const real = resolvePath(context.runId, rel);
-    assertInsideWorkspace(context.runId, real);
+    const real = resolveWorkspacePath(context.workspaceRoot, rel);
+    assertInsideRoot(context.workspaceRoot, real);
     return real;
   } catch {
     rejectPath(rel);
@@ -123,7 +123,7 @@ register({
 register({
   name: "createDir",
   description:
-    "在沙箱工作区内创建单个目录（仅允许 work/ 或 output/ 下）。path 为工作区内相对目录路径；父目录必须已存在；已存在则幂等返回。",
+    "在当前 Workspace 内创建单个目录。path 必须是 Workspace 内相对目录路径；父目录必须已存在；已存在则幂等返回。",
   effect: "idempotent",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
@@ -133,14 +133,14 @@ register({
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "工作区内相对目录路径，仅允许 work/ 或 output/ 开头，如 work/sub" },
+      path: { type: "string", description: "当前 Workspace 内相对目录路径，如 src/generated" },
     },
     required: ["path"],
   },
   execute: async (args, context) => {
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
-    assertWritableZone(rel);
+    assertWritableZone(rel, context);
     const real = guardPath(context, rel);
 
     // 父目录必须已存在
@@ -174,7 +174,7 @@ register({
 register({
   name: "moveFile",
   description:
-    "移动沙箱工作区内文件。source/target 均为工作区内相对路径，仅允许 work/ 或 output/ 下。会破坏源位置（非幂等）。",
+    "移动当前 Workspace 内文件。source/target 均必须是 Workspace 内相对路径。会破坏源位置（非幂等）。",
   effect: "non_idempotent",
   getOperationKey: (args, context) => {
     const src = String(args.source ?? "").trim();
@@ -196,8 +196,8 @@ register({
     const dst = String(args.target ?? "").trim();
     if (!src) throw new Error("缺少参数 source");
     if (!dst) throw new Error("缺少参数 target");
-    assertWritableZone(src);
-    assertWritableZone(dst);
+    assertWritableZone(src, context);
+    assertWritableZone(dst, context);
     const realSrc = guardPath(context, src);
     const realDst = guardPath(context, dst);
 
@@ -230,7 +230,7 @@ register({
 register({
   name: "deleteFile",
   description:
-    "删除沙箱工作区内文件（仅允许 work/ 或 output/ 下，不递归删除目录）。path 为工作区内相对文件路径；文件不存在则幂等返回。",
+    "删除当前 Workspace 内文件（不递归删除目录）。path 必须是 Workspace 内相对文件路径；文件不存在则幂等返回。",
   effect: "idempotent",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
@@ -247,7 +247,7 @@ register({
   execute: async (args, context) => {
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
-    assertWritableZone(rel);
+    assertWritableZone(rel, context);
     const real = guardPath(context, rel);
 
     try {
@@ -270,13 +270,13 @@ register({
 register({
   name: "shell",
   description:
-    "在当前沙箱工作区的 work 目录下执行一条 shell 命令（macOS OS Sandbox，非交互，timeout 10s，输出限 64KB）。命令及其子进程只能读写当前 workspace。",
+    "在当前 Workspace 根目录执行一条 shell 命令（macOS OS Sandbox，非交互，timeout 10s，输出限 64KB）。命令及其子进程只能读写当前 Workspace。",
   effect: "non_idempotent",
   getOperationKey: (args) => `cmd:${String(args.command ?? "").trim()}`,
   parameters: {
     type: "object",
     properties: {
-      command: { type: "string", description: "要在 work 目录执行的 shell 命令" },
+      command: { type: "string", description: "要在当前 Workspace 根目录执行的 shell 命令" },
     },
     required: ["command"],
   },
@@ -284,30 +284,48 @@ register({
     const cmd = String(args.command ?? "").trim();
     if (!cmd) throw new Error("缺少参数 command");
 
-    const workspaceRoot = path.join(getSandboxRoot(), "workspaces", context.runId);
-    const workDir = path.join(workspaceRoot, "work");
-    const home = path.join(workDir, ".home");
-    const tmpdir = path.join(workDir, ".tmp");
-    fs.mkdirSync(home, { recursive: true });
-    fs.mkdirSync(tmpdir, { recursive: true });
+    // Fail-closed gate: never run an unsandboxed shell. sandbox-exec is
+    // deprecated; on some macOS releases (e.g. macOS 26) it cannot apply any
+    // profile ("Operation not permitted"). When the primitive is unavailable
+    // the shell tool refuses, so containment is never silently dropped.
+    if (!(await probeSandboxAvailability())) {
+      throw new Error(
+        "Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system " +
+        "(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve " +
+        "filesystem containment."
+      );
+    }
 
-    const sandbox = MacOSSandbox.forWorkspace(workspaceRoot);
-    const result = await sandbox.run(cmd, {
-      cwd: workDir,
-      home,
-      tmpdir,
-      onEvent: (event) => {
-        if (event === "started") {
-          context.onSandboxEvent?.({ type: "shell_sandbox_started", platform: "macos" });
-        } else {
-          context.onSandboxEvent?.({
-            type: "shell_sandbox_denied",
-            platform: "macos",
-            reason: "workspace_policy",
-          });
-        }
-      },
-    });
+    const workspaceRoot = context.workspaceRoot;
+    const workDir = workspaceRoot;
+    // HOME/TMPDIR must stay under the same authorized root. Use an ephemeral
+    // per-call directory so npm/tsx caches never become project artifacts.
+    const runtimeDir = fs.mkdtempSync(path.join(workspaceRoot, ".payaso-shell-"));
+    const home = runtimeDir;
+    const tmpdir = runtimeDir;
+
+    let result: MacOSSandboxResult;
+    try {
+      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot);
+      result = await sandbox.run(cmd, {
+        cwd: workDir,
+        home,
+        tmpdir,
+        onEvent: (event) => {
+          if (event === "started") {
+            context.onSandboxEvent?.({ type: "shell_sandbox_started", platform: "macos" });
+          } else {
+            context.onSandboxEvent?.({
+              type: "shell_sandbox_denied",
+              platform: "macos",
+              reason: "workspace_policy",
+            });
+          }
+        },
+      });
+    } finally {
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+    }
 
     if (result.denied) {
       // Do not expose stderr or host paths to the LLM/context.

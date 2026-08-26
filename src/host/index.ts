@@ -6,7 +6,7 @@ import { createHostServer } from "./server.js";
 const port = Number(process.env.PORT ?? 4500);
 const server = createHostServer();
 
-server.listen(port, () => {
+server.listen(port, "127.0.0.1", () => {
   console.log(`Payaso Host API listening on http://localhost:${port}`);
   console.log(`  POST /runs                创建 Run`);
   console.log(`  GET  /runs                列出 Run`);
@@ -16,6 +16,8 @@ server.listen(port, () => {
   console.log(`  GET  /runs/:id/events     SSE 事件流`);
   console.log(`  GET  /runs/:id/files      列 workspace 文件`);
   console.log(`  GET  /runs/:id/files/*    读 workspace 文件`);
+  console.log(`  GET  /workspace            当前 Workspace`);
+  console.log(`  POST /workspace/open       打开本地文件夹`);
 });
 
 // 优雅退出：关闭 SSE 连接

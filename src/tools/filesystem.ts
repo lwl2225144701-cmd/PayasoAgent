@@ -1,6 +1,6 @@
 // 模块: Sandbox 文件工具（只读 listDir / readFile + 受控写入 writeFile）
-// 安全契约：LLM 只传工作区内相对路径；真实路径由 Runtime 注入的 ToolContext.runId +
-// SandboxManager.resolvePath / assertInsideWorkspace 解析与校验。
+// 安全契约：LLM 只传工作区内相对路径；真实路径由 Runtime 注入的 ToolContext.workspaceRoot +
+// resolveWorkspacePath / assertInsideRoot 解析与校验。
 // 核心原则：模型决定读取什么，Runtime 决定在哪里读取。
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做 operation key 归一化（不暴露宿主绝对路径）。
 
@@ -8,9 +8,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { register, type ToolContext } from "./tools.js";
 import {
-  resolvePath,
-  assertInsideWorkspace,
-  getSandboxRoot,
+  resolveWorkspacePath,
+  assertInsideRoot,
+  getRunWorkspaceRoot,
 } from "../sandbox/sandbox-manager.js";
 
 // 最大读取限制：超过则返回 invalid result，不把大文件塞进 Context
@@ -27,8 +27,8 @@ function rejectPath(rel: string): never {
 // 任何逃逸（.. / 绝对路径 / symlink 指向外部）→ BLOCKED（tool_error）
 function guardPath(context: ToolContext, rel: string): string {
   try {
-    const real = resolvePath(context.runId, rel);
-    assertInsideWorkspace(context.runId, real);
+    const real = resolveWorkspacePath(context.workspaceRoot, rel);
+    assertInsideRoot(context.workspaceRoot, real);
     return real;
   } catch {
     rejectPath(rel);
@@ -41,10 +41,9 @@ function guardPath(context: ToolContext, rel: string): string {
 // 若路径非法（穿越/绝对），返回 null，由调用方回退保守处理。
 export function canonicalPathKey(context: ToolContext, rel: string): string | null {
   try {
-    const real = resolvePath(context.runId, rel);
-    assertInsideWorkspace(context.runId, real);
-    const wsRoot = path.join(getSandboxRoot(), "workspaces", context.runId);
-    const relKey = path.relative(wsRoot, real);
+    const real = resolveWorkspacePath(context.workspaceRoot, rel);
+    assertInsideRoot(context.workspaceRoot, real);
+    const relKey = path.relative(context.workspaceRoot, real);
     // 统一分隔符为 "/"（跨平台稳定）；剥离头部 "./"
     const norm = relKey.split(path.sep).join("/").replace(/^\.\//, "");
     return norm === "" ? "/" : norm;
@@ -174,7 +173,12 @@ export const MAX_WRITE_BYTES = 1024 * 1024; // 1MB
 const WRITABLE_TOP_LEVEL = new Set(["work", "output"]);
 
 // 权限规则的字符串级首段校验：禁止写入 input/，也禁止任何非白名单顶层目录
-export function assertWritableZone(rel: string): void {
+export function assertWritableZone(rel: string, context: ToolContext): void {
+  // Legacy no-Workspace mode keeps input/ read-only and work/output writable.
+  // An explicitly authorized real Workspace is writable throughout its root.
+  const legacyRoot = path.resolve(getRunWorkspaceRoot(context.runId));
+  const activeRoot = path.resolve(context.workspaceRoot);
+  if (activeRoot !== legacyRoot) return;
   const first = String(rel).split(/[\\/]+/)[0];
   if (!first || !WRITABLE_TOP_LEVEL.has(first)) {
     throw new Error(
@@ -189,11 +193,11 @@ export function assertWritableZone(rel: string): void {
 register({
   name: "writeFile",
   description:
-    "向沙箱工作区内写文本文件（UTF-8，仅允许写入 work/ 与 output/，禁止写入 input/，单次≤1MB，原子写入）。path 为工作区内相对路径，如 work/note.txt；父目录必须已存在。",
+    "向当前 Workspace 写文本文件（UTF-8，单次≤1MB，原子写入）。path 必须是 Workspace 内相对路径，如 src/note.txt 或 work-test.txt；父目录必须已存在。",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "工作区内相对文件路径，仅允许 work/ 或 output/ 开头，如 work/note.txt" },
+      path: { type: "string", description: "当前 Workspace 内相对文件路径，如 src/note.txt 或 work-test.txt" },
       content: { type: "string", description: "要写入的 UTF-8 文本内容" },
     },
     required: ["path", "content"],
@@ -216,7 +220,7 @@ register({
     if (typeof content !== "string") throw new Error("content 必须是字符串（仅支持 UTF-8 文本）");
 
     // 权限规则①：仅允许写入 work/ 与 output/，禁止 input/ 及其他目录
-    assertWritableZone(rel);
+    assertWritableZone(rel, context);
 
     // 单次写入限制：超限直接拒绝，不产生文件（同 readFile 的"结果不可用"模式，避免无谓重试）
     if (Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) {

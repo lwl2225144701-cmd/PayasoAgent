@@ -1,4 +1,4 @@
-import type { HostRun, FileEntry, HostEvent } from './types';
+import type { HostRun, FileEntry, HostEvent, WorkspaceView } from './types';
 
 const API_BASE = '';
 
@@ -16,6 +16,14 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function createRun(task: string): Promise<{ runId: string; status: string }> {
   return jsonFetch('/runs', { method: 'POST', body: JSON.stringify({ task }) });
+}
+
+export function getWorkspace(): Promise<{ workspace: WorkspaceView | null }> {
+  return jsonFetch('/workspace');
+}
+
+export function openWorkspace(): Promise<{ workspace: WorkspaceView | null; cancelled: boolean }> {
+  return jsonFetch('/workspace/open', { method: 'POST' });
 }
 
 export function listRuns(): Promise<{ runs: HostRun[] }> {

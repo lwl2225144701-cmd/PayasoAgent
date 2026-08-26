@@ -18,8 +18,46 @@ const SHELL = "/bin/sh";
 const SHELL_TIMEOUT_MS = 10_000;
 const MAX_SHELL_OUTPUT = 64 * 1024;
 
+// ---- Capability probe (fail-closed gate) ----
+// sandbox-exec is deprecated by Apple and on some newer macOS releases it can
+// no longer apply ANY profile (e.g. macOS 26: "sandbox_apply: Operation not
+// permitted", exit 71), even for an empty policy. We must never run an
+// uncontained shell, so the shell tool refuses to execute when the OS
+// sandbox primitive is unavailable. Probe once per process and cache it.
+let sandboxAvailability: boolean | null = null;
+
+export async function probeSandboxAvailability(): Promise<boolean> {
+  if (sandboxAvailability !== null) return sandboxAvailability;
+  if (process.platform !== "darwin" || !fs.existsSync(SANDBOX_EXEC)) {
+    sandboxAvailability = false;
+    return sandboxAvailability;
+  }
+  // Mirror the real shell profile's bootstrap dependencies (system.sb import),
+  // so a working sandbox_exec completes with exit 0.
+  const probeProfile = [
+    "(version 1)",
+    "(deny default)",
+    '(import "system.sb")',
+    "(allow process-fork)",
+    "(allow process-exec)",
+    '(allow file-read* (subpath "/usr/bin"))',
+  ].join("\n");
+  const ok = await new Promise<boolean>((resolve) => {
+    execFile(
+      SANDBOX_EXEC,
+      ["-p", probeProfile, "/usr/bin/true"],
+      { timeout: 5000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 },
+      (err) => resolve(!err)
+    );
+  });
+  sandboxAvailability = ok;
+  return ok;
+}
+
 // Keep the existing shell command environment small and deterministic.
-const SAFE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+const NODE_INSTALL_ROOT = fs.realpathSync.native(path.resolve(path.dirname(process.execPath), ".."));
+const NODE_BIN_ROOT = fs.realpathSync.native(path.dirname(process.execPath));
+const SAFE_PATH = `${NODE_BIN_ROOT}:/usr/bin:/bin:/usr/sbin:/sbin`;
 
 // These are the system paths needed to load and run standard macOS command
 // line tools. No /private/etc, user home, /tmp, or other host data roots are
@@ -34,6 +72,9 @@ const MACOS_SYSTEM_READ_ROOTS = [
   "/dev/null",
   "/dev/urandom",
   "/dev/random",
+  // The Host's own Node distribution is read/exec-only. This allows project
+  // commands such as npm test while keeping user data outside Workspace denied.
+  NODE_INSTALL_ROOT,
 ];
 
 export type MacOSSandboxEvent = "started" | "denied";
@@ -72,8 +113,21 @@ function isExecutableRoot(root: string, workspaceRoot: string): boolean {
     root === "/bin" ||
     root === "/sbin" ||
     root === "/usr/bin" ||
-    root === "/usr/sbin"
+    root === "/usr/sbin" ||
+    root === NODE_INSTALL_ROOT ||
+    root === NODE_BIN_ROOT
   );
+}
+
+function pathAncestors(target: string): string[] {
+  const out: string[] = [];
+  let current = path.dirname(target);
+  while (current !== path.dirname(current)) {
+    out.push(current);
+    current = path.dirname(current);
+  }
+  out.push(current);
+  return out;
 }
 
 function profileFor(policy: SandboxPolicy): string {
@@ -94,7 +148,19 @@ function profileFor(policy: SandboxPolicy): string {
     // allowed preserves the pre-existing shell capability; filesystem access
     // is still default-deny.
     "(allow network*)",
+    // macOS shell selector symlink; target binaries remain covered by /bin.
+    '(allow file-read* (literal "/private/var/select/sh"))',
   ];
+
+  // Resolving an allowed executable symlink (notably npm -> npm-cli.js) needs
+  // lstat access to its ancestor directories. Metadata-only literals permit
+  // canonicalization without granting directory listing or file-content reads.
+  const metadataAncestors = new Set(
+    policy.readableRoots.flatMap((root) => pathAncestors(root))
+  );
+  for (const ancestor of metadataAncestors) {
+    lines.push(`(allow file-read-metadata (literal ${schemeString(ancestor)}))`);
+  }
 
   for (const root of policy.readableRoots) {
     const operation = isExecutableRoot(root, policy.workspaceRoot)

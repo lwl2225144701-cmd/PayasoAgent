@@ -1,7 +1,7 @@
 // 模块: Checkpoint — 最小持久化（本地 JSON 文件），支持任务中断后 --resume 恢复
 // 不引入数据库，不引入 Memory，只解决"中断后无法继续"的问题
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { Scratchpad } from "./scratchpad.js";
 import type { ChatMessage } from "../llm/llm.js";
@@ -19,6 +19,7 @@ export interface Checkpoint {
   scratchpad: Scratchpad; // 执行进度（completedSteps / failedSteps / nextStep）
   messages: ChatMessage[]; // 完整消息历史（恢复后继续发给 LLM）
   state: AgentState; // Agent State 快照（恢复 runId/task/统计字段）
+  workspaceRoot?: string; // Host/Runtime-only canonical root；resume 沿用原 Run 绑定
   // v1.3 Side-Effect Safety：已成功执行的 non_idempotent 操作（resume 防重放）
   sideEffects?: ExecutedOperation[];
   savedAt: string; // 保存时间
@@ -34,7 +35,14 @@ export function saveCheckpoint(cp: Omit<Checkpoint, "savedAt">): string {
   mkdirSync(CHECKPOINT_DIR, { recursive: true });
   const full: Checkpoint = { ...cp, savedAt: new Date().toISOString() };
   const file = checkpointPath(cp.runId);
-  writeFileSync(file, JSON.stringify(full, null, 2), "utf-8");
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    writeFileSync(temp, JSON.stringify(full, null, 2), "utf-8");
+    renameSync(temp, file);
+  } catch (err) {
+    rmSync(temp, { force: true });
+    throw err;
+  }
   return file;
 }
 
