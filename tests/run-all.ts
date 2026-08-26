@@ -23,6 +23,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: "os-sandbox", file: "tests/os-sandbox.test.ts" },
   { name: "workspace", file: "tests/workspace.test.ts" },
   { name: "context", file: "tests/context.test.ts" },
+  { name: "context-budget", file: "tests/context-budget.test.ts" },
   { name: "llm", file: "tests/llm.test.ts" },
   { name: "docs-contract", file: "tests/docs-contract.test.ts" },
   { name: "side-effect", file: "tests/side-effect.test.ts" },

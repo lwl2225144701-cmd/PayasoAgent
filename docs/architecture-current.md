@@ -249,7 +249,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 13 套件（tool-contract / filesystem-tools / sandbox-manager / operation-identity / operation-replay / output-guard / runtime-tools / os-sandbox / workspace / context / llm / docs-contract / side-effect） | `npm run test:all` | **13/13 PASS**（os-sandbox / workspace 为能力条件式：可用时验证完整隔离矩阵，不可用时验证 fail-closed 拒绝路径） |
+| 确定性 14 套件（tool-contract / filesystem-tools / sandbox-manager / operation-identity / operation-replay / output-guard / runtime-tools / os-sandbox / workspace / context / context-budget / llm / docs-contract / side-effect） | `npm run test:all` | **14/14 PASS**（os-sandbox / workspace 为能力条件式：可用时验证完整隔离矩阵，不可用时验证 fail-closed 拒绝路径；context-budget 验证 Agent 级超预算硬失败） |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |

@@ -84,5 +84,5 @@ export function estimateTextTokens(text: string): number {
 }
 
 export function estimateJsonTokens(value: unknown): number {
-  return estimateTextTokens(JSON.stringify(value));
+  return estimateTextTokens(JSON.stringify(value) ?? "");
 }
