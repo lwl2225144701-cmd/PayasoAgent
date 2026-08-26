@@ -32,6 +32,10 @@
   height: 38px;
   object-fit: contain;
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
 }
 
 .logoMark {

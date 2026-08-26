@@ -118,3 +118,201 @@
     max-width: none;
   }
 }
+
+.heroComposer {
+  width: min(760px, calc(100vw - 48px));
+  text-align: left;
+}
+
+.heroMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-height: 34px;
+  padding: 0 12px 8px;
+}
+
+.metaButton,
+.permissionButton,
+.modelButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-secondary);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.metaButton {
+  max-width: 260px;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.metaButton span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaButton:hover:not(:disabled),
+.permissionButton:hover,
+.modelButton:hover {
+  color: var(--text-primary);
+}
+
+.metaButton:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.heroInputWrapper {
+  min-height: 142px;
+  display: flex;
+  flex-direction: column;
+  background: #2a2b2e;
+  border: 1px solid #393b40;
+  border-radius: 24px;
+  box-shadow:
+    0 22px 70px rgba(0, 0, 0, 0.24),
+    0 0 0 1px rgba(255, 255, 255, 0.015) inset;
+  overflow: hidden;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.heroInputWrapper:focus-within {
+  border-color: #50545d;
+  box-shadow:
+    0 24px 78px rgba(0, 0, 0, 0.3),
+    0 0 0 3px rgba(74, 115, 190, 0.08);
+}
+
+.heroInput {
+  width: 100%;
+  min-height: 82px;
+  max-height: 180px;
+  flex: 1;
+  resize: none;
+  padding: 18px 20px 8px;
+  border: 0;
+  outline: 0;
+  color: var(--text-primary);
+  background: transparent;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.heroInput::placeholder {
+  color: #737780;
+}
+
+.heroFooter {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px 10px;
+}
+
+.heroTools,
+.heroActions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.heroTools {
+  gap: 8px;
+}
+
+.heroActions {
+  gap: 10px;
+}
+
+.addButton,
+.heroSendButton {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.addButton {
+  color: #c4c7cd;
+  background: #34363a;
+}
+
+.addButton:hover {
+  color: #ffffff;
+  background: #3c3e43;
+}
+
+.permissionButton {
+  height: 38px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.permissionButton:hover,
+.modelButton:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.modelButton {
+  height: 38px;
+  padding: 0 7px 0 10px;
+  border-radius: 10px;
+  color: #b7bac1;
+  font-size: 12.5px;
+  font-weight: 560;
+}
+
+.heroSendButton {
+  color: #ffffff;
+  background: #416aa8;
+  transition: background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+
+.heroSendButton:hover:not(:disabled) {
+  background: #4b78bb;
+  transform: translateY(-1px);
+}
+
+.heroSendButton:disabled {
+  color: #858a93;
+  background: #3b4657;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  .heroComposer {
+    width: min(100%, calc(100vw - 28px));
+  }
+
+  .heroMetaRow {
+    gap: 13px;
+    padding-inline: 5px;
+  }
+
+  .metaButton {
+    max-width: 56%;
+  }
+
+  .heroInputWrapper {
+    min-height: 154px;
+    border-radius: 20px;
+  }
+
+  .permissionButton span,
+  .modelButton span {
+    display: none;
+  }
+}

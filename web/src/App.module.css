@@ -5,6 +5,23 @@
   overflow: hidden;
 }
 
+.landing {
+  --bg-primary: #121315;
+  --bg-secondary: #17181b;
+  --bg-tertiary: #1d1e21;
+  --bg-hover: #25262a;
+  --bg-active: #252b38;
+  --text-primary: #f2f3f5;
+  --text-secondary: #c4c7ce;
+  --text-tertiary: #8d929c;
+  --text-muted: #686d76;
+  --border-color: #2b2d31;
+  --border-light: #232529;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(39, 54, 79, 0.15), transparent 34%),
+    #121315;
+}
+
 .main {
   flex: 1;
   min-width: 0;
@@ -28,37 +45,70 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: var(--space-6);
-  gap: var(--space-3);
+  padding: 40px 24px 13vh;
+  gap: 26px;
 }
 
 .emptyLogo {
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  background: var(--accent-blue);
-  color: #ffffff;
-  font-size: 28px;
-  font-weight: 700;
+  width: 50px;
+  height: 50px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: var(--space-2);
-  box-shadow: var(--shadow-md);
+  flex: 0 0 auto;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+.emptyLogo::before {
+  content: '';
+  width: 100%;
+  height: 100%;
+  background: #2f6df6;
+  mask-image: url('/payaso-mark.png');
+  mask-mode: luminance;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-image: url('/payaso-mark.png');
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+}
+
+.heroTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
 }
 
 .emptyTitle {
-  font-size: var(--font-size-xxl);
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 650;
   color: var(--text-primary);
   margin: 0;
   letter-spacing: -0.02em;
 }
 
-.emptyHint {
-  font-size: var(--font-size-base);
-  color: var(--text-tertiary);
-  margin: 0;
-  max-width: 420px;
-  line-height: 1.6;
+@media (max-width: 640px) {
+  .emptyState {
+    justify-content: flex-start;
+    padding-top: 22vh;
+  }
+
+  .heroTitleRow {
+    gap: 9px;
+  }
+
+  .emptyTitle {
+    font-size: 22px;
+  }
+
+  .emptyLogo {
+    width: 42px;
+    height: 42px;
+  }
 }

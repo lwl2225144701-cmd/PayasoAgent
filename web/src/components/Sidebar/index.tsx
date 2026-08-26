@@ -65,12 +65,12 @@ export function Sidebar({
             aria-label="展开侧栏"
             onClick={onToggleCollapsed}
           >
-            <img className={styles.logoImage} src="/payaso-mark-light.png" alt="" />
+            <img className={styles.logoImage} src="/payaso-mark-light.png" alt="" draggable={false} />
           </button>
         ) : (
           <>
             <div className={styles.brand}>
-              <img className={styles.logoImage} src="/payaso-mark-light.png" alt="Payaso" />
+              <img className={styles.logoImage} src="/payaso-mark-light.png" alt="Payaso" draggable={false} />
               <span className={styles.logoText}>Payaso</span>
             </div>
             <button

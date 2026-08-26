@@ -1,14 +1,35 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import { PaperclipIcon, SendIcon, KbdEnterIcon } from '../icons';
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  FolderIcon,
+  KbdEnterIcon,
+  PaperclipIcon,
+  PlusIcon,
+  SendIcon,
+  ShieldIcon,
+} from '../icons';
 import styles from './InputBar.module.css';
 
 interface InputBarProps {
   onSend: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  variant?: 'compact' | 'hero';
+  workspaceName?: string;
+  openingWorkspace?: boolean;
+  onOpenWorkspace?: () => void;
 }
 
-export function InputBar({ onSend, disabled, placeholder = '输入任务…' }: InputBarProps) {
+export function InputBar({
+  onSend,
+  disabled,
+  placeholder = '输入任务…',
+  variant = 'compact',
+  workspaceName,
+  openingWorkspace,
+  onOpenWorkspace,
+}: InputBarProps) {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -34,6 +55,69 @@ export function InputBar({ onSend, disabled, placeholder = '输入任务…' }: 
   }
 
   const canSend = text.trim().length > 0 && !disabled;
+
+  if (variant === 'hero') {
+    return (
+      <div className={styles.heroComposer}>
+        <div className={styles.heroMetaRow}>
+          <button
+            className={styles.metaButton}
+            type="button"
+            onClick={onOpenWorkspace}
+            disabled={openingWorkspace}
+            title={workspaceName ? '更换 Workspace' : '选择 Workspace'}
+          >
+            <FolderIcon size={17} />
+            <span>{openingWorkspace ? '正在打开…' : workspaceName ?? '选择 Workspace'}</span>
+            <ChevronDownIcon size={13} />
+          </button>
+        </div>
+
+        <div className={styles.heroInputWrapper}>
+          <textarea
+            ref={textareaRef}
+            className={styles.heroInput}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            rows={2}
+            disabled={disabled}
+            autoFocus
+          />
+
+          <div className={styles.heroFooter}>
+            <div className={styles.heroTools}>
+              <button className={styles.addButton} title="添加附件（即将上线）" type="button">
+                <PlusIcon size={20} />
+              </button>
+              <button className={styles.permissionButton} type="button" title="当前 Workspace 权限">
+                <ShieldIcon size={16} />
+                <span>Workspace Write</span>
+                <ChevronDownIcon size={13} />
+              </button>
+            </div>
+
+            <div className={styles.heroActions}>
+              <button className={styles.modelButton} type="button" title="当前 Agent">
+                <span>Payaso Agent</span>
+                <ChevronDownIcon size={13} />
+              </button>
+              <button
+                className={styles.heroSendButton}
+                onClick={handleSend}
+                disabled={!canSend}
+                title="发送（回车）"
+                type="button"
+              >
+                <ArrowUpIcon size={20} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.inputBar}>

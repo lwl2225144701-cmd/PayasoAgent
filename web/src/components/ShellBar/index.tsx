@@ -32,17 +32,12 @@ export function ShellBar({ run, onOpenSummary }: ShellBarProps) {
   }, [run?.status]);
 
   return (
-    <div className={styles.bar}>
+    <div className={`${styles.bar} ${run ? '' : styles.landingBar}`}>
       <div className={styles.left}>
-        {run ? (
+        {run && (
           <span className={styles.taskTitle} title={run.task}>
             {run.task}
           </span>
-        ) : (
-          <>
-            <span className={styles.logoMark}>P</span>
-            <span className={styles.logoText}>Payaso</span>
-          </>
         )}
       </div>
 
@@ -61,7 +56,7 @@ export function ShellBar({ run, onOpenSummary }: ShellBarProps) {
           type="button"
           aria-label="运行摘要"
         >
-          <ListIcon size={15} />
+          <ListIcon size={18} />
         </button>
 
         <button
@@ -71,7 +66,7 @@ export function ShellBar({ run, onOpenSummary }: ShellBarProps) {
           aria-label="设置"
           onClick={() => { /* Settings drawer placeholder. */ }}
         >
-          <SettingsIcon size={15} />
+          <SettingsIcon size={18} />
         </button>
       </div>
     </div>

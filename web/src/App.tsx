@@ -127,7 +127,7 @@ export default function App() {
   void loading;
 
   return (
-    <div className={styles.app}>
+    <div className={`${styles.app} ${currentRun ? '' : styles.landing}`}>
       <Sidebar
         runs={runs}
         currentRunId={currentRunId}
@@ -155,15 +155,24 @@ export default function App() {
           </div>
         ) : (
           <div className={styles.emptyState}>
-            <span className={styles.emptyLogo}>P</span>
-            <h1 className={styles.emptyTitle}>需要我帮你做什么？</h1>
-            <p className={styles.emptyHint}>
-              在下方输入任务描述，智能助手会规划步骤、调用工具，并在此返回结果。
-            </p>
+            <div className={styles.heroTitleRow}>
+              <span className={styles.emptyLogo} role="img" aria-label="Payaso" />
+              <h1 className={styles.emptyTitle}>路漫漫其修远兮，吾将上下而求索。</h1>
+            </div>
+            <InputBar
+              variant="hero"
+              onSend={handleCreateRun}
+              placeholder="描述你想要构建的内容"
+              workspaceName={workspace?.name}
+              openingWorkspace={openingWorkspace}
+              onOpenWorkspace={handleOpenWorkspace}
+            />
           </div>
         )}
 
-        <InputBar onSend={handleCreateRun} placeholder="输入任务…" disabled={currentRun?.status === 'running'} />
+        {currentRun && (
+          <InputBar onSend={handleCreateRun} placeholder="输入任务…" disabled={currentRun.status === 'running'} />
+        )}
       </div>
 
       {currentRun && (

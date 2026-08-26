@@ -121,6 +121,17 @@ export function SendIcon({ size, ...p }: IconProps) {
   );
 }
 
+export function ArrowUpIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M12 19V5" />
+      <path d="m5 12 7-7 7 7" />
+    </>,
+    p,
+  );
+}
+
 export function PencilIcon({ size, ...p }: IconProps) {
   return base(
     size,
