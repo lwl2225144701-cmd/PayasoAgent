@@ -8,7 +8,7 @@ import type {
   ToolErrorEvent,
   ToolResultEvent,
 } from '../../types';
-import { formatTime, isDuplicateOfFinal, reasoningStatusLine, stripThinkTags } from '../../format';
+import { formatBytes, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
 import { listFiles } from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
@@ -214,12 +214,6 @@ export function Timeline({ run }: TimelineProps) {
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function FileIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -364,9 +358,6 @@ function buildStructure(
 
   const lastStepRunning = run.status === 'running';
   const producedFiles = producedMap['__global'] ?? [];
-
-  // reference reasoningStatusLine so tree-shaker keeps it (may be used for future status variants)
-  void reasoningStatusLine;
 
   return {
     runStarted,

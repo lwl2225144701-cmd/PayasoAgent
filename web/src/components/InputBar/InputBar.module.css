@@ -23,26 +23,6 @@
   box-shadow: 0 0 0 3px var(--color-brand-ring);
 }
 
-.attachBtn {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.12s, color 0.12s;
-}
-
-.attachBtn:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-
 .input {
   flex: 1;
   min-height: 24px;
@@ -73,33 +53,6 @@
   flex-shrink: 0;
 }
 
-.sendBtn {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, transform 0.15s, opacity 0.15s;
-}
-
-.sendBtn:hover:not(:disabled) {
-  background: var(--accent-blue);
-  color: var(--color-text-on-brand);
-  transform: translateY(-1px);
-}
-
-.sendBtn:disabled {
-  color: var(--text-muted);
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
 .kbdHint {
   color: var(--text-muted);
   display: none;
@@ -120,7 +73,8 @@
 }
 
 .heroComposer {
-  width: min(760px, calc(100vw - 48px));
+  /* 用 100% 而不是 100vw，让 composer 随主内容区（已扣除 Sidebar）自适应 */
+  width: min(760px, 100%);
   text-align: left;
 }
 
@@ -214,6 +168,11 @@
   justify-content: space-between;
   gap: 16px;
   padding: 8px 10px 10px;
+  flex-wrap: wrap;
+}
+
+.heroActions {
+  margin-left: auto;
 }
 
 .heroTools,
@@ -231,33 +190,13 @@
   gap: 10px;
 }
 
-.addButton,
-.heroSendButton {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-}
-
-.addButton {
-  color: var(--color-text-secondary);
-  background: var(--color-composer-control);
-}
-
-.addButton:hover {
-  color: var(--color-text-primary);
-  background: var(--color-surface-hover);
-}
-
 .permissionButton {
   height: 38px;
   padding: 0 8px;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 560;
+  min-width: 0;
 }
 
 .permissionButton:hover,
@@ -272,24 +211,15 @@
   color: var(--color-text-secondary);
   font-size: 12.5px;
   font-weight: 560;
+  min-width: 0;
 }
 
-.heroSendButton {
-  color: var(--color-text-on-brand);
-  background: var(--color-brand);
-  transition: background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
-}
-
-.heroSendButton:hover:not(:disabled) {
-  background: var(--color-brand-hover);
-  transform: translateY(-1px);
-}
-
-.heroSendButton:disabled {
-  color: var(--color-text-muted);
-  background: var(--color-surface-raised);
-  cursor: not-allowed;
-  opacity: 0.7;
+.permissionButton span,
+.modelButton span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 @media (max-width: 640px) {

@@ -7,6 +7,7 @@ import {
   PlusIcon,
   SettingsIcon,
 } from '../icons';
+import { IconButton } from '../IconButton';
 import styles from './Sidebar.module.css';
 
 interface SidebarProps {
@@ -73,16 +74,17 @@ export function Sidebar({
               <img className={styles.logoImage} src="/payaso-mark-light.png" alt="Payaso" draggable={false} />
               <span className={styles.logoText}>Payaso</span>
             </div>
-            <button
-              className={styles.collapseBtn}
-              type="button"
+            <IconButton
+              buttonSize="sm"
+              variant="ghost"
+              shape="rounded"
               title="收起侧栏"
               aria-label="收起侧栏"
               aria-pressed={false}
               onClick={onToggleCollapsed}
             >
               <PanelLeftIcon size={18} />
-            </button>
+            </IconButton>
           </>
         )}
       </div>

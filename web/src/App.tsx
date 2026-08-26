@@ -4,7 +4,6 @@ import { ShellBar } from './components/ShellBar';
 import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
-import { SummaryDrawer } from './components/SummaryDrawer';
 import { useEventStream } from './hooks/useEventStream';
 import { createRun, getWorkspace, listRuns, listFiles, openWorkspace, stopRun } from './api';
 import type { FileEntry, HostRun, WorkspaceView } from './types';
@@ -17,8 +16,8 @@ export default function App() {
   const [, setFiles] = useState<FileEntry[]>([]);
   const [viewingFile, setViewingFile] = useState<FileEntry | null>(null);
   const [loading, setLoading] = useState(true);
-  const [summaryOpen, setSummaryOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarUserOverrideRef = useRef(false);
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -45,6 +44,18 @@ export default function App() {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, [refreshRuns]);
+
+  // 窄视口下自动折叠 Sidebar；用户手动切换后不再自动干预本次会话
+  useEffect(() => {
+    const breakpoint = 900;
+    const onResize = () => {
+      if (sidebarUserOverrideRef.current) return;
+      setSidebarCollapsed(window.innerWidth < breakpoint);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const currentRun = runs.find(r => r.runId === currentRunId) ?? null;
 
@@ -134,17 +145,17 @@ export default function App() {
         onSelectRun={handleSelectRun}
         onNewTask={handleNewTask}
         collapsed={sidebarCollapsed}
-        onToggleCollapsed={() => setSidebarCollapsed(value => !value)}
+        onToggleCollapsed={() => {
+          sidebarUserOverrideRef.current = true;
+          setSidebarCollapsed(value => !value);
+        }}
         workspace={workspace}
         openingWorkspace={openingWorkspace}
         onOpenWorkspace={handleOpenWorkspace}
       />
 
       <div className={styles.main}>
-        <ShellBar
-          run={currentRun}
-          onOpenSummary={() => setSummaryOpen(v => !v)}
-        />
+        <ShellBar run={currentRun} />
 
         {currentRun ? (
           <div className={styles.workspace}>
@@ -171,19 +182,15 @@ export default function App() {
         )}
 
         {currentRun && (
-          <InputBar onSend={handleCreateRun} placeholder="输入任务…" disabled={currentRun.status === 'running'} />
+          <InputBar
+            onSend={handleCreateRun}
+            onStop={handleStopRun}
+            isRunning={currentRun.status === 'running'}
+            placeholder="输入任务…"
+            disabled={currentRun.status === 'running'}
+          />
         )}
       </div>
-
-      {currentRun && (
-        <SummaryDrawer
-          run={currentRun}
-          events={events}
-          open={summaryOpen}
-          onClose={() => setSummaryOpen(false)}
-          onStop={handleStopRun}
-        />
-      )}
 
       {viewingFile && currentRunId && (
         <FileModal

@@ -1,0 +1,23 @@
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.copyButton:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.copied {
+  color: var(--accent-blue);
+}

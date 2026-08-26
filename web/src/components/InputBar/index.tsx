@@ -6,13 +6,16 @@ import {
   KbdEnterIcon,
   PaperclipIcon,
   PlusIcon,
-  SendIcon,
   ShieldIcon,
+  StopIcon,
 } from '../icons';
+import { IconButton } from '../IconButton';
 import styles from './InputBar.module.css';
 
 interface InputBarProps {
   onSend: (text: string) => void;
+  onStop?: () => void;
+  isRunning?: boolean;
   disabled?: boolean;
   placeholder?: string;
   variant?: 'compact' | 'hero';
@@ -23,6 +26,8 @@ interface InputBarProps {
 
 export function InputBar({
   onSend,
+  onStop,
+  isRunning,
   disabled,
   placeholder = '输入任务…',
   variant = 'compact',
@@ -88,9 +93,14 @@ export function InputBar({
 
           <div className={styles.heroFooter}>
             <div className={styles.heroTools}>
-              <button className={styles.addButton} title="添加附件（即将上线）" type="button">
+              <IconButton
+                buttonSize="lg"
+                variant="surface"
+                shape="circle"
+                title="添加附件（即将上线）"
+              >
                 <PlusIcon size={20} />
-              </button>
+              </IconButton>
               <button className={styles.permissionButton} type="button" title="当前 Workspace 权限">
                 <ShieldIcon size={16} />
                 <span>Workspace Write</span>
@@ -103,15 +113,16 @@ export function InputBar({
                 <span>Payaso Agent</span>
                 <ChevronDownIcon size={13} />
               </button>
-              <button
-                className={styles.heroSendButton}
+              <IconButton
+                buttonSize="lg"
+                variant="brand"
+                shape="circle"
                 onClick={handleSend}
                 disabled={!canSend}
                 title="发送（回车）"
-                type="button"
               >
                 <ArrowUpIcon size={20} />
-              </button>
+              </IconButton>
             </div>
           </div>
         </div>
@@ -122,9 +133,9 @@ export function InputBar({
   return (
     <div className={styles.inputBar}>
       <div className={styles.inputWrapper}>
-        <button className={styles.attachBtn} title="附件（即将上线）" type="button">
+        <IconButton buttonSize="sm" variant="ghost" shape="rounded" title="附件（即将上线）">
           <PaperclipIcon size={18} />
-        </button>
+        </IconButton>
         <textarea
           ref={textareaRef}
           className={styles.input}
@@ -136,18 +147,33 @@ export function InputBar({
           disabled={disabled}
         />
         <div className={styles.actions}>
-          <button
-            className={styles.sendBtn}
-            onClick={handleSend}
-            disabled={!canSend}
-            title="发送（回车）"
-            type="button"
-          >
-            <SendIcon size={16} />
-          </button>
-          <span className={styles.kbdHint} title="Enter to send · Shift+Enter for new line">
-            <KbdEnterIcon size={18} />
-          </span>
+          {isRunning ? (
+            <IconButton
+              buttonSize="md"
+              variant="surface"
+              shape="circle"
+              onClick={onStop}
+              title="停止当前任务"
+            >
+              <StopIcon size={16} />
+            </IconButton>
+          ) : (
+            <>
+              <IconButton
+                buttonSize="md"
+                variant="brand"
+                shape="circle"
+                onClick={handleSend}
+                disabled={!canSend}
+                title="发送（回车）"
+              >
+                <ArrowUpIcon size={18} />
+              </IconButton>
+              <span className={styles.kbdHint} title="Enter to send · Shift+Enter for new line">
+                <KbdEnterIcon size={18} />
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>

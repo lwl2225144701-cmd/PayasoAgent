@@ -22,27 +22,6 @@
   gap: 8px;
 }
 
-.logoMark {
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
-  font-weight: 800;
-  color: var(--color-text-on-brand);
-  background: var(--accent-blue);
-  border-radius: 9px;
-  letter-spacing: -0.5px;
-}
-
-.logoText {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--accent-blue);
-  letter-spacing: -0.15px;
-}
-
 .taskTitle {
   min-width: 0;
   max-width: min(720px, 62vw);
@@ -89,20 +68,4 @@
   font-size: 12.5px;
   font-weight: 500;
   color: var(--accent-blue);
-}
-
-.iconBtn {
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  transition: background 0.12s ease, color 0.12s ease;
-}
-.iconBtn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
 }
