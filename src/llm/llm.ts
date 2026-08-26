@@ -1,12 +1,31 @@
 // 模块 1: LLM 封装 — OpenAI 兼容 chat/completions（纯 fetch，无 SDK 依赖）
 
+import { resolveModelContextConfig } from "../runtime/model-context.js";
+
 const BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const API_KEY = process.env.OPENAI_API_KEY || "";
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const REQUEST_TIMEOUT_MS = 30_000;
+const MODEL_CONTEXT = resolveModelContextConfig();
 const MAX_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 100;
 const MAX_ERROR_BODY_CHARS = 2_000;
+
+// Total per-attempt request budget. Reading env per call keeps it configurable
+// at runtime (tests set a tiny value) and defaults to a safe generous ceiling.
+// A timeout ANYWHERE in the attempt — waiting for headers OR reading the body —
+// is a terminal failure for that run. We never auto-retry a long generation:
+// that would multiply latency (3 × timeout) and bill the same completion twice.
+// Ordinary connection errors / 408 / 429 / 5xx still retry as before.
+const DEFAULT_REQUEST_TIMEOUT_MS = 240_000;
+
+function requestTimeoutMs(): number {
+  const raw = process.env.LLM_REQUEST_TIMEOUT_MS;
+  if (raw && raw.trim() !== "") {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+}
 
 export interface ToolCall {
   id: string;
@@ -85,6 +104,78 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Result of a single attempt. status: HTTP status, 0 = no response (network
+// error before headers), -1 = response body was not valid JSON.
+interface RawResult {
+  status: number;
+  data?: unknown;
+  errorBody: string;
+  networkError?: string;
+  timedOut: boolean;
+  retryAfter: string | null;
+}
+
+// One attempt under a single abort timer that stays armed across BOTH the
+// header phase and the body read, so a stalled body (or stalled error body)
+// cannot hang forever. clearTimeout runs only after the body/error is read.
+async function doRequest(
+  url: string,
+  body: Record<string, unknown>,
+  timeoutMs: number
+): Promise<RawResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${API_KEY}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      return {
+        status: 0,
+        errorBody: "",
+        networkError: (err as Error).message,
+        timedOut: controller.signal.aborted,
+        retryAfter: null,
+      };
+    }
+
+    if (!res.ok) {
+      let errorBody = "";
+      try {
+        errorBody = (await res.text()).slice(0, MAX_ERROR_BODY_CHARS);
+      } catch {
+        // Timed out while reading the error body; timedOut below reports it.
+        errorBody = "";
+      }
+      return {
+        status: res.status,
+        errorBody,
+        timedOut: controller.signal.aborted,
+        retryAfter: res.headers.get("retry-after"),
+      };
+    }
+
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return { status: -1, errorBody: "", timedOut: controller.signal.aborted, retryAfter: null };
+    }
+
+    return { status: 200, data, errorBody: "", timedOut: false, retryAfter: null };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // 调用 LLM，返回 assistant 消息（可能含 tool_calls）
 // ---- 模拟中断开关（测试用，已注释）----
 // 需要模拟"任务执行中途网络中断"时，取消注释下面 4 行，并带 SIMULATE_INTERRUPT=1 运行：
@@ -103,52 +194,49 @@ export async function chat(
   messages: ChatMessage[],
   tools?: ToolSchema[]
 ): Promise<ChatMessage> {
-  const body: Record<string, unknown> = { model: MODEL, messages };
+  const body: Record<string, unknown> = {
+    model: MODEL,
+    messages,
+    max_tokens: MODEL_CONTEXT.maxOutputTokens,
+  };
   if (tools?.length) body.tools = tools;
 
+  const url = `${BASE_URL}/chat/completions`;
+
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetch(`${BASE_URL}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } catch (err) {
+    const timeoutMs = requestTimeoutMs();
+    const result = await doRequest(url, body, timeoutMs);
+
+    // Total request timeout (no headers, stalled body, or stalled error body)
+    // is terminal: do not auto-retry a long generation.
+    if (result.timedOut) {
+      throw new Error(`LLM request timed out after ${timeoutMs}ms`);
+    }
+
+    // Connection error before any response → retry (bounded).
+    if (result.status === 0) {
       if (attempt < MAX_RETRIES) {
         await wait(retryDelay(attempt, null));
         continue;
       }
-      const reason = controller.signal.aborted ? "request timed out" : (err as Error).message;
-      throw new Error(`LLM API request failed after ${attempt + 1} attempts: ${reason}`);
-    } finally {
-      clearTimeout(timeout);
+      throw new Error(`LLM API request failed after ${attempt + 1} attempts: ${result.networkError}`);
     }
 
-    if (!res.ok) {
-      if (retryableStatus(res.status) && attempt < MAX_RETRIES) {
-        const retryAfter = res.headers.get("retry-after");
-        try { await res.body?.cancel(); } catch { /* ignore response cleanup failure */ }
-        await wait(retryDelay(attempt, retryAfter));
-        continue;
-      }
-      const errorBody = (await res.text()).slice(0, MAX_ERROR_BODY_CHARS);
-      throw new Error(`LLM API error: ${res.status} ${errorBody}`.trim());
-    }
-
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch {
+    // Body was not valid JSON → not transient, do not retry.
+    if (result.status === -1) {
       throw new Error("LLM API malformed response: invalid JSON");
     }
-    return parseAssistantMessage(data);
+
+    // Non-2xx. Retry only transient statuses (408/429/5xx).
+    if (result.status !== 200) {
+      if (retryableStatus(result.status) && attempt < MAX_RETRIES) {
+        await wait(retryDelay(attempt, result.retryAfter));
+        continue;
+      }
+      throw new Error(`LLM API error: ${result.status} ${result.errorBody}`.trim());
+    }
+
+    return parseAssistantMessage(result.data);
   }
 
   throw new Error("LLM API request failed");

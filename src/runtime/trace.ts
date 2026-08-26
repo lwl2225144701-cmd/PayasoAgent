@@ -60,6 +60,24 @@ export type TraceEvent =
       afterMessages: number; // 裁剪后消息条数
     }
   | {
+      type: "context_usage";
+      step: number;
+      timestamp: string;
+      model: string;
+      configSource: "env" | "model_registry" | "fallback";
+      contextWindowTokens: number;
+      maxOutputTokens: number;
+      safetyTokens: number;
+      inputBudgetTokens: number;
+      messageTokens: number;
+      toolSchemaTokens: number;
+      scratchpadTokens: number;
+      estimatedInputTokens: number;
+      usageRatio: number;
+      trimmedMessages: number;
+      overBudget: boolean;
+    }
+  | {
       type: "recovery_decision";
       step: number;
       timestamp: string;
@@ -160,6 +178,22 @@ export type TraceEventInput =
       type: "context_trim";
       beforeMessages: number;
       afterMessages: number;
+    }
+  | {
+      type: "context_usage";
+      model: string;
+      configSource: "env" | "model_registry" | "fallback";
+      contextWindowTokens: number;
+      maxOutputTokens: number;
+      safetyTokens: number;
+      inputBudgetTokens: number;
+      messageTokens: number;
+      toolSchemaTokens: number;
+      scratchpadTokens: number;
+      estimatedInputTokens: number;
+      usageRatio: number;
+      trimmedMessages: number;
+      overBudget: boolean;
     }
   | {
       type: "recovery_decision";

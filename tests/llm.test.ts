@@ -20,12 +20,17 @@ async function test(name: string, fn: () => Promise<void>): Promise<void> {
 
 try {
   await test("valid assistant response is normalized", async () => {
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      choices: [{ message: { content: "done", reasoning_content: "private" } }],
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    const requestBodies: Record<string, unknown>[] = [];
+    globalThis.fetch = async (_input, init) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "done", reasoning_content: "private" } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
     const message = await chat([{ role: "user", content: "hello" }]);
     assert.equal(message.content, "done");
     assert.equal(message.reasoning_content, "private");
+    assert.ok(typeof requestBodies[0]?.max_tokens === "number" && requestBodies[0].max_tokens > 0);
   });
 
   await test("malformed JSON and missing choices are rejected deterministically", async () => {
@@ -74,6 +79,53 @@ try {
     };
     await assert.rejects(() => chat([{ role: "user", content: "hello" }]), /after 3 attempts: offline/);
     assert.equal(calls, 3);
+  });
+
+  await test("headers arrived, slow body aborts at total timeout (no retry)", async () => {
+    process.env.LLM_REQUEST_TIMEOUT_MS = "60";
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      const signal = init?.signal;
+      const stream = new ReadableStream({
+        start(readController) {
+          // Body never completes on its own (simulates a long generation); the
+          // abort signal interrupts it at the total request timeout.
+          const finish = setTimeout(() => {
+            try { readController.close(); } catch { /* already cancelled */ }
+          }, 1000);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(finish);
+            try { readController.error(new DOMException("Aborted", "AbortError")); } catch { /* already cancelled */ }
+          }, { once: true });
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    try {
+      await assert.rejects(() => chat([{ role: "user", content: "hello" }]), /timed out after 60ms/);
+      assert.equal(calls, 1); // total timeout must NOT be retried
+    } finally {
+      delete process.env.LLM_REQUEST_TIMEOUT_MS;
+    }
+  });
+
+  await test("total timeout before any response does not retry", async () => {
+    process.env.LLM_REQUEST_TIMEOUT_MS = "50";
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    };
+    try {
+      await assert.rejects(() => chat([{ role: "user", content: "hello" }]), /timed out after 50ms/);
+      assert.equal(calls, 1); // total timeout must NOT be retried
+    } finally {
+      delete process.env.LLM_REQUEST_TIMEOUT_MS;
+    }
   });
 } finally {
   globalThis.fetch = originalFetch;

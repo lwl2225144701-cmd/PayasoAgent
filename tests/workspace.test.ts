@@ -139,6 +139,12 @@ test("Run 创建时快照绑定当前 Workspace，之后更换不影响既有 Ru
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(!JSON.stringify(loadCheckpoint(runA)?.messages).includes("<think>"));
     assert.ok(!JSON.stringify(loadCheckpoint(runA)?.messages).includes("private-reasoning"));
+    const usage = manager.getRaw(runA)?.events.find((event) => event.type === "context_usage");
+    assert.ok(usage && usage.type === "context_usage");
+    assert.ok(usage.inputBudgetTokens > 0);
+    assert.ok(usage.toolSchemaTokens > 0);
+    assert.equal(usage.estimatedInputTokens, usage.messageTokens + usage.toolSchemaTokens);
+    assert.equal(usage.overBudget, false);
   } finally {
     globalThis.fetch = originalFetch;
     clearWorkspace();
@@ -149,7 +155,15 @@ test("Run 创建时快照绑定当前 Workspace，之后更换不影响既有 Ru
 
 test("Host stop 记录 run_stopped SSE 终态事件", () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => await new Promise<Response>(() => {});
+  const originalTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
+  // Keep the run mid-flight (LLM never returns on its own), but make the
+  // request abortable and give it a short budget so the abandoned run-agent
+  // frees its timeout timer instead of keeping the subprocess alive for the
+  // default long request timeout.
+  process.env.LLM_REQUEST_TIMEOUT_MS = "250";
+  globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  });
   const manager = new RunManager();
   const chunks: string[] = [];
   try {
@@ -164,6 +178,8 @@ test("Host stop 记录 run_stopped SSE 终态事件", () => {
     assert.ok(chunks.some((chunk) => chunk.includes("event: run_stopped")));
   } finally {
     globalThis.fetch = originalFetch;
+    if (originalTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;
+    else process.env.LLM_REQUEST_TIMEOUT_MS = originalTimeout;
   }
 });
 
@@ -182,7 +198,11 @@ test("Host resume 拒绝对同一 running runId 启动第二个 Agent", () => {
     sideEffects: [],
   });
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => await new Promise<Response>(() => {});
+  const originalTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
+  process.env.LLM_REQUEST_TIMEOUT_MS = "250";
+  globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  });
   const manager = new RunManager();
   try {
     assert.equal(manager.resume(runId), true);
@@ -192,6 +212,8 @@ test("Host resume 拒绝对同一 running runId 启动第二个 Agent", () => {
     assert.equal(manager.get(runId)?.status, "running");
   } finally {
     globalThis.fetch = originalFetch;
+    if (originalTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;
+    else process.env.LLM_REQUEST_TIMEOUT_MS = originalTimeout;
     fs.rmSync(checkpointPath(runId), { force: true });
   }
 });

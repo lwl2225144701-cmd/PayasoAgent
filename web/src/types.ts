@@ -77,6 +77,23 @@ export interface ContextTrimEvent extends TraceEventBase {
   afterMessages: number;
 }
 
+export interface ContextUsageEvent extends TraceEventBase {
+  type: "context_usage";
+  model: string;
+  configSource: "env" | "model_registry" | "fallback";
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+  safetyTokens: number;
+  inputBudgetTokens: number;
+  messageTokens: number;
+  toolSchemaTokens: number;
+  scratchpadTokens: number;
+  estimatedInputTokens: number;
+  usageRatio: number;
+  trimmedMessages: number;
+  overBudget: boolean;
+}
+
 export interface RecoveryDecisionEvent extends TraceEventBase {
   type: "recovery_decision";
   tool: string;
@@ -161,6 +178,7 @@ export type TraceEvent =
   | FinalAnswerEvent
   | ToolErrorEvent
   | ContextTrimEvent
+  | ContextUsageEvent
   | RecoveryDecisionEvent
   | SideEffectSkipEvent
   | SideEffectUncertainEvent

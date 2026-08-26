@@ -1,9 +1,23 @@
 // Context 模块 — 最小上下文管理（仅控制发送给 LLM 的消息规模，无 Memory / 无数据库）
 
 import type { ChatMessage } from "../llm/llm.js";
+import type { ToolSchema } from "../llm/llm.js";
+import { estimateJsonTokens } from "./model-context.js";
 
-// 默认上下文上限（粗略字符数估计，非真实 token 数）
-const DEFAULT_MAX_LENGTH = 4000;
+const DEFAULT_MAX_INPUT_TOKENS = 24_000;
+
+export interface ContextUsage {
+  beforeMessages: number;
+  afterMessages: number;
+  beforeMessageTokens: number;
+  messageTokens: number;
+  toolSchemaTokens: number;
+  estimatedInputTokens: number;
+  inputBudgetTokens: number;
+  usageRatio: number;
+  trimmedMessages: number;
+  overBudget: boolean;
+}
 
 // 将消息序列按"轮"分组：每个 assistant 及其后续 tool 归为一块
 function groupByRound(msgs: ChatMessage[]): ChatMessage[][] {
@@ -24,20 +38,20 @@ function groupByRound(msgs: ChatMessage[]): ChatMessage[][] {
 }
 
 export class ContextManager {
-  private maxLength: number;
+  private maxInputTokens: number;
 
-  constructor(maxLength: number = DEFAULT_MAX_LENGTH) {
-    this.maxLength = maxLength;
+  constructor(maxInputTokens: number = DEFAULT_MAX_INPUT_TOKENS) {
+    this.maxInputTokens = maxInputTokens;
   }
 
-  // 粗略统计上下文大小（字符数）
+  // Conservative estimate; a provider tokenizer can replace this later.
   estimateTokens(messages: ChatMessage[]): number {
-    return messages.reduce((sum, m) => sum + JSON.stringify(m).length, 0);
+    return messages.reduce((sum, message) => sum + estimateJsonTokens(message) + 4, 0);
   }
 
   // 裁剪消息：保留 system + 最后一条 user(task) + 最近若干轮，删除最早轮
-  trimMessages(messages: ChatMessage[], maxLength: number): ChatMessage[] {
-    if (this.estimateTokens(messages) <= maxLength) return messages;
+  trimMessages(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
+    if (this.estimateTokens(messages) <= maxTokens) return messages;
 
     // 必须保留：system（第一条）、最后一条 user
     const sysIdx = messages.findIndex((m) => m.role === "system");
@@ -65,7 +79,7 @@ export class ContextManager {
         ...blocks.slice(keepFrom).flat(),
       ] as ChatMessage[];
     while (
-      this.estimateTokens(rebuild()) > maxLength &&
+      this.estimateTokens(rebuild()) > maxTokens &&
       keepFrom < blocks.length
     ) {
       keepFrom++;
@@ -74,13 +88,31 @@ export class ContextManager {
   }
 
   // 处理消息：返回裁剪后的消息及前后条数（用于 Trace）
-  process(messages: ChatMessage[]): {
+  process(messages: ChatMessage[], tools: ToolSchema[] = []): {
     messages: ChatMessage[];
-    before: number;
-    after: number;
+    usage: ContextUsage;
   } {
-    const before = messages.length;
-    const trimmed = this.trimMessages(messages, this.maxLength);
-    return { messages: trimmed, before, after: trimmed.length };
+    const beforeMessages = messages.length;
+    const beforeMessageTokens = this.estimateTokens(messages);
+    const toolSchemaTokens = estimateJsonTokens(tools);
+    const messageBudget = Math.max(0, this.maxInputTokens - toolSchemaTokens);
+    const trimmed = this.trimMessages(messages, messageBudget);
+    const messageTokens = this.estimateTokens(trimmed);
+    const estimatedInputTokens = messageTokens + toolSchemaTokens;
+    return {
+      messages: trimmed,
+      usage: {
+        beforeMessages,
+        afterMessages: trimmed.length,
+        beforeMessageTokens,
+        messageTokens,
+        toolSchemaTokens,
+        estimatedInputTokens,
+        inputBudgetTokens: this.maxInputTokens,
+        usageRatio: Number((estimatedInputTokens / this.maxInputTokens).toFixed(4)),
+        trimmedMessages: beforeMessages - trimmed.length,
+        overBudget: estimatedInputTokens > this.maxInputTokens,
+      },
+    };
   }
 }

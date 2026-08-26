@@ -8,6 +8,7 @@ import { createWorkspace, canonicalizeWorkspaceRoot } from "../sandbox/sandbox-m
 import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { ContextManager } from "./context.js";
+import { estimateTextTokens, resolveModelContextConfig } from "./model-context.js";
 import { guardToolOutput } from "./output-guard.js";
 import { saveCheckpoint } from "./checkpoint.js";
 import {
@@ -31,7 +32,6 @@ import {
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
-const MAX_CONTEXT_TOKENS = 4000; // 发送给 LLM 的上下文上限（粗略字符数）
 
 const SYSTEM_PROMPT = `你是一个助手，可以使用工具帮助用户完成任务。
 遇到任何计算任务，必须调用 calculator 工具获取结果，禁止自行计算。
@@ -65,7 +65,8 @@ export async function runAgent(
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
   const trace = createTrace(runId, opts?.onTrace);
-  const contextManager = new ContextManager(MAX_CONTEXT_TOKENS);
+  const modelContext = resolveModelContextConfig();
+  const contextManager = new ContextManager(modelContext.maxInputTokens);
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
@@ -115,30 +116,56 @@ export async function runAgent(
       printStateSummary(state);
 
       // 0. 将 Scratchpad 注入 system（独立对象，不随 messages 裁剪丢失）
+      const scratchpadText = toSystemText(scratchpad);
       messages[0] = {
         role: "system",
-        content: SYSTEM_PROMPT + "\n\n" + toSystemText(scratchpad),
+        content: SYSTEM_PROMPT + "\n\n" + scratchpadText,
       };
 
       // 0.5 上下文裁剪（Scratchpad 不在 messages 中，裁剪不影响其完整性）
-      const ctx = contextManager.process(messages);
+      const schemas = getSchemas();
+      const ctx = contextManager.process(messages, schemas);
       messages = ctx.messages;
       printEvent(
         addEvent(trace, {
           type: "context_trim",
-          beforeMessages: ctx.before,
-          afterMessages: ctx.after,
+          beforeMessages: ctx.usage.beforeMessages,
+          afterMessages: ctx.usage.afterMessages,
         })
       );
-      if (ctx.before !== ctx.after) {
+      printEvent(
+        addEvent(trace, {
+          type: "context_usage",
+          model: modelContext.model,
+          configSource: modelContext.source,
+          contextWindowTokens: modelContext.contextWindowTokens,
+          maxOutputTokens: modelContext.maxOutputTokens,
+          safetyTokens: modelContext.safetyTokens,
+          inputBudgetTokens: ctx.usage.inputBudgetTokens,
+          messageTokens: ctx.usage.messageTokens,
+          toolSchemaTokens: ctx.usage.toolSchemaTokens,
+          scratchpadTokens: estimateTextTokens(scratchpadText),
+          estimatedInputTokens: ctx.usage.estimatedInputTokens,
+          usageRatio: ctx.usage.usageRatio,
+          trimmedMessages: ctx.usage.trimmedMessages,
+          overBudget: ctx.usage.overBudget,
+        })
+      );
+      if (ctx.usage.beforeMessages !== ctx.usage.afterMessages) {
         console.log(`\n=== Context ===`);
-        console.log(`before:\n${ctx.before} messages`);
-        console.log(`after:\n${ctx.after} messages`);
-        console.log(`trimmed:\n${ctx.before - ctx.after}`);
+        console.log(`before:\n${ctx.usage.beforeMessages} messages`);
+        console.log(`after:\n${ctx.usage.afterMessages} messages`);
+        console.log(`trimmed:\n${ctx.usage.trimmedMessages}`);
+      }
+      if (ctx.usage.overBudget) {
+        throw new Error(
+          `Context budget exceeded: estimated ${ctx.usage.estimatedInputTokens} input tokens, ` +
+          `budget ${ctx.usage.inputBudgetTokens}`
+        );
       }
 
       // 1. 调用 LLM 判断下一步
-      const assistantMsg = await chat(messages, getSchemas());
+      const assistantMsg = await chat(messages, schemas);
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;

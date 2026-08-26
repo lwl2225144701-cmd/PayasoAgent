@@ -82,12 +82,13 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/agent.ts` | Agent Loop 主循环：迭代预算、重试/恢复、防死循环、Side-Effect 集成、Checkpoint 落盘 |
 | `src/runtime/state.ts` | AgentState：status / iteration / currentStep / 工具统计 / pendingAction / lastToolError |
 | `src/runtime/scratchpad.ts` | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪 |
-| `src/runtime/context.ts` | ContextManager：按轮分组裁剪，保留 system + 最后一条 user |
+| `src/runtime/context.ts` | ContextManager：按轮分组裁剪，保留 system + 最后一条 user；Messages + Tool Schema 统一预算 |
+| `src/runtime/model-context.ts` | 模型上下文能力配置、环境变量覆盖和保守 token 估算 |
 | `src/runtime/trace.ts` | 结构化事件轨迹（15 类事件，见 §3.3） |
 | `src/runtime/checkpoint.ts` | 最小 JSON 持久化（`.checkpoints/<runId>.json`） |
 | `src/runtime/side-effect.ts` | 副作用三态生命周期 + canonical operation key 去重 |
 | `src/runtime/output-guard.ts` | 单工具结果 16KB 硬上限（UTF-8 安全截断） |
-| `src/llm/llm.ts` | OpenAI 兼容 `/chat/completions` 封装（fetch，无 SDK；30s 超时 + 有限重试 + 响应校验） |
+| `src/llm/llm.ts` | OpenAI 兼容 `/chat/completions` 封装（fetch，无 SDK；总请求超时默认 240s 可配 `LLM_REQUEST_TIMEOUT_MS`，覆盖响应头+正文；有限重试 + 响应形状校验） |
 | `src/tools/tools.ts` | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey |
 | `src/tools/filesystem.ts` | listDir / readFile / writeFile（含可写区权限与原子写） |
 | `src/tools/runtime-tools.ts` | searchText / createDir / moveFile / deleteFile / shell |
@@ -126,7 +127,7 @@ web/src/
 
 <!-- docs-contract:events -->
 ```json
-["llm_call","tool_call","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","tool_call","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
 ```
 <!-- /docs-contract:events -->
 
@@ -151,7 +152,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
               └─ throw   → non_idempotent markUncertain / 其余 recordFailure+重试
 ```
 
-常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）、`MAX_CONTEXT_TOKENS=4000`（粗略字符数，非 token）。
+常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）。上下文预算由 `model-context.ts` 按模型能力解析：环境变量优先，其次内置模型表，最后保守 fallback。
 
 ### 4.2 三层状态职责
 
@@ -236,9 +237,9 @@ npm run test:host         # Host API 集成（需 LLM）
 | 4 | ~~**`run_stopped` SSE 事件缺失**~~ **已修复** | `host/run-manager.ts` | `stop()` 不再预先改终态，统一由 `finish(run, "stopped")` 设状态并发布事件 |
 | 5 | ~~**resume 无"正在运行"守卫**~~ **已修复** | `host/run-manager.ts` | 同一 Host 进程内，已有 running runId 时 `resume()` 直接拒绝，不替换内存记录、不启动第二个 Agent |
 | 6 | ~~**`readBody` 无大小限制**~~ **已修复** | `host/routes.ts` | Run JSON 请求体限制 64KB；同时检查 `Content-Length` 和实际流式字节，超限返回 413 |
-| 7 | ~~**LLM 层无重试 + 无防御解析**~~ **已修复** | `llm/llm.ts` | 30s 超时；网络错误/408/429/5xx 最多重试 2 次（支持 `Retry-After`）；4xx 不重试；JSON/choices/message/tool_calls 形状防御校验 |
+| 7 | ~~**LLM 层无重试 + 无防御解析**~~ **已修复** | `llm/llm.ts` | 总请求超时默认 240s（`LLM_REQUEST_TIMEOUT_MS` 可配），定时器覆盖"响应头 + 正文读取"，`res.json()` 不再无保护挂死；**总超时不自动重试**（防长生成连续三遍、重复计费）；网络错误/408/429/5xx 最多重试 2 次（支持 `Retry-After`）；4xx 不重试；JSON/choices/message/tool_calls 形状防御校验 |
 | 8 | ~~os-sandbox / workspace 两个确定性套件 FAIL~~ **已修复**：`sandbox-exec` 在某些外层受限运行环境中无法应用 profile（`sandbox_apply: Operation not permitted`，exit 71） | `sandbox/macos-sandbox.ts`、`tools/runtime-tools.ts`、`tests/os-sandbox.test.ts`、`tests/workspace.test.ts` | 修复 = 运行时能力探测 `probeSandboxAvailability()` + **fail-closed 门**；不可用则 shell 拒绝执行，可用则跑完整隔离矩阵。该能力取决于实际运行上下文，不应仅按 macOS 版本判断 |
-| 9 | **system（含 Scratchpad）永不裁剪**：超预算时整段历史被丢，只剩 system+user | `runtime/context.ts` | 长任务 + 大结果下历史丢失。上限 4000 是粗略字符数 |
+| 9 | **system（含 Scratchpad）的模型视图尚未单独压缩** | `runtime/context.ts`、`runtime/scratchpad.ts` | 已去除固定 4000 字符限制，改为按模型配置输入/输出/安全预算，并以 `context_usage` 观测 Messages/Tool Schema/Scratchpad；若未来实测接近窗口，再增加有界 Scratchpad Model View |
 | 10 | **`.env` 存真实 API 密钥**（不入库，但磁盘明文） | 项目根 `.env` | 建议轮换 + 后续引入密钥管理 |
 | 11 | ~~**思考标签保留在历史**~~ **已修复** | `runtime/agent.ts` | `reasoning_content` 与 content 内嵌 `<think>` 块都不再写入下一轮 messages/checkpoint；Trace 仍可记录 provider reasoning 供观测 |
 
@@ -248,7 +249,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 12 套件（tool-contract / filesystem-tools / sandbox-manager / operation-identity / operation-replay / output-guard / runtime-tools / os-sandbox / workspace / llm / docs-contract / side-effect） | `npm run test:all` | **12/12 PASS**（os-sandbox / workspace 为能力条件式：可用时验证完整隔离矩阵，不可用时验证 fail-closed 拒绝路径） |
+| 确定性 13 套件（tool-contract / filesystem-tools / sandbox-manager / operation-identity / operation-replay / output-guard / runtime-tools / os-sandbox / workspace / context / llm / docs-contract / side-effect） | `npm run test:all` | **13/13 PASS**（os-sandbox / workspace 为能力条件式：可用时验证完整隔离矩阵，不可用时验证 fail-closed 拒绝路径） |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |
