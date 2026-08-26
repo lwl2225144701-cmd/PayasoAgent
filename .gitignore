@@ -11,3 +11,5 @@ sandbox/workspaces/*
 # 前端构建产物
 web/dist/
 *.tsbuildinfo
+# Trae IDE 产物目录
+.trae/
