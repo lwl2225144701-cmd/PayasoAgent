@@ -62,7 +62,7 @@ export function connectSSE(
   const es = new EventSource(url);
 
   const eventTypes = [
-    'run_started', 'run_completed', 'run_failed', 'run_stopped',
+    'run_started', 'run_completed', 'run_failed', 'run_stopped', 'run_interrupted',
     'llm_call', 'tool_call', 'tool_result', 'tool_result_invalid',
     'tool_error', 'final_answer', 'context_trim', 'context_usage', 'recovery_decision',
     'side_effect_skip', 'side_effect_uncertain', 'tool_output_truncated',

@@ -4,6 +4,8 @@
 >
 > **基线日期**：2026-08-26
 >
+> **后续状态**：本文是 Phase 2 之前的历史冻结坐标；当前实现状态以 `architecture-current.md` 与 `phase2-session-persistence.md` 为准。
+>
 > **文档定位**：以当前工作区实际源码为准，记录 v1 已完成的能力、已验证的边界、以及明确不属于 v1 的范围。作为下一阶段 **SQLite / Session Persistence** 开始前的冻结坐标。
 >
 > **历史文档状态**：

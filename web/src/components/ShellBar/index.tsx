@@ -4,6 +4,8 @@ import styles from './ShellBar.module.css';
 
 interface ShellBarProps {
   run: HostRun | null;
+  onResume?: () => void;
+  resuming?: boolean;
 }
 
 const RUN_STATUS_TEXT: Record<HostRun['status'], string | null> = {
@@ -12,9 +14,10 @@ const RUN_STATUS_TEXT: Record<HostRun['status'], string | null> = {
   completed: null,
   failed: null,
   stopped: null,
+  interrupted: '已中断',
 };
 
-export function ShellBar({ run }: ShellBarProps) {
+export function ShellBar({ run, onResume, resuming }: ShellBarProps) {
   const label = run ? RUN_STATUS_TEXT[run.status] : null;
   const [, tick] = useState(0);
   const autoTickRef = useRef<number | null>(null);
@@ -45,6 +48,11 @@ export function ShellBar({ run }: ShellBarProps) {
             <span className={styles.dot} aria-hidden="true" />
             <span className={styles.statusText}>{label}</span>
           </span>
+          {run?.status === 'interrupted' && (
+            <button className={styles.resumeButton} type="button" onClick={onResume} disabled={resuming}>
+              {resuming ? '正在恢复…' : '继续运行'}
+            </button>
+          )}
         </div>
       )}
     </div>

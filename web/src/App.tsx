@@ -5,7 +5,7 @@ import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
 import { useEventStream } from './hooks/useEventStream';
-import { createRun, getWorkspace, listRuns, listFiles, openWorkspace, stopRun } from './api';
+import { createRun, getWorkspace, listRuns, listFiles, openWorkspace, resumeRun, stopRun } from './api';
 import type { FileEntry, HostRun, WorkspaceView } from './types';
 import styles from './App.module.css';
 
@@ -20,6 +20,7 @@ export default function App() {
   const sidebarUserOverrideRef = useRef(false);
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
+  const [resumingRun, setResumingRun] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { events } = useEventStream(currentRunId);
@@ -63,7 +64,7 @@ export default function App() {
   useEffect(() => {
     if (!currentRunId || events.length === 0) return;
     const lastEvent = events[events.length - 1];
-    if (lastEvent.type === 'run_completed' || lastEvent.type === 'run_failed' || lastEvent.type === 'run_stopped') {
+    if (lastEvent.type === 'run_completed' || lastEvent.type === 'run_failed' || lastEvent.type === 'run_stopped' || lastEvent.type === 'run_interrupted') {
       refreshRuns();
     }
   }, [events, currentRunId, refreshRuns]);
@@ -106,6 +107,19 @@ export default function App() {
       console.error('Failed to stop run:', err);
     }
   }, [currentRunId, refreshRuns]);
+
+  const handleResumeRun = useCallback(async () => {
+    if (!currentRunId || resumingRun) return;
+    setResumingRun(true);
+    try {
+      await resumeRun(currentRunId);
+      await refreshRuns();
+    } catch (err) {
+      console.error('Failed to resume run:', err);
+    } finally {
+      setResumingRun(false);
+    }
+  }, [currentRunId, refreshRuns, resumingRun]);
 
   const handleSelectRun = useCallback((runId: string) => {
     setCurrentRunId(runId);
@@ -155,7 +169,7 @@ export default function App() {
       />
 
       <div className={styles.main}>
-        <ShellBar run={currentRun} />
+        <ShellBar run={currentRun} onResume={handleResumeRun} resuming={resumingRun} />
 
         {currentRun ? (
           <div className={styles.workspace}>

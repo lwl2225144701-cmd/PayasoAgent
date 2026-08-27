@@ -190,7 +190,8 @@ function handleSse(req: IncomingMessage, res: ServerResponse, manager: RunManage
   });
   res.write("retry: 3000\n\n");
   const sink = sinkOf(res);
-  manager.subscribe(runId, sink);
+  const lastEventId = Number(req.headers["last-event-id"] ?? 0);
+  manager.subscribe(runId, sink, Number.isSafeInteger(lastEventId) && lastEventId > 0 ? lastEventId : 0);
   const heartbeat = setInterval(() => { res.write(": ping\n\n"); }, 15000);
   res.on("close", () => { clearInterval(heartbeat); manager.unsubscribe(runId, sink); });
 }

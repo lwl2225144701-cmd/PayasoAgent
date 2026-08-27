@@ -69,3 +69,23 @@
   font-weight: 500;
   color: var(--accent-blue);
 }
+
+.resumeButton {
+  border: 1px solid var(--color-brand-border);
+  border-radius: 7px;
+  padding: 5px 10px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-hover);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.resumeButton:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.resumeButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

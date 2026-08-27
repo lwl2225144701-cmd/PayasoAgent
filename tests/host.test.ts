@@ -10,8 +10,9 @@ import { createHostServer } from "../src/host/server.js";
 import { createWorkspace, getSandboxRoot } from "../src/sandbox/sandbox-manager.js";
 
 // 用隔离沙箱根，避免污染仓库 sandbox/
-const ROOT = path.join(os.tmpdir(), "payaso-host-test");
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-host-test-"));
 process.env.SANDBOX_ROOT = ROOT;
+process.env.PAYASO_DB_PATH = path.join(ROOT, "payaso.db");
 fs.mkdirSync(ROOT, { recursive: true });
 
 const server = createHostServer();

@@ -17,6 +17,7 @@ export function createHostServer(manager: RunManager = new RunManager()): http.S
       }
     });
   });
+  server.once("close", () => manager.close());
   return server;
 }
 

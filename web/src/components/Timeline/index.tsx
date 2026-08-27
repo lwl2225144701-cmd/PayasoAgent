@@ -198,6 +198,9 @@ export function Timeline({ run }: TimelineProps) {
                 )}
               </div>
             )}
+            {!finalAnswer && finalError && run.status !== 'running' && (
+              <div className={styles.finalError}>{finalError}</div>
+            )}
           </section>
         ) : (
           // Empty agent section: reserved vertical rhythm so input isn't jumpy.

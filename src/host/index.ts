@@ -2,9 +2,11 @@
 // 用法: npm run host   （PORT 环境变量可覆盖端口，默认 4500）
 
 import { createHostServer } from "./server.js";
+import { RunManager } from "./run-manager.js";
 
 const port = Number(process.env.PORT ?? 4500);
-const server = createHostServer();
+const manager = new RunManager();
+const server = createHostServer(manager);
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`Payaso Host API listening on http://localhost:${port}`);
@@ -24,6 +26,8 @@ server.listen(port, "127.0.0.1", () => {
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     console.log(`\n收到 ${sig}，关闭 server...`);
+    // Close SSE and SQLite before waiting for node:http connections to drain.
+    manager.close();
     server.close(() => process.exit(0));
     // 兜底：强制退出
     setTimeout(() => process.exit(0), 2000).unref?.();

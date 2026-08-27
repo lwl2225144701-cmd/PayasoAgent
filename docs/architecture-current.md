@@ -46,7 +46,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 ┌───────────────▼─────────────────────────────────────────────┐
 │ Host (src/host/, node:http, 端口 4500, 仅 127.0.0.1)         │
 │  server.ts → routes.ts → RunManager → runAgent(后台)         │
-│  run-events.ts(SSE 编码) · workspace.ts(原生 picker)         │
+│  persistence/(SQLite) · run-events.ts · workspace.ts         │
 └───────────────┬─────────────────────────────────────────────┘
                 │ runAgent(task, checkpoint?, opts)
 ┌───────────────▼─────────────────────────────────────────────┐
@@ -97,9 +97,11 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/sandbox-policy.ts` | seatbelt 策略生成（default-deny + 白名单） |
 | `src/host/server.ts` | node:http 服务器 + 统一错误兜底 |
 | `src/host/routes.ts` | 路由分发：/runs API、/workspace、静态文件 + SPA fallback |
-| `src/host/run-manager.ts` | 内存 Run 状态机（running/completed/failed/stopped）+ SSE 订阅广播 |
+| `src/host/run-manager.ts` | 活跃 Run 内存状态 + SQLite 历史/状态/事件 + SSE 广播；启动时 running→interrupted |
 | `src/host/run-events.ts` | HostEvent 类型 + SSE 编码 |
 | `src/host/workspace.ts` | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM） |
+| `src/host/persistence/store.ts` | 薄 RunStore 接口（Run CRUD + Event append/list） |
+| `src/host/persistence/sqlite-store.ts` | 原生 `node:sqlite` 实现；默认 `~/.payaso/payaso.db` |
 | `src/host/index.ts` | Host 启动入口（PORT 可覆盖，默认 4500） |
 
 ### 3.2 Web 前端
@@ -196,16 +198,16 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | 方法 | 路径 | 功能 |
 |---|---|---|
 | POST | `/runs` | 创建 Run（`{task}`），立即返回 runId，后台执行 |
-| GET | `/runs` | 列出 Run（内存级，重启丢失） |
+| GET | `/runs` | 从 SQLite 列出当前与历史 Run（Host 重启后仍存在） |
 | GET | `/runs/:id` | 单个 Run 元数据 |
 | POST | `/runs/:id/resume` | 从 checkpoint 恢复 |
 | POST | `/runs/:id/stop` | 停止（迭代边界生效；见 §8 已知缺口 #4） |
-| GET | `/runs/:id/events` | SSE（回放历史 + 实时） |
+| GET | `/runs/:id/events` | SQLite 历史事件回放 + 当前活跃 Run 实时 SSE；支持 Last-Event-ID |
 | GET | `/runs/:id/files` | 工作区文件树（深度≤6，数量≤500） |
 | GET | `/runs/:id/files/*` | 读取工作区内文件（≤1MB） |
 | GET | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器 |
 
-SSE 事件 = Runtime Trace 15 类（透传）+ Host 生命周期 4 类 `run_started / run_completed / run_failed / run_stopped`。
+SSE 事件 = Runtime Trace 16 类（透传）+ Host 生命周期 5 类 `run_started / run_completed / run_failed / run_stopped / run_interrupted`。
 
 ---
 
@@ -249,7 +251,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 14 套件（tool-contract / filesystem-tools / sandbox-manager / operation-identity / operation-replay / output-guard / runtime-tools / os-sandbox / workspace / context / context-budget / llm / docs-contract / side-effect） | `npm run test:all` | **14/14 PASS**（os-sandbox / workspace 为能力条件式：可用时验证完整隔离矩阵，不可用时验证 fail-closed 拒绝路径；context-budget 验证 Agent 级超预算硬失败） |
+| 确定性 15 套件（增加 persistence：SQLite CRUD、事件顺序/隔离、Host restart、interrupted、Workspace Resume） | `npm run test:all` | **15/15 PASS** |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |
@@ -261,7 +263,7 @@ npm run test:host         # Host API 集成（需 LLM）
 - 多模型/多 Provider 路由、缓存、降级（LLM 层仅实现单 Provider 的有限重试）
 - 工具执行超时（除 shell 的 10s）：无 AbortController 包装
 - 流式 / 分页 Tool Output；长期 Memory / RAG；跨 run 编排（`MAX_ITERATIONS=10` 仍为硬预算）
-- Trace 持久化（仅内存 + stdout）；checkpoint 生命周期清理
+- checkpoint 生命周期清理（Trace/Host Event 已由 SQLite 持久化）
 - 用户鉴权 / 多租户（runId 单租户；Host 仅监听 127.0.0.1）
 - 非 macOS 上的 shell 工具（`sandbox-exec` 仅 darwin）；**macOS 上 sandbox-exec 不可用时 shell 自动禁用**（fail-closed，见 §8 #8）
 

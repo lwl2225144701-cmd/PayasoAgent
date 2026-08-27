@@ -13,11 +13,13 @@ import { clearWorkspace, getWorkspace, setWorkspace, workspacePublicView } from 
 import { createHostServer, RunManager } from "../src/host/server.js";
 import { checkpointPath, loadCheckpoint, saveCheckpoint } from "../src/runtime/checkpoint.js";
 import { probeSandboxAvailability } from "../src/sandbox/macos-sandbox.js";
+import { SqliteRunStore } from "../src/host/persistence/sqlite-store.js";
 import { createScratchpad } from "../src/runtime/scratchpad.js";
 import { createState } from "../src/runtime/state.js";
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-workspace-v1-"));
 process.env.SANDBOX_ROOT = path.join(base, "runtime-sandbox");
+process.env.PAYASO_DB_PATH = path.join(base, "payaso.db");
 const rootA = path.join(base, "workspace-A");
 const rootB = path.join(base, "workspace-B");
 fs.mkdirSync(rootA, { recursive: true });
@@ -197,6 +199,20 @@ test("Host resume 拒绝对同一 running runId 启动第二个 Agent", () => {
     workspaceRoot: canonicalA,
     sideEffects: [],
   });
+  const seed = new SqliteRunStore(process.env.PAYASO_DB_PATH!);
+  if (!seed.getRun(runId)) {
+    const now = new Date().toISOString();
+    seed.createRun({
+      runId,
+      task,
+      status: "interrupted",
+      workspaceRoot: canonicalA,
+      workspaceName: "workspace-A",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  seed.close();
   const originalFetch = globalThis.fetch;
   const originalTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
   process.env.LLM_REQUEST_TIMEOUT_MS = "250";

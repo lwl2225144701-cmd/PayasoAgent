@@ -9,7 +9,8 @@ export type LifecycleEvent =
   | { type: "run_started"; runId: string; timestamp: string }
   | { type: "run_completed"; runId: string; timestamp: string; result?: string }
   | { type: "run_failed"; runId: string; timestamp: string; error?: string }
-  | { type: "run_stopped"; runId: string; timestamp: string };
+  | { type: "run_stopped"; runId: string; timestamp: string }
+  | { type: "run_interrupted"; runId: string; timestamp: string; error: string };
 
 // 浏览器收到的统一事件：Runtime Trace 事件 或 Host 生命周期事件
 export type HostEvent = TraceEvent | LifecycleEvent;
@@ -20,7 +21,8 @@ export function isLifecycle(ev: HostEvent): ev is LifecycleEvent {
     ev.type === "run_started" ||
     ev.type === "run_completed" ||
     ev.type === "run_failed" ||
-    ev.type === "run_stopped"
+    ev.type === "run_stopped" ||
+    ev.type === "run_interrupted"
   );
 }
 
