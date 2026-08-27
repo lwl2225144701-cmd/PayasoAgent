@@ -248,6 +248,44 @@ export async function handleRequest(
         return bad(res, (err as Error).message);
       }
     }
+    if (s.length === 2 && s[1] === "rename" && method === "POST") {
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const fromName = typeof body.fromName === "string" ? body.fromName.trim() : "";
+      const toName = typeof body.toName === "string" ? body.toName.trim() : "";
+      if (!fromName || !toName) return bad(res, "缺少 fromName/toName");
+      if (toName.length > 120) return bad(res, "名称过长");
+      try {
+        return sendJson(res, 200, manager.renameWorkspace(fromName, toName));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && s[1] === "delete" && method === "POST") {
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name) return bad(res, "缺少 name");
+      try {
+        return sendJson(res, 200, manager.deleteWorkspace(name));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
     return notFound(res);
   }
 
@@ -313,8 +351,10 @@ export async function handleRequest(
       if (!task) return bad(res, "缺少 task");
       const requestedSessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : undefined;
       if (requestedSessionId && !SAFE_SESSION_ID.test(requestedSessionId)) return bad(res, "非法 sessionId");
+      const workspaceName = typeof body.workspaceName === "string" ? body.workspaceName.trim() : undefined;
+      if (workspaceName && workspaceName.length > 120) return bad(res, "workspaceName 过长");
       try {
-        const created = manager.createInSession(task, requestedSessionId);
+        const created = manager.createInSession(task, requestedSessionId, { workspaceName });
         return sendJson(res, 202, { ...created, status: "running" });
       } catch (err) {
         return bad(res, (err as Error).message);

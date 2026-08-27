@@ -4,7 +4,18 @@ import { ShellBar } from './components/ShellBar';
 import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
-import { createRun, getWorkspace, listRuns, listSessions, listFiles, openWorkspace, resumeRun, stopRun } from './api';
+import {
+  createRun,
+  deleteWorkspaceGroup,
+  getWorkspace,
+  listRuns,
+  listSessions,
+  listFiles,
+  openWorkspace,
+  renameWorkspace as apiRenameWorkspace,
+  resumeRun,
+  stopRun,
+} from './api';
 import type { FileEntry, HostRun, HostSession, WorkspaceView } from './types';
 import styles from './App.module.css';
 
@@ -27,6 +38,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const [resumingRun, setResumingRun] = useState(false);
+  const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -40,17 +52,24 @@ export default function App() {
     }
   }, []);
 
-  const refreshSessions = useCallback(async () => {
+  const refreshSessions = useCallback(async (mode: 'merge' | 'replace' = 'merge'): Promise<HostSession[]> => {
     try {
       const sessionResp = await listSessions();
-      // 与乐观插入的 sessions merge：服务端返回的同名 sessionId 项以服务端为准（title/workspace 可能和前端生成的不同）
-      setSessions(prev => {
-        const byId = new Map(prev.map(s => [s.sessionId, s]));
-        for (const s of sessionResp.sessions) byId.set(s.sessionId, s);
-        return Array.from(byId.values());
-      });
+      // merge：与乐观插入的 sessions 合并，服务端同 sessionId 项优先（title/workspace 以服务端为准）；
+      // replace：以服务端为准整体替换（删除工作区后必须换，否则被删会话残留前端）。
+      if (mode === 'replace') {
+        setSessions(sessionResp.sessions);
+      } else {
+        setSessions(prev => {
+          const byId = new Map(prev.map(s => [s.sessionId, s]));
+          for (const s of sessionResp.sessions) byId.set(s.sessionId, s);
+          return Array.from(byId.values());
+        });
+      }
+      return sessionResp.sessions;
     } catch (err) {
       console.error('Failed to refresh sessions:', err);
+      throw err;
     }
   }, []);
 
@@ -100,7 +119,11 @@ export default function App() {
     const trimmed = task.trim();
     if (!trimmed) return;
     try {
-      const resp = await createRun(trimmed, currentSessionId ?? undefined);
+      const resp = await createRun(
+        trimmed,
+        currentSessionId ?? undefined,
+        preferredWorkspaceName ?? undefined,
+      );
       const isNewSession = !currentSessionId;
       // 立刻把刚创建的 Run 合并进 runs 数组（乐观更新），避免等 refreshRuns 回来之前 landing 分支还在显示
       const optimisticRun: HostRun = {
@@ -135,12 +158,13 @@ export default function App() {
       }
       // Session 列表与 Run 状态解耦；仅新建会话后做一次服务端同步。
       if (isNewSession) void refreshSessions();
+      setPreferredWorkspaceName(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('Failed to create run:', err);
       alert(`任务创建失败：${msg}`);
     }
-  }, [currentSessionId, currentSessionRuns.length, refreshSessions, workspace]);
+  }, [currentSessionId, currentSessionRuns.length, preferredWorkspaceName, refreshSessions, workspace]);
 
   const handleRunTerminal = useCallback(() => {
     // SSE 已携带终态；这里只做一次持久化状态对账，不启动后台轮询。
@@ -183,11 +207,54 @@ export default function App() {
     setCurrentRunId(null);
     setCurrentSessionId(null);
     setViewingFile(null);
+    setPreferredWorkspaceName(null);
     setTimeout(() => {
       const input = document.querySelector('textarea');
       input?.focus();
     }, 50);
   }, []);
+
+  const handleNewTaskInWorkspace = useCallback((workspaceName: string) => {
+    // 切到 landing 并记住目标工作区；用户提交任务时 createRun 会带上 workspaceName，
+    // 后端新建会话并继承该工作区根目录（会话创建后清空偏好）。
+    setPreferredWorkspaceName(workspaceName);
+    setCurrentRunId(null);
+    setCurrentSessionId(null);
+    setViewingFile(null);
+    setTimeout(() => {
+      const input = document.querySelector('textarea');
+      input?.focus();
+    }, 50);
+  }, []);
+
+  const handleRenameWorkspace = useCallback(async (fromName: string, toName: string) => {
+    try {
+      await apiRenameWorkspace(fromName, toName);
+      setWorkspace(w => (w && w.name === fromName ? { name: toName } : w));
+      await refreshSessions('replace');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`重命名失败：${msg}`);
+    }
+  }, [refreshSessions]);
+
+  const handleDeleteWorkspace = useCallback(async (name: string) => {
+    try {
+      await deleteWorkspaceGroup(name);
+      setWorkspace(w => (w && w.name === name ? null : w));
+      const remaining = await refreshSessions('replace');
+      setSessions(remaining);
+      // 当前会话所属工作区被删除 → 回到 landing
+      if (currentSessionId && !remaining.some(s => s.sessionId === currentSessionId)) {
+        setCurrentSessionId(null);
+        setCurrentRunId(null);
+        setViewingFile(null);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`删除工作区失败：${msg}`);
+    }
+  }, [currentSessionId, refreshSessions]);
 
   const handleOpenWorkspace = useCallback(async () => {
     if (openingWorkspace) return;
@@ -212,6 +279,9 @@ export default function App() {
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
         onNewTask={handleNewTask}
+        onNewTaskInWorkspace={handleNewTaskInWorkspace}
+        onRenameWorkspace={handleRenameWorkspace}
+        onDeleteWorkspace={handleDeleteWorkspace}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => {
           sidebarUserOverrideRef.current = true;

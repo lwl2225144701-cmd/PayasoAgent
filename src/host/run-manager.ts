@@ -9,7 +9,7 @@ import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
 import type { RunStore, StoredRun, StoredRunStatus, StoredSession } from "./persistence/store.js";
-import { getWorkspace } from "./workspace.js";
+import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
 
 export type HostRunStatus = StoredRunStatus;
 
@@ -78,7 +78,11 @@ export class RunManager {
     return this.createInSession(task).runId;
   }
 
-  createInSession(task: string, requestedSessionId?: string): { runId: string; sessionId: string } {
+  createInSession(
+    task: string,
+    requestedSessionId?: string,
+    opts?: { workspaceName?: string },
+  ): { runId: string; sessionId: string } {
     const runId = crypto.randomUUID();
     const now = new Date().toISOString();
     let session: StoredSession;
@@ -91,7 +95,13 @@ export class RunManager {
       session = { ...persisted, updatedAt: now };
       this.store.updateSession(session);
     } else {
-      const workspace = getWorkspace();
+      let workspace = getWorkspace();
+      if (opts?.workspaceName) {
+        // Bind a brand-new Session to an existing (historical) Workspace: inherit
+        // its canonical root without ever exposing the absolute path to the client.
+        const reference = this.store.findSessionByWorkspaceName(opts.workspaceName);
+        if (reference) workspace = { rootPath: reference.workspaceRoot, name: opts.workspaceName };
+      }
       session = {
         sessionId: crypto.randomUUID(),
         title: this.sessionTitle(task),
@@ -158,6 +168,33 @@ export class RunManager {
     this.record(run, { type: "run_started", runId, timestamp: now });
     this.startAgent(run, checkpoint.task, checkpoint);
     return true;
+  }
+
+  renameWorkspace(fromName: string, toName: string): { updated: number } {
+    if (toName === fromName) return { updated: 0 };
+    const updated = this.store.renameSessionsWorkspace(fromName, toName);
+    if (updated === 0) throw new Error(`Workspace not found: ${fromName}`);
+    // Keep in-memory active Runs pointing at the same Workspace label.
+    for (const run of this.runs.values()) {
+      if (run.workspace?.name === fromName) run.workspace = { name: toName };
+    }
+    renameWorkspaceLabel(toName);
+    return { updated };
+  }
+
+  deleteWorkspace(name: string): { deleted: number } {
+    for (const run of this.runs.values()) {
+      if (run.status === "running" && run.workspace?.name === name) {
+        throw new Error("Workspace has a running Run");
+      }
+    }
+    const deleted = this.store.deleteSessionsByWorkspace(name);
+    if (deleted === 0) throw new Error(`Workspace not found: ${name}`);
+    for (const run of this.runs.values()) {
+      if (run.workspace?.name === name) run.workspace = undefined;
+    }
+    if (getWorkspace()?.name === name) clearWorkspace();
+    return { deleted };
   }
 
   stop(runId: string): boolean {

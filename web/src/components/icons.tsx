@@ -320,6 +320,28 @@ export function FolderIcon({ size, ...p }: IconProps) {
   );
 }
 
+export function FolderFilledIcon({ size, ...p }: IconProps) {
+  return (
+    <svg width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" />
+    </svg>
+  );
+}
+
+export function TrashIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </>,
+    p,
+  );
+}
+
 export function FolderPlusIcon({ size, ...p }: IconProps) {
   return base(
     size,

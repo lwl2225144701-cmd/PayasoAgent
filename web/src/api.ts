@@ -14,9 +14,16 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-export function createRun(task: string, sessionId?: string): Promise<{ runId: string; sessionId: string; status: string }> {
+export function createRun(
+  task: string,
+  sessionId?: string,
+  workspaceName?: string,
+): Promise<{ runId: string; sessionId: string; status: string }> {
   const url = sessionId ? `/sessions/${sessionId}/runs` : '/runs';
-  return jsonFetch(url, { method: 'POST', body: JSON.stringify({ task }) });
+  return jsonFetch(url, {
+    method: 'POST',
+    body: JSON.stringify(workspaceName ? { task, workspaceName } : { task }),
+  });
 }
 
 export function listSessions(): Promise<{ sessions: HostSession[] }> {
@@ -33,6 +40,14 @@ export function getWorkspace(): Promise<{ workspace: WorkspaceView | null }> {
 
 export function openWorkspace(): Promise<{ workspace: WorkspaceView | null; cancelled: boolean }> {
   return jsonFetch('/workspace/open', { method: 'POST' });
+}
+
+export function renameWorkspace(fromName: string, toName: string): Promise<{ updated: number }> {
+  return jsonFetch('/workspace/rename', { method: 'POST', body: JSON.stringify({ fromName, toName }) });
+}
+
+export function deleteWorkspaceGroup(name: string): Promise<{ deleted: number }> {
+  return jsonFetch('/workspace/delete', { method: 'POST', body: JSON.stringify({ name }) });
 }
 
 export function listRuns(): Promise<{ runs: HostRun[] }> {

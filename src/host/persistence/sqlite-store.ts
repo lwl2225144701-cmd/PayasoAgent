@@ -78,7 +78,8 @@ export function resolvePayasoDbPath(env: Record<string, string | undefined> = pr
 }
 
 export class SqliteRunStore implements RunStore {
-  private db: DatabaseSync;
+  // 在构造函数的多候选循环内赋值（磁盘失败回退 :memory:），故用 definite assignment
+  private db!: DatabaseSync;
   private closed = false;
 
   constructor(readonly dbPath: string = resolvePayasoDbPath()) {
@@ -309,6 +310,36 @@ export class SqliteRunStore implements RunStore {
       "SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC, created_at ASC"
     ).all(sessionId) as unknown as RunRow[];
     return rows.map(mapRun);
+  }
+
+  renameSessionsWorkspace(fromName: string, toName: string): number {
+    const timestampsResult = this.db.prepare(
+      "UPDATE sessions SET workspace_name = ?, updated_at = ? WHERE workspace_name = ?"
+    ).run(toName, new Date().toISOString(), fromName);
+    this.db.prepare(
+      "UPDATE runs SET workspace_name = ? WHERE workspace_name = ?"
+    ).run(toName, fromName);
+    return Number(timestampsResult.changes);
+  }
+
+  deleteSessionsByWorkspace(name: string): number {
+    // events cascade on run_id; runs must be removed before their parent session.
+    this.db.prepare(`
+      DELETE FROM runs WHERE session_id IN (
+        SELECT session_id FROM sessions WHERE workspace_name = ?
+      )
+    `).run(name);
+    const result = this.db.prepare(
+      "DELETE FROM sessions WHERE workspace_name = ?"
+    ).run(name);
+    return Number(result.changes);
+  }
+
+  findSessionByWorkspaceName(name: string): StoredSession | null {
+    const row = this.db.prepare(
+      "SELECT * FROM sessions WHERE workspace_name = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+    ).get(name) as SessionRow | undefined;
+    return row ? mapSession(row) : null;
   }
 
   appendEvent(runId: string, event: HostEvent): number {

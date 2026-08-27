@@ -15,3 +15,6 @@ web/dist/
 .trae/
 # 本地 SQLite 持久化数据（放项目内可绕过 HOME 目录沙箱）
 .data/
+
+# JetBrains IDE 产物目录
+.idea/

@@ -9,14 +9,19 @@ export function formatTime(iso: string | undefined | null): string {
   }
 }
 
-export function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
-  if (diffDays <= 0) return '今天';
-  if (diffDays === 1) return '昨天';
-  return d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+export function formatRelativeTime(iso: string | undefined | null): string {
+  if (!iso) return '';
+  const time = new Date(iso).getTime();
+  if (Number.isNaN(time)) return '';
+  const diff = Date.now() - time;
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diff < minute) return '刚刚';
+  if (diff < hour) return `${Math.floor(diff / minute)}分钟`;
+  if (diff < day) return `${Math.floor(diff / hour)}小时`;
+  if (diff < 2 * day) return '昨天';
+  return new Date(iso).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
 export function formatBytes(bytes: number): string {

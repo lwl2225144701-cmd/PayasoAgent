@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { RunManager } from "../src/host/run-manager.js";
 import type { StreamingEvent } from "../src/host/run-events.js";
 import { SqliteRunStore } from "../src/host/persistence/sqlite-store.js";
-import type { StoredRun } from "../src/host/persistence/store.js";
+import type { StoredRun, StoredSession } from "../src/host/persistence/store.js";
 import { clearWorkspace, setWorkspace } from "../src/host/workspace.js";
 import { checkpointPath, saveCheckpoint } from "../src/runtime/checkpoint.js";
 import { createScratchpad } from "../src/runtime/scratchpad.js";
@@ -312,6 +312,53 @@ test("streaming deltas are batched, persisted, and ordered before final events",
     clearWorkspace();
     if (runId) fs.rmSync(checkpointPath(runId), { force: true });
   }
+});
+
+test("workspace group ops: rename sessions/runs label and delete cascades runs+events", () => {
+  const dbPath = path.join(root, "workspace-ops.db");
+  const store = new SqliteRunStore(dbPath);
+
+  const mkSession = (sid: string, name: string): StoredSession => ({
+    sessionId: sid,
+    title: `title-${sid}`,
+    workspaceRoot: canonicalWorkspace,
+    workspaceName: name,
+    createdAt: "2026-08-27T00:00:00.000Z",
+    updatedAt: "2026-08-27T00:00:00.000Z",
+  });
+  store.createSession(mkSession("s1", "Workspace-A"));
+  store.createSession(mkSession("s2", "Workspace-A"));
+  store.createSession(mkSession("s3", "Workspace-B"));
+  store.updateSession({
+    ...mkSession("s2", "Workspace-A"),
+    createdAt: "2026-08-27T00:30:00.000Z",
+    updatedAt: "2026-08-27T01:00:00.000Z",
+  });
+  store.createRun({ ...storedRun("r1"), sessionId: "s1", workspaceName: "Workspace-A" });
+  store.createRun({ ...storedRun("r2"), sessionId: "s3", workspaceName: "Workspace-B" });
+  store.appendEvent("r1", { type: "run_started", runId: "r1", timestamp: "2026-08-27T00:00:00.000Z" });
+
+  // 重命名：sessions + runs 的 workspace_name 一并更新
+  const renamed = store.renameSessionsWorkspace("Workspace-A", "renamed-A");
+  assert.equal(renamed, 2);
+  assert.equal(store.getSession("s1")?.workspaceName, "renamed-A");
+  assert.equal(store.getSession("s2")?.workspaceName, "renamed-A");
+  assert.equal(store.getRun("r1")?.workspaceName, "renamed-A");
+
+  // 按名字找最新会话（用于新会话绑定工作区）
+  const found = store.findSessionByWorkspaceName("renamed-A");
+  assert.equal(found?.sessionId, "s2");
+
+  // 删除工作区：会话 + 其 Run + 事件级联清理
+  const deleted = store.deleteSessionsByWorkspace("renamed-A");
+  assert.equal(deleted, 2);
+  assert.equal(store.getSession("s1"), null);
+  assert.equal(store.getSession("s2"), null);
+  assert.equal(store.getRun("r1"), null);
+  assert.equal(store.listEvents("r1").length, 0);
+  assert.equal(store.getSession("s3")?.workspaceName, "Workspace-B");
+
+  store.close();
 });
 
 let passed = 0;

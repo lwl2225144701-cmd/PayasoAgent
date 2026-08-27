@@ -10,6 +10,14 @@ export default defineConfig({
         target: 'http://localhost:4500',
         changeOrigin: true,
       },
+      '/sessions': {
+        target: 'http://localhost:4500',
+        changeOrigin: true,
+      },
+      '/workspace': {
+        target: 'http://localhost:4500',
+        changeOrigin: true,
+      },
     },
   },
   build: {

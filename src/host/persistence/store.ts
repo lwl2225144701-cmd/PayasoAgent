@@ -39,6 +39,9 @@ export interface RunStore {
   updateSession(session: StoredSession): void;
   getSession(sessionId: string): StoredSession | null;
   listSessions(): StoredSession[];
+  renameSessionsWorkspace(fromName: string, toName: string): number;
+  deleteSessionsByWorkspace(name: string): number;
+  findSessionByWorkspaceName(name: string): StoredSession | null;
   createRun(run: StoredRun): void;
   updateRun(run: StoredRun): void;
   getRun(runId: string): StoredRun | null;

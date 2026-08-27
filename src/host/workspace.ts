@@ -29,6 +29,12 @@ export function clearWorkspace(): void {
   currentWorkspace = null;
 }
 
+// Rename the display label of the Host's current Workspace (root path unchanged).
+// New sessions created while this Workspace is active inherit the new label.
+export function renameWorkspaceLabel(name: string): void {
+  if (currentWorkspace) currentWorkspace = { ...currentWorkspace, name };
+}
+
 // Browsers intentionally do not reveal an arbitrary folder's absolute host
 // path. The local Host therefore owns the native macOS picker and authorizes
 // only the directory the user explicitly chooses.
