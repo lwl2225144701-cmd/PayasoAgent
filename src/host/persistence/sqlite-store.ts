@@ -3,12 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { HostEvent } from "../run-events.js";
-import type { RunStore, StoredEvent, StoredRun, StoredRunStatus } from "./store.js";
+import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession } from "./store.js";
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".payaso", "payaso.db");
 
 interface RunRow {
   run_id: string;
+  session_id: string;
+  turn_index: number;
   task: string;
   status: string;
   workspace_root: string;
@@ -17,6 +19,15 @@ interface RunRow {
   updated_at: string;
   result: string | null;
   error: string | null;
+}
+
+interface SessionRow {
+  session_id: string;
+  title: string;
+  workspace_root: string;
+  workspace_name: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface EventRow {
@@ -31,6 +42,8 @@ function nullable(value: string | undefined): string | null {
 function mapRun(row: RunRow): StoredRun {
   const run: StoredRun = {
     runId: row.run_id,
+    sessionId: row.session_id,
+    turnIndex: row.turn_index,
     task: row.task,
     status: row.status as StoredRunStatus,
     workspaceRoot: row.workspace_root,
@@ -41,6 +54,17 @@ function mapRun(row: RunRow): StoredRun {
   if (row.result !== null) run.result = row.result;
   if (row.error !== null) run.error = row.error;
   return run;
+}
+
+function mapSession(row: SessionRow): StoredSession {
+  return {
+    sessionId: row.session_id,
+    title: row.title,
+    workspaceRoot: row.workspace_root,
+    workspaceName: row.workspace_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export function resolvePayasoDbPath(env: Record<string, string | undefined> = process.env): string {
@@ -61,8 +85,19 @@ export class SqliteRunStore implements RunStore {
     this.db.exec("PRAGMA busy_timeout = 5000");
     if (dbPath !== ":memory:") this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        workspace_root TEXT NOT NULL,
+        workspace_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS runs (
         run_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        turn_index INTEGER NOT NULL,
         task TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'stopped', 'interrupted')),
         workspace_root TEXT NOT NULL,
@@ -70,7 +105,9 @@ export class SqliteRunStore implements RunStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         result TEXT,
-        error TEXT
+        error TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id),
+        UNIQUE (session_id, turn_index)
       );
 
       CREATE TABLE IF NOT EXISTS events (
@@ -85,18 +122,98 @@ export class SqliteRunStore implements RunStore {
       );
 
       CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
+    `);
+    this.migrateLegacyRuns();
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
     `);
   }
 
+  private migrateLegacyRuns(): void {
+    const columns = this.db.prepare("PRAGMA table_info(runs)").all() as unknown as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("session_id")) this.db.exec("ALTER TABLE runs ADD COLUMN session_id TEXT");
+    if (!names.has("turn_index")) this.db.exec("ALTER TABLE runs ADD COLUMN turn_index INTEGER");
+    this.db.exec(`
+      INSERT OR IGNORE INTO sessions (
+        session_id, title, workspace_root, workspace_name, created_at, updated_at
+      )
+      SELECT run_id, substr(task, 1, 80), workspace_root, workspace_name, created_at, updated_at
+      FROM runs
+      WHERE session_id IS NULL OR session_id = '';
+
+      UPDATE runs SET session_id = run_id
+      WHERE session_id IS NULL OR session_id = '';
+
+      UPDATE runs SET turn_index = 1
+      WHERE turn_index IS NULL OR turn_index < 1;
+    `);
+  }
+
+  createSession(session: StoredSession): void {
+    this.db.prepare(`
+      INSERT INTO sessions (
+        session_id, title, workspace_root, workspace_name, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      session.sessionId,
+      session.title,
+      session.workspaceRoot,
+      session.workspaceName,
+      session.createdAt,
+      session.updatedAt,
+    );
+  }
+
+  updateSession(session: StoredSession): void {
+    const result = this.db.prepare(`
+      UPDATE sessions SET title = ?, workspace_root = ?, workspace_name = ?,
+        created_at = ?, updated_at = ? WHERE session_id = ?
+    `).run(
+      session.title,
+      session.workspaceRoot,
+      session.workspaceName,
+      session.createdAt,
+      session.updatedAt,
+      session.sessionId,
+    );
+    if (result.changes !== 1) throw new Error(`Session not found: ${session.sessionId}`);
+  }
+
+  getSession(sessionId: string): StoredSession | null {
+    const row = this.db.prepare("SELECT * FROM sessions WHERE session_id = ?").get(sessionId) as SessionRow | undefined;
+    return row ? mapSession(row) : null;
+  }
+
+  listSessions(): StoredSession[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM sessions ORDER BY updated_at DESC, session_id ASC"
+    ).all() as unknown as SessionRow[];
+    return rows.map(mapSession);
+  }
+
   createRun(run: StoredRun): void {
+    if (!this.getSession(run.sessionId)) {
+      this.createSession({
+        sessionId: run.sessionId,
+        title: run.task.replace(/\s+/g, " ").trim().slice(0, 80) || "未命名任务",
+        workspaceRoot: run.workspaceRoot,
+        workspaceName: run.workspaceName,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      });
+    }
     this.db.prepare(`
       INSERT INTO runs (
-        run_id, task, status, workspace_root, workspace_name,
+        run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
         created_at, updated_at, result, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       run.runId,
+      run.sessionId,
+      run.turnIndex,
       run.task,
       run.status,
       run.workspaceRoot,
@@ -111,10 +228,12 @@ export class SqliteRunStore implements RunStore {
   updateRun(run: StoredRun): void {
     const result = this.db.prepare(`
       UPDATE runs SET
-        task = ?, status = ?, workspace_root = ?, workspace_name = ?,
+        session_id = ?, turn_index = ?, task = ?, status = ?, workspace_root = ?, workspace_name = ?,
         created_at = ?, updated_at = ?, result = ?, error = ?
       WHERE run_id = ?
     `).run(
+      run.sessionId,
+      run.turnIndex,
       run.task,
       run.status,
       run.workspaceRoot,
@@ -135,6 +254,13 @@ export class SqliteRunStore implements RunStore {
 
   listRuns(): StoredRun[] {
     const rows = this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC, run_id ASC").all() as unknown as RunRow[];
+    return rows.map(mapRun);
+  }
+
+  listRunsBySession(sessionId: string): StoredRun[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC, created_at ASC"
+    ).all(sessionId) as unknown as RunRow[];
     return rows.map(mapRun);
   }
 

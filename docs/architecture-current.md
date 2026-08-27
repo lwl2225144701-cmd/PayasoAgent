@@ -7,7 +7,7 @@
 > - `v1.0-design.md` + `architecture-v1.0.svg` —— v1.0 设计稿（已过时，仅存历史）
 > - `.trae/documents/minimal-web-ui_plan.md` —— Web UI 实现方案（已按此落地）
 >
-> **版本锚点**：`CURRENT_VERSION = v1.5 + Host API + Web UI (web v0.1)`。
+> **版本锚点**：`CURRENT_VERSION = v1.5 + persistent Session/Run + streaming Web`。
 
 ---
 
@@ -29,8 +29,8 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | v1.5 | **融合身份机制**：`getOperationKey` 可选接收 ToolContext，路径归一化（`canonicalPathKey`） | `tools/*` |
 | v1.5+ | 写工具全家桶：`writeFile` / `createDir` / `moveFile` / `deleteFile` / `searchText` / `shell` | `tools/filesystem.ts`、`tools/runtime-tools.ts` |
 | v1.5+ | macOS OS Sandbox（`sandbox-exec` policy）执行 shell | `sandbox/macos-sandbox.ts`、`sandbox-policy.ts` |
-| Host | HTTP API + SSE + RunManager + 静态文件服务 + 原生工作区选择器 | `host/*` |
-| Web | React 18 + Vite 前端（Sidebar / Timeline / RunHeader / InputBar） | `web/` |
+| Host | HTTP API + SSE + Session/Run 持久化 + 静态文件服务 + 原生工作区选择器 | `host/*` |
+| Web | React 18 + Vite 前端（Session Sidebar / 连续 Timeline / 流式答案） | `web/` |
 
 **现状结论**：`src/runtime/` 不再是冻结区，而是"**谨慎修改区**"——改动需带回归测试，但不再有"不做 X"的硬边界承诺（除本文件 §10 明示的非目标）。
 
@@ -88,7 +88,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/checkpoint.ts` | 最小 JSON 持久化（`.checkpoints/<runId>.json`） |
 | `src/runtime/side-effect.ts` | 副作用三态生命周期 + canonical operation key 去重 |
 | `src/runtime/output-guard.ts` | 单工具结果 16KB 硬上限（UTF-8 安全截断） |
-| `src/llm/llm.ts` | OpenAI 兼容 `/chat/completions` 封装（fetch，无 SDK；总请求超时默认 240s 可配 `LLM_REQUEST_TIMEOUT_MS`，覆盖响应头+正文；有限重试 + 响应形状校验） |
+| `src/llm/llm.ts` | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验） |
 | `src/tools/tools.ts` | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey |
 | `src/tools/filesystem.ts` | listDir / readFile / writeFile（含可写区权限与原子写） |
 | `src/tools/runtime-tools.ts` | searchText / createDir / moveFile / deleteFile / shell |
@@ -96,11 +96,11 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/macos-sandbox.ts` | macOS `sandbox-exec` 启动器（timeout 10s、输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门） |
 | `src/sandbox/sandbox-policy.ts` | seatbelt 策略生成（default-deny + 白名单） |
 | `src/host/server.ts` | node:http 服务器 + 统一错误兜底 |
-| `src/host/routes.ts` | 路由分发：/runs API、/workspace、静态文件 + SPA fallback |
-| `src/host/run-manager.ts` | 活跃 Run 内存状态 + SQLite 历史/状态/事件 + SSE 广播；启动时 running→interrupted |
+| `src/host/routes.ts` | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback |
+| `src/host/run-manager.ts` | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running→interrupted |
 | `src/host/run-events.ts` | HostEvent 类型 + SSE 编码 |
 | `src/host/workspace.ts` | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM） |
-| `src/host/persistence/store.ts` | 薄 RunStore 接口（Run CRUD + Event append/list） |
+| `src/host/persistence/store.ts` | 薄 RunStore 接口（Session/Run CRUD + Event append/list） |
 | `src/host/persistence/sqlite-store.ts` | 原生 `node:sqlite` 实现；默认 `~/.payaso/payaso.db` |
 | `src/host/index.ts` | Host 启动入口（PORT 可覆盖，默认 4500） |
 
@@ -110,8 +110,8 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 web/src/
 ├── main.tsx / App.tsx      React 入口 + 三栏布局 + 全局状态
 ├── api.ts                  fetch 封装 + SSE EventSource
-├── hooks/useEventStream.ts SSE 连接/重连/去重
-├── types.ts                HostRun / HostEvent / FileEntry
+├── hooks/useEventStream.ts SSE 连接/重连/按 seq 去重
+├── types.ts                HostSession / HostRun / HostEvent / FileEntry
 ├── format.ts               时间/大小格式化
 └── components/             Sidebar / Timeline(思考/工具卡片) / RunHeader
                             / InputBar / ShellBar / SummaryDrawer / FileModal ...
@@ -143,7 +143,9 @@ web/src/
 for (i = startIter .. MAX_ITERATIONS=10):
   ├─ 0.    注入 Scratchpad 到 system（messages[0]）
   ├─ 0.5   ContextManager.process() → 按轮裁剪（上限 4000 字符估算）
-  ├─ 1.    chat(messages, getSchemas())
+  ├─ 1.    chat(messages, getSchemas(), onStreamDelta)
+  │         ├─ SSE delta → Host 批量持久化 → Web 增量显示
+  │         └─ 完整组装 assistant/tool_calls 后才进入 Loop
   │         └─ 无 tool_calls → stripThink → final_answer → status=completed
   └─ 2.    逐个 tool_call：
         ├─ 2a. non_idempotent → resolveOperation（replay / uncertain / start）
@@ -199,6 +201,9 @@ for (i = startIter .. MAX_ITERATIONS=10):
 |---|---|---|
 | POST | `/runs` | 创建 Run（`{task}`），立即返回 runId，后台执行 |
 | GET | `/runs` | 从 SQLite 列出当前与历史 Run（Host 重启后仍存在） |
+| GET | `/sessions` | 列出持久化 Session（不返回 workspaceRoot） |
+| GET | `/sessions/:id` | Session 元数据 |
+| GET/POST | `/sessions/:id/runs` | 获取连续对话轮次 / 在 Session 内创建下一轮 Run |
 | GET | `/runs/:id` | 单个 Run 元数据 |
 | POST | `/runs/:id/resume` | 从 checkpoint 恢复 |
 | POST | `/runs/:id/stop` | 停止（迭代边界生效；见 §8 已知缺口 #4） |
@@ -207,7 +212,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET | `/runs/:id/files/*` | 读取工作区内文件（≤1MB） |
 | GET | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器 |
 
-SSE 事件 = Runtime Trace 16 类（透传）+ Host 生命周期 5 类 `run_started / run_completed / run_failed / run_stopped / run_interrupted`。
+SSE 事件 = Runtime Trace 16 类 + Host 生命周期 5 类 + `assistant_delta / reasoning_delta`。delta 在 Host 约 60ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
 
 ---
 
@@ -239,7 +244,7 @@ npm run test:host         # Host API 集成（需 LLM）
 | 4 | ~~**`run_stopped` SSE 事件缺失**~~ **已修复** | `host/run-manager.ts` | `stop()` 不再预先改终态，统一由 `finish(run, "stopped")` 设状态并发布事件 |
 | 5 | ~~**resume 无"正在运行"守卫**~~ **已修复** | `host/run-manager.ts` | 同一 Host 进程内，已有 running runId 时 `resume()` 直接拒绝，不替换内存记录、不启动第二个 Agent |
 | 6 | ~~**`readBody` 无大小限制**~~ **已修复** | `host/routes.ts` | Run JSON 请求体限制 64KB；同时检查 `Content-Length` 和实际流式字节，超限返回 413 |
-| 7 | ~~**LLM 层无重试 + 无防御解析**~~ **已修复** | `llm/llm.ts` | 总请求超时默认 240s（`LLM_REQUEST_TIMEOUT_MS` 可配），定时器覆盖"响应头 + 正文读取"，`res.json()` 不再无保护挂死；**总超时不自动重试**（防长生成连续三遍、重复计费）；网络错误/408/429/5xx 最多重试 2 次（支持 `Retry-After`）；4xx 不重试；JSON/choices/message/tool_calls 形状防御校验 |
+| 7 | ~~**LLM 层无重试、无防御解析、无流式输出**~~ **已修复** | `llm/llm.ts` | 默认解析 OpenAI-compatible SSE，正文/推理增量输出，Tool Call 参数完整组装并校验后才执行；保留 240s 总超时、有限重试、JSON fallback 与响应形状校验 |
 | 8 | ~~os-sandbox / workspace 两个确定性套件 FAIL~~ **已修复**：`sandbox-exec` 在某些外层受限运行环境中无法应用 profile（`sandbox_apply: Operation not permitted`，exit 71） | `sandbox/macos-sandbox.ts`、`tools/runtime-tools.ts`、`tests/os-sandbox.test.ts`、`tests/workspace.test.ts` | 修复 = 运行时能力探测 `probeSandboxAvailability()` + **fail-closed 门**；不可用则 shell 拒绝执行，可用则跑完整隔离矩阵。该能力取决于实际运行上下文，不应仅按 macOS 版本判断 |
 | 9 | **system（含 Scratchpad）的模型视图尚未单独压缩** | `runtime/context.ts`、`runtime/scratchpad.ts` | 已去除固定 4000 字符限制，改为按模型配置输入/输出/安全预算，并以 `context_usage` 观测 Messages/Tool Schema/Scratchpad；若未来实测接近窗口，再增加有界 Scratchpad Model View |
 | 10 | **`.env` 存真实 API 密钥**（不入库，但磁盘明文） | 项目根 `.env` | 建议轮换 + 后续引入密钥管理 |
@@ -251,7 +256,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 15 套件（增加 persistence：SQLite CRUD、事件顺序/隔离、Host restart、interrupted、Workspace Resume） | `npm run test:all` | **15/15 PASS** |
+| 确定性 15 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序） | `npm run test:all` | **15/15 PASS** |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |
@@ -262,7 +267,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 - 多模型/多 Provider 路由、缓存、降级（LLM 层仅实现单 Provider 的有限重试）
 - 工具执行超时（除 shell 的 10s）：无 AbortController 包装
-- 流式 / 分页 Tool Output；长期 Memory / RAG；跨 run 编排（`MAX_ITERATIONS=10` 仍为硬预算）
+- 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排（单个 Run 的 `MAX_ITERATIONS=10` 仍为硬预算）
 - checkpoint 生命周期清理（Trace/Host Event 已由 SQLite 持久化）
 - 用户鉴权 / 多租户（runId 单租户；Host 仅监听 127.0.0.1）
 - 非 macOS 上的 shell 工具（`sandbox-exec` 仅 darwin）；**macOS 上 sandbox-exec 不可用时 shell 自动禁用**（fail-closed，见 §8 #8）

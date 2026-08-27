@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { HostRun, WorkspaceView } from '../../types';
+import type { HostSession, WorkspaceView } from '../../types';
 import { formatTime, dayLabel } from '../../format';
 import {
   FolderIcon,
@@ -11,9 +11,9 @@ import { IconButton } from '../IconButton';
 import styles from './Sidebar.module.css';
 
 interface SidebarProps {
-  runs: HostRun[];
-  currentRunId: string | null;
-  onSelectRun: (runId: string) => void;
+  sessions: HostSession[];
+  currentSessionId: string | null;
+  onSelectSession: (sessionId: string) => void;
   onNewTask: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -22,15 +22,15 @@ interface SidebarProps {
   onOpenWorkspace: () => void;
 }
 
-interface RunGroup {
+interface SessionGroup {
   label: string;
-  items: HostRun[];
+  items: HostSession[];
 }
 
 export function Sidebar({
-  runs,
-  currentRunId,
-  onSelectRun,
+  sessions,
+  currentSessionId,
+  onSelectSession,
   onNewTask,
   collapsed,
   onToggleCollapsed,
@@ -38,22 +38,22 @@ export function Sidebar({
   openingWorkspace,
   onOpenWorkspace,
 }: SidebarProps) {
-  const groups = useMemo<RunGroup[]>(() => {
-    const sorted = [...runs].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  const groups = useMemo<SessionGroup[]>(() => {
+    const sorted = [...sessions].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
-    const groups: RunGroup[] = [];
-    for (const run of sorted) {
-      const label = dayLabel(run.createdAt);
+    const groups: SessionGroup[] = [];
+    for (const session of sorted) {
+      const label = dayLabel(session.updatedAt);
       const last = groups[groups.length - 1];
       if (last && last.label === label) {
-        last.items.push(run);
+        last.items.push(session);
       } else {
-        groups.push({ label, items: [run] });
+        groups.push({ label, items: [session] });
       }
     }
     return groups;
-  }, [runs]);
+  }, [sessions]);
 
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
@@ -128,17 +128,17 @@ export function Sidebar({
         )}
         {groups.map(group => (
           <div key={group.label}>
-            {group.items.map(run => {
-              const active = run.runId === currentRunId;
+            {group.items.map(session => {
+              const active = session.sessionId === currentSessionId;
               return (
                 <button
-                  key={run.runId}
+                  key={session.sessionId}
                   className={`${styles.runItem} ${active ? styles.active : ''}`}
-                  onClick={() => onSelectRun(run.runId)}
+                  onClick={() => onSelectSession(session.sessionId)}
                 >
                   <FolderIcon size={17} />
-                  <span className={`${styles.runTitle} truncate`}>{run.task || '未命名任务'}</span>
-                  <span className={styles.runTime}>{formatTime(run.createdAt)}</span>
+                  <span className={`${styles.runTitle} truncate`}>{session.title || '未命名任务'}</span>
+                  <span className={styles.runTime}>{formatTime(session.updatedAt)}</span>
                   {active && <span className={styles.activeDot} />}
                 </button>
               );

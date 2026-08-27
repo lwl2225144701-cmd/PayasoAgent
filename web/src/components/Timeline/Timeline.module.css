@@ -11,6 +11,16 @@
   scrollbar-gutter: stable;
 }
 
+.embedded {
+  flex: none;
+  overflow: visible;
+}
+
+.embedded .timeline {
+  max-width: 100%;
+  padding-bottom: 20px;
+}
+
 .timeline {
   width: 100%;
   max-width: 80%;

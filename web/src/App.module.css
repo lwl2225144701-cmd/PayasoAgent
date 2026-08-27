@@ -26,6 +26,13 @@
   flex-direction: column;
 }
 
+.sessionTimeline {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .emptyState {
   flex: 1;
   min-height: 0;

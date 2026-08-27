@@ -3,17 +3,20 @@
 // 边界：只通过公开边界 runAgent 调用 Runtime；不持久化 Runtime checkpoint 内容。
 
 import { runAgent } from "../runtime/agent.js";
+import type { ChatMessage, ChatStreamDelta } from "../llm/llm.js";
 import { loadCheckpoint } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
-import { sseEncode, type HostEvent } from "./run-events.js";
+import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
-import type { RunStore, StoredRun, StoredRunStatus } from "./persistence/store.js";
-import { getWorkspace, workspacePublicView } from "./workspace.js";
+import type { RunStore, StoredRun, StoredRunStatus, StoredSession } from "./persistence/store.js";
+import { getWorkspace } from "./workspace.js";
 
 export type HostRunStatus = StoredRunStatus;
 
 export interface HostRun {
   runId: string;
+  sessionId: string;
+  turnIndex: number;
   task: string;
   status: HostRunStatus;
   createdAt: string;
@@ -21,6 +24,14 @@ export interface HostRun {
   result?: string;
   error?: string;
   workspace?: { name: string };
+}
+
+export interface HostSession {
+  sessionId: string;
+  title: string;
+  workspace?: { name: string };
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface InternalRun extends HostRun {
@@ -64,29 +75,55 @@ export class RunManager {
   }
 
   create(task: string): string {
+    return this.createInSession(task).runId;
+  }
+
+  createInSession(task: string, requestedSessionId?: string): { runId: string; sessionId: string } {
     const runId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const workspace = getWorkspace();
-    const workspaceRoot = workspace?.rootPath ?? getRunWorkspaceRoot(runId);
-    const workspaceName = workspace?.name ?? "";
+    let session: StoredSession;
+    if (requestedSessionId) {
+      const persisted = this.store.getSession(requestedSessionId);
+      if (!persisted) throw new Error("Session not found");
+      if (this.store.listRunsBySession(requestedSessionId).some((item) => item.status === "running")) {
+        throw new Error("Session already has a running Run");
+      }
+      session = { ...persisted, updatedAt: now };
+      this.store.updateSession(session);
+    } else {
+      const workspace = getWorkspace();
+      session = {
+        sessionId: crypto.randomUUID(),
+        title: this.sessionTitle(task),
+        workspaceRoot: workspace?.rootPath ?? getRunWorkspaceRoot(runId),
+        workspaceName: workspace?.name ?? "",
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.store.createSession(session);
+    }
+    const previousRuns = this.store.listRunsBySession(session.sessionId);
+    const conversationHistory = this.conversationHistory(previousRuns);
     const run: InternalRun = {
       runId,
+      sessionId: session.sessionId,
+      turnIndex: previousRuns.length + 1,
       task,
       status: "running",
       createdAt: now,
       updatedAt: now,
       events: [],
       cancelled: false,
-      workspace: workspacePublicView(workspace) ?? undefined,
-      workspaceRoot,
+      workspace: session.workspaceName ? { name: session.workspaceName } : undefined,
+      workspaceRoot: session.workspaceRoot,
     };
 
     // Persist before execution starts, so every Runtime event has a parent Run.
     this.store.createRun(this.toStoredRun(run));
     this.runs.set(runId, run);
     this.record(run, { type: "run_started", runId, timestamp: now });
-    this.startAgent(run, task);
-    return runId;
+    this.startAgent(run, task, undefined, conversationHistory);
+    return { runId, sessionId: session.sessionId };
   }
 
   resume(runId: string): boolean {
@@ -103,6 +140,8 @@ export class RunManager {
     const workspaceName = persisted.workspaceName;
     const run: InternalRun = {
       runId,
+      sessionId: persisted.sessionId,
+      turnIndex: persisted.turnIndex,
       task: persisted.task,
       status: "running",
       createdAt: persisted.createdAt,
@@ -137,6 +176,20 @@ export class RunManager {
     return this.store.listRuns().map((run) => this.publicStoredView(run));
   }
 
+  listSessions(): HostSession[] {
+    return this.store.listSessions().map((session) => this.publicSessionView(session));
+  }
+
+  getSession(sessionId: string): HostSession | null {
+    const session = this.store.getSession(sessionId);
+    return session ? this.publicSessionView(session) : null;
+  }
+
+  listSessionRuns(sessionId: string): HostRun[] | null {
+    if (!this.store.getSession(sessionId)) return null;
+    return this.store.listRunsBySession(sessionId).map((run) => this.publicStoredView(run));
+  }
+
   get(runId: string): HostRun | null {
     const active = this.runs.get(runId);
     if (active) return this.publicView(active);
@@ -152,13 +205,17 @@ export class RunManager {
     return this.runs.get(runId)?.workspaceRoot ?? this.store.getRun(runId)?.workspaceRoot ?? null;
   }
 
-  subscribe(runId: string, sink: SseSink, afterSeq = 0): boolean {
+  subscribe(runId: string, sink: SseSink, afterSeq = 0, live = true): boolean {
     if (!this.store.getRun(runId)) return false;
     if (!this.subscribers.has(runId)) this.subscribers.set(runId, new Set());
     const set = this.subscribers.get(runId)!;
     for (const item of this.store.listEvents(runId)) {
       if (item.seq <= afterSeq) continue;
       if (!sink.closed()) sink.write(sseEncode(item.seq, item.event));
+    }
+    if (!live) {
+      sink.end();
+      return true;
     }
     set.add(sink);
     return true;
@@ -178,14 +235,53 @@ export class RunManager {
     this.store.close();
   }
 
-  private startAgent(run: InternalRun, task: string, resume?: Parameters<typeof runAgent>[1]): void {
+  private startAgent(
+    run: InternalRun,
+    task: string,
+    resume?: Parameters<typeof runAgent>[1],
+    conversationHistory: ChatMessage[] = [],
+  ): void {
+    let pendingDelta: StreamingEvent | null = null;
+    let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushDelta = () => {
+      if (deltaTimer) clearTimeout(deltaTimer);
+      deltaTimer = null;
+      if (!pendingDelta) return;
+      this.record(run, pendingDelta);
+      pendingDelta = null;
+    };
+    const queueDelta = (delta: ChatStreamDelta) => {
+      if (
+        pendingDelta
+        && pendingDelta.type === delta.type
+        && pendingDelta.messageId === delta.messageId
+      ) {
+        pendingDelta.delta += delta.delta;
+      } else {
+        flushDelta();
+        pendingDelta = {
+          type: delta.type,
+          runId: run.runId,
+          messageId: delta.messageId,
+          timestamp: new Date().toISOString(),
+          delta: delta.delta,
+        };
+      }
+      if (!deltaTimer) deltaTimer = setTimeout(flushDelta, 60);
+    };
     void runAgent(task, resume, {
       runId: run.runId,
       workspaceRoot: run.workspaceRoot,
-      onTrace: (event) => this.record(run, event),
+      conversationHistory,
+      onStreamDelta: queueDelta,
+      onTrace: (event) => {
+        flushDelta();
+        this.record(run, event);
+      },
       isCancelled: () => run.cancelled,
     })
       .then((result) => {
+        flushDelta();
         if (run.cancelled) {
           this.finish(run, "stopped");
           return;
@@ -203,6 +299,7 @@ export class RunManager {
         });
       })
       .catch((err: unknown) => {
+        flushDelta();
         if (run.cancelled) {
           this.finish(run, "stopped");
           return;
@@ -261,6 +358,8 @@ export class RunManager {
   private toStoredRun(run: InternalRun): StoredRun {
     return {
       runId: run.runId,
+      sessionId: run.sessionId,
+      turnIndex: run.turnIndex,
       task: run.task,
       status: run.status,
       workspaceRoot: run.workspaceRoot,
@@ -275,6 +374,8 @@ export class RunManager {
   private publicView(run: InternalRun): HostRun {
     return {
       runId: run.runId,
+      sessionId: run.sessionId,
+      turnIndex: run.turnIndex,
       task: run.task,
       status: run.status,
       createdAt: run.createdAt,
@@ -288,6 +389,8 @@ export class RunManager {
   private publicStoredView(run: StoredRun): HostRun {
     return {
       runId: run.runId,
+      sessionId: run.sessionId,
+      turnIndex: run.turnIndex,
       task: run.task,
       status: run.status,
       createdAt: run.createdAt,
@@ -296,5 +399,35 @@ export class RunManager {
       error: run.error,
       workspace: run.workspaceName ? { name: run.workspaceName } : undefined,
     };
+  }
+
+  private publicSessionView(session: StoredSession): HostSession {
+    return {
+      sessionId: session.sessionId,
+      title: session.title,
+      workspace: session.workspaceName ? { name: session.workspaceName } : undefined,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    };
+  }
+
+  private sessionTitle(task: string): string {
+    return task.replace(/\s+/g, " ").trim().slice(0, 80) || "未命名任务";
+  }
+
+  private conversationHistory(runs: StoredRun[]): ChatMessage[] {
+    const messages: ChatMessage[] = [];
+    for (const run of runs) {
+      if (run.status === "running" || run.status === "interrupted") continue;
+      messages.push({ role: "user", content: run.task });
+      if (run.status === "completed" && run.result) {
+        messages.push({ role: "assistant", content: run.result });
+      } else {
+        // Product errors may contain Host-only paths/provider details. Preserve
+        // conversational continuity without feeding those internals to the LLM.
+        messages.push({ role: "assistant", content: `上一轮未完成（${run.status}）` });
+      }
+    }
+    return messages;
   }
 }

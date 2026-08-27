@@ -7,6 +7,7 @@ import type {
   ToolCallEvent,
   ToolErrorEvent,
   ToolResultEvent,
+  StreamingEvent,
 } from '../../types';
 import { formatBytes, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
@@ -20,6 +21,8 @@ import styles from './Timeline.module.css';
 interface TimelineProps {
   run: HostRun | null;
   modelFallback: string | null;
+  embedded?: boolean;
+  showFiles?: boolean;
 }
 
 export interface ToolCallData {
@@ -40,8 +43,8 @@ interface ReasoningBlock {
   visible: string;
 }
 
-export function Timeline({ run }: TimelineProps) {
-  const { events } = useEventStream(run?.runId ?? null);
+export function Timeline({ run, embedded = false, showFiles = true }: TimelineProps) {
+  const { events } = useEventStream(run?.runId ?? null, run?.status === 'running');
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
   const [producedFiles, setProducedFiles] = useState<Record<string, FileEntry[]> | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -56,7 +59,7 @@ export function Timeline({ run }: TimelineProps) {
   }, [run?.runId, run?.status]);
 
   useEffect(() => {
-    if (!run) {
+    if (!run || !showFiles) {
       setProducedFiles(undefined);
       return;
     }
@@ -71,7 +74,7 @@ export function Timeline({ run }: TimelineProps) {
     return () => {
       cancelled = true;
     };
-  }, [run?.runId]);
+  }, [run?.runId, showFiles]);
 
   const scrollEndRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
@@ -120,7 +123,7 @@ export function Timeline({ run }: TimelineProps) {
     || !!finalAnswer;
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className={styles.timelineWrap}>
+    <div ref={scrollRef} onScroll={onScroll} className={`${styles.timelineWrap} ${embedded ? styles.embedded : ''}`}>
       <div className={styles.timeline}>
         <article className={styles.userBlock}>
           <p className={styles.userText}>{run.task}</p>
@@ -261,6 +264,13 @@ function buildStructure(
     finalAnswer = (completedEv.result as unknown as string | undefined)?.trim() || null;
   }
   if (!finalAnswer && run.result) finalAnswer = String(run.result).trim() || null;
+  if (!finalAnswer) {
+    const streamed = events
+      .filter((event): event is StreamingEvent => event.type === 'assistant_delta')
+      .map((event) => event.delta)
+      .join('');
+    finalAnswer = streamed || null;
+  }
 
   const finalError: string | null =
     failedEv && 'error' in failedEv
@@ -299,7 +309,10 @@ function buildStructure(
 
   const toolSteps: ToolStepGroup[] = [];
   const processedToolsEv: HostEvent[] = [];
-  let globalThinkingAcc = '';
+  let globalThinkingAcc = events
+    .filter((event): event is StreamingEvent => event.type === 'reasoning_delta')
+    .map((event) => event.delta)
+    .join('');
 
   for (const step of stepNumbers) {
     const stepEvents = byStep.get(step) ?? [];

@@ -46,6 +46,12 @@ export interface ToolSchema {
   function: { name: string; description: string; parameters: object };
 }
 
+export interface ChatStreamDelta {
+  messageId: string;
+  type: "assistant_delta" | "reasoning_delta";
+  delta: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -121,7 +127,8 @@ interface RawResult {
 async function doRequest(
   url: string,
   body: Record<string, unknown>,
-  timeoutMs: number
+  timeoutMs: number,
+  onDelta?: (delta: ChatStreamDelta) => void,
 ): Promise<RawResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -165,7 +172,10 @@ async function doRequest(
 
     let data: unknown;
     try {
-      data = await res.json();
+      const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+      data = contentType.includes("text/event-stream")
+        ? { choices: [{ message: await readStreamingMessage(res, onDelta) }] }
+        : await res.json();
     } catch {
       return { status: -1, errorBody: "", timedOut: controller.signal.aborted, retryAfter: null };
     }
@@ -174,6 +184,112 @@ async function doRequest(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function readStreamingMessage(
+  res: Response,
+  onDelta?: (delta: ChatStreamDelta) => void,
+): Promise<ChatMessage> {
+  if (!res.body) throw new Error("LLM streaming response has no body");
+  const messageId = crypto.randomUUID();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let reasoning = "";
+  let inlinePending = "";
+  let insideInlineThink = false;
+  const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
+
+  const emitInline = (type: ChatStreamDelta["type"], delta: string): void => {
+    if (delta) onDelta?.({ messageId, type, delta });
+  };
+  const retainedTagPrefix = (value: string, tag: string): number => {
+    const max = Math.min(value.length, tag.length - 1);
+    for (let size = max; size > 0; size--) {
+      if (tag.startsWith(value.slice(-size))) return size;
+    }
+    return 0;
+  };
+  const feedInlineContent = (delta: string, final = false): void => {
+    inlinePending += delta;
+    while (inlinePending) {
+      const tag = insideInlineThink ? "</think>" : "<think>";
+      const index = inlinePending.indexOf(tag);
+      if (index >= 0) {
+        emitInline(insideInlineThink ? "reasoning_delta" : "assistant_delta", inlinePending.slice(0, index));
+        inlinePending = inlinePending.slice(index + tag.length);
+        insideInlineThink = !insideInlineThink;
+        continue;
+      }
+      const retained = final ? 0 : retainedTagPrefix(inlinePending, tag);
+      const ready = inlinePending.slice(0, inlinePending.length - retained);
+      emitInline(insideInlineThink ? "reasoning_delta" : "assistant_delta", ready);
+      inlinePending = inlinePending.slice(inlinePending.length - retained);
+      break;
+    }
+  };
+
+  const consumeBlock = (block: string): void => {
+    const payload = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!payload || payload === "[DONE]") return;
+    const parsed = JSON.parse(payload) as unknown;
+    if (!isRecord(parsed) || !Array.isArray(parsed.choices) || parsed.choices.length === 0) return;
+    const choice = parsed.choices[0];
+    if (!isRecord(choice) || !isRecord(choice.delta)) return;
+    const delta = choice.delta;
+    if (typeof delta.content === "string" && delta.content) {
+      content += delta.content;
+      feedInlineContent(delta.content);
+    }
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+      reasoning += delta.reasoning_content;
+      onDelta?.({ messageId, type: "reasoning_delta", delta: delta.reasoning_content });
+    }
+    if (Array.isArray(delta.tool_calls)) {
+      for (const raw of delta.tool_calls) {
+        if (!isRecord(raw)) throw new Error("LLM streaming response has invalid tool_call delta");
+        const index = typeof raw.index === "number" ? raw.index : 0;
+        const previous = toolCalls.get(index) ?? { id: "", name: "", arguments: "" };
+        if (typeof raw.id === "string") previous.id += raw.id;
+        if (isRecord(raw.function)) {
+          if (typeof raw.function.name === "string") previous.name += raw.function.name;
+          if (typeof raw.function.arguments === "string") previous.arguments += raw.function.arguments;
+        }
+        toolCalls.set(index, previous);
+      }
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) consumeBlock(block);
+    if (done) break;
+  }
+  if (buffer.trim()) consumeBlock(buffer);
+  feedInlineContent("", true);
+
+  const assembledTools: ToolCall[] = [...toolCalls.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, call]) => {
+      if (!call.id || !call.name) throw new Error("LLM streaming response has incomplete tool_call");
+      // Validate completeness now; Runtime must never execute partial JSON.
+      JSON.parse(call.arguments);
+      return { id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } };
+    });
+  return {
+    role: "assistant",
+    content,
+    reasoning_content: reasoning || undefined,
+    tool_calls: assembledTools.length ? assembledTools : undefined,
+  };
 }
 
 // 调用 LLM，返回 assistant 消息（可能含 tool_calls）
@@ -192,12 +308,14 @@ async function doRequest(
 //   }
 export async function chat(
   messages: ChatMessage[],
-  tools?: ToolSchema[]
+  tools?: ToolSchema[],
+  onDelta?: (delta: ChatStreamDelta) => void,
 ): Promise<ChatMessage> {
   const body: Record<string, unknown> = {
     model: MODEL,
     messages,
     max_tokens: MODEL_CONTEXT.maxOutputTokens,
+    stream: process.env.LLM_STREAMING !== "0",
   };
   if (tools?.length) body.tools = tools;
 
@@ -205,7 +323,7 @@ export async function chat(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const timeoutMs = requestTimeoutMs();
-    const result = await doRequest(url, body, timeoutMs);
+    const result = await doRequest(url, body, timeoutMs, onDelta);
 
     // Total request timeout (no headers, stalled body, or stalled error body)
     // is terminal: do not auto-retry a long generation.

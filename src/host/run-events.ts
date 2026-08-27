@@ -12,8 +12,16 @@ export type LifecycleEvent =
   | { type: "run_stopped"; runId: string; timestamp: string }
   | { type: "run_interrupted"; runId: string; timestamp: string; error: string };
 
+export type StreamingEvent = {
+  type: "assistant_delta" | "reasoning_delta";
+  runId: string;
+  messageId: string;
+  timestamp: string;
+  delta: string;
+};
+
 // 浏览器收到的统一事件：Runtime Trace 事件 或 Host 生命周期事件
-export type HostEvent = TraceEvent | LifecycleEvent;
+export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent;
 
 // 是否为 Host 生命周期事件
 export function isLifecycle(ev: HostEvent): ev is LifecycleEvent {

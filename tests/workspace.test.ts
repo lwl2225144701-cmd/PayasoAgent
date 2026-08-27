@@ -204,6 +204,8 @@ test("Host resume 拒绝对同一 running runId 启动第二个 Agent", () => {
     const now = new Date().toISOString();
     seed.createRun({
       runId,
+      sessionId: `session-${runId}`,
+      turnIndex: 1,
       task,
       status: "interrupted",
       workspaceRoot: canonicalA,

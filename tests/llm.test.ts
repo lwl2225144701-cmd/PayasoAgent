@@ -33,6 +33,39 @@ try {
     assert.ok(typeof requestBodies[0]?.max_tokens === "number" && requestBodies[0].max_tokens > 0);
   });
 
+  await test("streaming content/reasoning and fragmented tool calls are assembled", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"reasoning_content":"想"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"<thi"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"nk>秘密</th"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"ink>你"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"好"}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"cal","arguments":"{\\"exp"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"culator","arguments":"ression\\":\\"1+1\\"}"}}]}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    globalThis.fetch = async () => new Response(chunks.join(""), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+    const deltas: string[] = [];
+    const message = await chat(
+      [{ role: "user", content: "hello" }],
+      undefined,
+      (delta) => deltas.push(`${delta.type}:${delta.delta}`),
+    );
+    assert.equal(message.content, "<think>秘密</think>你好");
+    assert.equal(message.reasoning_content, "想");
+    assert.equal(message.tool_calls?.[0]?.function.name, "calculator");
+    assert.equal(message.tool_calls?.[0]?.function.arguments, '{"expression":"1+1"}');
+    assert.deepEqual(deltas, [
+      "reasoning_delta:想",
+      "reasoning_delta:秘密",
+      "assistant_delta:你",
+      "assistant_delta:好",
+    ]);
+  });
+
   await test("malformed JSON and missing choices are rejected deterministically", async () => {
     globalThis.fetch = async () => new Response("not-json", { status: 200 });
     await assert.rejects(() => chat([{ role: "user", content: "hello" }]), /invalid JSON/);

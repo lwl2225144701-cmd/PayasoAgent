@@ -4,13 +4,14 @@ import { ShellBar } from './components/ShellBar';
 import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
-import { useEventStream } from './hooks/useEventStream';
-import { createRun, getWorkspace, listRuns, listFiles, openWorkspace, resumeRun, stopRun } from './api';
-import type { FileEntry, HostRun, WorkspaceView } from './types';
+import { createRun, getWorkspace, listRuns, listSessions, listFiles, openWorkspace, resumeRun, stopRun } from './api';
+import type { FileEntry, HostRun, HostSession, WorkspaceView } from './types';
 import styles from './App.module.css';
 
 export default function App() {
   const [runs, setRuns] = useState<HostRun[]>([]);
+  const [sessions, setSessions] = useState<HostSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [online, setOnline] = useState(false);
   const [, setFiles] = useState<FileEntry[]>([]);
@@ -23,12 +24,11 @@ export default function App() {
   const [resumingRun, setResumingRun] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { events } = useEventStream(currentRunId);
-
   const refreshRuns = useCallback(async () => {
     try {
-      const resp = await listRuns();
-      setRuns(resp.runs);
+      const [runResp, sessionResp] = await Promise.all([listRuns(), listSessions()]);
+      setRuns(runResp.runs);
+      setSessions(sessionResp.sessions);
       setOnline(true);
     } catch {
       setOnline(false);
@@ -59,15 +59,9 @@ export default function App() {
   }, []);
 
   const currentRun = runs.find(r => r.runId === currentRunId) ?? null;
-
-  // Refresh run list when the stream reaches a terminal event
-  useEffect(() => {
-    if (!currentRunId || events.length === 0) return;
-    const lastEvent = events[events.length - 1];
-    if (lastEvent.type === 'run_completed' || lastEvent.type === 'run_failed' || lastEvent.type === 'run_stopped' || lastEvent.type === 'run_interrupted') {
-      refreshRuns();
-    }
-  }, [events, currentRunId, refreshRuns]);
+  const currentSessionRuns = runs
+    .filter(run => run.sessionId === currentSessionId)
+    .sort((a, b) => a.turnIndex - b.turnIndex);
 
   // Poll run files (kept for future "附件" row; not displayed inline).
   useEffect(() => {
@@ -90,13 +84,14 @@ export default function App() {
 
   const handleCreateRun = useCallback(async (task: string) => {
     try {
-      const resp = await createRun(task);
+      const resp = await createRun(task, currentSessionId ?? undefined);
+      setCurrentSessionId(resp.sessionId);
       setCurrentRunId(resp.runId);
       refreshRuns();
     } catch (err) {
       console.error('Failed to create run:', err);
     }
-  }, [refreshRuns]);
+  }, [currentSessionId, refreshRuns]);
 
   const handleStopRun = useCallback(async () => {
     if (!currentRunId) return;
@@ -121,13 +116,18 @@ export default function App() {
     }
   }, [currentRunId, refreshRuns, resumingRun]);
 
-  const handleSelectRun = useCallback((runId: string) => {
-    setCurrentRunId(runId);
+  const handleSelectSession = useCallback((sessionId: string) => {
+    const sessionRuns = runs
+      .filter(run => run.sessionId === sessionId)
+      .sort((a, b) => b.turnIndex - a.turnIndex);
+    setCurrentSessionId(sessionId);
+    setCurrentRunId(sessionRuns[0]?.runId ?? null);
     setViewingFile(null);
-  }, []);
+  }, [runs]);
 
   const handleNewTask = useCallback(() => {
     setCurrentRunId(null);
+    setCurrentSessionId(null);
     setViewingFile(null);
     setTimeout(() => {
       const input = document.querySelector('textarea');
@@ -154,9 +154,9 @@ export default function App() {
   return (
     <div className={`${styles.app} ${currentRun ? '' : styles.landing}`}>
       <Sidebar
-        runs={runs}
-        currentRunId={currentRunId}
-        onSelectRun={handleSelectRun}
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onSelectSession={handleSelectSession}
         onNewTask={handleNewTask}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => {
@@ -171,12 +171,19 @@ export default function App() {
       <div className={styles.main}>
         <ShellBar run={currentRun} onResume={handleResumeRun} resuming={resumingRun} />
 
-        {currentRun ? (
+        {currentSessionId && currentSessionRuns.length > 0 ? (
           <div className={styles.workspace}>
-            <Timeline
-              run={currentRun}
-              modelFallback={null}
-            />
+            <div className={styles.sessionTimeline}>
+              {currentSessionRuns.map((run, index) => (
+                <Timeline
+                  key={run.runId}
+                  run={run}
+                  modelFallback={null}
+                  embedded
+                  showFiles={index === currentSessionRuns.length - 1}
+                />
+              ))}
+            </div>
           </div>
         ) : (
           <div className={styles.emptyState}>
@@ -195,7 +202,7 @@ export default function App() {
           </div>
         )}
 
-        {currentRun && (
+        {currentSessionId && currentRun && (
           <InputBar
             onSend={handleCreateRun}
             onStop={handleStopRun}

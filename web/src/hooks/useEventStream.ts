@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { HostEvent } from '../types';
 import { connectSSE } from '../api';
 
-export function useEventStream(runId: string | null) {
+export function useEventStream(runId: string | null, live = true) {
   const [events, setEvents] = useState<HostEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const processedIdsRef = useRef<Set<number>>(new Set());
@@ -35,13 +35,13 @@ export function useEventStream(runId: string | null) {
 
     const close = connectSSE(
       runId,
-      (ev) => {
+      live,
+      (ev, seq) => {
         if (!isActive) return;
-        // 使用 step + type 做去重（SSE 重连回放时避免重复）
-        const evStep = 'step' in ev ? (ev as { step: number }).step : -1;
-        const dedupeKey = evStep * 1000 + hashEventType(ev.type);
-        if (processedIdsRef.current.has(dedupeKey)) return;
-        processedIdsRef.current.add(dedupeKey);
+        // SQLite/SSE seq is the only stable identity. step+type is not unique:
+        // one LLM turn may emit multiple tool calls or streaming deltas.
+        if (seq > 0 && processedIdsRef.current.has(seq)) return;
+        if (seq > 0) processedIdsRef.current.add(seq);
         setEvents((prev) => [...prev, ev]);
       },
       () => { if (isActive) setIsConnected(true); },
@@ -58,17 +58,11 @@ export function useEventStream(runId: string | null) {
       close();
       cleanupRef.current = null;
     };
-  }, [runId]);
+  }, [runId, live]);
 
   const appendEvent = useCallback((ev: HostEvent) => {
     setEvents((prev) => [...prev, ev]);
   }, []);
 
   return { events, isConnected, appendEvent };
-}
-
-function hashEventType(type: string): number {
-  let h = 0;
-  for (let i = 0; i < type.length; i++) h = (h * 31 + type.charCodeAt(i)) & 0xffff;
-  return h;
 }

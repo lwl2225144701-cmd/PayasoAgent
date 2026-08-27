@@ -1,4 +1,4 @@
-import type { HostRun, FileEntry, HostEvent, WorkspaceView } from './types';
+import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView } from './types';
 
 const API_BASE = '';
 
@@ -14,8 +14,17 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-export function createRun(task: string): Promise<{ runId: string; status: string }> {
-  return jsonFetch('/runs', { method: 'POST', body: JSON.stringify({ task }) });
+export function createRun(task: string, sessionId?: string): Promise<{ runId: string; sessionId: string; status: string }> {
+  const url = sessionId ? `/sessions/${sessionId}/runs` : '/runs';
+  return jsonFetch(url, { method: 'POST', body: JSON.stringify({ task }) });
+}
+
+export function listSessions(): Promise<{ sessions: HostSession[] }> {
+  return jsonFetch('/sessions');
+}
+
+export function listSessionRuns(sessionId: string): Promise<{ runs: HostRun[] }> {
+  return jsonFetch(`/sessions/${sessionId}/runs`);
 }
 
 export function getWorkspace(): Promise<{ workspace: WorkspaceView | null }> {
@@ -54,15 +63,17 @@ export function readFile(runId: string, filePath: string): Promise<{ runId: stri
 // 返回 cleanup 函数（close）
 export function connectSSE(
   runId: string,
-  onEvent: (ev: HostEvent) => void,
+  live: boolean,
+  onEvent: (ev: HostEvent, seq: number) => void,
   onConnect?: () => void,
   onError?: () => void,
 ): () => void {
-  const url = `/runs/${runId}/events`;
+  const url = `/runs/${runId}/events${live ? '' : '?live=0'}`;
   const es = new EventSource(url);
 
   const eventTypes = [
     'run_started', 'run_completed', 'run_failed', 'run_stopped', 'run_interrupted',
+    'assistant_delta', 'reasoning_delta',
     'llm_call', 'tool_call', 'tool_result', 'tool_result_invalid',
     'tool_error', 'final_answer', 'context_trim', 'context_usage', 'recovery_decision',
     'side_effect_skip', 'side_effect_uncertain', 'tool_output_truncated',
@@ -73,7 +84,8 @@ export function connectSSE(
   const handler = (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data) as HostEvent;
-      onEvent(data);
+      const seq = Number(e.lastEventId);
+      onEvent(data, Number.isSafeInteger(seq) && seq > 0 ? seq : 0);
     } catch {
       // ignore parse errors
     }
@@ -84,7 +96,10 @@ export function connectSSE(
   }
 
   es.onopen = () => { onConnect?.(); };
-  es.onerror = () => { onError?.(); };
+  es.onerror = () => {
+    if (!live) es.close();
+    onError?.();
+  };
 
   return () => {
     for (const t of eventTypes) {

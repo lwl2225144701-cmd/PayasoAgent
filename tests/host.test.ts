@@ -83,6 +83,17 @@ console.log("Payaso Host API 集成测试\n");
 const r1 = await postRun("请用 calculator 计算 1+1，然后直接告诉我结果，不要做其他事情。");
 check("POST /runs → 202 + runId", r1.status === 202 && typeof r1.body.runId === "string" && r1.body.runId.length > 0, `status=${r1.status}`);
 const id1 = r1.body.runId;
+const sessionId1 = r1.body.sessionId;
+check("POST /runs → 返回 sessionId", typeof sessionId1 === "string" && sessionId1.length > 0);
+const sessionList = await (await fetch(`${base}/sessions`)).json();
+check(
+  "GET /sessions 返回会话且不泄露 workspaceRoot",
+  Array.isArray(sessionList.sessions)
+    && sessionList.sessions.some((session: any) => session.sessionId === sessionId1)
+    && !JSON.stringify(sessionList).includes("workspaceRoot"),
+);
+const sessionRuns = await (await fetch(`${base}/sessions/${sessionId1}/runs`)).json();
+check("GET /sessions/:id/runs 返回首轮", sessionRuns.runs?.[0]?.runId === id1 && sessionRuns.runs?.[0]?.turnIndex === 1);
 
 // 4. 不存在 runId → 404（不依赖 run 完成，提前验证）
 const r404 = await fetch(`${base}/runs/nonexistent-run-xyz`);
@@ -116,7 +127,8 @@ const list = await (await fetch(`${base}/runs`)).json();
 check("GET /runs 包含该 run", Array.isArray(list.runs) && list.runs.some((r: any) => r.runId === id1));
 
 // 3. SSE：实时 tool_call + run_completed（阻塞等待 run 完成，放最后）
-const events = await collectSse(id1, ["tool_call", "run_completed"]);
+const events = await collectSse(id1, ["assistant_delta", "tool_call", "run_completed"]);
+check("SSE 收到 assistant_delta", events.some((e) => e.type === "assistant_delta"));
 check("SSE 收到 tool_call", events.some((e) => e.type === "tool_call"));
 check("SSE 收到 run_completed", events.some((e) => e.type === "run_completed"));
 

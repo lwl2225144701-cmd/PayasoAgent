@@ -4,12 +4,22 @@ export type HostRunStatus = "running" | "completed" | "failed" | "stopped" | "in
 
 export interface HostRun {
   runId: string;
+  sessionId: string;
+  turnIndex: number;
   task: string;
   status: HostRunStatus;
   createdAt: string;
   updatedAt: string;
   result?: string;
   error?: string;
+  workspace?: WorkspaceView;
+}
+
+export interface HostSession {
+  sessionId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
   workspace?: WorkspaceView;
 }
 
@@ -177,6 +187,14 @@ export interface RunInterruptedEvent {
   error: string;
 }
 
+export interface StreamingEvent {
+  type: "assistant_delta" | "reasoning_delta";
+  runId: string;
+  messageId: string;
+  timestamp: string;
+  delta: string;
+}
+
 export type TraceEvent =
   | LlmCallEvent
   | ToolCallEvent
@@ -202,7 +220,7 @@ export type LifecycleEvent =
   | RunStoppedEvent
   | RunInterruptedEvent;
 
-export type HostEvent = TraceEvent | LifecycleEvent;
+export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent;
 
 // 用户消息（前端派生，不在 SSE 中）
 export interface UserMessageEvent {

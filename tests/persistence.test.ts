@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { RunManager } from "../src/host/run-manager.js";
+import type { StreamingEvent } from "../src/host/run-events.js";
 import { SqliteRunStore } from "../src/host/persistence/sqlite-store.js";
 import type { StoredRun } from "../src/host/persistence/store.js";
 import { clearWorkspace, setWorkspace } from "../src/host/workspace.js";
@@ -25,6 +27,8 @@ function test(name: string, fn: () => void | Promise<void>): void { tests.push({
 function storedRun(runId: string, status: StoredRun["status"] = "running"): StoredRun {
   return {
     runId,
+    sessionId: `session-${runId}`,
+    turnIndex: 1,
     task: `task-${runId}`,
     status,
     workspaceRoot: canonicalWorkspace,
@@ -64,6 +68,38 @@ test("RunStore CRUD persists status/result/workspace across reopen", () => {
   assert.equal(restored?.workspaceName, "workspace-A");
   assert.equal(reopened.listRuns().length, 1);
   reopened.close();
+});
+
+test("legacy Run-only database is migrated one Run per Session", () => {
+  const dbPath = path.join(root, "legacy.db");
+  const legacy = new DatabaseSync(dbPath);
+  legacy.exec(`
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY,
+      task TEXT NOT NULL,
+      status TEXT NOT NULL,
+      workspace_root TEXT NOT NULL,
+      workspace_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      result TEXT,
+      error TEXT
+    );
+  `);
+  legacy.prepare(`
+    INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "legacy-run", "legacy task", "completed", canonicalWorkspace, "workspace-A",
+    "2026-08-27T00:00:00.000Z", "2026-08-27T00:01:00.000Z", "done", null,
+  );
+  legacy.close();
+
+  const migrated = new SqliteRunStore(dbPath);
+  assert.equal(migrated.getRun("legacy-run")?.sessionId, "legacy-run");
+  assert.equal(migrated.getRun("legacy-run")?.turnIndex, 1);
+  assert.equal(migrated.getSession("legacy-run")?.title, "legacy task");
+  assert.equal(migrated.listRunsBySession("legacy-run").length, 1);
+  migrated.close();
 });
 
 test("events retain per-Run sequence and never cross Run boundaries", () => {
@@ -114,6 +150,13 @@ test("completed Run metadata/result/events survive RunManager restart", async ()
     }), true);
     assert.ok(chunks.some((chunk) => chunk.includes("event: final_answer")));
     assert.ok(chunks.some((chunk) => chunk.includes("event: run_completed")));
+    let replayEnded = false;
+    assert.equal(hostB.subscribe(runId, {
+      write: () => {},
+      end: () => { replayEnded = true; },
+      closed: () => false,
+    }, 0, false), true);
+    assert.equal(replayEnded, true);
     hostB.close();
   } finally {
     globalThis.fetch = originalFetch;
@@ -182,6 +225,92 @@ test("manual resume uses persisted Workspace and existing checkpoint", async () 
   } finally {
     globalThis.fetch = originalFetch;
     fs.rmSync(checkpointPath(runId), { force: true });
+  }
+});
+
+test("Session follow-up receives prior stable turns and keeps original Workspace", async () => {
+  const dbPath = path.join(root, "session-continuity.db");
+  const workspaceB = path.join(root, "workspace-B");
+  fs.mkdirSync(workspaceB, { recursive: true });
+  const requestBodies: Array<Record<string, unknown>> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_input, init) => {
+    requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    const answer = requestBodies.length === 1 ? "first answer" : "second answer";
+    return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: answer } }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const runIds: string[] = [];
+  try {
+    setWorkspace(workspace);
+    const manager = new RunManager(new SqliteRunStore(dbPath));
+    const first = manager.createInSession("first question");
+    runIds.push(first.runId);
+    await waitFor(() => manager.get(first.runId)?.status === "completed");
+
+    setWorkspace(workspaceB);
+    const second = manager.createInSession("follow up", first.sessionId);
+    runIds.push(second.runId);
+    await waitFor(() => manager.get(second.runId)?.status === "completed");
+
+    const sentMessages = requestBodies[1]?.messages as Array<{ role: string; content: string }>;
+    assert.deepEqual(sentMessages.slice(-3), [
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "follow up" },
+    ]);
+    assert.equal(manager.getWorkspaceRoot(second.runId), canonicalWorkspace);
+    assert.deepEqual(manager.listSessionRuns(first.sessionId)?.map((run) => run.turnIndex), [1, 2]);
+    manager.close();
+
+    const reopened = new RunManager(new SqliteRunStore(dbPath));
+    assert.equal(reopened.listSessions().length, 1);
+    assert.equal(reopened.listSessionRuns(first.sessionId)?.length, 2);
+    reopened.close();
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWorkspace();
+    for (const runId of runIds) fs.rmSync(checkpointPath(runId), { force: true });
+  }
+});
+
+test("streaming deltas are batched, persisted, and ordered before final events", async () => {
+  const dbPath = path.join(root, "stream-events.db");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n' +
+    'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n' +
+    'data: [DONE]\n\n',
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+  let runId = "";
+  try {
+    setWorkspace(workspace);
+    const manager = new RunManager(new SqliteRunStore(dbPath));
+    runId = manager.create("stream please");
+    await waitFor(() => manager.get(runId)?.status === "completed");
+    manager.close();
+
+    const reopened = new SqliteRunStore(dbPath);
+    const events = reopened.listEvents(runId).map((item) => item.event);
+    const deltaIndex = events.findIndex((event) => event.type === "assistant_delta");
+    const finalIndex = events.findIndex((event) => event.type === "final_answer");
+    assert.ok(deltaIndex >= 0 && finalIndex > deltaIndex);
+    assert.equal(
+      events
+        .filter((event): event is StreamingEvent => event.type === "assistant_delta")
+        .map((event) => event.delta)
+        .join(""),
+      "hello",
+    );
+    assert.equal(reopened.getRun(runId)?.result, "hello");
+    reopened.close();
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWorkspace();
+    if (runId) fs.rmSync(checkpointPath(runId), { force: true });
   }
 });
 

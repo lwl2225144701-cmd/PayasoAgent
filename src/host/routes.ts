@@ -21,6 +21,7 @@ const MAX_FILE_BYTES = 1024 * 1024; // 读文件大小上限
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
 const MAX_BODY_BYTES = 64 * 1024; // Host JSON 请求体上限
 const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
+const SAFE_SESSION_ID = SAFE_RUN_ID;
 const WORKSPACE_DIRS = ["input", "work", "output"];
 
 // 静态文件根目录：项目根/web/dist/（server 从项目根启动，process.cwd() 为项目根）
@@ -191,7 +192,9 @@ function handleSse(req: IncomingMessage, res: ServerResponse, manager: RunManage
   res.write("retry: 3000\n\n");
   const sink = sinkOf(res);
   const lastEventId = Number(req.headers["last-event-id"] ?? 0);
-  manager.subscribe(runId, sink, Number.isSafeInteger(lastEventId) && lastEventId > 0 ? lastEventId : 0);
+  const live = new URL(req.url ?? "/", "http://localhost").searchParams.get("live") !== "0";
+  manager.subscribe(runId, sink, Number.isSafeInteger(lastEventId) && lastEventId > 0 ? lastEventId : 0, live);
+  if (!live) return;
   const heartbeat = setInterval(() => { res.write(": ping\n\n"); }, 15000);
   res.on("close", () => { clearInterval(heartbeat); manager.unsubscribe(runId, sink); });
 }
@@ -248,7 +251,45 @@ export async function handleRequest(
     return notFound(res);
   }
 
-  // 非 /runs/* /workspace → 静态文件服务（含 SPA fallback）
+  if (s[0] === "sessions") {
+    if (s.length === 1 && method === "GET") {
+      return sendJson(res, 200, { sessions: manager.listSessions() });
+    }
+    const sessionId = s[1];
+    if (!sessionId || !SAFE_SESSION_ID.test(sessionId)) return bad(res, "非法 sessionId");
+    if (s.length === 2 && method === "GET") {
+      const session = manager.getSession(sessionId);
+      return session ? sendJson(res, 200, session) : notFound(res);
+    }
+    if (s.length === 3 && s[2] === "runs") {
+      if (method === "GET") {
+        const runs = manager.listSessionRuns(sessionId);
+        return runs ? sendJson(res, 200, { runs }) : notFound(res);
+      }
+      if (method === "POST") {
+        let body: Record<string, unknown>;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (err instanceof RequestBodyTooLargeError) {
+            return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+          }
+          throw err;
+        }
+        const task = typeof body.task === "string" ? body.task.trim() : "";
+        if (!task) return bad(res, "缺少 task");
+        try {
+          const created = manager.createInSession(task, sessionId);
+          return sendJson(res, 202, { ...created, status: "running" });
+        } catch (err) {
+          return bad(res, (err as Error).message);
+        }
+      }
+    }
+    return notFound(res);
+  }
+
+  // 非 API 路径 → 静态文件服务（含 SPA fallback）
   if (s[0] !== "runs") {
     // 仅 GET/HEAD 允许访问静态文件
     if (method !== "GET" && method !== "HEAD") { res.writeHead(405); res.end("method not allowed"); return; }
@@ -270,8 +311,14 @@ export async function handleRequest(
       }
       const task = typeof body.task === "string" ? body.task.trim() : "";
       if (!task) return bad(res, "缺少 task");
-      const newRunId = manager.create(task);
-      return sendJson(res, 202, { runId: newRunId, status: "running" });
+      const requestedSessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : undefined;
+      if (requestedSessionId && !SAFE_SESSION_ID.test(requestedSessionId)) return bad(res, "非法 sessionId");
+      try {
+        const created = manager.createInSession(task, requestedSessionId);
+        return sendJson(res, 202, { ...created, status: "running" });
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
     }
     return notFound(res);
   }

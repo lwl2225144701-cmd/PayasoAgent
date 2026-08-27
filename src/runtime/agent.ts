@@ -1,6 +1,6 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
-import { chat, type ChatMessage } from "../llm/llm.js";
+import { chat, type ChatMessage, type ChatStreamDelta } from "../llm/llm.js";
 import { execute, getTool, getSchemas, validateToolResult, type ToolSandboxEvent } from "../tools/tools.js";
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
 import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
@@ -50,7 +50,14 @@ function stripThink(text: string): string {
 export async function runAgent(
   task: string,
   resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; sideEffects?: ExecutedOperation[] },
-  opts?: { runId?: string; workspaceRoot?: string; onTrace?: (ev: TraceEvent) => void; isCancelled?: () => boolean }
+  opts?: {
+    runId?: string;
+    workspaceRoot?: string;
+    conversationHistory?: ChatMessage[];
+    onStreamDelta?: (delta: ChatStreamDelta) => void;
+    onTrace?: (ev: TraceEvent) => void;
+    isCancelled?: () => boolean;
+  }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
   const runId = resume ? resume.state.runId : (opts?.runId ?? crypto.randomUUID());
@@ -70,10 +77,14 @@ export async function runAgent(
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
+  const conversationHistory = (opts?.conversationHistory ?? [])
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => ({ role: message.role, content: message.content } as ChatMessage));
   let messages: ChatMessage[] = resume
     ? resume.messages
     : [
         { role: "system", content: SYSTEM_PROMPT },
+        ...conversationHistory,
         { role: "user", content: task },
       ];
   // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
@@ -165,7 +176,7 @@ export async function runAgent(
       }
 
       // 1. 调用 LLM 判断下一步
-      const assistantMsg = await chat(messages, schemas);
+      const assistantMsg = await chat(messages, schemas, opts?.onStreamDelta);
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;
