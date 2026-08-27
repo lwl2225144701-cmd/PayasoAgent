@@ -267,7 +267,7 @@ export class RunManager {
           delta: delta.delta,
         };
       }
-      if (!deltaTimer) deltaTimer = setTimeout(flushDelta, 60);
+      if (!deltaTimer) deltaTimer = setTimeout(flushDelta, 16);
     };
     void runAgent(task, resume, {
       runId: run.runId,

@@ -23,6 +23,7 @@ interface TimelineProps {
   modelFallback: string | null;
   embedded?: boolean;
   showFiles?: boolean;
+  onRunTerminal?: () => void;
 }
 
 export interface ToolCallData {
@@ -43,12 +44,16 @@ interface ReasoningBlock {
   visible: string;
 }
 
-export function Timeline({ run, embedded = false, showFiles = true }: TimelineProps) {
+export function Timeline({ run, embedded = false, showFiles = true, onRunTerminal }: TimelineProps) {
   // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
-  // 正确的关闭时机交给 useEventStream 内部：收到 run_finished/run_failed/run_stopped/run_interrupted 后主动 close SSE。
-  const { events } = useEventStream(run?.runId ?? null, true);
+  // 正确的关闭时机交给 useEventStream 内部：收到 run_completed/run_failed/run_stopped/run_interrupted 后主动 close SSE。
+  const { events } = useEventStream(
+    run?.runId ?? null,
+    true,
+    run?.status === 'running' ? onRunTerminal : undefined,
+  );
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
   const [producedFiles, setProducedFiles] = useState<Record<string, FileEntry[]> | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -119,12 +124,13 @@ export function Timeline({ run, embedded = false, showFiles = true }: TimelinePr
   // Do we have any tool that's currently in progress? If so, the tool itself
   // carries the visual status and we don't need an extra "正在处理…" banner.
   const anyToolRunning = toolSteps.some(g => g.tools.some(t => t.status === 'running'));
-  const showGlobalRunningBanner = lastStepRunning && !anyToolRunning;
+  const showGlobalRunningBanner = lastStepRunning && !anyToolRunning && !finalAnswer;
 
   // Has any work actually been performed? (tools + visible reasoning + final answer).
   const hasAnyWork =
     toolSteps.some(g => g.tools.length > 0 || (g.reasoning && (g.reasoning.visible || g.reasoning.thinkingDetail)))
-    || !!finalAnswer;
+    || !!finalAnswer
+    || !!globalThinking;
 
   return (
     <div ref={scrollRef} onScroll={onScroll} className={`${styles.timelineWrap} ${embedded ? styles.embedded : ''}`}>

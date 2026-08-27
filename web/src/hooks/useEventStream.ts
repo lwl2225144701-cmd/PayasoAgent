@@ -3,16 +3,18 @@ import type { HostEvent } from '../types';
 import { connectSSE } from '../api';
 
 // 终态事件类型：收到后 Run 已经结束，SSE 不必继续挂着，主动 close 避免浏览器自动重连
-type TerminalEventType = 'run_finished' | 'run_failed' | 'run_stopped' | 'run_interrupted';
-const TERMINAL_TYPES: TerminalEventType[] = ['run_finished', 'run_failed', 'run_stopped', 'run_interrupted'];
+type TerminalEventType = 'run_completed' | 'run_failed' | 'run_stopped' | 'run_interrupted';
+const TERMINAL_TYPES: TerminalEventType[] = ['run_completed', 'run_failed', 'run_stopped', 'run_interrupted'];
 const isTerminal = (ev: HostEvent): boolean => (TERMINAL_TYPES as string[]).includes(ev.type);
 
-export function useEventStream(runId: string | null, live = true) {
+export function useEventStream(runId: string | null, live = true, onTerminal?: (event: HostEvent) => void) {
   const [events, setEvents] = useState<HostEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const processedIdsRef = useRef<Set<number>>(new Set());
   const closeRef = useRef<(() => void) | null>(null);
   const endedRef = useRef(false);
+  const onTerminalRef = useRef(onTerminal);
+  onTerminalRef.current = onTerminal;
 
   useEffect(() => {
     // 清理旧连接
@@ -53,6 +55,7 @@ export function useEventStream(runId: string | null, live = true) {
           }
           closeRef.current = null;
           setIsConnected(false);
+          onTerminalRef.current?.(ev);
         }
       },
       () => { if (isActive && !endedRef.current) setIsConnected(true); },

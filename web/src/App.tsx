@@ -27,18 +27,11 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const [resumingRun, setResumingRun] = useState(false);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshRuns = useCallback(async () => {
     try {
-      const [runResp, sessionResp] = await Promise.all([listRuns(), listSessions()]);
+      const runResp = await listRuns();
       setRuns(runResp.runs);
-      // 与乐观插入的 sessions merge：服务端返回的同名 sessionId 项以服务端为准（title/workspace 可能和前端生成的不同）
-      setSessions(prev => {
-        const byId = new Map(prev.map(s => [s.sessionId, s]));
-        for (const s of sessionResp.sessions) byId.set(s.sessionId, s);
-        return Array.from(byId.values());
-      });
       setOnline(true);
     } catch {
       setOnline(false);
@@ -47,14 +40,25 @@ export default function App() {
     }
   }, []);
 
+  const refreshSessions = useCallback(async () => {
+    try {
+      const sessionResp = await listSessions();
+      // 与乐观插入的 sessions merge：服务端返回的同名 sessionId 项以服务端为准（title/workspace 可能和前端生成的不同）
+      setSessions(prev => {
+        const byId = new Map(prev.map(s => [s.sessionId, s]));
+        for (const s of sessionResp.sessions) byId.set(s.sessionId, s);
+        return Array.from(byId.values());
+      });
+    } catch (err) {
+      console.error('Failed to refresh sessions:', err);
+    }
+  }, []);
+
   useEffect(() => {
-    refreshRuns();
+    void refreshRuns();
+    void refreshSessions();
     getWorkspace().then(resp => setWorkspace(resp.workspace)).catch(() => {});
-    pollTimerRef.current = setInterval(refreshRuns, 2000);
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, [refreshRuns]);
+  }, [refreshRuns, refreshSessions]);
 
   // 窄视口下自动折叠 Sidebar；用户手动切换后不再自动干预本次会话
   useEffect(() => {
@@ -129,14 +133,19 @@ export default function App() {
           return [optimisticSession, ...prev];
         });
       }
-      // 后台再同步一次服务端最新状态，不阻塞 UI 切换
-      void refreshRuns().catch(() => {});
+      // Session 列表与 Run 状态解耦；仅新建会话后做一次服务端同步。
+      if (isNewSession) void refreshSessions();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('Failed to create run:', err);
       alert(`任务创建失败：${msg}`);
     }
-  }, [currentSessionId, currentSessionRuns.length, refreshRuns, workspace]);
+  }, [currentSessionId, currentSessionRuns.length, refreshSessions, workspace]);
+
+  const handleRunTerminal = useCallback(() => {
+    // SSE 已携带终态；这里只做一次持久化状态对账，不启动后台轮询。
+    void refreshRuns();
+  }, [refreshRuns]);
 
   const handleStopRun = useCallback(async () => {
     if (!currentRunId) return;
@@ -227,6 +236,7 @@ export default function App() {
                     modelFallback={null}
                     embedded
                     showFiles={index === currentSessionRuns.length - 1}
+                    onRunTerminal={handleRunTerminal}
                   />
                 ))
               ) : (

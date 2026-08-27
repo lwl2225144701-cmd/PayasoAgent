@@ -230,6 +230,8 @@ async function readStreamingMessage(
     }
   };
 
+  let finishReason: string | null = null;
+
   const consumeBlock = (block: string): void => {
     const payload = block
       .split(/\r?\n/)
@@ -240,7 +242,14 @@ async function readStreamingMessage(
     const parsed = JSON.parse(payload) as unknown;
     if (!isRecord(parsed) || !Array.isArray(parsed.choices) || parsed.choices.length === 0) return;
     const choice = parsed.choices[0];
-    if (!isRecord(choice) || !isRecord(choice.delta)) return;
+    if (!isRecord(choice)) return;
+
+    // 先检查 finish_reason：某些 provider 最后一个 chunk 可能没有 delta 字段。
+    if (typeof choice.finish_reason === "string" && choice.finish_reason) {
+      finishReason = choice.finish_reason;
+    }
+
+    if (!isRecord(choice.delta)) return;
     const delta = choice.delta;
     if (typeof delta.content === "string" && delta.content) {
       content += delta.content;
@@ -271,7 +280,7 @@ async function readStreamingMessage(
     const blocks = buffer.split(/\r?\n\r?\n/);
     buffer = blocks.pop() ?? "";
     for (const block of blocks) consumeBlock(block);
-    if (done) break;
+    if (done || finishReason) break;
   }
   if (buffer.trim()) consumeBlock(buffer);
   feedInlineContent("", true);
