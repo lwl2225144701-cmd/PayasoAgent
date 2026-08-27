@@ -1,11 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import url from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import type { HostEvent } from "../run-events.js";
 import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession } from "./store.js";
 
-const DEFAULT_DB_PATH = path.join(os.homedir(), ".payaso", "payaso.db");
+// Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
+const REPO_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..", "..", "..");
+
+// 默认数据库路径：优先放项目目录内 .data/payaso.db（一定可写，避免 HOME 目录权限/扩展属性/沙箱问题）
+// 用户可通过环境变量 PAYASO_DB_PATH 覆盖：设为绝对路径就写指定位置，设为 ":memory:" 就全内存模式
+const DEFAULT_DB_PATH = path.join(REPO_ROOT, ".data", "payaso.db");
 
 interface RunRow {
   run_id: string;
@@ -76,59 +82,100 @@ export class SqliteRunStore implements RunStore {
   private closed = false;
 
   constructor(readonly dbPath: string = resolvePayasoDbPath()) {
-    if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    if (dbPath !== ":memory:") {
-      try { fs.chmodSync(dbPath, 0o600); } catch { /* best effort on non-POSIX filesystems */ }
+    let actualPath = dbPath;
+    let initialized = false;
+    const attempts: Array<{ path: string; error: string }> = [];
+
+    // 先试用户指定路径（磁盘），磁盘任一步失败都再试一次 :memory:。
+    // :memory: 再失败就直接抛，说明运行环境连 node:sqlite 内存模式都用不了（更严重的问题）。
+    for (const candidate of [actualPath, ":memory:"]) {
+      if (initialized) break;
+      actualPath = candidate;
+      try {
+        if (actualPath !== ":memory:") {
+          try { fs.mkdirSync(path.dirname(actualPath), { recursive: true }); } catch { /* 下面 open/create/exec 还会再报 */ }
+        }
+        this.db = new DatabaseSync(actualPath);
+        if (actualPath !== ":memory:") {
+          try { fs.chmodSync(actualPath, 0o600); } catch { /* best effort */ }
+        }
+        this.db.exec("PRAGMA foreign_keys = ON");
+        this.db.exec("PRAGMA busy_timeout = 5000");
+        if (actualPath !== ":memory:") {
+          try {
+            this.db.exec("PRAGMA journal_mode = WAL");
+          } catch (err) {
+            // 沙箱/扩展属性/只读挂载都可能导致 WAL 无法创建 -wal/-shm 伴生文件。
+            // 回退到 DELETE journal 模式牺牲一点并发，保证能跑起来。
+            console.warn(
+              `[RunStore] 启用 WAL 失败（${(err as Error).message}），回退到 DELETE journal 模式；仍会持久化但写入性能较差`
+            );
+            try { this.db.exec("PRAGMA journal_mode = DELETE"); } catch { /* 都失败就用 SQLite 默认 */ }
+          }
+        }
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            workspace_root TEXT NOT NULL,
+            workspace_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            turn_index INTEGER NOT NULL,
+            task TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'stopped', 'interrupted')),
+            workspace_root TEXT NOT NULL,
+            workspace_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            result TEXT,
+            error TEXT,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id),
+            UNIQUE (session_id, turn_index)
+          );
+
+          CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
+            UNIQUE (run_id, seq)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
+        `);
+        this.migrateLegacyRuns();
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
+          CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
+        `);
+        initialized = true;
+      } catch (err) {
+        attempts.push({ path: actualPath, error: (err as Error).message });
+        try { this.db?.close?.(); } catch { /* cleanup, ignore */ }
+        if (actualPath === ":memory:") break; // :memory: 失败就不再试了，外层汇总抛
+      }
     }
-    this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec("PRAGMA busy_timeout = 5000");
-    if (dbPath !== ":memory:") this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        workspace_root TEXT NOT NULL,
-        workspace_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
 
-      CREATE TABLE IF NOT EXISTS runs (
-        run_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        turn_index INTEGER NOT NULL,
-        task TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'stopped', 'interrupted')),
-        workspace_root TEXT NOT NULL,
-        workspace_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        result TEXT,
-        error TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(session_id),
-        UNIQUE (session_id, turn_index)
-      );
+    if (!initialized) {
+      const detail = attempts.map(a => `  ${a.path}: ${a.error}`).join("\n");
+      throw new Error(`[RunStore] 无法在磁盘或内存中初始化 SQLite：\n${detail}`);
+    }
 
-      CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
-        UNIQUE (run_id, seq)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
-    `);
-    this.migrateLegacyRuns();
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
-      CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
-    `);
+    // 写回实际使用的路径（外部打印日志时能知道是不是内存模式）
+    (this as { dbPath: string }).dbPath = actualPath;
+    if (actualPath === ":memory:" && dbPath !== ":memory:") {
+      console.warn(`[RunStore] 因无法写入 ${dbPath}，当前正在使用内存模式持久化；Host 进程退出后会话/Run/事件将全部丢失`);
+    }
   }
 
   private migrateLegacyRuns(): void {

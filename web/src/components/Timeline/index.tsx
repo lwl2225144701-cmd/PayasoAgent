@@ -44,7 +44,11 @@ interface ReasoningBlock {
 }
 
 export function Timeline({ run, embedded = false, showFiles = true }: TimelineProps) {
-  const { events } = useEventStream(run?.runId ?? null, run?.status === 'running');
+  // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
+  // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
+  // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
+  // 正确的关闭时机交给 useEventStream 内部：收到 run_finished/run_failed/run_stopped/run_interrupted 后主动 close SSE。
+  const { events } = useEventStream(run?.runId ?? null, true);
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
   const [producedFiles, setProducedFiles] = useState<Record<string, FileEntry[]> | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);

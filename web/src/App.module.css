@@ -33,6 +33,16 @@
   scrollbar-gutter: stable;
 }
 
+.sessionTimelineEmpty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  padding: 48px 24px;
+  font-size: 14px;
+}
+
 .emptyState {
   flex: 1;
   min-height: 0;

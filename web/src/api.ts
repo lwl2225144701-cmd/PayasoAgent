@@ -95,8 +95,19 @@ export function connectSSE(
     es.addEventListener(t, handler as EventListener);
   }
 
-  es.onopen = () => { onConnect?.(); };
+  let failedAttempts = 0;
+  const MAX_FAILS_BEFORE_CLOSE = 5;
+  let connectedOnce = false;
+
+  es.onopen = () => { connectedOnce = true; failedAttempts = 0; onConnect?.(); };
   es.onerror = () => {
+    // 一旦服务器返回非 200（例如 404/502/握手失败），EventSource 会按 retry:3000 自动重连。
+    // 若连续多次连不上，通常就是永久失败（run 不存在、Host 挂了、反代挂了），主动关掉避免 Network 里一直重连。
+    if (!connectedOnce) failedAttempts += 1;
+    if (failedAttempts >= MAX_FAILS_BEFORE_CLOSE) {
+      console.warn(`[SSE] 连续 ${failedAttempts} 次连接失败，关闭 EventSource 以避免无限重连（runId=${runId}）`);
+      es.close();
+    }
     if (!live) es.close();
     onError?.();
   };
