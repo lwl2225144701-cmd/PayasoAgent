@@ -21,10 +21,10 @@
 }
 
 .timeline {
-  width: 100%;
-  max-width: 80%;
+  width: min(920px, calc(100% - 48px));
+  max-width: none;
   margin: 0 auto;
-  padding: 30px 32px 60px;
+  padding: 30px 12px 60px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -78,7 +78,7 @@
 /* AI content stays document-like: no chat bubble, card, or filled container. */
 
 .agentBlock {
-  width: min(82%, 1280px);
+  width: 100%;
   margin-right: auto;
   display: flex;
   flex-direction: column;
@@ -390,7 +390,7 @@
 /* ===== Responsive ===== */
 @media (max-width: 780px) {
   .timeline {
-    max-width: 100%;
+    width: 100%;
     padding: 28px 18px 48px;
   }
   .agentBlock {

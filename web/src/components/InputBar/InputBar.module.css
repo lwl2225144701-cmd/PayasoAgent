@@ -1,75 +1,67 @@
 .inputBar {
-  padding: 10px 0 18px;
-  background: var(--bg-primary);
+  padding: 12px 24px 20px;
+  background: linear-gradient(to top, var(--bg-primary) 68%, transparent);
   flex-shrink: 0;
 }
 
-.inputWrapper {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  padding: 8px var(--space-3) 8px var(--space-4);
-  width: 80%;
-  max-width: 80%;
+.conversationComposer {
+  width: min(920px, 100%);
+  min-height: 112px;
   margin: 0 auto;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-composer);
+  border: 1px solid var(--color-border-default);
+  border-radius: 24px;
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 255, 255, 0.015) inset;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.inputWrapper:focus-within {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px var(--color-brand-ring);
+.conversationComposer:focus-within {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-lg), 0 0 0 3px var(--color-brand-ring);
 }
 
-.input {
+.conversationInput {
+  width: 100%;
   flex: 1;
-  min-height: 24px;
+  min-height: 58px;
   max-height: 132px;
   resize: none;
-  border: none;
-  outline: none;
+  border: 0;
+  outline: 0;
   font-family: inherit;
-  font-size: var(--font-size-base);
+  font-size: 14px;
   line-height: 1.55;
-  padding: 5px 2px;
+  padding: 15px 18px 6px;
   color: var(--text-primary);
   background: transparent;
 }
 
-.input::placeholder {
+.conversationInput::placeholder {
   color: var(--text-muted);
 }
 
-.input:disabled {
+.conversationInput:disabled {
   opacity: 0.6;
 }
 
-.actions {
+.conversationFooter {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 52px;
+  padding: 6px 10px 10px;
 }
 
-.kbdHint {
-  color: var(--text-muted);
-  display: none;
-  align-items: center;
-  padding-right: var(--space-1);
-  opacity: 0.85;
-}
-
-.inputWrapper:focus-within .kbdHint {
+.conversationActions {
   display: flex;
-}
-
-@media (max-width: 780px) {
-  .inputWrapper {
-    width: calc(100% - 36px);
-    max-width: none;
-  }
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .heroComposer {
@@ -223,6 +215,23 @@
 }
 
 @media (max-width: 640px) {
+  .inputBar {
+    padding: 10px 14px 14px;
+  }
+
+  .conversationComposer {
+    min-height: 106px;
+    border-radius: 20px;
+  }
+
+  .conversationInput {
+    padding-inline: 15px;
+  }
+
+  .conversationFooter {
+    padding-inline: 7px;
+  }
+
   .heroComposer {
     width: min(100%, calc(100vw - 28px));
   }

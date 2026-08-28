@@ -1,15 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import {
-  ArrowUpIcon,
-  ChevronDownIcon,
-  FolderIcon,
-  KbdEnterIcon,
-  PaperclipIcon,
-  PlusIcon,
-  ShieldIcon,
-  StopIcon,
-} from '../icons';
-import { IconButton } from '../IconButton';
+import { ChevronDownIcon, FolderIcon } from '../icons';
+import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import styles from './InputBar.module.css';
 
 interface InputBarProps {
@@ -29,7 +20,7 @@ export function InputBar({
   onStop,
   isRunning,
   disabled,
-  placeholder = '输入任务…',
+  placeholder = '发消息或做任务... / 调用指令 @ 文件或对话',
   variant = 'compact',
   workspaceName,
   openingWorkspace,
@@ -79,52 +70,17 @@ export function InputBar({
         </div>
 
         <div className={styles.heroInputWrapper}>
-          <textarea
+          <ComposerTextarea
             ref={textareaRef}
-            className={styles.heroInput}
+            variant="hero"
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            rows={2}
             disabled={disabled}
             autoFocus
           />
-
-          <div className={styles.heroFooter}>
-            <div className={styles.heroTools}>
-              <IconButton
-                buttonSize="lg"
-                variant="surface"
-                shape="circle"
-                title="添加附件（即将上线）"
-              >
-                <PlusIcon size={20} />
-              </IconButton>
-              <button className={styles.permissionButton} type="button" title="当前 Workspace 权限">
-                <ShieldIcon size={16} />
-                <span>Workspace Write</span>
-                <ChevronDownIcon size={13} />
-              </button>
-            </div>
-
-            <div className={styles.heroActions}>
-              <button className={styles.modelButton} type="button" title="当前 Agent">
-                <span>Payaso Agent</span>
-                <ChevronDownIcon size={13} />
-              </button>
-              <IconButton
-                buttonSize="lg"
-                variant="brand"
-                shape="circle"
-                onClick={handleSend}
-                disabled={!canSend}
-                title="发送（回车）"
-              >
-                <ArrowUpIcon size={20} />
-              </IconButton>
-            </div>
-          </div>
+          <ComposerFooter variant="hero" canSend={canSend} onSend={handleSend} />
         </div>
       </div>
     );
@@ -132,49 +88,23 @@ export function InputBar({
 
   return (
     <div className={styles.inputBar}>
-      <div className={styles.inputWrapper}>
-        <IconButton buttonSize="sm" variant="ghost" shape="rounded" title="附件（即将上线）">
-          <PaperclipIcon size={18} />
-        </IconButton>
-        <textarea
+      <div className={styles.conversationComposer}>
+        <ComposerTextarea
           ref={textareaRef}
-          className={styles.input}
+          variant="conversation"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          rows={1}
           disabled={disabled}
         />
-        <div className={styles.actions}>
-          {isRunning ? (
-            <IconButton
-              buttonSize="md"
-              variant="surface"
-              shape="circle"
-              onClick={onStop}
-              title="停止当前任务"
-            >
-              <StopIcon size={16} />
-            </IconButton>
-          ) : (
-            <>
-              <IconButton
-                buttonSize="md"
-                variant="brand"
-                shape="circle"
-                onClick={handleSend}
-                disabled={!canSend}
-                title="发送（回车）"
-              >
-                <ArrowUpIcon size={18} />
-              </IconButton>
-              <span className={styles.kbdHint} title="Enter to send · Shift+Enter for new line">
-                <KbdEnterIcon size={18} />
-              </span>
-            </>
-          )}
-        </div>
+        <ComposerFooter
+          variant="conversation"
+          canSend={canSend}
+          isRunning={isRunning}
+          onSend={handleSend}
+          onStop={onStop}
+        />
       </div>
     </div>
   );

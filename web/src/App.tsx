@@ -380,7 +380,7 @@ export default function App() {
             onSend={handleCreateRun}
             onStop={handleStopRun}
             isRunning={currentRun.status === 'running'}
-            placeholder="输入任务…"
+            placeholder="发消息或做任务... / 调用指令 @ 文件或对话"
             disabled={currentRun.status === 'running'}
           />
         )}
