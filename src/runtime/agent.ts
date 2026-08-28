@@ -1,6 +1,6 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
-import { chat, type ChatMessage, type ChatStreamDelta } from "../llm/llm.js";
+import { chat, type ChatMessage, type ChatStreamDelta, type ModelConfig } from "../llm/llm.js";
 import { execute, getTool, getSchemas, validateToolResult, type ToolSandboxEvent } from "../tools/tools.js";
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
 import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
@@ -57,6 +57,7 @@ export async function runAgent(
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
     isCancelled?: () => boolean;
+    modelConfig?: ModelConfig;
   }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
@@ -176,7 +177,7 @@ export async function runAgent(
       }
 
       // 1. 调用 LLM 判断下一步
-      const assistantMsg = await chat(messages, schemas, opts?.onStreamDelta);
+      const assistantMsg = await chat(messages, schemas, opts?.onStreamDelta, opts?.modelConfig);
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;

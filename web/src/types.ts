@@ -13,6 +13,7 @@ export interface HostRun {
   result?: string;
   error?: string;
   workspace?: WorkspaceView;
+  model?: string;
 }
 
 export interface HostSession {
@@ -35,12 +36,13 @@ export interface FileEntry {
 // 模型配置 — 对齐后端 ModelProviderView / StoredModelProvider
 export interface ModelProviderView {
   id: string;
+  kind: 'builtin' | 'custom';
   name: string;
   baseUrl: string;
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
-  status: 'unchecked';
+  status: 'unconfigured' | 'configured' | 'available' | 'error' | 'checking';
 }
 
 export interface CreateModelProviderInput {
@@ -55,6 +57,19 @@ export interface UpdateModelProviderInput {
   baseUrl?: string;
   apiKey?: string | null;
   models?: string[];
+}
+
+// 默认模型（provider + model 成对）— 对齐后端 GET/POST /settings(/default) 响应
+export interface DefaultModelView {
+  defaultProviderId: string;
+  defaultModelId: string;
+}
+
+// 输入栏模型下拉的当前选择（由 DefaultModelView + ModelProviderView 列表派生）
+export interface ModelSelection {
+  providerId: string;
+  providerName: string;
+  model: string;
 }
 
 // Runtime Trace 事件

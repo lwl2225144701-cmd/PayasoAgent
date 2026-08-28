@@ -3,12 +3,12 @@
 // 边界：只通过公开边界 runAgent 调用 Runtime；不持久化 Runtime checkpoint 内容。
 
 import { runAgent } from "../runtime/agent.js";
-import type { ChatMessage, ChatStreamDelta } from "../llm/llm.js";
+import type { ChatMessage, ChatStreamDelta, ModelConfig } from "../llm/llm.js";
 import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
-import type { RunStore, StoredRun, StoredRunStatus, StoredSession, CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
+import type { RunStore, StoredRun, StoredRunStatus, StoredSession, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
 import fs from "node:fs";
 
@@ -25,6 +25,9 @@ export interface HostRun {
   result?: string;
   error?: string;
   workspace?: { name: string };
+  model?: string;
+  providerId?: string;
+  baseUrl?: string;
 }
 
 export interface HostSession {
@@ -45,6 +48,8 @@ interface InternalRun extends HostRun {
   events: HostEvent[];
   cancelled: boolean;
   workspaceRoot: string;
+  providerId?: string;
+  baseUrl?: string;
 }
 
 export interface SseSink {
@@ -126,6 +131,7 @@ export class RunManager {
     }
     const previousRuns = this.store.listRunsBySession(session.sessionId);
     const conversationHistory = this.conversationHistory(previousRuns);
+    const resolved = this.resolveModelConfig();
     const run: InternalRun = {
       runId,
       sessionId: session.sessionId,
@@ -138,6 +144,9 @@ export class RunManager {
       cancelled: false,
       workspace: session.workspaceName ? { name: session.workspaceName } : undefined,
       workspaceRoot: session.workspaceRoot,
+      model: resolved?.model,
+      providerId: resolved?.providerId,
+      baseUrl: resolved?.baseUrl,
     };
 
     // Persist before execution starts, so every Runtime event has a parent Run.
@@ -176,6 +185,9 @@ export class RunManager {
       workspaceRoot,
       result: undefined,
       error: undefined,
+      model: persisted.model,
+      providerId: persisted.providerId,
+      baseUrl: persisted.baseUrl,
     };
     this.store.updateRun(this.toStoredRun(run));
     this.runs.set(runId, run);
@@ -485,18 +497,30 @@ export class RunManager {
       }
       if (!deltaTimer) deltaTimer = setTimeout(flushDelta, 16);
     };
-    void runAgent(task, resume, {
-      runId: run.runId,
-      workspaceRoot: run.workspaceRoot,
-      conversationHistory,
-      onStreamDelta: queueDelta,
-      onTrace: (event) => {
-        flushDelta();
-        this.record(run, event);
-      },
-      isCancelled: () => run.cancelled,
-    })
-      .then((result) => {
+
+    // Run 已经持久化为 running，任何启动失败都必须落为 failed + run_failed，
+    // 不允许同步 throw 留下永远 running 的僵尸 Run（模型解析失败也走同一条路）。
+    void (async () => {
+      let modelConfig: ModelConfig | undefined;
+      try {
+        modelConfig = this.modelConfigForRun(run);
+      } catch (err) {
+        this.failRun(run, (err as Error).message);
+        return;
+      }
+      try {
+        const result = await runAgent(task, resume, {
+          runId: run.runId,
+          workspaceRoot: run.workspaceRoot,
+          conversationHistory,
+          modelConfig,
+          onStreamDelta: queueDelta,
+          onTrace: (event) => {
+            flushDelta();
+            this.record(run, event);
+          },
+          isCancelled: () => run.cancelled,
+        });
         flushDelta();
         if (run.cancelled) {
           this.finish(run, "stopped");
@@ -513,24 +537,28 @@ export class RunManager {
           timestamp: run.updatedAt,
           result,
         });
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         flushDelta();
         if (run.cancelled) {
           this.finish(run, "stopped");
           return;
         }
-        run.status = "failed";
-        run.error = (err as Error).message;
-        run.updatedAt = new Date().toISOString();
-        this.persistRunSafely(run);
-        this.record(run, {
-          type: "run_failed",
-          runId: run.runId,
-          timestamp: run.updatedAt,
-          error: run.error,
-        });
-      });
+        this.failRun(run, (err as Error).message);
+      }
+    })();
+  }
+
+  private failRun(run: InternalRun, message: string): void {
+    run.status = "failed";
+    run.error = message;
+    run.updatedAt = new Date().toISOString();
+    this.persistRunSafely(run);
+    this.record(run, {
+      type: "run_failed",
+      runId: run.runId,
+      timestamp: run.updatedAt,
+      error: message,
+    });
   }
 
   private finish(run: InternalRun, status: "stopped"): void {
@@ -584,6 +612,9 @@ export class RunManager {
       updatedAt: run.updatedAt,
       result: run.result,
       error: run.error,
+      model: run.model,
+      providerId: run.providerId,
+      baseUrl: run.baseUrl,
     };
   }
 
@@ -599,6 +630,9 @@ export class RunManager {
       result: run.result,
       error: run.error,
       workspace: run.workspace,
+      model: run.model,
+      providerId: run.providerId,
+      baseUrl: run.baseUrl,
     };
   }
 
@@ -651,6 +685,15 @@ export class RunManager {
     return this.store.listModelProviders();
   }
 
+  getModelProvider(id: string) {
+    return this.store.getModelProvider(id);
+  }
+
+  // 密钥只在服务端使用（如代拉 /models 目录），绝不进入 API 响应
+  getModelProviderSecret(id: string) {
+    return this.store.getModelProviderSecret(id);
+  }
+
   addModelProvider(input: CreateModelProviderInput) {
     return this.store.addModelProvider(input);
   }
@@ -661,5 +704,70 @@ export class RunManager {
 
   deleteModelProvider(id: string) {
     return this.store.deleteModelProvider(id);
+  }
+
+  getDefaultProviderId(): string {
+    return this.store.getDefaultProviderId();
+  }
+
+  getDefaultModelId(): string {
+    return this.store.getDefaultModelId();
+  }
+
+  setDefaultModel(providerId: string, modelId?: string): { providerId: string; modelId: string } {
+    return this.store.setDefaultModel(providerId, modelId);
+  }
+
+  // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）
+  importEnvModelProvider(input: { baseUrl: string; apiKey: string; model: string }): { providerId: string; modelId: string } | null {
+    return this.store.importEnvFallback(input);
+  }
+
+  // 原子解析模型配置：要么返回完整可用的 {providerId, baseUrl, apiKey, model}，
+  // 要么返回 undefined（调用方整组回退环境配置）。绝不返回残缺元组：
+  // 默认 Provider 只有配置了密钥且有模型时才参与选中，否则跳过（而不是拿着空密钥命中）。
+  private resolveModelConfig(): ModelConfig | undefined {
+    const providers = this.store.listModelProviders();
+    const usable = (p: ModelProviderView): boolean => p.hasApiKey && p.models.length > 0;
+    const defaultId = this.store.getDefaultProviderId();
+    const byDefault = providers.find(p => p.id === defaultId && usable(p));
+    const configured = byDefault ?? providers.find(usable);
+    if (!configured) return undefined;
+    const full = this.store.getModelProviderSecret(configured.id);
+    if (!full?.apiKey || !full.baseUrl) return undefined;
+    const defaultModelId = this.store.getDefaultModelId();
+    const model =
+      defaultId === configured.id && defaultModelId && configured.models.includes(defaultModelId)
+        ? defaultModelId
+        : configured.models[0];
+    if (!model) return undefined;
+    return {
+      providerId: configured.id,
+      baseUrl: full.baseUrl,
+      apiKey: full.apiKey,
+      model,
+    };
+  }
+
+  // Run 快照绑定了 provider/model 时，必须仍能组成完整元组（密钥可能事后被清除）；
+  // 组不出来就 fail-closed 抛错，由 startAgent 落为 failed Run。
+  private modelConfigForRun(run: InternalRun): ModelConfig | undefined {
+    if (run.model && run.providerId) {
+      const secret = this.store.getModelProviderSecret(run.providerId);
+      if (!secret?.apiKey) {
+        throw new Error(`Provider ${run.providerId} API key is missing for run ${run.runId}`);
+      }
+      const baseUrl = run.baseUrl ?? secret.baseUrl;
+      if (!baseUrl) {
+        throw new Error(`Provider ${run.providerId} baseUrl is missing for run ${run.runId}`);
+      }
+      return {
+        providerId: run.providerId,
+        baseUrl,
+        apiKey: secret.apiKey,
+        model: run.model,
+      };
+    }
+    return this.resolveModelConfig();
   }
 }

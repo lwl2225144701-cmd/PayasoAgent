@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { RunManager, type SseSink } from "./run-manager.js";
+import { fetchAvailableModels } from "./available-models.js";
 import type { CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
 import {
   resolveWorkspacePath,
@@ -264,7 +265,10 @@ export async function handleRequest(
     }
     if (s.length === 3 && s[1] === "models") {
       const id = s[2];
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      const knownBuiltins = new Set(["deepseek-chat", "openai-gpt4o", "stepfun-step"]);
+      const isBuiltin = knownBuiltins.has(id);
+      if (!isUuid && !isBuiltin) {
         return bad(res, "invalid_model_id");
       }
       if (method === "PATCH") {
@@ -304,6 +308,65 @@ export async function handleRequest(
         return sendJson(res, 200, { deleted: true });
       }
       return notFound(res);
+    }
+    if (s.length === 2 && s[1] === "default" && method === "POST") {
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+      if (!providerId) return bad(res, "providerId is required");
+      // 未知 provider → 404；存在但未配置密钥/无模型/模型不在目录 → 400
+      if (!manager.getModelProvider(providerId)) return notFound(res);
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+      if (model !== undefined && !model) return bad(res, "model must be non-empty when provided");
+      try {
+        const result = manager.setDefaultModel(providerId, model);
+        return sendJson(res, 200, { defaultProviderId: result.providerId, defaultModelId: result.modelId });
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 1 && s[0] === "settings" && method === "GET") {
+      return sendJson(res, 200, {
+        defaultProviderId: manager.getDefaultProviderId(),
+        defaultModelId: manager.getDefaultModelId(),
+      });
+    }
+    if (s.length === 2 && s[1] === "available-models" && method === "POST") {
+      // 拉取 OpenAI 兼容端点的可用模型目录。apiKey 可显式传入（添加表单），
+      // 或留空并传 providerId 以使用存储的密钥（编辑表单，密钥只在服务端使用）。
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+      const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+      if (!baseUrl) return bad(res, "baseUrl is required");
+      let effectiveKey = apiKey;
+      if (!effectiveKey && providerId) {
+        const secret = manager.getModelProviderSecret(providerId);
+        if (!secret?.apiKey) return bad(res, "no API key available for this provider");
+        effectiveKey = secret.apiKey;
+      }
+      if (!effectiveKey) return bad(res, "apiKey is required");
+      try {
+        const models = await fetchAvailableModels(baseUrl, effectiveKey);
+        return sendJson(res, 200, { models });
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
     }
     return notFound(res);
   }

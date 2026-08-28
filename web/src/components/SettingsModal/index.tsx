@@ -4,6 +4,8 @@ import {
   createModel,
   updateModel,
   deleteModel,
+  setDefaultModel,
+  fetchAvailableModels,
 } from '../../api';
 import type { ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from '../../types';
 import {
@@ -19,32 +21,59 @@ import {
 import { Modal } from '../Modal';
 import styles from './SettingsModal.module.css';
 
-type Tab = 'general' | 'models' | 'plugins' | 'presets';
+type Tab = 'models';
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  onSaved?: () => void;
 }
 
-type FormMode = 'list' | 'add' | 'edit';
+type FormMode = 'list' | 'add' | 'builtin-add' | 'edit';
+
+interface ModelTag {
+  id: string;
+  value: string;
+}
 
 interface FormState {
   id?: string;
+  kind?: 'builtin' | 'custom';
   name: string;
   baseUrl: string;
   apiKey: string;
-  models: string;
+  hadApiKey: boolean;
+  tags: ModelTag[];
+  newTag: string;
+}
+
+function statusLabel(status: ModelProviderView['status']): string {
+  switch (status) {
+    case 'unconfigured':
+      return '未配置';
+    case 'configured':
+      return '已配置，未检测';
+    case 'available':
+      return '可用';
+    case 'error':
+      return '检测失败';
+    case 'checking':
+      return '正在检测';
+    default:
+      return status;
+  }
 }
 
 const EMPTY_FORM: FormState = {
   name: '',
   baseUrl: '',
   apiKey: '',
-  models: '',
+  hadApiKey: false,
+  tags: [],
+  newTag: '',
 };
 
-export function SettingsModal({ open, onClose }: SettingsModalProps) {
-  const [tab, setTab] = useState<Tab>('models');
+export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const [loading, setLoading] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('list');
@@ -52,6 +81,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -68,10 +99,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   }, []);
 
   useEffect(() => {
-    if (open && tab === 'models') {
+    if (open) {
       void refresh();
     }
-  }, [open, tab, refresh]);
+  }, [open, refresh]);
 
   useEffect(() => {
     if (!open) {
@@ -82,21 +113,37 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   }, [open]);
 
-  const startAdd = () => {
-    setForm({ ...EMPTY_FORM, models: '' });
-    setFormMode('add');
+  const startAdd = (isBuiltin: boolean) => {
+    if (isBuiltin) {
+      setForm({
+        ...EMPTY_FORM,
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        tags: [{ id: 'default', value: 'deepseek-chat' }],
+        hadApiKey: false,
+      });
+      setFormMode('builtin-add');
+    } else {
+      setForm({ ...EMPTY_FORM, tags: [] });
+      setFormMode('add');
+    }
+    setCustomOpen(false);
     setError(null);
   };
 
   const startEdit = (m: ModelProviderView) => {
     setForm({
       id: m.id,
+      kind: m.kind,
       name: m.name,
       baseUrl: m.baseUrl,
       apiKey: '',
-      models: m.models.join(', '),
+      hadApiKey: m.hasApiKey,
+      tags: m.models.map((value, idx) => ({ id: `${m.id}-${idx}`, value })),
+      newTag: '',
     });
     setFormMode('edit');
+    setCustomOpen(false);
     setError(null);
   };
 
@@ -110,15 +157,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setError(null);
     const name = form.name.trim();
     const baseUrl = form.baseUrl.trim();
-    const modelsRaw = form.models;
+    const modelsList = modelsFromTags();
     if (!name || !baseUrl) {
       setError('名称和 Base URL 不能为空。');
       return;
     }
-    const modelsList = modelsRaw
-      .split(/[,，\n]+/)
-      .map(s => s.trim())
-      .filter(Boolean);
     if (modelsList.length === 0) {
       setError('至少需要一个模型标识。');
       return;
@@ -126,7 +169,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
     setSaving(true);
     try {
-      if (formMode === 'add') {
+      if (formMode === 'add' || formMode === 'builtin-add') {
         const input: CreateModelProviderInput = {
           name,
           baseUrl,
@@ -150,6 +193,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       await refresh();
       setFormMode('list');
       setForm(EMPTY_FORM);
+      setCustomOpen(false);
+      onSaved?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`保存失败：${msg}`);
@@ -165,7 +210,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     try {
       await updateModel(form.id, { apiKey: null });
       await refresh();
-      setForm(prev => ({ ...prev, apiKey: '' }));
+      setForm(prev => ({ ...prev, apiKey: '', hadApiKey: false }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`清除密钥失败：${msg}`);
@@ -187,11 +232,79 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
   };
 
+  const addTag = () => {
+    const value = form.newTag.trim();
+    if (!value) return;
+    setForm(prev => ({
+      ...prev,
+      tags: [...prev.tags, { id: crypto.randomUUID(), value }],
+      newTag: '',
+    }));
+    setError(null);
+  };
+
+  const removeTag = (id: string) => {
+    setForm(prev => ({
+      ...prev,
+      tags: prev.tags.filter(t => t.id !== id),
+    }));
+  };
+
+  const modelsFromTags = () => form.tags.map(t => t.value);
+
+  // 拉取 OpenAI 兼容端点的可用模型并合并进目录（点保存才落库）。
+  // 编辑已有 Provider 且密钥留空时由后端使用存储的密钥（明文不出服务端）。
+  const handleFetchModels = async () => {
+    setError(null);
+    const baseUrl = form.baseUrl.trim();
+    const apiKey = form.apiKey.trim();
+    if (!baseUrl) {
+      setError('请先填写 API 地址。');
+      return;
+    }
+    const useStoredKey = formMode === 'edit' && !apiKey;
+    if (!apiKey && !useStoredKey) {
+      setError('请先填写 API 密钥后再获取可用模型。');
+      return;
+    }
+    setFetchingModels(true);
+    try {
+      const resp = await fetchAvailableModels({
+        baseUrl,
+        apiKey: apiKey || undefined,
+        providerId: useStoredKey ? form.id : undefined,
+      });
+      const known = new Set(form.tags.map(t => t.value));
+      const added = resp.models
+        .filter(m => !known.has(m))
+        .map(value => ({ id: crypto.randomUUID(), value }));
+      let tags = [...form.tags, ...added];
+      if (tags.length > 50) {
+        tags = tags.slice(0, 50);
+        setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
+      }
+      setForm(prev => ({ ...prev, tags }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`获取可用模型失败：${msg}`);
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
   const renderModelsTab = () => {
     if (formMode !== 'list') {
+      const isBuiltin = formMode === 'edit' && form.kind === 'builtin';
+      const hasApiKey = formMode === 'edit' && (form.hadApiKey || form.apiKey.length > 0);
+      const title = formMode === 'builtin-add' ? '添加提供方' : formMode === 'add' ? '添加自定义提供方' : '编辑提供方';
       return (
         <div className={styles.formCard}>
-          <h3 className={styles.formTitle}>{formMode === 'add' ? '添加提供方' : '编辑提供方'}</h3>
+          <div className={styles.formHeader}>
+            <h3 className={styles.formTitle}>{title}</h3>
+            {isBuiltin && (
+              <span className={styles.officialBadge}>{form.name} official</span>
+            )}
+          </div>
           {error && <div className={styles.error}>{error}</div>}
           <div className={styles.field}>
             <label className={styles.label}>名称</label>
@@ -203,24 +316,21 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             />
           </div>
           <div className={styles.field}>
-            <label className={styles.label}>Base URL</label>
-            <input
-              className={styles.input}
-              value={form.baseUrl}
-              onChange={e => setForm(prev => ({ ...prev, baseUrl: e.target.value }))}
-              placeholder="https://api.deepseek.com"
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label}>API Key</label>
+            <label className={styles.label}>API 密钥</label>
             <input
               className={styles.input}
               type="password"
               value={form.apiKey}
               onChange={e => setForm(prev => ({ ...prev, apiKey: e.target.value }))}
-              placeholder="留空 = 不修改"
+              placeholder={
+                isBuiltin && hasApiKey
+                  ? '已配置——输入新值可替换'
+                  : formMode === 'edit'
+                    ? '留空 = 不修改'
+                    : '输入 API 密钥'
+              }
             />
-            {formMode === 'edit' && (
+            {formMode === 'edit' && hasApiKey && (
               <button
                 type="button"
                 className={styles.linkButton}
@@ -232,24 +342,77 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             )}
           </div>
           <div className={styles.field}>
-            <label className={styles.label}>模型标识（逗号分隔）</label>
-            <textarea
-              className={styles.textarea}
-              value={form.models}
-              onChange={e => setForm(prev => ({ ...prev, models: e.target.value }))}
-              placeholder="deepseek-chat, deepseek-reasoner"
-              rows={3}
-            />
-          </div>
-          <div className={styles.formActions}>
             <button
               type="button"
-              className={styles.primaryButton}
-              onClick={handleSave}
-              disabled={saving}
+              className={styles.collapseButton}
+              onClick={() => setCustomOpen(v => !v)}
             >
-              {saving ? '保存中…' : '保存'}
+              <span>{customOpen ? '▾' : '▸'} 自定义设置</span>
             </button>
+            {customOpen && (
+              <div className={styles.collapseBody}>
+                <div className={styles.field}>
+                  <label className={styles.label}>API 地址</label>
+                  <input
+                    className={styles.input}
+                    value={form.baseUrl}
+                    onChange={e => setForm(prev => ({ ...prev, baseUrl: e.target.value }))}
+                    placeholder="https://api.deepseek.com"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <div className={styles.tagHeader}>
+                    <label className={styles.label}>模型目录</label>
+                    <button
+                      type="button"
+                      className={styles.linkButton}
+                      onClick={handleFetchModels}
+                      disabled={fetchingModels}
+                    >
+                      {fetchingModels ? '获取中…' : '获取可用模型'}
+                    </button>
+                  </div>
+                  <div className={styles.tagHint}>正在使用适配器默认模型</div>
+                  <div className={styles.tagList}>
+                    {form.tags.map(tag => (
+                      <span key={tag.id} className={styles.tag}>
+                        <span className={styles.tagValue}>{tag.value}</span>
+                        <button
+                          type="button"
+                          className={styles.tagRemove}
+                          onClick={() => removeTag(tag.id)}
+                        >
+                          <TrashIcon size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className={styles.tagAddRow}>
+                    <input
+                      className={styles.tagInput}
+                      value={form.newTag}
+                      onChange={e => setForm(prev => ({ ...prev, newTag: e.target.value }))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addTag();
+                        }
+                      }}
+                      placeholder="输入模型标识"
+                    />
+                    <button
+                      type="button"
+                      className={styles.tagAddButton}
+                      onClick={addTag}
+                    >
+                      + 添加模型
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className={styles.formActions}>
             <button
               type="button"
               className={styles.secondaryButton}
@@ -257,6 +420,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               disabled={saving}
             >
               取消
+            </button>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? '保存中…' : '保存'}
             </button>
           </div>
         </div>
@@ -266,9 +437,17 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     return (
       <div className={styles.modelsTab}>
         <div className={styles.toolbar}>
-          <button type="button" className={styles.primaryButton} onClick={startAdd}>
+          <button type="button" className={styles.primaryButton} onClick={() => startAdd(true)}>
             <PlusIcon size={14} />
             <span>添加提供方</span>
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => startAdd(false)}
+          >
+            <PlusIcon size={14} />
+            <span>添加自定义提供方</span>
           </button>
         </div>
         {error && <div className={styles.error}>{error}</div>}
@@ -279,34 +458,56 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         ) : (
           <div className={styles.list}>
             {models.map(m => (
-              <div key={m.id} className={styles.item}>
-                <div className={styles.itemMain}>
-                  <div className={styles.itemTitle}>{m.name}</div>
-                  <div className={styles.itemMeta}>{m.baseUrl}</div>
-                  <div className={styles.itemMeta}>
+              <div key={m.id} className={styles.card}>
+                <div className={styles.cardMain}>
+                  <div className={styles.cardTitleRow}>
+                    <span className={styles.cardTitle}>{m.name}</span>
+                    <span className={styles.statusDot} data-status={m.status} title={statusLabel(m.status)} />
+                  </div>
+                  <div className={styles.cardMeta}>{m.baseUrl}</div>
+                  <div className={styles.cardMeta}>
                     API Key：{m.hasApiKey ? m.apiKeyMasked : '未设置'}
                   </div>
-                  <div className={styles.itemMeta}>
-                    状态：<span className={styles.statusUnchecked}>未检测</span>
+                  <div className={styles.cardMeta}>
+                    状态：<span className={styles.statusText} data-status={m.status}>{statusLabel(m.status)}</span>
                   </div>
                 </div>
-                <div className={styles.itemActions}>
+                <div className={styles.cardActions}>
                   <button
                     type="button"
-                    className={styles.iconButton}
+                    className={styles.textButton}
                     onClick={() => startEdit(m)}
-                    title="编辑"
                   >
-                    <PencilIcon size={14} />
+                    编辑
                   </button>
                   <button
                     type="button"
-                    className={`${styles.iconButton} ${styles.dangerButton}`}
-                    onClick={() => setDeletingId(m.id)}
-                    title="删除"
+                    className={styles.textButton}
+                    disabled={!m.hasApiKey}
+                    title={m.hasApiKey ? undefined : '请先配置 API 密钥'}
+                    onClick={async () => {
+                      setError(null);
+                      try {
+                        await setDefaultModel(m.id, m.models[0] ?? '');
+                        // 通知 App 刷新默认模型
+                        window.dispatchEvent(new CustomEvent('settings:defaultChanged', { detail: { providerId: m.id } }));
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        setError(`设为默认失败：${msg}`);
+                      }
+                    }}
                   >
-                    <TrashIcon size={14} />
+                    设为默认
                   </button>
+                  {m.kind === 'custom' && (
+                    <button
+                      type="button"
+                      className={`${styles.textButton} ${styles.textButtonDanger}`}
+                      onClick={() => setDeletingId(m.id)}
+                    >
+                      删除
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -314,129 +515,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         )}
       </div>
     );
-  };
-
-  const renderGeneralTab = () => (
-    <div className={styles.generalTab}>
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>Agent 预设</div>
-            <div className={styles.settingDesc}>对此后新建的会话生效。运行中的会话保持它开始时的预设。</div>
-          </div>
-          <div className={styles.settingControl}>
-            <select className={styles.select}>
-              <option>标准模式</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>权限</div>
-            <div className={styles.settingDesc}>选择新会话的默认权限模式</div>
-          </div>
-          <div className={styles.settingControl}>
-            <select className={styles.select}>
-              <option>Workspace Write</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>语言</div>
-          </div>
-          <div className={styles.settingControl}>
-            <select className={styles.select}>
-              <option>中文</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>外观</div>
-          </div>
-          <div className={styles.settingControl}>
-            <div className={styles.buttonGroup}>
-              <button type="button" className={styles.buttonGroupItem}>浅色</button>
-              <button type="button" className={`${styles.buttonGroupItem} ${styles.buttonGroupItemActive}`}>深色</button>
-              <button type="button" className={styles.buttonGroupItem}>跟随系统</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>字号大小</div>
-            <div className={styles.settingDesc}>仅会影响会话内容的字号</div>
-          </div>
-          <div className={styles.settingControl}>
-            <div className={styles.numberControl}>
-              <input className={styles.numberInput} type="text" value="14" readOnly />
-              <span className={styles.numberUnit}>px</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>对话显示</div>
-            <div className={styles.settingDesc}>控制已完成轮次的过程内容</div>
-          </div>
-          <div className={styles.settingControl}>
-            <select className={styles.select}>
-              <option>Compact</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.settingGroup}>
-        <div className={styles.settingItem}>
-          <div className={styles.settingHeader}>
-            <div className={styles.settingTitle}>繁忙时 Enter 行为</div>
-            <div className={styles.settingDesc}>仅在智能体运行时生效；Cmd/Ctrl+Enter 使用另一行为</div>
-          </div>
-          <div className={styles.settingControl}>
-            <select className={styles.select}>
-              <option>排队发送</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderTabContent = () => {
-    switch (tab) {
-      case 'general':
-        return renderGeneralTab();
-      case 'models':
-        return renderModelsTab();
-      case 'plugins':
-      case 'presets':
-      default:
-        return (
-          <div className={styles.placeholder}>
-            {tab === 'plugins' && '插件管理'}
-            {tab === 'presets' && 'Agent 预设'}
-            <br />
-            后续版本支持。
-          </div>
-        );
-    }
   };
 
   return (
@@ -457,38 +535,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           <nav className={styles.nav}>
             <button
               type="button"
-              className={`${styles.navItem} ${tab === 'general' ? styles.navItemActive : ''}`}
-              onClick={() => setTab('general')}
-            >
-              <SettingsIcon size={16} />
-              <span>通用设置</span>
-            </button>
-            <button
-              type="button"
-              className={`${styles.navItem} ${tab === 'models' ? styles.navItemActive : ''}`}
-              onClick={() => setTab('models')}
+              className={`${styles.navItem} ${styles.navItemActive}`}
             >
               <DatabaseIcon size={16} />
               <span>模型</span>
             </button>
-            <button
-              type="button"
-              className={`${styles.navItem} ${tab === 'plugins' ? styles.navItemActive : ''}`}
-              onClick={() => setTab('plugins')}
-            >
-              <SlidersIcon size={16} />
-              <span>插件</span>
-            </button>
-            <button
-              type="button"
-              className={`${styles.navItem} ${tab === 'presets' ? styles.navItemActive : ''}`}
-              onClick={() => setTab('presets')}
-            >
-              <UserIcon size={16} />
-              <span>Agent 预设</span>
-            </button>
           </nav>
-          <div className={styles.content}>{renderTabContent()}</div>
+          <div className={styles.content}>{renderModelsTab()}</div>
         </div>
       </div>
 

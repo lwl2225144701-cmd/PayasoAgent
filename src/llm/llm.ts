@@ -128,6 +128,7 @@ async function doRequest(
   url: string,
   body: Record<string, unknown>,
   timeoutMs: number,
+  apiKey: string,
   onDelta?: (delta: ChatStreamDelta) => void,
 ): Promise<RawResult> {
   const controller = new AbortController();
@@ -139,7 +140,7 @@ async function doRequest(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -315,24 +316,52 @@ async function readStreamingMessage(
 //   if (process.env.SIMULATE_INTERRUPT === "1" && __callCount === 2) {
 //     throw new Error("Simulated network interruption: fetch failed (ECONNRESET)");
 //   }
+export interface ModelConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  providerId?: string;
+}
+
+// 模型配置是原子元组：传入 modelConfig 则三个字段必须齐全并整体采用，
+// 绝不逐字段回退环境配置（否则 provider A 的 baseUrl 会拿到 provider B 的密钥）；
+// 未传入才整体回退环境配置三元组。
+function resolveEndpointConfig(modelConfig?: ModelConfig): { baseUrl: string; apiKey: string; model: string } {
+  if (modelConfig) {
+    if (!modelConfig.baseUrl || !modelConfig.apiKey || !modelConfig.model) {
+      throw new Error(
+        "modelConfig is incomplete: baseUrl, apiKey and model are all required " +
+        "(no per-field fallback to environment config)"
+      );
+    }
+    return { baseUrl: modelConfig.baseUrl, apiKey: modelConfig.apiKey, model: modelConfig.model };
+  }
+  return { baseUrl: BASE_URL, apiKey: API_KEY, model: MODEL };
+}
+
 export async function chat(
   messages: ChatMessage[],
   tools?: ToolSchema[],
   onDelta?: (delta: ChatStreamDelta) => void,
+  modelConfig?: ModelConfig,
 ): Promise<ChatMessage> {
+  const endpoint = resolveEndpointConfig(modelConfig);
+  const resolvedBaseUrl = endpoint.baseUrl;
+  const resolvedApiKey = endpoint.apiKey;
+  const resolvedModel = endpoint.model;
   const body: Record<string, unknown> = {
-    model: MODEL,
+    model: resolvedModel,
     messages,
     max_tokens: MODEL_CONTEXT.maxOutputTokens,
     stream: process.env.LLM_STREAMING !== "0",
   };
   if (tools?.length) body.tools = tools;
 
-  const url = `${BASE_URL}/chat/completions`;
+  const url = `${resolvedBaseUrl}/chat/completions`;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const timeoutMs = requestTimeoutMs();
-    const result = await doRequest(url, body, timeoutMs, onDelta);
+    const result = await doRequest(url, body, timeoutMs, resolvedApiKey, onDelta);
 
     // Total request timeout (no headers, stalled body, or stalled error body)
     // is terminal: do not auto-retry a long generation.

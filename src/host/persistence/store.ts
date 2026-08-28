@@ -1,5 +1,5 @@
 import type { HostEvent } from "../run-events.js";
-import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./settings-store.js";
+import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./settings-store.js";
 
 export type StoredRunStatus = "running" | "completed" | "failed" | "stopped" | "interrupted";
 
@@ -28,6 +28,9 @@ export interface StoredRun {
   result?: string;
   error?: string;
   deletedAt?: string;
+  model?: string;
+  providerId?: string;
+  baseUrl?: string;
 }
 
 export interface StoredEvent {
@@ -67,10 +70,15 @@ export interface RunStore {
   deleteSession(sessionId: string): number;
   listModelProviders(): ModelProviderView[];
   getModelProvider(id: string): ModelProviderView | null;
+  getModelProviderSecret(id: string): { apiKey: string; baseUrl: string; models: string[] } | null;
+  getDefaultProviderId(): string;
+  getDefaultModelId(): string;
+  setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection;
+  importEnvFallback(input: { baseUrl: string; apiKey: string; model: string }): DefaultModelSelection | null;
   addModelProvider(input: CreateModelProviderInput): ModelProviderView;
   updateModelProvider(id: string, input: UpdateModelProviderInput): ModelProviderView | null;
   deleteModelProvider(id: string): boolean;
   close(): void;
 }
 
-export type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./settings-store.js";
+export type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./settings-store.js";

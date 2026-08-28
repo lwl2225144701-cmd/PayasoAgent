@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { ChevronDownIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
+import type { ModelProviderView, ModelSelection } from '../../types';
 import styles from './InputBar.module.css';
 
 interface InputBarProps {
@@ -13,6 +14,9 @@ interface InputBarProps {
   workspaceName?: string;
   openingWorkspace?: boolean;
   onOpenWorkspace?: () => void;
+  currentModel?: ModelSelection;
+  models?: ModelProviderView[];
+  onSelectModel?: (providerId: string, model: string) => void;
 }
 
 export function InputBar({
@@ -25,6 +29,9 @@ export function InputBar({
   workspaceName,
   openingWorkspace,
   onOpenWorkspace,
+  currentModel,
+  models = [],
+  onSelectModel,
 }: InputBarProps) {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -80,7 +87,14 @@ export function InputBar({
             disabled={disabled}
             autoFocus
           />
-          <ComposerFooter variant="hero" canSend={canSend} onSend={handleSend} />
+          <ComposerFooter
+            variant="hero"
+            canSend={canSend}
+            onSend={handleSend}
+            currentModel={currentModel}
+            models={models}
+            onSelectModel={onSelectModel}
+          />
         </div>
       </div>
     );
@@ -104,6 +118,9 @@ export function InputBar({
           isRunning={isRunning}
           onSend={handleSend}
           onStop={onStop}
+          currentModel={currentModel}
+          models={models}
+          onSelectModel={onSelectModel}
         />
       </div>
     </div>

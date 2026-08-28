@@ -4,7 +4,7 @@ import path from "node:path";
 import url from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import type { HostEvent } from "../run-events.js";
-import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView, StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./store.js";
+import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView, StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./store.js";
 import { SettingsStore } from "./settings-store.js";
 
 // Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
@@ -27,6 +27,9 @@ interface RunRow {
   result: string | null;
   error: string | null;
   deleted_at: string | null;
+  model: string | null;
+  provider_id: string | null;
+  base_url: string | null;
 }
 
 interface SessionRow {
@@ -63,6 +66,9 @@ function mapRun(row: RunRow): StoredRun {
   if (row.result !== null) run.result = row.result;
   if (row.error !== null) run.error = row.error;
   if (row.deleted_at !== null) run.deletedAt = row.deleted_at;
+  if (row.model !== null) run.model = row.model;
+  if (row.provider_id !== null) run.providerId = row.provider_id;
+  if (row.base_url !== null) run.baseUrl = row.base_url;
   return run;
 }
 
@@ -142,6 +148,9 @@ export class SqliteRunStore implements RunStore {
             result TEXT,
             error TEXT,
             deleted_at TEXT,
+            model TEXT,
+            provider_id TEXT,
+            base_url TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id),
             UNIQUE (session_id, turn_index)
           );
@@ -224,6 +233,15 @@ export class SqliteRunStore implements RunStore {
     }
     if (!names.has("deleted_at")) {
       this.db.exec("ALTER TABLE runs ADD COLUMN deleted_at TEXT");
+    }
+    if (!names.has("model")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN model TEXT");
+    }
+    if (!names.has("provider_id")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN provider_id TEXT");
+    }
+    if (!names.has("base_url")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN base_url TEXT");
     }
     const rows = this.db.prepare(
       "SELECT run_id, task, workspace_root, workspace_name, created_at, updated_at FROM runs WHERE session_id IS NULL OR session_id = ''"
@@ -359,8 +377,8 @@ export class SqliteRunStore implements RunStore {
     this.db.prepare(`
       INSERT INTO runs (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        created_at, updated_at, result, error, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       run.runId,
       run.sessionId,
@@ -373,7 +391,10 @@ export class SqliteRunStore implements RunStore {
       run.updatedAt,
       nullable(run.result),
       nullable(run.error),
-      nullable(run.deletedAt)
+      nullable(run.deletedAt),
+      nullable(run.model),
+      nullable(run.providerId),
+      nullable(run.baseUrl)
     );
   }
 
@@ -381,7 +402,8 @@ export class SqliteRunStore implements RunStore {
     const result = this.db.prepare(`
       UPDATE runs SET
         session_id = ?, turn_index = ?, task = ?, status = ?, workspace_root = ?, workspace_name = ?,
-        created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?
+        created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?,
+        model = ?, provider_id = ?, base_url = ?
       WHERE run_id = ?
     `).run(
       run.sessionId,
@@ -395,6 +417,9 @@ export class SqliteRunStore implements RunStore {
       nullable(run.result),
       nullable(run.error),
       nullable(run.deletedAt),
+      nullable(run.model),
+      nullable(run.providerId),
+      nullable(run.baseUrl),
       run.runId
     );
     if (result.changes !== 1) throw new Error(`Run not found: ${run.runId}`);
@@ -477,6 +502,28 @@ export class SqliteRunStore implements RunStore {
   getModelProvider(id: string): ModelProviderView | null {
     const provider = this.settings.getModel(id);
     return provider ? this.settings.listViews().find(p => p.id === id) ?? null : null;
+  }
+
+  getModelProviderSecret(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {
+    const provider = this.settings.getModel(id);
+    if (!provider) return null;
+    return { apiKey: provider.apiKey, baseUrl: provider.baseUrl, models: provider.models };
+  }
+
+  getDefaultProviderId(): string {
+    return this.settings.getDefaultProviderId();
+  }
+
+  getDefaultModelId(): string {
+    return this.settings.getDefaultModelId();
+  }
+
+  setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection {
+    return this.settings.setDefaultModel(providerId, modelId);
+  }
+
+  importEnvFallback(input: { baseUrl: string; apiKey: string; model: string }): DefaultModelSelection | null {
+    return this.settings.importEnvFallback(input);
   }
 
   addModelProvider(input: CreateModelProviderInput): ModelProviderView {

@@ -6,6 +6,20 @@ import { RunManager } from "./run-manager.js";
 
 const port = Number(process.env.PORT ?? 4500);
 const manager = new RunManager();
+
+// 一次性把 .env 的环境模型配置导入设置并设为默认：
+// 仅在从未导入过时生效；之后模型配置一律以设置面板为准。
+if (process.env.OPENAI_API_KEY) {
+  const imported = manager.importEnvModelProvider({
+    baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    apiKey: process.env.OPENAI_API_KEY,
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+  });
+  if (imported) {
+    console.log(`[settings] 已从环境变量导入模型配置并设为默认: ${imported.modelId}`);
+  }
+}
+
 const server = createHostServer(manager);
 
 server.listen(port, "127.0.0.1", () => {

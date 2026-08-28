@@ -1,4 +1,4 @@
-import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from './types';
+import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelView } from './types';
 
 const API_BASE = '';
 
@@ -166,5 +166,27 @@ export function updateModel(id: string, input: UpdateModelProviderInput): Promis
 export function deleteModel(id: string): Promise<{ deleted: true }> {
   return jsonFetch(`/settings/models/${id}`, {
     method: 'DELETE',
+  });
+}
+
+// ===== 默认模型（provider + model 成对） =====
+
+export function getDefaultModel(): Promise<DefaultModelView> {
+  return jsonFetch('/settings', { cache: 'no-store' });
+}
+
+export function setDefaultModel(providerId: string, model: string): Promise<DefaultModelView> {
+  return jsonFetch('/settings/default', {
+    method: 'POST',
+    body: JSON.stringify({ providerId, model }),
+  });
+}
+
+// 拉取 OpenAI 兼容端点的可用模型目录。
+// 编辑已有 Provider 且密钥留空时传 providerId，由后端使用存储的密钥（不回传明文）。
+export function fetchAvailableModels(input: { baseUrl: string; apiKey?: string; providerId?: string }): Promise<{ models: string[] }> {
+  return jsonFetch('/settings/available-models', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }

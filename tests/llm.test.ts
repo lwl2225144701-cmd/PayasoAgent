@@ -160,6 +160,63 @@ try {
       delete process.env.LLM_REQUEST_TIMEOUT_MS;
     }
   });
+
+  await test("incomplete modelConfig is rejected without falling back to env config", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      throw new Error("must not be called");
+    };
+    // 空 apiKey 绝不能静默换成宿主环境密钥（跨 Provider 泄露防线）
+    await assert.rejects(
+      () => chat(
+        [{ role: "user", content: "hello" }],
+        undefined,
+        undefined,
+        { baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-chat" },
+      ),
+      /modelConfig is incomplete/,
+    );
+    await assert.rejects(
+      () => chat(
+        [{ role: "user", content: "hello" }],
+        undefined,
+        undefined,
+        { baseUrl: "https://api.deepseek.com", apiKey: "sk-x", model: "" },
+      ),
+      /modelConfig is incomplete/,
+    );
+    assert.equal(fetchCalls, 0);
+  });
+
+  await test("complete modelConfig is used atomically (no env config mixing)", async () => {
+    const requests: Array<{ url: string; authorization: string | null; model: unknown }> = [];
+    globalThis.fetch = async (input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      requests.push({
+        url: String(input),
+        authorization: headers.Authorization ?? null,
+        model: (JSON.parse(String(init?.body)) as { model: unknown }).model,
+      });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    };
+    const message = await chat(
+      [{ role: "user", content: "hello" }],
+      undefined,
+      undefined,
+      {
+        providerId: "p1",
+        baseUrl: "https://provider.example/v1",
+        apiKey: "sk-provider-key",
+        model: "model-from-provider",
+      },
+    );
+    assert.equal(message.content, "ok");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, "https://provider.example/v1/chat/completions");
+    assert.equal(requests[0].authorization, "Bearer sk-provider-key");
+    assert.equal(requests[0].model, "model-from-provider");
+  });
 } finally {
   globalThis.fetch = originalFetch;
 }

@@ -1,7 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 
+export type ModelProviderKind = "builtin" | "custom";
+
 export interface StoredModelProvider {
   id: string;
+  kind: ModelProviderKind;
   name: string;
   baseUrl: string;
   apiKey: string;
@@ -10,12 +13,13 @@ export interface StoredModelProvider {
 
 export interface ModelProviderView {
   id: string;
+  kind: ModelProviderKind;
   name: string;
   baseUrl: string;
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
-  status: "unchecked" | "connected" | "error";
+  status: "unconfigured" | "configured" | "available" | "error" | "checking";
 }
 
 export interface CreateModelProviderInput {
@@ -32,7 +36,57 @@ export interface UpdateModelProviderInput {
   models?: string[];
 }
 
-const DEFAULT_MODELS: StoredModelProvider[] = [];
+// 默认模型 = provider + model 成对选择，二者必须一起持久化、一起校验
+export interface DefaultModelSelection {
+  providerId: string;
+  modelId: string;
+}
+
+// settings 表 key='app' 的完整 blob。读写必须整块进行：
+// 任何一次局部重写（例如只写 models）都会把其余字段静默抹掉。
+interface AppSettingsBlob {
+  models: StoredModelProvider[];
+  defaultProviderId: string;
+  defaultModelId: string;
+  // .env 环境模型配置是否已导入过设置（一次性导入标记，删除导入的 Provider 也不会再导）
+  envImported: boolean;
+}
+
+const DEFAULT_MODELS: StoredModelProvider[] = [
+  {
+    id: "deepseek-chat",
+    kind: "builtin",
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    apiKey: "",
+    models: ["deepseek-chat", "deepseek-reasoner"],
+  },
+  {
+    id: "openai-gpt4o",
+    kind: "builtin",
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    models: ["gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"],
+  },
+  {
+    id: "stepfun-step",
+    kind: "builtin",
+    name: "StepFun",
+    baseUrl: "https://api.stepfun.com/v1",
+    apiKey: "",
+    models: ["step-2-16k", "step-1-8k"],
+  },
+];
+
+function defaultSettings(): AppSettingsBlob {
+  return {
+    models: JSON.parse(JSON.stringify(DEFAULT_MODELS)) as StoredModelProvider[],
+    defaultProviderId: DEFAULT_MODELS[0]?.id ?? "",
+    defaultModelId: DEFAULT_MODELS[0]?.models[0] ?? "",
+    envImported: false,
+  };
+}
 
 export class SettingsStore {
   private db: DatabaseSync;
@@ -47,19 +101,48 @@ export class SettingsStore {
     `);
     const row = (this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as { value: string } | undefined);
     if (!row) {
-      this.db.prepare("INSERT INTO settings (key, value) VALUES ('app', ?)").run(JSON.stringify({ models: DEFAULT_MODELS }));
+      this.writeSettings(defaultSettings());
+    } else {
+      // 旧库迁移：readSettings 会补齐缺失字段（如 defaultModelId），回写完成迁移
+      this.writeSettings(this.readSettings());
     }
   }
 
-  public getAllModels(): StoredModelProvider[] {
+  private readSettings(): AppSettingsBlob {
+    const fallback = defaultSettings();
     const row = (this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as { value: string } | undefined);
-    if (!row) return JSON.parse(JSON.stringify(DEFAULT_MODELS));
+    if (!row) return fallback;
+    let settings: AppSettingsBlob;
     try {
-      const parsed = JSON.parse(row.value) as { models?: StoredModelProvider[] };
-      return Array.isArray(parsed.models) ? parsed.models : JSON.parse(JSON.stringify(DEFAULT_MODELS));
-    } catch {
-      return JSON.parse(JSON.stringify(DEFAULT_MODELS));
+      const parsed = JSON.parse(row.value) as Partial<AppSettingsBlob>;
+      settings = {
+        models: Array.isArray(parsed.models) && parsed.models.length > 0 ? parsed.models : fallback.models,
+        defaultProviderId: typeof parsed.defaultProviderId === "string" ? parsed.defaultProviderId : "",
+        defaultModelId: typeof parsed.defaultModelId === "string" ? parsed.defaultModelId : "",
+        envImported: parsed.envImported === true,
+      };
+    } catch (err) {
+      console.error(`[SettingsStore] settings blob is corrupted, falling back to defaults: ${(err as Error).message}`);
+      settings = fallback;
     }
+    // 旧库迁移 / 目录变化后的安全网：默认模型必须仍在默认 provider 的模型目录里
+    const provider = settings.models.find(m => m.id === settings.defaultProviderId);
+    if (!provider || !provider.models.includes(settings.defaultModelId)) {
+      settings.defaultModelId = provider?.models[0] ?? "";
+    }
+    return settings;
+  }
+
+  private writeSettings(settings: AppSettingsBlob): void {
+    // UPSERT：settings 行可能尚不存在（首次初始化），仅 UPDATE 会静默写入 0 行
+    this.db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('app', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(JSON.stringify(settings));
+  }
+
+  public getAllModels(): StoredModelProvider[] {
+    return this.readSettings().models;
   }
 
   private maskApiKey(apiKey: string): string {
@@ -82,19 +165,92 @@ export class SettingsStore {
   }
 
   private toView(provider: StoredModelProvider): ModelProviderView {
+    const hasApiKey = Boolean(provider.apiKey);
+    const status: ModelProviderView["status"] = hasApiKey ? "configured" : "unconfigured";
     return {
       id: provider.id,
+      kind: provider.kind,
       name: provider.name,
       baseUrl: provider.baseUrl,
       apiKeyMasked: this.maskApiKey(provider.apiKey),
-      hasApiKey: Boolean(provider.apiKey),
+      hasApiKey,
       models: provider.models,
-      status: "unchecked",
+      status,
     };
   }
 
   listViews(): ModelProviderView[] {
     return this.getAllModels().map(p => this.toView(p));
+  }
+
+  getDefaultProviderId(): string {
+    return this.readSettings().defaultProviderId;
+  }
+
+  getDefaultModelId(): string {
+    return this.readSettings().defaultModelId;
+  }
+
+  // 设置默认模型（provider + model 成对持久化）。校验：provider 必须存在、
+  // 已配置密钥、至少有一个模型；显式传入的 modelId 必须在目录内。
+  setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection {
+    const settings = this.readSettings();
+    const provider = settings.models.find(m => m.id === providerId);
+    if (!provider) throw new Error("Provider not found");
+    if (!provider.apiKey) throw new Error("Provider has no API key configured");
+    if (provider.models.length === 0) throw new Error("Provider has no models");
+    let resolvedModelId: string;
+    if (modelId !== undefined && modelId !== "") {
+      if (!provider.models.includes(modelId)) {
+        throw new Error(`Model "${modelId}" is not in provider catalog`);
+      }
+      resolvedModelId = modelId;
+    } else {
+      resolvedModelId = provider.models[0];
+    }
+    this.writeSettings({ ...settings, defaultProviderId: provider.id, defaultModelId: resolvedModelId });
+    return { providerId: provider.id, modelId: resolvedModelId };
+  }
+
+  // 一次性把 .env 的环境模型配置导入设置：仅当从未导入过时执行（envImported 标记）。
+  // baseUrl 与现有 Provider 一致时填入该 Provider（模型不在目录则插到最前），
+  // 否则新建以模型 ID 命名的自定义 Provider；导入后即设为默认。
+  importEnvFallback(input: { baseUrl: string; apiKey: string; model: string }): DefaultModelSelection | null {
+    const settings = this.readSettings();
+    if (settings.envImported) return null;
+    settings.envImported = true;
+
+    const baseUrl = input.baseUrl.trim();
+    const apiKey = input.apiKey.trim();
+    const model = input.model.trim();
+    if (!baseUrl || !apiKey || !model) {
+      this.writeSettings(settings);
+      return null;
+    }
+
+    const existing = settings.models.find(m => m.baseUrl.toLowerCase() === baseUrl.toLowerCase());
+    if (existing) {
+      existing.apiKey = apiKey;
+      if (!existing.models.includes(model)) {
+        existing.models = [model, ...existing.models];
+      }
+      settings.defaultProviderId = existing.id;
+      settings.defaultModelId = model;
+    } else {
+      const provider: StoredModelProvider = {
+        id: crypto.randomUUID(),
+        kind: "custom",
+        name: model,
+        baseUrl,
+        apiKey,
+        models: [model],
+      };
+      settings.models.push(provider);
+      settings.defaultProviderId = provider.id;
+      settings.defaultModelId = model;
+    }
+    this.writeSettings(settings);
+    return { providerId: settings.defaultProviderId, modelId: settings.defaultModelId };
   }
 
   addModel(input: CreateModelProviderInput): ModelProviderView {
@@ -111,24 +267,26 @@ export class SettingsStore {
     const id = crypto.randomUUID();
     const provider: StoredModelProvider = {
       id,
+      kind: "custom",
       name,
       baseUrl,
       apiKey,
       models,
     };
 
-    const current = this.getAllModels();
-    if (current.some(m => m.name.toLowerCase() === name.toLowerCase() || m.baseUrl.toLowerCase() === baseUrl.toLowerCase())) {
+    const settings = this.readSettings();
+    if (settings.models.some(m => m.name.toLowerCase() === name.toLowerCase() || m.baseUrl.toLowerCase() === baseUrl.toLowerCase())) {
       throw new Error("Provider with same name or baseUrl already exists");
     }
 
-    current.push(provider);
-    this.persist(current);
+    settings.models.push(provider);
+    this.writeSettings(settings);
     return this.toView(provider);
   }
 
   updateModel(id: string, input: UpdateModelProviderInput): ModelProviderView | null {
-    const current = this.getAllModels();
+    const settings = this.readSettings();
+    const current = settings.models;
     const idx = current.findIndex(m => m.id === id);
     if (idx === -1) return null;
 
@@ -169,23 +327,38 @@ export class SettingsStore {
       current[idx].models = models;
     }
 
-    this.persist(current);
+    // 默认选择的一致性：默认 provider 被清空密钥或模型目录不再包含默认模型时，
+    // 默认选择一并清空/回退，避免留下指向不可用组合的悬挂默认值。
+    if (settings.defaultProviderId === id) {
+      if (!current[idx].apiKey) {
+        settings.defaultProviderId = "";
+        settings.defaultModelId = "";
+      } else if (!current[idx].models.includes(settings.defaultModelId)) {
+        settings.defaultModelId = current[idx].models[0] ?? "";
+      }
+    }
+
+    this.writeSettings(settings);
     return this.toView(current[idx]);
   }
 
   deleteModel(id: string): boolean {
-    const current = this.getAllModels();
-    const next = current.filter(m => m.id !== id);
-    if (next.length === current.length) return false;
-    this.persist(next);
+    const settings = this.readSettings();
+    const target = settings.models.find(m => m.id === id);
+    if (target?.kind === "builtin") return false;
+    const next = settings.models.filter(m => m.id !== id);
+    if (next.length === settings.models.length) return false;
+    // 删除的是默认 provider → 默认选择一并清空（解析时回退到第一个可用 provider）
+    if (settings.defaultProviderId === id) {
+      settings.defaultProviderId = "";
+      settings.defaultModelId = "";
+    }
+    settings.models = next;
+    this.writeSettings(settings);
     return true;
   }
 
   getModel(id: string): StoredModelProvider | null {
     return this.getAllModels().find(m => m.id === id) ?? null;
-  }
-
-  private persist(models: StoredModelProvider[]): void {
-    this.db.prepare("UPDATE settings SET value = ? WHERE key = 'app'").run(JSON.stringify({ models }));
   }
 }

@@ -8,18 +8,21 @@ import { SettingsModal } from './components/SettingsModal';
 import {
   createRun,
   deleteWorkspaceGroup,
+  getDefaultModel,
   getWorkspace,
   listRuns,
   listSessions,
   listFiles,
+  listModels,
   openWorkspace,
   renameWorkspace as apiRenameWorkspace,
   renameSession as apiRenameSession,
   archiveSession as apiArchiveSession,
   resumeRun,
+  setDefaultModel,
   stopRun,
 } from './api';
-import type { FileEntry, HostRun, HostSession, WorkspaceView } from './types';
+import type { DefaultModelView, FileEntry, HostRun, HostSession, ModelProviderView, ModelSelection, WorkspaceView } from './types';
 import styles from './App.module.css';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
@@ -44,11 +47,22 @@ export default function App() {
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [defaultModel, setDefaultModelState] = useState<DefaultModelView | null>(null);
+  const [models, setModels] = useState<ModelProviderView[]>([]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2000);
   }, []);
+
+  const handleSelectModel = useCallback((providerId: string, model: string) => {
+    // 乐观更新；持久化失败提示用户，下次 refresh 会与服务端对齐
+    setDefaultModelState({ defaultProviderId: providerId, defaultModelId: model });
+    setDefaultModel(providerId, model).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`默认模型保存失败：${msg}`);
+    });
+  }, [showToast]);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -59,6 +73,27 @@ export default function App() {
       setOnline(false);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const refreshDefaultModel = useCallback(async () => {
+    try {
+      const resp = await getDefaultModel();
+      setDefaultModelState({
+        defaultProviderId: resp.defaultProviderId,
+        defaultModelId: resp.defaultModelId,
+      });
+    } catch {
+      // ignore：下拉仍可用，仅默认选择显示为占位
+    }
+  }, []);
+
+  const refreshModels = useCallback(async () => {
+    try {
+      const resp = await listModels();
+      setModels(resp.models);
+    } catch {
+      // ignore
     }
   }, []);
 
@@ -87,7 +122,9 @@ export default function App() {
     void refreshRuns();
     void refreshSessions();
     getWorkspace().then(resp => setWorkspace(resp.workspace)).catch(() => {});
-  }, [refreshRuns, refreshSessions]);
+    void refreshModels();
+    void refreshDefaultModel();
+  }, [refreshRuns, refreshSessions, refreshModels, refreshDefaultModel]);
 
   // 窄视口下自动折叠 Sidebar；用户手动切换后不再自动干预本次会话
   useEffect(() => {
@@ -101,7 +138,28 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // 监听 Settings 默认模型变更
+  useEffect(() => {
+    const handler = () => {
+      void refreshDefaultModel();
+    };
+    window.addEventListener('settings:defaultChanged', handler);
+    return () => window.removeEventListener('settings:defaultChanged', handler);
+  }, [refreshDefaultModel]);
+
   const currentRun = runs.find(r => r.runId === currentRunId) ?? null;
+
+  // 下拉的当前选择 = 默认模型对 + provider 目录派生；目录未加载或对不上时显示占位
+  const currentModelSelection: ModelSelection | null = (() => {
+    if (!defaultModel?.defaultProviderId) return null;
+    const provider = models.find(m => m.id === defaultModel.defaultProviderId);
+    if (!provider) return null;
+    const model = defaultModel.defaultModelId && provider.models.includes(defaultModel.defaultModelId)
+      ? defaultModel.defaultModelId
+      : provider.models[0];
+    if (!model) return null;
+    return { providerId: provider.id, providerName: provider.name, model };
+  })();
   const currentSessionRuns = runs
     .filter(run => run.sessionId === currentSessionId)
     .sort((a, b) => a.turnIndex - b.turnIndex);
@@ -374,6 +432,9 @@ export default function App() {
               workspaceName={workspace?.name}
               openingWorkspace={openingWorkspace}
               onOpenWorkspace={handleOpenWorkspace}
+              currentModel={currentModelSelection ?? undefined}
+              models={models}
+              onSelectModel={handleSelectModel}
             />
           </div>
         )}
@@ -385,6 +446,9 @@ export default function App() {
             isRunning={currentRun.status === 'running'}
             placeholder="发消息或做任务... / 调用指令 @ 文件或对话"
             disabled={currentRun.status === 'running'}
+            currentModel={currentModelSelection ?? undefined}
+            models={models}
+            onSelectModel={handleSelectModel}
           />
         )}
       </div>
@@ -401,6 +465,9 @@ export default function App() {
         <SettingsModal
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
+          onSaved={() => {
+            void refreshDefaultModel();
+          }}
         />
       )}
 

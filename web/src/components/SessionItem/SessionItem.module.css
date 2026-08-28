@@ -45,6 +45,11 @@
   font: inherit;
 }
 
+.body:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-brand-ring);
+}
+
 .title {
   font-size: 12.5px;
   line-height: 1.4;
