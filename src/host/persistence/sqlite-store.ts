@@ -430,6 +430,43 @@ export class SqliteRunStore implements RunStore {
     return rows.map((row) => ({ seq: row.seq, event: JSON.parse(row.payload) as HostEvent }));
   }
 
+  renameSession(sessionId: string, title: string): void {
+    const now = new Date().toISOString();
+    const result = this.db.prepare("UPDATE sessions SET title = ?, updated_at = ? WHERE session_id = ? AND deleted_at IS NULL")
+      .run(title, now, sessionId);
+    if (result.changes !== 1) throw new Error(`Session not found: ${sessionId}`);
+  }
+
+  archiveSession(sessionId: string, now: string): number {
+    return this.tx(() => {
+      const sessionsResult = this.db.prepare("UPDATE sessions SET deleted_at = ?, updated_at = ? WHERE session_id = ? AND deleted_at IS NULL")
+        .run(now, now, sessionId);
+      this.db.prepare("UPDATE runs SET deleted_at = ?, updated_at = ? WHERE session_id = ? AND deleted_at IS NULL")
+        .run(now, now, sessionId);
+      return Number(sessionsResult.changes);
+    });
+  }
+
+  restoreSession(sessionId: string, now: string): number {
+    return this.tx(() => {
+      const sessionsResult = this.db.prepare("UPDATE sessions SET deleted_at = NULL, updated_at = ? WHERE session_id = ? AND deleted_at IS NOT NULL")
+        .run(now, sessionId);
+      this.db.prepare("UPDATE runs SET deleted_at = NULL, updated_at = ? WHERE session_id = ? AND deleted_at IS NOT NULL")
+        .run(now, sessionId);
+      return Number(sessionsResult.changes);
+    });
+  }
+
+  deleteSession(sessionId: string): number {
+    return this.tx(() => {
+      this.db.prepare("DELETE FROM events WHERE run_id IN (SELECT run_id FROM runs WHERE session_id = ?)")
+        .run(sessionId);
+      this.db.prepare("DELETE FROM runs WHERE session_id = ?").run(sessionId);
+      const sessionsDelete = this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
+      return Number(sessionsDelete.changes);
+    });
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;

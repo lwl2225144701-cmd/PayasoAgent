@@ -19,6 +19,9 @@ interface WorkspaceSectionProps {
   onNewTaskInWorkspace: (workspaceName: string) => void;
   onRenameWorkspace: (fromName: string, toName: string) => Promise<void>;
   onDeleteWorkspace: (name: string) => Promise<void>;
+  onRenameSession: (sessionId: string, title: string) => Promise<void>;
+  onArchiveSession: (sessionId: string) => Promise<void>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
 }
 
 interface WorkspaceGroup {
@@ -162,6 +165,9 @@ export function WorkspaceSection({
   onNewTaskInWorkspace,
   onRenameWorkspace,
   onDeleteWorkspace,
+  onRenameSession,
+  onArchiveSession,
+  onDeleteSession,
 }: WorkspaceSectionProps) {
   const groups = useMemo(
     () => groupSessionsByWorkspace(sessions, workspace),
@@ -260,6 +266,9 @@ export function WorkspaceSection({
                     session={session}
                     active={session.sessionId === currentSessionId}
                     onClick={() => onSelectSession(session.sessionId)}
+                    onRename={onRenameSession}
+                    onArchive={onArchiveSession}
+                    onDelete={onDeleteSession}
                   />
                 ))}
               </Collapse>

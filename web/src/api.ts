@@ -46,6 +46,22 @@ export function renameWorkspace(fromName: string, toName: string): Promise<{ upd
   return jsonFetch('/workspace/rename', { method: 'POST', body: JSON.stringify({ fromName, toName }) });
 }
 
+export function renameSession(sessionId: string, title: string): Promise<{ updatedAt: string }> {
+  return jsonFetch(`/sessions/${sessionId}`, { method: 'PATCH', body: JSON.stringify({ title }) });
+}
+
+export function archiveSession(sessionId: string): Promise<{ archived: number; updatedAt: string }> {
+  return jsonFetch(`/sessions/${sessionId}/archive`, { method: 'POST' });
+}
+
+export function restoreSession(sessionId: string): Promise<{ restored: number; updatedAt: string }> {
+  return jsonFetch(`/sessions/${sessionId}/restore`, { method: 'POST' });
+}
+
+export function deleteSession(sessionId: string): Promise<{ deleted: number; cleanupErrors: Array<{ runId: string; target: string }> }> {
+  return jsonFetch(`/sessions/${sessionId}/delete`, { method: 'POST' });
+}
+
 export function deleteWorkspaceGroup(name: string): Promise<{ deleted: number }> {
   return jsonFetch('/workspace/delete', { method: 'POST', body: JSON.stringify({ name }) });
 }

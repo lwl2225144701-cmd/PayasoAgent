@@ -342,6 +342,18 @@ export function TrashIcon({ size, ...p }: IconProps) {
   );
 }
 
+export function ArchiveIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="2" y="3" width="20" height="18" rx="2" />
+      <path d="M2 7h20" />
+      <path d="M12 3v18" />
+    </>,
+    p,
+  );
+}
+
 export function FolderPlusIcon({ size, ...p }: IconProps) {
   return base(
     size,

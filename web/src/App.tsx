@@ -13,6 +13,10 @@ import {
   listFiles,
   openWorkspace,
   renameWorkspace as apiRenameWorkspace,
+  renameSession as apiRenameSession,
+  archiveSession as apiArchiveSession,
+  restoreSession as apiRestoreSession,
+  deleteSession as apiDeleteSession,
   resumeRun,
   stopRun,
 } from './api';
@@ -256,6 +260,31 @@ export default function App() {
     }
   }, [currentSessionId, refreshSessions]);
 
+  const handleRenameSession = useCallback(async (sessionId: string, title: string) => {
+    await apiRenameSession(sessionId, title);
+    setSessions(prev => prev.map(s => s.sessionId === sessionId ? { ...s, title, updatedAt: new Date().toISOString() } : s));
+  }, []);
+
+  const handleArchiveSession = useCallback(async (sessionId: string) => {
+    await apiArchiveSession(sessionId);
+    await refreshSessions('replace');
+    if (currentSessionId === sessionId) {
+      setCurrentSessionId(null);
+      setCurrentRunId(null);
+      setViewingFile(null);
+    }
+  }, [currentSessionId, refreshSessions]);
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    await apiDeleteSession(sessionId);
+    await refreshSessions('replace');
+    if (currentSessionId === sessionId) {
+      setCurrentSessionId(null);
+      setCurrentRunId(null);
+      setViewingFile(null);
+    }
+  }, [currentSessionId, refreshSessions]);
+
   const handleOpenWorkspace = useCallback(async () => {
     if (openingWorkspace) return;
     setOpeningWorkspace(true);
@@ -282,6 +311,9 @@ export default function App() {
         onNewTaskInWorkspace={handleNewTaskInWorkspace}
         onRenameWorkspace={handleRenameWorkspace}
         onDeleteWorkspace={handleDeleteWorkspace}
+        onRenameSession={handleRenameSession}
+        onArchiveSession={handleArchiveSession}
+        onDeleteSession={handleDeleteSession}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => {
           sidebarUserOverrideRef.current = true;

@@ -277,6 +277,64 @@ export class RunManager {
     return { purged, cleanupErrors };
   }
 
+  renameSession(sessionId: string, title: string): { updatedAt: string } {
+    this.store.renameSession(sessionId, title);
+    const now = new Date().toISOString();
+    return { updatedAt: now };
+  }
+
+  archiveSession(sessionId: string): { archived: number; updatedAt: string } {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    if (!session) throw new Error("Session not found");
+    if (session.deletedAt) throw new Error("Session already archived");
+
+    const hasRunning = [...this.runs.values()].some(
+      (r) => r.sessionId === sessionId && r.status === "running"
+    );
+    if (hasRunning) throw new Error("Session has a running Run");
+
+    const now = new Date().toISOString();
+    const archived = this.store.archiveSession(sessionId, now);
+    return { archived, updatedAt: now };
+  }
+
+  restoreSession(sessionId: string): { restored: number; updatedAt: string } {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    if (!session) throw new Error("Session not found");
+    if (!session.deletedAt) throw new Error("Session is not archived");
+
+    const now = new Date().toISOString();
+    const restored = this.store.restoreSession(sessionId, now);
+    return { restored, updatedAt: now };
+  }
+
+  deleteSession(sessionId: string): { deleted: number; cleanupErrors: CleanupError[] } {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    if (!session) throw new Error("Session not found");
+    if (!session.deletedAt) throw new Error("Session has not been archived");
+
+    const hasRunning = this.store.listRuns({ includeDeleted: true }).some(
+      (r) => r.sessionId === sessionId && r.status === "running"
+    );
+    if (hasRunning) throw new Error("Session has a running Run");
+
+    const runs = this.store.listRunsBySession(sessionId, { includeDeleted: true });
+    const deleted = this.store.deleteSession(sessionId);
+    const cleanupErrors: CleanupError[] = [];
+    for (const run of runs) {
+      this.runs.delete(run.runId);
+      const sinks = this.subscribers.get(run.runId);
+      if (sinks) {
+        for (const sink of sinks) {
+          try { sink.end(); } catch { /* ignore shutdown write failures */ }
+        }
+        this.subscribers.delete(run.runId);
+      }
+      cleanupErrors.push(...this.cleanupRun(run.runId));
+    }
+    return { deleted, cleanupErrors };
+  }
+
   private cleanupRun(runId: string): CleanupError[] {
     const errors: CleanupError[] = [];
     try {

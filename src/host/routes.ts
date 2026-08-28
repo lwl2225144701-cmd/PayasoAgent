@@ -342,6 +342,24 @@ export async function handleRequest(
       const session = manager.getSession(sessionId);
       return session ? sendJson(res, 200, session) : notFound(res);
     }
+    if (s.length === 2 && method === "PATCH") {
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const title = typeof body.title === "string" ? body.title.trim() : "";
+      if (!title) return bad(res, "缺少 title");
+      try {
+        return sendJson(res, 200, manager.renameSession(sessionId, title));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
     if (s.length === 3 && s[2] === "runs") {
       if (method === "GET") {
         const runs = manager.listSessionRuns(sessionId);
@@ -365,6 +383,27 @@ export async function handleRequest(
         } catch (err) {
           return bad(res, (err as Error).message);
         }
+      }
+    }
+    if (s.length === 2 && method === "POST" && s[2] === "archive") {
+      try {
+        return sendJson(res, 200, manager.archiveSession(sessionId));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && method === "POST" && s[2] === "restore") {
+      try {
+        return sendJson(res, 200, manager.restoreSession(sessionId));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && method === "POST" && s[2] === "delete") {
+      try {
+        return sendJson(res, 200, manager.deleteSession(sessionId));
+      } catch (err) {
+        return bad(res, (err as Error).message);
       }
     }
     return notFound(res);

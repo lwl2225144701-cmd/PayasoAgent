@@ -16,6 +16,9 @@ interface SidebarProps {
   onNewTaskInWorkspace: (workspaceName: string) => void;
   onRenameWorkspace: (fromName: string, toName: string) => Promise<void>;
   onDeleteWorkspace: (name: string) => Promise<void>;
+  onRenameSession: (sessionId: string, title: string) => Promise<void>;
+  onArchiveSession: (sessionId: string) => Promise<void>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   workspace: WorkspaceView | null;
@@ -31,6 +34,9 @@ export function Sidebar({
   onNewTaskInWorkspace,
   onRenameWorkspace,
   onDeleteWorkspace,
+  onRenameSession,
+  onArchiveSession,
+  onDeleteSession,
   collapsed,
   onToggleCollapsed,
   workspace,
@@ -89,6 +95,9 @@ export function Sidebar({
           onNewTaskInWorkspace={onNewTaskInWorkspace}
           onRenameWorkspace={onRenameWorkspace}
           onDeleteWorkspace={onDeleteWorkspace}
+          onRenameSession={onRenameSession}
+          onArchiveSession={onArchiveSession}
+          onDeleteSession={onDeleteSession}
         />
       </div>
 

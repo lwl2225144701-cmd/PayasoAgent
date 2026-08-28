@@ -60,5 +60,9 @@ export interface RunStore {
   listRunsBySession(sessionId: string, opts?: { includeDeleted?: boolean }): StoredRun[];
   appendEvent(runId: string, event: HostEvent): number;
   listEvents(runId: string): StoredEvent[];
+  renameSession(sessionId: string, title: string): void;
+  archiveSession(sessionId: string, now: string): number;
+  restoreSession(sessionId: string, now: string): number;
+  deleteSession(sessionId: string): number;
   close(): void;
 }
