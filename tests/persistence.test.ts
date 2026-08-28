@@ -317,25 +317,28 @@ test("streaming deltas are batched, persisted, and ordered before final events",
 test("workspace group ops: rename sessions/runs label and delete cascades runs+events", () => {
   const dbPath = path.join(root, "workspace-ops.db");
   const store = new SqliteRunStore(dbPath);
+  const workspaceB = path.join(root, "workspace-B");
+  fs.mkdirSync(workspaceB, { recursive: true });
+  const canonicalB = fs.realpathSync.native(workspaceB);
 
-  const mkSession = (sid: string, name: string): StoredSession => ({
+  const mkSession = (sid: string, name: string, workspaceRoot: string): StoredSession => ({
     sessionId: sid,
     title: `title-${sid}`,
-    workspaceRoot: canonicalWorkspace,
+    workspaceRoot,
     workspaceName: name,
     createdAt: "2026-08-27T00:00:00.000Z",
     updatedAt: "2026-08-27T00:00:00.000Z",
   });
-  store.createSession(mkSession("s1", "Workspace-A"));
-  store.createSession(mkSession("s2", "Workspace-A"));
-  store.createSession(mkSession("s3", "Workspace-B"));
+  store.createSession(mkSession("s1", "Workspace-A", canonicalWorkspace));
+  store.createSession(mkSession("s2", "Workspace-A", canonicalWorkspace));
+  store.createSession(mkSession("s3", "Workspace-B", canonicalB));
   store.updateSession({
-    ...mkSession("s2", "Workspace-A"),
+    ...mkSession("s2", "Workspace-A", canonicalWorkspace),
     createdAt: "2026-08-27T00:30:00.000Z",
     updatedAt: "2026-08-27T01:00:00.000Z",
   });
-  store.createRun({ ...storedRun("r1"), sessionId: "s1", workspaceName: "Workspace-A" });
-  store.createRun({ ...storedRun("r2"), sessionId: "s3", workspaceName: "Workspace-B" });
+  store.createRun({ ...storedRun("r1"), sessionId: "s1", workspaceName: "Workspace-A", workspaceRoot: canonicalWorkspace });
+  store.createRun({ ...storedRun("r2"), sessionId: "s3", workspaceName: "Workspace-B", workspaceRoot: canonicalB });
   store.appendEvent("r1", { type: "run_started", runId: "r1", timestamp: "2026-08-27T00:00:00.000Z" });
 
   // 重命名：sessions + runs 的 workspace_name 一并更新
@@ -349,13 +352,14 @@ test("workspace group ops: rename sessions/runs label and delete cascades runs+e
   const found = store.findSessionByWorkspaceName("renamed-A");
   assert.equal(found?.sessionId, "s2");
 
-  // 删除工作区：会话 + 其 Run + 事件级联清理
-  const deleted = store.deleteSessionsByWorkspace("renamed-A");
+  // 软删除工作区：按 canonical workspaceRoot 删除
+  const deleted = store.softDeleteWorkspace(canonicalWorkspace, "2026-08-27T02:00:00.000Z");
   assert.equal(deleted, 2);
-  assert.equal(store.getSession("s1"), null);
-  assert.equal(store.getSession("s2"), null);
-  assert.equal(store.getRun("r1"), null);
-  assert.equal(store.listEvents("r1").length, 0);
+  assert.equal(store.getSession("s1", { includeDeleted: true })?.deletedAt, "2026-08-27T02:00:00.000Z");
+  assert.equal(store.getSession("s2", { includeDeleted: true })?.deletedAt, "2026-08-27T02:00:00.000Z");
+  assert.equal(store.getRun("r1", { includeDeleted: true })?.deletedAt, "2026-08-27T02:00:00.000Z");
+  // 软删保留 events， purge 时才物理删除
+  assert.equal(store.listEvents("r1").length, 1);
   assert.equal(store.getSession("s3")?.workspaceName, "Workspace-B");
 
   store.close();

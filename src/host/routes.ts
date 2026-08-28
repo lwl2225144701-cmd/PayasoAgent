@@ -278,10 +278,53 @@ export async function handleRequest(
         }
         throw err;
       }
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
       const name = typeof body.name === "string" ? body.name.trim() : "";
-      if (!name) return bad(res, "缺少 name");
+      let targetSessionId = sessionId;
+      if (!targetSessionId && name) {
+        const byName = manager.findSessionByWorkspaceName(name, { includeDeleted: true });
+        if (!byName) return bad(res, "Workspace not found");
+        targetSessionId = byName.sessionId;
+      }
+      if (!targetSessionId || !SAFE_SESSION_ID.test(targetSessionId)) return bad(res, "缺少 sessionId");
       try {
-        return sendJson(res, 200, manager.deleteWorkspace(name));
+        return sendJson(res, 200, manager.deleteWorkspace(targetSessionId));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && s[1] === "restore" && method === "POST") {
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+      if (!sessionId || !SAFE_SESSION_ID.test(sessionId)) return bad(res, "缺少 sessionId");
+      try {
+        return sendJson(res, 200, manager.restoreWorkspace(sessionId));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && s[1] === "purge" && method === "POST") {
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+      if (!sessionId || !SAFE_SESSION_ID.test(sessionId)) return bad(res, "缺少 sessionId");
+      try {
+        return sendJson(res, 200, manager.purgeWorkspace(sessionId));
       } catch (err) {
         return bad(res, (err as Error).message);
       }

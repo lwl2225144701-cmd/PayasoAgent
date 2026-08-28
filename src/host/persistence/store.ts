@@ -9,6 +9,7 @@ export interface StoredSession {
   workspaceName: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }
 
 // Host-private persistence record. workspaceRoot is deliberately absent from
@@ -25,6 +26,7 @@ export interface StoredRun {
   updatedAt: string;
   result?: string;
   error?: string;
+  deletedAt?: string;
 }
 
 export interface StoredEvent {
@@ -32,21 +34,30 @@ export interface StoredEvent {
   event: HostEvent;
 }
 
+export interface DeletedWorkspaceView {
+  workspaceRoot: string;
+  workspaceName: string;
+  deletedAt: string;
+}
+
 // Thin product-persistence boundary. Runtime checkpoints intentionally do not
 // pass through this interface.
 export interface RunStore {
   createSession(session: StoredSession): void;
   updateSession(session: StoredSession): void;
-  getSession(sessionId: string): StoredSession | null;
-  listSessions(): StoredSession[];
+  getSession(sessionId: string, opts?: { includeDeleted?: boolean }): StoredSession | null;
+  listSessions(opts?: { includeDeleted?: boolean }): StoredSession[];
   renameSessionsWorkspace(fromName: string, toName: string): number;
-  deleteSessionsByWorkspace(name: string): number;
-  findSessionByWorkspaceName(name: string): StoredSession | null;
+  softDeleteWorkspace(workspaceRoot: string, now: string): number;
+  restoreWorkspace(workspaceRoot: string, now: string): number;
+  purgeWorkspace(workspaceRoot: string): number;
+  listDeletedWorkspaces(): DeletedWorkspaceView[];
+  findSessionByWorkspaceName(name: string, opts?: { includeDeleted?: boolean }): StoredSession | null;
   createRun(run: StoredRun): void;
   updateRun(run: StoredRun): void;
-  getRun(runId: string): StoredRun | null;
-  listRuns(): StoredRun[];
-  listRunsBySession(sessionId: string): StoredRun[];
+  getRun(runId: string, opts?: { includeDeleted?: boolean }): StoredRun | null;
+  listRuns(opts?: { includeDeleted?: boolean }): StoredRun[];
+  listRunsBySession(sessionId: string, opts?: { includeDeleted?: boolean }): StoredRun[];
   appendEvent(runId: string, event: HostEvent): number;
   listEvents(runId: string): StoredEvent[];
   close(): void;

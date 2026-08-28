@@ -28,6 +28,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: "llm", file: "tests/llm.test.ts" },
   { name: "docs-contract", file: "tests/docs-contract.test.ts" },
   { name: "side-effect", file: "tests/side-effect.test.ts" },
+  { name: "workspace-trash", file: "tests/workspace-trash.test.ts" },
 ];
 
 console.log("=".repeat(70));

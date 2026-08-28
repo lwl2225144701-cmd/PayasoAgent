@@ -4,7 +4,7 @@ import path from "node:path";
 import url from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import type { HostEvent } from "../run-events.js";
-import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession } from "./store.js";
+import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView } from "./store.js";
 
 // Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
 const REPO_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -25,6 +25,7 @@ interface RunRow {
   updated_at: string;
   result: string | null;
   error: string | null;
+  deleted_at: string | null;
 }
 
 interface SessionRow {
@@ -34,6 +35,7 @@ interface SessionRow {
   workspace_name: string;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 }
 
 interface EventRow {
@@ -59,6 +61,7 @@ function mapRun(row: RunRow): StoredRun {
   };
   if (row.result !== null) run.result = row.result;
   if (row.error !== null) run.error = row.error;
+  if (row.deleted_at !== null) run.deletedAt = row.deleted_at;
   return run;
 }
 
@@ -70,6 +73,7 @@ function mapSession(row: SessionRow): StoredSession {
     workspaceName: row.workspace_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deletedAt: row.deleted_at ?? undefined,
   };
 }
 
@@ -78,25 +82,24 @@ export function resolvePayasoDbPath(env: Record<string, string | undefined> = pr
 }
 
 export class SqliteRunStore implements RunStore {
-  // 在构造函数的多候选循环内赋值（磁盘失败回退 :memory:），故用 definite assignment
   private db!: DatabaseSync;
   private closed = false;
 
-  constructor(readonly dbPath: string = resolvePayasoDbPath()) {
+  constructor(dbPath: string = resolvePayasoDbPath()) {
     let actualPath = dbPath;
     let initialized = false;
     const attempts: Array<{ path: string; error: string }> = [];
 
-    // 先试用户指定路径（磁盘），磁盘任一步失败都再试一次 :memory:。
-    // :memory: 再失败就直接抛，说明运行环境连 node:sqlite 内存模式都用不了（更严重的问题）。
     for (const candidate of [actualPath, ":memory:"]) {
       if (initialized) break;
       actualPath = candidate;
+      let opened: DatabaseSync | undefined;
       try {
         if (actualPath !== ":memory:") {
           try { fs.mkdirSync(path.dirname(actualPath), { recursive: true }); } catch { /* 下面 open/create/exec 还会再报 */ }
         }
-        this.db = new DatabaseSync(actualPath);
+        opened = new DatabaseSync(actualPath);
+        this.db = opened;
         if (actualPath !== ":memory:") {
           try { fs.chmodSync(actualPath, 0o600); } catch { /* best effort */ }
         }
@@ -106,8 +109,6 @@ export class SqliteRunStore implements RunStore {
           try {
             this.db.exec("PRAGMA journal_mode = WAL");
           } catch (err) {
-            // 沙箱/扩展属性/只读挂载都可能导致 WAL 无法创建 -wal/-shm 伴生文件。
-            // 回退到 DELETE journal 模式牺牲一点并发，保证能跑起来。
             console.warn(
               `[RunStore] 启用 WAL 失败（${(err as Error).message}），回退到 DELETE journal 模式；仍会持久化但写入性能较差`
             );
@@ -121,7 +122,8 @@ export class SqliteRunStore implements RunStore {
             workspace_root TEXT NOT NULL,
             workspace_name TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT
           );
 
           CREATE TABLE IF NOT EXISTS runs (
@@ -136,6 +138,7 @@ export class SqliteRunStore implements RunStore {
             updated_at TEXT NOT NULL,
             result TEXT,
             error TEXT,
+            deleted_at TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id),
             UNIQUE (session_id, turn_index)
           );
@@ -153,58 +156,92 @@ export class SqliteRunStore implements RunStore {
 
           CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
         `);
+        this.migrateDeletedAt();
         this.migrateLegacyRuns();
         this.db.exec(`
           CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
-          CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_runs_workspace_name ON runs(workspace_name);
         `);
         initialized = true;
       } catch (err) {
         attempts.push({ path: actualPath, error: (err as Error).message });
-        try { this.db?.close?.(); } catch { /* cleanup, ignore */ }
-        if (actualPath === ":memory:") break; // :memory: 失败就不再试了，外层汇总抛
+        try { opened?.close(); } catch { /* ignore */ }
+        if (actualPath === ":memory:") {
+          throw new Error(
+            `[RunStore] 无法初始化持久层（磁盘和 :memory: 均失败）：\n${attempts.map((a) => `- ${a.path}: ${a.error}`).join("\n")}`
+          );
+        }
       }
     }
-
-    if (!initialized) {
-      const detail = attempts.map(a => `  ${a.path}: ${a.error}`).join("\n");
-      throw new Error(`[RunStore] 无法在磁盘或内存中初始化 SQLite：\n${detail}`);
-    }
-
-    // 写回实际使用的路径（外部打印日志时能知道是不是内存模式）
-    (this as { dbPath: string }).dbPath = actualPath;
-    if (actualPath === ":memory:" && dbPath !== ":memory:") {
-      console.warn(`[RunStore] 因无法写入 ${dbPath}，当前正在使用内存模式持久化；Host 进程退出后会话/Run/事件将全部丢失`);
+    if (actualPath !== dbPath) {
+      (this as any).dbPath = actualPath;
+      console.warn(`[RunStore] 无法使用 ${dbPath}，已回退到内存模式（:memory:）；数据不会持久化`);
     }
   }
 
-  private migrateLegacyRuns(): void {
-    const columns = this.db.prepare("PRAGMA table_info(runs)").all() as unknown as Array<{ name: string }>;
-    const names = new Set(columns.map((column) => column.name));
-    if (!names.has("session_id")) this.db.exec("ALTER TABLE runs ADD COLUMN session_id TEXT");
-    if (!names.has("turn_index")) this.db.exec("ALTER TABLE runs ADD COLUMN turn_index INTEGER");
+  private migrateDeletedAt(): void {
+    const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all() as unknown as Array<{ name: string }>;
+    const runColumns = this.db.prepare("PRAGMA table_info(runs)").all() as unknown as Array<{ name: string }>;
+    const sessionHasDeleted = sessionColumns.some((c) => c.name === "deleted_at");
+    const runHasDeleted = runColumns.some((c) => c.name === "deleted_at");
+    if (!sessionHasDeleted) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT");
+    }
+    if (!runHasDeleted) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN deleted_at TEXT");
+    }
     this.db.exec(`
-      INSERT OR IGNORE INTO sessions (
-        session_id, title, workspace_root, workspace_name, created_at, updated_at
-      )
-      SELECT run_id, substr(task, 1, 80), workspace_root, workspace_name, created_at, updated_at
-      FROM runs
-      WHERE session_id IS NULL OR session_id = '';
-
-      UPDATE runs SET session_id = run_id
-      WHERE session_id IS NULL OR session_id = '';
-
-      UPDATE runs SET turn_index = 1
-      WHERE turn_index IS NULL OR turn_index < 1;
+      CREATE INDEX IF NOT EXISTS idx_sessions_deleted_at ON sessions(deleted_at);
+      CREATE INDEX IF NOT EXISTS idx_runs_deleted_at ON runs(deleted_at);
     `);
+  }
+
+  private migrateLegacyRuns(): void {
+    const names = new Set(
+      this.db.prepare("PRAGMA table_info(runs)").all().map((r) => (r as any).name)
+    );
+    if (!names.has("session_id")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN session_id TEXT");
+    }
+    if (!names.has("turn_index")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN turn_index INTEGER");
+    }
+    if (!names.has("workspace_root")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN workspace_root TEXT NOT NULL DEFAULT ''");
+    }
+    if (!names.has("workspace_name")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN workspace_name TEXT NOT NULL DEFAULT ''");
+    }
+    if (!names.has("result")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN result TEXT");
+    }
+    if (!names.has("error")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN error TEXT");
+    }
+    if (!names.has("deleted_at")) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN deleted_at TEXT");
+    }
+    const rows = this.db.prepare(
+      "SELECT run_id, task, workspace_root, workspace_name, created_at, updated_at FROM runs WHERE session_id IS NULL OR session_id = ''"
+    ).all() as Array<{ run_id: string; task: string; workspace_root: string; workspace_name: string; created_at: string; updated_at: string }>;
+    for (const row of rows) {
+      const sessionId = row.run_id;
+      const title = row.task.replace(/\s+/g, " ").trim().slice(0, 80) || "未命名任务";
+      this.db.prepare("INSERT OR REPLACE INTO sessions (session_id, title, workspace_root, workspace_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(sessionId, title, row.workspace_root, row.workspace_name, row.created_at, row.updated_at);
+      this.db.prepare("UPDATE runs SET session_id = ?, turn_index = ? WHERE run_id = ?").run(sessionId, 1, row.run_id);
+    }
+  }
+
+  private deletedFilter(opts?: { includeDeleted?: boolean }): string {
+    return opts?.includeDeleted ? "" : " AND deleted_at IS NULL";
   }
 
   createSession(session: StoredSession): void {
     this.db.prepare(`
-      INSERT INTO sessions (
-        session_id, title, workspace_root, workspace_name, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (session_id, title, workspace_root, workspace_name, created_at, updated_at, deleted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.sessionId,
       session.title,
@@ -212,34 +249,97 @@ export class SqliteRunStore implements RunStore {
       session.workspaceName,
       session.createdAt,
       session.updatedAt,
+      nullable(session.deletedAt)
     );
   }
 
   updateSession(session: StoredSession): void {
-    const result = this.db.prepare(`
-      UPDATE sessions SET title = ?, workspace_root = ?, workspace_name = ?,
-        created_at = ?, updated_at = ? WHERE session_id = ?
+    this.db.prepare(`
+      UPDATE sessions SET title = ?, workspace_root = ?, workspace_name = ?, updated_at = ?, deleted_at = ? WHERE session_id = ?
     `).run(
       session.title,
       session.workspaceRoot,
       session.workspaceName,
-      session.createdAt,
       session.updatedAt,
-      session.sessionId,
+      nullable(session.deletedAt),
+      session.sessionId
     );
-    if (result.changes !== 1) throw new Error(`Session not found: ${session.sessionId}`);
   }
 
-  getSession(sessionId: string): StoredSession | null {
-    const row = this.db.prepare("SELECT * FROM sessions WHERE session_id = ?").get(sessionId) as SessionRow | undefined;
+  getSession(sessionId: string, opts?: { includeDeleted?: boolean }): StoredSession | null {
+    const row = this.db.prepare(`SELECT * FROM sessions WHERE session_id = ?${this.deletedFilter(opts)}`).get(sessionId) as SessionRow | undefined;
     return row ? mapSession(row) : null;
   }
 
-  listSessions(): StoredSession[] {
-    const rows = this.db.prepare(
-      "SELECT * FROM sessions ORDER BY updated_at DESC, session_id ASC"
-    ).all() as unknown as SessionRow[];
+  listSessions(opts?: { includeDeleted?: boolean }): StoredSession[] {
+    const rows = this.db.prepare(`SELECT * FROM sessions WHERE 1=1${this.deletedFilter(opts)} ORDER BY updated_at DESC, session_id ASC`).all() as unknown as SessionRow[];
     return rows.map(mapSession);
+  }
+
+  private tx<T>(fn: () => T): T {
+    this.db.exec("BEGIN TRANSACTION");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      try { this.db.exec("ROLLBACK"); } catch { /* ignore rollback errors */ }
+      throw err;
+    }
+  }
+
+  renameSessionsWorkspace(fromName: string, toName: string): number {
+    const sessionsResult = this.db.prepare("UPDATE sessions SET workspace_name = ? WHERE workspace_name = ? AND deleted_at IS NULL")
+      .run(toName, fromName);
+    this.db.prepare("UPDATE runs SET workspace_name = ? WHERE workspace_name = ? AND deleted_at IS NULL")
+      .run(toName, fromName);
+    return Number(sessionsResult.changes);
+  }
+
+  softDeleteWorkspace(workspaceRoot: string, now: string): number {
+    return this.tx(() => {
+      const sessionsResult = this.db.prepare("UPDATE sessions SET deleted_at = ?, updated_at = ? WHERE workspace_root = ? AND deleted_at IS NULL")
+        .run(now, now, workspaceRoot);
+      this.db.prepare("UPDATE runs SET deleted_at = ?, updated_at = ? WHERE workspace_root = ? AND deleted_at IS NULL")
+        .run(now, now, workspaceRoot);
+      return Number(sessionsResult.changes);
+    });
+  }
+
+  restoreWorkspace(workspaceRoot: string, now: string): number {
+    return this.tx(() => {
+      const sessionsResult = this.db.prepare("UPDATE sessions SET deleted_at = NULL, updated_at = ? WHERE workspace_root = ? AND deleted_at IS NOT NULL")
+        .run(now, workspaceRoot);
+      this.db.prepare("UPDATE runs SET deleted_at = NULL, updated_at = ? WHERE workspace_root = ? AND deleted_at IS NOT NULL")
+        .run(now, workspaceRoot);
+      return Number(sessionsResult.changes);
+    });
+  }
+
+  purgeWorkspace(workspaceRoot: string): number {
+    return this.tx(() => {
+      this.db.prepare("DELETE FROM runs WHERE workspace_root = ? AND deleted_at IS NOT NULL")
+        .run(workspaceRoot);
+      const sessionsDelete = this.db.prepare("DELETE FROM sessions WHERE workspace_root = ? AND deleted_at IS NOT NULL")
+        .run(workspaceRoot);
+      return Number(sessionsDelete.changes);
+    });
+  }
+
+  listDeletedWorkspaces(): DeletedWorkspaceView[] {
+    const rows = this.db.prepare(`
+      SELECT workspace_root, workspace_name, MAX(deleted_at) AS deleted_at
+      FROM sessions
+      WHERE deleted_at IS NOT NULL
+      GROUP BY workspace_root
+      ORDER BY deleted_at DESC
+    `).all() as unknown as Array<{ workspace_root: string; workspace_name: string; deleted_at: string }>;
+    return rows.map((r) => ({ workspaceRoot: r.workspace_root, workspaceName: r.workspace_name, deletedAt: r.deleted_at }));
+  }
+
+  findSessionByWorkspaceName(name: string, opts?: { includeDeleted?: boolean }): StoredSession | null {
+    const row = this.db.prepare(`SELECT * FROM sessions WHERE workspace_name = ?${this.deletedFilter(opts)} ORDER BY updated_at DESC LIMIT 1`).get(name) as SessionRow | undefined;
+    return row ? mapSession(row) : null;
   }
 
   createRun(run: StoredRun): void {
@@ -256,8 +356,8 @@ export class SqliteRunStore implements RunStore {
     this.db.prepare(`
       INSERT INTO runs (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        created_at, updated_at, result, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, result, error, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       run.runId,
       run.sessionId,
@@ -270,6 +370,7 @@ export class SqliteRunStore implements RunStore {
       run.updatedAt,
       nullable(run.result),
       nullable(run.error),
+      nullable(run.deletedAt)
     );
   }
 
@@ -277,7 +378,7 @@ export class SqliteRunStore implements RunStore {
     const result = this.db.prepare(`
       UPDATE runs SET
         session_id = ?, turn_index = ?, task = ?, status = ?, workspace_root = ?, workspace_name = ?,
-        created_at = ?, updated_at = ?, result = ?, error = ?
+        created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?
       WHERE run_id = ?
     `).run(
       run.sessionId,
@@ -290,61 +391,28 @@ export class SqliteRunStore implements RunStore {
       run.updatedAt,
       nullable(run.result),
       nullable(run.error),
-      run.runId,
+      nullable(run.deletedAt),
+      run.runId
     );
     if (result.changes !== 1) throw new Error(`Run not found: ${run.runId}`);
   }
 
-  getRun(runId: string): StoredRun | null {
-    const row = this.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId) as RunRow | undefined;
+  getRun(runId: string, opts?: { includeDeleted?: boolean }): StoredRun | null {
+    const row = this.db.prepare(`SELECT * FROM runs WHERE run_id = ?${this.deletedFilter(opts)}`).get(runId) as RunRow | undefined;
     return row ? mapRun(row) : null;
   }
 
-  listRuns(): StoredRun[] {
-    const rows = this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC, run_id ASC").all() as unknown as RunRow[];
+  listRuns(opts?: { includeDeleted?: boolean }): StoredRun[] {
+    const rows = this.db.prepare(`SELECT * FROM runs WHERE 1=1${this.deletedFilter(opts)} ORDER BY created_at DESC, run_id ASC`).all() as unknown as RunRow[];
     return rows.map(mapRun);
   }
 
-  listRunsBySession(sessionId: string): StoredRun[] {
-    const rows = this.db.prepare(
-      "SELECT * FROM runs WHERE session_id = ? ORDER BY turn_index ASC, created_at ASC"
-    ).all(sessionId) as unknown as RunRow[];
+  listRunsBySession(sessionId: string, opts?: { includeDeleted?: boolean }): StoredRun[] {
+    const rows = this.db.prepare(`SELECT * FROM runs WHERE session_id = ?${this.deletedFilter(opts)} ORDER BY turn_index ASC`).all(sessionId) as unknown as RunRow[];
     return rows.map(mapRun);
-  }
-
-  renameSessionsWorkspace(fromName: string, toName: string): number {
-    const timestampsResult = this.db.prepare(
-      "UPDATE sessions SET workspace_name = ?, updated_at = ? WHERE workspace_name = ?"
-    ).run(toName, new Date().toISOString(), fromName);
-    this.db.prepare(
-      "UPDATE runs SET workspace_name = ? WHERE workspace_name = ?"
-    ).run(toName, fromName);
-    return Number(timestampsResult.changes);
-  }
-
-  deleteSessionsByWorkspace(name: string): number {
-    // events cascade on run_id; runs must be removed before their parent session.
-    this.db.prepare(`
-      DELETE FROM runs WHERE session_id IN (
-        SELECT session_id FROM sessions WHERE workspace_name = ?
-      )
-    `).run(name);
-    const result = this.db.prepare(
-      "DELETE FROM sessions WHERE workspace_name = ?"
-    ).run(name);
-    return Number(result.changes);
-  }
-
-  findSessionByWorkspaceName(name: string): StoredSession | null {
-    const row = this.db.prepare(
-      "SELECT * FROM sessions WHERE workspace_name = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1"
-    ).get(name) as SessionRow | undefined;
-    return row ? mapSession(row) : null;
   }
 
   appendEvent(runId: string, event: HostEvent): number {
-    // The aggregate INSERT allocates the next per-run sequence inside the same
-    // SQLite statement. UNIQUE(run_id, seq) protects replay order.
     const row = this.db.prepare(`
       INSERT INTO events (run_id, seq, type, timestamp, payload)
       SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?

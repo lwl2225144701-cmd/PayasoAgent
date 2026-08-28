@@ -4,12 +4,13 @@
 
 import { runAgent } from "../runtime/agent.js";
 import type { ChatMessage, ChatStreamDelta } from "../llm/llm.js";
-import { loadCheckpoint } from "../runtime/checkpoint.js";
+import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
 import type { RunStore, StoredRun, StoredRunStatus, StoredSession } from "./persistence/store.js";
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
+import fs from "node:fs";
 
 export type HostRunStatus = StoredRunStatus;
 
@@ -32,6 +33,12 @@ export interface HostSession {
   workspace?: { name: string };
   createdAt: string;
   updatedAt: string;
+}
+
+// purge 文件清理失败的结构化描述；不包含文件系统路径，可安全返回前端
+export interface CleanupError {
+  runId: string;
+  target: "checkpoint" | "sandbox";
 }
 
 interface InternalRun extends HostRun {
@@ -74,6 +81,11 @@ export class RunManager {
     }
   }
 
+  private isSessionDeleted(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    return !session || session.deletedAt !== undefined;
+  }
+
   create(task: string): string {
     return this.createInSession(task).runId;
   }
@@ -81,7 +93,7 @@ export class RunManager {
   createInSession(
     task: string,
     requestedSessionId?: string,
-    opts?: { workspaceName?: string },
+    opts?: { workspaceName?: string; startAgent?: boolean },
   ): { runId: string; sessionId: string } {
     const runId = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -132,7 +144,9 @@ export class RunManager {
     this.store.createRun(this.toStoredRun(run));
     this.runs.set(runId, run);
     this.record(run, { type: "run_started", runId, timestamp: now });
-    this.startAgent(run, task, undefined, conversationHistory);
+    if (opts?.startAgent !== false) {
+      this.startAgent(run, task, undefined, conversationHistory);
+    }
     return { runId, sessionId: session.sessionId };
   }
 
@@ -182,24 +196,115 @@ export class RunManager {
     return { updated };
   }
 
-  deleteWorkspace(name: string): { deleted: number } {
+  deleteWorkspace(sessionId: string): { deleted: number; updatedAt: string } {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    if (!session) throw new Error("Workspace not found");
+    const workspaceRoot = session.workspaceRoot;
+
     for (const run of this.runs.values()) {
-      if (run.status === "running" && run.workspace?.name === name) {
+      if (run.status === "running" && run.workspaceRoot === workspaceRoot) {
         throw new Error("Workspace has a running Run");
       }
     }
-    const deleted = this.store.deleteSessionsByWorkspace(name);
-    if (deleted === 0) throw new Error(`Workspace not found: ${name}`);
-    for (const run of this.runs.values()) {
-      if (run.workspace?.name === name) run.workspace = undefined;
+    const runningInStore = this.store.listRuns({ includeDeleted: true }).some(
+      (r) => r.workspaceRoot === workspaceRoot && r.status === "running"
+    );
+    if (runningInStore) throw new Error("Workspace has a running Run");
+
+    const now = new Date().toISOString();
+    const deleted = this.store.softDeleteWorkspace(workspaceRoot, now);
+
+    if (getWorkspace()?.rootPath === workspaceRoot) {
+      clearWorkspace();
     }
-    if (getWorkspace()?.name === name) clearWorkspace();
-    return { deleted };
+    return { deleted, updatedAt: now };
+  }
+
+  restoreWorkspace(sessionId: string): { restored: number; updatedAt: string } {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    if (!session) throw new Error("Workspace not found");
+    const workspaceRoot = session.workspaceRoot;
+
+    if (!fs.existsSync(workspaceRoot)) {
+      throw new Error("Workspace path no longer exists");
+    }
+    const stat = fs.statSync(workspaceRoot);
+    if (!stat.isDirectory()) {
+      throw new Error("Workspace path is no longer a directory");
+    }
+    const real = fs.realpathSync.native(workspaceRoot);
+    if (real !== workspaceRoot) {
+      throw new Error("Workspace path has changed");
+    }
+
+    const now = new Date().toISOString();
+    const restored = this.store.restoreWorkspace(workspaceRoot, now);
+    return { restored, updatedAt: now };
+  }
+
+  purgeWorkspace(sessionId: string): { purged: number; cleanupErrors: CleanupError[] } {
+    const session = this.store.getSession(sessionId, { includeDeleted: true });
+    if (!session) throw new Error("Workspace not found");
+    const workspaceRoot = session.workspaceRoot;
+
+    if (!session.deletedAt) {
+      throw new Error("Workspace has not been deleted");
+    }
+
+    const hasRunning = this.store.listRuns({ includeDeleted: true }).some(
+      (r) => r.workspaceRoot === workspaceRoot && r.status === "running"
+    );
+    if (hasRunning) throw new Error("Workspace has a running Run");
+
+    const runs = this.store.listRuns({ includeDeleted: true }).filter(
+      (r) => r.workspaceRoot === workspaceRoot
+    );
+
+    // 先清理数据库，再清理文件；数据库失败则 checkpoint 仍在，避免半完成状态
+    const purged = this.store.purgeWorkspace(workspaceRoot);
+    const cleanupErrors: CleanupError[] = [];
+    for (const run of runs) {
+      this.runs.delete(run.runId);
+      const sinks = this.subscribers.get(run.runId);
+      if (sinks) {
+        for (const sink of sinks) {
+          try { sink.end(); } catch { /* ignore shutdown write failures */ }
+        }
+        this.subscribers.delete(run.runId);
+      }
+      cleanupErrors.push(...this.cleanupRun(run.runId));
+    }
+    return { purged, cleanupErrors };
+  }
+
+  private cleanupRun(runId: string): CleanupError[] {
+    const errors: CleanupError[] = [];
+    try {
+      fs.rmSync(checkpointPath(runId), { force: true });
+    } catch (err) {
+      // 原始错误（可能含绝对路径）只写 Host 日志，不返回前端
+      console.error(`[RunStore] purge checkpoint cleanup failed for ${runId}: ${(err as Error).message}`);
+      errors.push({ runId, target: "checkpoint" });
+    }
+    try {
+      const sandboxRoot = getRunWorkspaceRoot(runId);
+      if (sandboxRoot && fs.existsSync(sandboxRoot)) {
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+      }
+    } catch (err) {
+      console.error(`[RunStore] purge sandbox cleanup failed for ${runId}: ${(err as Error).message}`);
+      errors.push({ runId, target: "sandbox" });
+    }
+    return errors;
   }
 
   stop(runId: string): boolean {
     const run = this.runs.get(runId);
-    if (!run) return this.store.getRun(runId) !== null;
+    if (!run) {
+      const stored = this.store.getRun(runId);
+      return stored !== null && !this.isSessionDeleted(stored.sessionId);
+    }
+    if (this.isSessionDeleted(run.sessionId)) return false;
     if (run.status !== "running") {
       run.cancelled = true;
       return true;
@@ -222,6 +327,17 @@ export class RunManager {
     return session ? this.publicSessionView(session) : null;
   }
 
+  findSessionByWorkspaceName(name: string, opts?: { includeDeleted?: boolean }): StoredSession | null {
+    const sessions = this.store.listSessions(opts).filter((s) => s.workspaceName === name);
+    if (sessions.length === 0) return null;
+    const roots = new Set(sessions.map((s) => s.workspaceRoot));
+    if (roots.size > 1) {
+      throw new Error(`Workspace name "${name}" matches multiple roots`);
+    }
+    sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return sessions[0];
+  }
+
   listSessionRuns(sessionId: string): HostRun[] | null {
     if (!this.store.getSession(sessionId)) return null;
     return this.store.listRunsBySession(sessionId).map((run) => this.publicStoredView(run));
@@ -229,9 +345,9 @@ export class RunManager {
 
   get(runId: string): HostRun | null {
     const active = this.runs.get(runId);
-    if (active) return this.publicView(active);
+    if (active && !this.isSessionDeleted(active.sessionId)) return this.publicView(active);
     const stored = this.store.getRun(runId);
-    return stored ? this.publicStoredView(stored) : null;
+    return stored && !this.isSessionDeleted(stored.sessionId) ? this.publicStoredView(stored) : null;
   }
 
   getRaw(runId: string): InternalRun | undefined {
@@ -239,7 +355,12 @@ export class RunManager {
   }
 
   getWorkspaceRoot(runId: string): string | null {
-    return this.runs.get(runId)?.workspaceRoot ?? this.store.getRun(runId)?.workspaceRoot ?? null;
+    const active = this.runs.get(runId);
+    if (active) {
+        return this.isSessionDeleted(active.sessionId) ? null : active.workspaceRoot;
+    }
+    const stored = this.store.getRun(runId);
+    return stored && !this.isSessionDeleted(stored.sessionId) ? stored.workspaceRoot : null;
   }
 
   subscribe(runId: string, sink: SseSink, afterSeq = 0, live = true): boolean {
