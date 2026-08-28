@@ -15,8 +15,6 @@ import {
   renameWorkspace as apiRenameWorkspace,
   renameSession as apiRenameSession,
   archiveSession as apiArchiveSession,
-  restoreSession as apiRestoreSession,
-  deleteSession as apiDeleteSession,
   resumeRun,
   stopRun,
 } from './api';
@@ -43,6 +41,12 @@ export default function App() {
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const [resumingRun, setResumingRun] = useState(false);
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  }, []);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -261,29 +265,36 @@ export default function App() {
   }, [currentSessionId, refreshSessions]);
 
   const handleRenameSession = useCallback(async (sessionId: string, title: string) => {
-    await apiRenameSession(sessionId, title);
-    setSessions(prev => prev.map(s => s.sessionId === sessionId ? { ...s, title, updatedAt: new Date().toISOString() } : s));
-  }, []);
+    try {
+      await apiRenameSession(sessionId, title);
+      setSessions(prev => prev.map(s => s.sessionId === sessionId ? { ...s, title, updatedAt: new Date().toISOString() } : s));
+      showToast('重命名成功');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`重命名失败：${msg}`);
+    }
+  }, [showToast]);
 
   const handleArchiveSession = useCallback(async (sessionId: string) => {
-    await apiArchiveSession(sessionId);
-    await refreshSessions('replace');
-    if (currentSessionId === sessionId) {
-      setCurrentSessionId(null);
-      setCurrentRunId(null);
-      setViewingFile(null);
+    try {
+      await apiArchiveSession(sessionId);
+      // 乐观更新：立即从列表移除，避免用户看到“什么都没发生”
+      setSessions(prev => prev.filter(s => s.sessionId !== sessionId));
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId(null);
+        setCurrentRunId(null);
+        setViewingFile(null);
+      }
+      showToast('已归档');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`归档失败：${msg}`);
     }
-  }, [currentSessionId, refreshSessions]);
-
-  const handleDeleteSession = useCallback(async (sessionId: string) => {
-    await apiDeleteSession(sessionId);
-    await refreshSessions('replace');
-    if (currentSessionId === sessionId) {
-      setCurrentSessionId(null);
-      setCurrentRunId(null);
-      setViewingFile(null);
-    }
-  }, [currentSessionId, refreshSessions]);
+    // 后台与服务端对齐；失败只记日志，不打扰用户
+    void refreshSessions('replace').catch((err) => {
+      console.error('Failed to refresh sessions:', err);
+    });
+  }, [currentSessionId, refreshSessions, showToast]);
 
   const handleOpenWorkspace = useCallback(async () => {
     if (openingWorkspace) return;
@@ -313,7 +324,6 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         onRenameSession={handleRenameSession}
         onArchiveSession={handleArchiveSession}
-        onDeleteSession={handleDeleteSession}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => {
           sidebarUserOverrideRef.current = true;
@@ -383,6 +393,8 @@ export default function App() {
           onClose={() => setViewingFile(null)}
         />
       )}
+
+      {toast && <div className={styles.toast}>{toast}</div>}
     </div>
   );
 }

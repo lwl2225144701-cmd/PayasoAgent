@@ -33,9 +33,19 @@
   background: var(--color-brand);
 }
 
-.title {
+.body {
   flex: 1;
   min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.title {
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--text-primary);
@@ -48,14 +58,13 @@
 }
 
 .time {
-  flex-shrink: 0;
   font-size: 11px;
   color: var(--text-muted);
+  margin-left: 6px;
 }
 
 .inlineInput {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--text-primary);
@@ -64,6 +73,25 @@
   border: none;
   outline: none;
   padding: 0;
+}
+
+.moreBtn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+.moreBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .menu {
@@ -96,12 +124,4 @@
 
 .menuItem:hover {
   background: var(--bg-hover);
-}
-
-.menuDanger {
-  color: var(--color-danger, #ef4444);
-}
-
-.menuDanger:hover {
-  background: rgba(239, 68, 68, 0.12);
 }

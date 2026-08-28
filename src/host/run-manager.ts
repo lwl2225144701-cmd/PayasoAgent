@@ -277,10 +277,10 @@ export class RunManager {
     return { purged, cleanupErrors };
   }
 
-  renameSession(sessionId: string, title: string): { updatedAt: string } {
+  renameSession(sessionId: string, title: string): { updatedAt: string; title: string } {
     this.store.renameSession(sessionId, title);
     const now = new Date().toISOString();
-    return { updatedAt: now };
+    return { updatedAt: now, title };
   }
 
   archiveSession(sessionId: string): { archived: number; updatedAt: string } {

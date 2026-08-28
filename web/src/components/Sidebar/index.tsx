@@ -18,7 +18,6 @@ interface SidebarProps {
   onDeleteWorkspace: (name: string) => Promise<void>;
   onRenameSession: (sessionId: string, title: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
-  onDeleteSession: (sessionId: string) => Promise<void>;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   workspace: WorkspaceView | null;
@@ -36,7 +35,6 @@ export function Sidebar({
   onDeleteWorkspace,
   onRenameSession,
   onArchiveSession,
-  onDeleteSession,
   collapsed,
   onToggleCollapsed,
   workspace,
@@ -97,7 +95,6 @@ export function Sidebar({
           onDeleteWorkspace={onDeleteWorkspace}
           onRenameSession={onRenameSession}
           onArchiveSession={onArchiveSession}
-          onDeleteSession={onDeleteSession}
         />
       </div>
 

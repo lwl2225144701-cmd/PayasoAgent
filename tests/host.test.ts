@@ -140,6 +140,31 @@ check("Run 最终 completed + 有 result", final1.status === "completed" && type
 const finalB = await waitTerminal(idB);
 check("两个 Run 各自独立完成", finalB.status === "completed");
 
+// 8. Session 路由：rename / archive / restore / delete
+async function patchSession(sessionId: string, body: any) {
+  const r = await fetch(`${base}/sessions/${sessionId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return { status: r.status, body: await r.json() };
+}
+async function postSession(sessionId: string, action: string) {
+  const r = await fetch(`${base}/sessions/${sessionId}/${action}`, { method: "POST" });
+  return { status: r.status, body: await r.json() };
+}
+
+const renameResp = await patchSession(sessionId1, { title: "新标题" });
+check("PATCH /sessions/:id → 200", renameResp.status === 200);
+check("PATCH /sessions/:id → title 已更新", renameResp.body?.title === "新标题");
+
+const archiveResp = await postSession(sessionId1, "archive");
+check("POST /sessions/:id/archive → 200", archiveResp.status === 200);
+
+const restoreResp = await postSession(sessionId1, "restore");
+check("POST /sessions/:id/restore → 200", restoreResp.status === 200);
+
+await postSession(sessionId1, "archive");
+const deleteResp = await postSession(sessionId1, "delete");
+check("POST /sessions/:id/delete → 200", deleteResp.status === 200);
+check("POST /sessions/:id/delete → cleanupErrors 结构化", Array.isArray(deleteResp.body?.cleanupErrors));
+
 console.log(`\nHost 测试汇总: ${passed} PASS / ${failed} FAIL`);
 // 直接退出，避免 server.close 等待活跃 SSE 连接（心跳连接保持打开）而挂起
 process.exit(failed ? 1 : 0);

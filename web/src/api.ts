@@ -27,19 +27,19 @@ export function createRun(
 }
 
 export function listSessions(): Promise<{ sessions: HostSession[] }> {
-  return jsonFetch('/sessions');
+  return jsonFetch('/sessions', { cache: 'no-store' });
 }
 
 export function listSessionRuns(sessionId: string): Promise<{ runs: HostRun[] }> {
-  return jsonFetch(`/sessions/${sessionId}/runs`);
+  return jsonFetch(`/sessions/${sessionId}/runs`, { cache: 'no-store' });
 }
 
 export function getWorkspace(): Promise<{ workspace: WorkspaceView | null }> {
-  return jsonFetch('/workspace');
+  return jsonFetch('/workspace', { cache: 'no-store' });
 }
 
 export function openWorkspace(): Promise<{ workspace: WorkspaceView | null; cancelled: boolean }> {
-  return jsonFetch('/workspace/open', { method: 'POST' });
+  return jsonFetch('/workspace/open', { method: 'POST', cache: 'no-store' });
 }
 
 export function renameWorkspace(fromName: string, toName: string): Promise<{ updated: number }> {
@@ -52,14 +52,6 @@ export function renameSession(sessionId: string, title: string): Promise<{ updat
 
 export function archiveSession(sessionId: string): Promise<{ archived: number; updatedAt: string }> {
   return jsonFetch(`/sessions/${sessionId}/archive`, { method: 'POST' });
-}
-
-export function restoreSession(sessionId: string): Promise<{ restored: number; updatedAt: string }> {
-  return jsonFetch(`/sessions/${sessionId}/restore`, { method: 'POST' });
-}
-
-export function deleteSession(sessionId: string): Promise<{ deleted: number; cleanupErrors: Array<{ runId: string; target: string }> }> {
-  return jsonFetch(`/sessions/${sessionId}/delete`, { method: 'POST' });
 }
 
 export function deleteWorkspaceGroup(name: string): Promise<{ deleted: number }> {

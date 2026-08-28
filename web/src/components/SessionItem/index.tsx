@@ -3,9 +3,8 @@ import type { HostSession } from '../../types';
 import { formatRelativeTime } from '../../format';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
-import { MoreIcon, PencilIcon, ArchiveIcon, TrashIcon } from '../icons';
+import { MoreIcon, PencilIcon, ArchiveIcon } from '../icons';
 import { IconButton } from '../IconButton';
-import { Modal } from '../Modal';
 import styles from './SessionItem.module.css';
 
 interface SessionItemProps {
@@ -14,7 +13,6 @@ interface SessionItemProps {
   onClick?: () => void;
   onRename: (sessionId: string, title: string) => Promise<void>;
   onArchive: (sessionId: string) => Promise<void>;
-  onDelete: (sessionId: string) => Promise<void>;
 }
 
 interface MenuState {
@@ -22,7 +20,7 @@ interface MenuState {
   y: number;
 }
 
-export function SessionItem({ session, active = false, onClick, onRename, onArchive, onDelete }: SessionItemProps) {
+export function SessionItem({ session, active = false, onClick, onRename, onArchive }: SessionItemProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -44,7 +42,7 @@ export function SessionItem({ session, active = false, onClick, onRename, onArch
       await onRename(session.sessionId, to);
       setRenaming(false);
     } catch {
-      // 错误提示由 App 层负责
+      // 错误由父级 toast 处理
     } finally {
       setBusy(false);
     }
@@ -57,68 +55,55 @@ export function SessionItem({ session, active = false, onClick, onRename, onArch
       await onArchive(session.sessionId);
       setMenu(null);
     } catch {
-      // ignored
+      // 错误由父级 toast 处理
     } finally {
       setBusy(false);
     }
   };
 
-  const confirmDelete = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await onDelete(session.sessionId);
-      setMenu(null);
-    } catch {
-      // ignored
-    } finally {
-      setBusy(false);
-    }
-  };
+  const itemClassName = `${styles.item} ${active ? styles.active : ''}`;
 
   return (
-    <>
+    <div className={itemClassName}>
+      {renaming ? (
+        <input
+          className={styles.inlineInput}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onBlur={submitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submitRename();
+            if (e.key === 'Escape') {
+              setRenameValue(session.title);
+              setRenaming(false);
+            }
+          }}
+          autoFocus
+          disabled={busy}
+        />
+      ) : (
+        <button
+          type="button"
+          className={styles.body}
+          onClick={onClick}
+          aria-label={session.title || '未命名任务'}
+        >
+          <span className={`${styles.title} truncate`}>{session.title || '未命名任务'}</span>
+          <span className={styles.time}>{formatRelativeTime(session.updatedAt)}</span>
+        </button>
+      )}
+
       <button
         type="button"
-        className={`${styles.item} ${active ? styles.active : ''}`}
-        onClick={onClick}
+        className={styles.moreBtn}
+        onClick={(e) => {
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          setMenu({ x: rect.left, y: rect.bottom + 4 });
+        }}
+        aria-label={`${session.title} 更多操作`}
       >
-        {renaming ? (
-          <input
-            className={styles.inlineInput}
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onBlur={submitRename}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submitRename();
-              if (e.key === 'Escape') {
-                setRenameValue(session.title);
-                setRenaming(false);
-              }
-            }}
-            autoFocus
-            disabled={busy}
-          />
-        ) : (
-          <>
-            <span className={`${styles.title} truncate`}>{session.title || '未命名任务'}</span>
-            <span className={styles.time}>{formatRelativeTime(session.updatedAt)}</span>
-            <IconButton
-              buttonSize="sm"
-              variant="ghost"
-              shape="rounded"
-              title="更多操作"
-              aria-label={`${session.title} 更多操作`}
-              onClick={(e) => {
-                e.stopPropagation();
-                const rect = e.currentTarget.getBoundingClientRect();
-                setMenu({ x: rect.left, y: rect.bottom + 4 });
-              }}
-            >
-              <MoreIcon size={14} />
-            </IconButton>
-          </>
-        )}
+        <MoreIcon size={14} />
       </button>
 
       {menu && (
@@ -131,12 +116,8 @@ export function SessionItem({ session, active = false, onClick, onRename, onArch
             <ArchiveIcon size={14} />
             <span>归档</span>
           </button>
-          <button type="button" className={`${styles.menuItem} ${styles.menuDanger}`} onClick={confirmDelete}>
-            <TrashIcon size={14} />
-            <span>删除</span>
-          </button>
         </div>
       )}
-    </>
+    </div>
   );
 }

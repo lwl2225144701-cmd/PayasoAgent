@@ -385,21 +385,21 @@ export async function handleRequest(
         }
       }
     }
-    if (s.length === 2 && method === "POST" && s[2] === "archive") {
+    if (s.length === 3 && method === "POST" && s[2] === "archive") {
       try {
         return sendJson(res, 200, manager.archiveSession(sessionId));
       } catch (err) {
         return bad(res, (err as Error).message);
       }
     }
-    if (s.length === 2 && method === "POST" && s[2] === "restore") {
+    if (s.length === 3 && method === "POST" && s[2] === "restore") {
       try {
         return sendJson(res, 200, manager.restoreSession(sessionId));
       } catch (err) {
         return bad(res, (err as Error).message);
       }
     }
-    if (s.length === 2 && method === "POST" && s[2] === "delete") {
+    if (s.length === 3 && method === "POST" && s[2] === "delete") {
       try {
         return sendJson(res, 200, manager.deleteSession(sessionId));
       } catch (err) {
