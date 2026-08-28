@@ -174,6 +174,8 @@ export function WorkspaceSection({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const isFallbackWorkspace = (name: string) => name === FALLBACK_WORKSPACE_NAME;
+
   const openRename = () => {
     if (!menu) return;
     setRenaming(menu.name);
@@ -236,14 +238,15 @@ export function WorkspaceSection({
         <nav className={styles.tree} aria-label="工作区任务">
           {groups.map(group => {
             const isCurrentWorkspace = group.name === (workspace?.name ?? FALLBACK_WORKSPACE_NAME);
+            const fallback = isFallbackWorkspace(group.name);
             return (
               <Collapse
                 key={group.name}
                 header={(
                   <WorkspaceFolderHeader
                     name={group.name}
-                    onOpenMenu={(x, y) => setMenu({ name: group.name, x, y })}
-                    onNewTask={() => onNewTaskInWorkspace(group.name)}
+                    onOpenMenu={fallback ? () => {} : (x, y) => setMenu({ name: group.name, x, y })}
+                    onNewTask={fallback ? () => {} : () => onNewTaskInWorkspace(group.name)}
                   />
                 )}
                 defaultExpanded={isCurrentWorkspace}
@@ -265,7 +268,7 @@ export function WorkspaceSection({
         </nav>
       )}
 
-      {menu && (
+      {menu && !isFallbackWorkspace(menu.name) && (
         <WorkspaceMenu
           name={menu.name}
           x={menu.x}
