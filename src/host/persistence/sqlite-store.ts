@@ -4,7 +4,8 @@ import path from "node:path";
 import url from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import type { HostEvent } from "../run-events.js";
-import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView } from "./store.js";
+import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView, StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./store.js";
+import { SettingsStore } from "./settings-store.js";
 
 // Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
 const REPO_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -84,6 +85,7 @@ export function resolvePayasoDbPath(env: Record<string, string | undefined> = pr
 export class SqliteRunStore implements RunStore {
   private db!: DatabaseSync;
   private closed = false;
+  private settings!: SettingsStore;
 
   constructor(dbPath: string = resolvePayasoDbPath()) {
     let actualPath = dbPath;
@@ -100,6 +102,7 @@ export class SqliteRunStore implements RunStore {
         }
         opened = new DatabaseSync(actualPath);
         this.db = opened;
+        this.settings = new SettingsStore(this.db);
         if (actualPath !== ":memory:") {
           try { fs.chmodSync(actualPath, 0o600); } catch { /* best effort */ }
         }
@@ -465,6 +468,27 @@ export class SqliteRunStore implements RunStore {
       const sessionsDelete = this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
       return Number(sessionsDelete.changes);
     });
+  }
+
+  listModelProviders(): ModelProviderView[] {
+    return this.settings.listViews();
+  }
+
+  getModelProvider(id: string): ModelProviderView | null {
+    const provider = this.settings.getModel(id);
+    return provider ? this.settings.listViews().find(p => p.id === id) ?? null : null;
+  }
+
+  addModelProvider(input: CreateModelProviderInput): ModelProviderView {
+    return this.settings.addModel(input);
+  }
+
+  updateModelProvider(id: string, input: UpdateModelProviderInput): ModelProviderView | null {
+    return this.settings.updateModel(id, input);
+  }
+
+  deleteModelProvider(id: string): boolean {
+    return this.settings.deleteModel(id);
   }
 
   close(): void {

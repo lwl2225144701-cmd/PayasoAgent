@@ -23,6 +23,7 @@ interface SidebarProps {
   workspace: WorkspaceView | null;
   openingWorkspace: boolean;
   onOpenWorkspace: () => void;
+  onOpenSettings: () => void;
 }
 
 export function Sidebar({
@@ -40,6 +41,7 @@ export function Sidebar({
   workspace,
   openingWorkspace,
   onOpenWorkspace,
+  onOpenSettings,
 }: SidebarProps) {
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
@@ -99,7 +101,7 @@ export function Sidebar({
       </div>
 
       <div className={styles.footer}>
-        <button className={styles.settingsBtn} title="设置" type="button">
+        <button className={styles.settingsBtn} title="设置" type="button" onClick={onOpenSettings}>
           <SettingsIcon size={18} />
           <span>设置</span>
         </button>

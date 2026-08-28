@@ -1,4 +1,5 @@
 import type { HostEvent } from "../run-events.js";
+import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./settings-store.js";
 
 export type StoredRunStatus = "running" | "completed" | "failed" | "stopped" | "interrupted";
 
@@ -64,5 +65,12 @@ export interface RunStore {
   archiveSession(sessionId: string, now: string): number;
   restoreSession(sessionId: string, now: string): number;
   deleteSession(sessionId: string): number;
+  listModelProviders(): ModelProviderView[];
+  getModelProvider(id: string): ModelProviderView | null;
+  addModelProvider(input: CreateModelProviderInput): ModelProviderView;
+  updateModelProvider(id: string, input: UpdateModelProviderInput): ModelProviderView | null;
+  deleteModelProvider(id: string): boolean;
   close(): void;
 }
+
+export type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./settings-store.js";

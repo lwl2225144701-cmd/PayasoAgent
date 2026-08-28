@@ -8,7 +8,7 @@ import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
-import type { RunStore, StoredRun, StoredRunStatus, StoredSession } from "./persistence/store.js";
+import type { RunStore, StoredRun, StoredRunStatus, StoredSession, CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
 import fs from "node:fs";
 
@@ -645,5 +645,21 @@ export class RunManager {
       }
     }
     return messages;
+  }
+
+  listModelProviders() {
+    return this.store.listModelProviders();
+  }
+
+  addModelProvider(input: CreateModelProviderInput) {
+    return this.store.addModelProvider(input);
+  }
+
+  updateModelProvider(id: string, input: UpdateModelProviderInput) {
+    return this.store.updateModelProvider(id, input);
+  }
+
+  deleteModelProvider(id: string) {
+    return this.store.deleteModelProvider(id);
   }
 }

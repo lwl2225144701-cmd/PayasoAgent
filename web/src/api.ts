@@ -1,4 +1,4 @@
-import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView } from './types';
+import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from './types';
 
 const API_BASE = '';
 
@@ -141,4 +141,30 @@ export function connectSSE(
     }
     es.close();
   };
+}
+
+// ===== Models CRUD =====
+
+export function listModels(): Promise<{ models: ModelProviderView[] }> {
+  return jsonFetch('/settings/models', { cache: 'no-store' });
+}
+
+export function createModel(input: CreateModelProviderInput): Promise<ModelProviderView> {
+  return jsonFetch('/settings/models', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateModel(id: string, input: UpdateModelProviderInput): Promise<ModelProviderView> {
+  return jsonFetch(`/settings/models/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteModel(id: string): Promise<{ deleted: true }> {
+  return jsonFetch(`/settings/models/${id}`, {
+    method: 'DELETE',
+  });
 }

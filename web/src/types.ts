@@ -32,6 +32,31 @@ export interface FileEntry {
   size: number;
 }
 
+// 模型配置 — 对齐后端 ModelProviderView / StoredModelProvider
+export interface ModelProviderView {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKeyMasked: string;
+  hasApiKey: boolean;
+  models: string[];
+  status: 'unchecked';
+}
+
+export interface CreateModelProviderInput {
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  models: string[];
+}
+
+export interface UpdateModelProviderInput {
+  name?: string;
+  baseUrl?: string;
+  apiKey?: string | null;
+  models?: string[];
+}
+
 // Runtime Trace 事件
 export interface TraceEventBase {
   step: number;

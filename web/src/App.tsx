@@ -4,6 +4,7 @@ import { ShellBar } from './components/ShellBar';
 import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
+import { SettingsModal } from './components/SettingsModal';
 import {
   createRun,
   deleteWorkspaceGroup,
@@ -42,6 +43,7 @@ export default function App() {
   const [resumingRun, setResumingRun] = useState(false);
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -332,6 +334,7 @@ export default function App() {
         workspace={workspace}
         openingWorkspace={openingWorkspace}
         onOpenWorkspace={handleOpenWorkspace}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       <div className={styles.main}>
@@ -391,6 +394,13 @@ export default function App() {
           runId={currentRunId}
           file={viewingFile}
           onClose={() => setViewingFile(null)}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
 

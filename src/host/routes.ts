@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { RunManager, type SseSink } from "./run-manager.js";
+import type { CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
 import {
   resolveWorkspacePath,
   assertInsideRoot,
@@ -226,6 +227,86 @@ export async function handleRequest(
 ): Promise<void> {
   const s = segs(req);
   const method = req.method ?? "GET";
+
+  if (s[0] === "settings") {
+    if (s.length === 2 && s[1] === "models") {
+      if (method === "GET") {
+        try {
+          const views = manager.listModelProviders();
+          return sendJson(res, 200, { models: views });
+        } catch (err) {
+          console.error("[settings] list models failed", err);
+          return bad(res, "list_models_failed");
+        }
+      }
+      if (method === "POST") {
+        let body: CreateModelProviderInput;
+        try {
+          body = (await readBody(req)) as unknown as CreateModelProviderInput;
+        } catch (err) {
+          if (err instanceof RequestBodyTooLargeError) {
+            return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+          }
+          throw err;
+        }
+        try {
+          if (typeof body.name !== "string" || typeof body.baseUrl !== "string" || !Array.isArray(body.models)) {
+            return bad(res, "invalid_request_body");
+          }
+          const created = manager.addModelProvider(body);
+          return sendJson(res, 201, created);
+        } catch (err) {
+          console.error("[settings] add model failed", err);
+          return bad(res, (err as Error).message || "add_model_failed");
+        }
+      }
+      return notFound(res);
+    }
+    if (s.length === 3 && s[1] === "models") {
+      const id = s[2];
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+        return bad(res, "invalid_model_id");
+      }
+      if (method === "PATCH") {
+        let body: UpdateModelProviderInput;
+        try {
+          body = (await readBody(req)) as unknown as UpdateModelProviderInput;
+        } catch (err) {
+          if (err instanceof RequestBodyTooLargeError) {
+            return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+          }
+          throw err;
+        }
+        try {
+          if (body.name !== undefined && typeof body.name !== "string") {
+            return bad(res, "invalid_request_body");
+          }
+          if (body.baseUrl !== undefined && typeof body.baseUrl !== "string") {
+            return bad(res, "invalid_request_body");
+          }
+          if (body.apiKey !== undefined && body.apiKey !== null && typeof body.apiKey !== "string") {
+            return bad(res, "invalid_request_body");
+          }
+          if (body.models !== undefined && !Array.isArray(body.models)) {
+            return bad(res, "invalid_request_body");
+          }
+          const updated = manager.updateModelProvider(id, body);
+          if (!updated) return notFound(res);
+          return sendJson(res, 200, updated);
+        } catch (err) {
+          console.error("[settings] update model failed", err);
+          return bad(res, (err as Error).message || "update_model_failed");
+        }
+      }
+      if (method === "DELETE") {
+        const ok = manager.deleteModelProvider(id);
+        if (!ok) return notFound(res);
+        return sendJson(res, 200, { deleted: true });
+      }
+      return notFound(res);
+    }
+    return notFound(res);
+  }
 
   // Current Workspace: the native picker is Host-owned because browsers do
   // not reveal arbitrary absolute local paths. Normal responses expose name only.
