@@ -132,7 +132,7 @@ export interface ContextTrimEvent extends TraceEventBase {
 export interface ContextUsageEvent extends TraceEventBase {
   type: "context_usage";
   model: string;
-  configSource: "env" | "model_registry" | "fallback";
+  configSource: "run_model" | "env" | "model_registry" | "fallback";
   contextWindowTokens: number;
   maxOutputTokens: number;
   safetyTokens: number;

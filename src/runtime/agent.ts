@@ -73,7 +73,9 @@ export async function runAgent(
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
   const trace = createTrace(runId, opts?.onTrace);
-  const modelContext = resolveModelContextConfig();
+  // 模型能力绑定当前 Run 实际选中的模型（model snapshot）；
+  // 无显式 modelConfig 时（CLI / legacy）才回退环境变量路径。
+  const modelContext = resolveModelContextConfig({ model: opts?.modelConfig?.model });
   const contextManager = new ContextManager(modelContext.maxInputTokens);
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复

@@ -64,7 +64,7 @@ export type TraceEvent =
       step: number;
       timestamp: string;
       model: string;
-      configSource: "env" | "model_registry" | "fallback";
+      configSource: "run_model" | "env" | "model_registry" | "fallback";
       contextWindowTokens: number;
       maxOutputTokens: number;
       safetyTokens: number;
@@ -182,7 +182,7 @@ export type TraceEventInput =
   | {
       type: "context_usage";
       model: string;
-      configSource: "env" | "model_registry" | "fallback";
+      configSource: "run_model" | "env" | "model_registry" | "fallback";
       contextWindowTokens: number;
       maxOutputTokens: number;
       safetyTokens: number;

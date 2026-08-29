@@ -22,7 +22,7 @@ function test(name: string, fn: () => void): void {
 }
 
 test("MiniMax-M3 uses guaranteed 512K registry context", () => {
-  const config = resolveModelContextConfig({ OPENAI_MODEL: "MiniMax-M3" });
+  const config = resolveModelContextConfig({}, { OPENAI_MODEL: "MiniMax-M3" });
   assert.equal(config.contextWindowTokens, 512_000);
   assert.equal(config.source, "model_registry");
   assert.ok(config.maxInputTokens < config.contextWindowTokens);
@@ -30,7 +30,7 @@ test("MiniMax-M3 uses guaranteed 512K registry context", () => {
 });
 
 test("explicit Host configuration overrides model registry", () => {
-  const config = resolveModelContextConfig({
+  const config = resolveModelContextConfig({}, {
     OPENAI_MODEL: "MiniMax-M3",
     MODEL_CONTEXT_WINDOW_TOKENS: "100000",
     MODEL_MAX_OUTPUT_TOKENS: "10000",
@@ -41,12 +41,56 @@ test("explicit Host configuration overrides model registry", () => {
 });
 
 test("invalid context configuration fails early", () => {
-  assert.throws(() => resolveModelContextConfig({ MODEL_CONTEXT_WINDOW_TOKENS: "nope" }));
-  assert.throws(() => resolveModelContextConfig({
+  assert.throws(() => resolveModelContextConfig({}, { MODEL_CONTEXT_WINDOW_TOKENS: "nope" }));
+  assert.throws(() => resolveModelContextConfig({}, {
     MODEL_CONTEXT_WINDOW_TOKENS: "1000",
     MODEL_MAX_OUTPUT_TOKENS: "900",
     MODEL_CONTEXT_SAFETY_TOKENS: "200",
   }));
+});
+
+// ---- v1.6 显式模型路径：Run 模型是能力解析的唯一来源，环境变量不参与 ----
+
+test("explicit run model wins over OPENAI_MODEL env (Case 1)", () => {
+  const config = resolveModelContextConfig(
+    { model: "MiniMax-M3" },
+    { OPENAI_MODEL: "gpt-4o-mini" },
+  );
+  assert.equal(config.model, "MiniMax-M3");
+  assert.equal(config.source, "run_model");
+  assert.equal(config.contextWindowTokens, 512_000);
+  assert.equal(config.maxOutputTokens, 16_384);
+  assert.ok(config.maxInputTokens < config.contextWindowTokens);
+});
+
+test("explicit model path ignores numeric env overrides", () => {
+  const config = resolveModelContextConfig(
+    { model: "MiniMax-M3", contextWindowTokens: 100_000 },
+    {
+      OPENAI_MODEL: "gpt-4o-mini",
+      MODEL_CONTEXT_WINDOW_TOKENS: "999999",
+      MODEL_MAX_OUTPUT_TOKENS: "7777",
+    },
+  );
+  assert.equal(config.source, "run_model");
+  assert.equal(config.contextWindowTokens, 100_000);
+  assert.equal(config.maxOutputTokens, 16_384);
+});
+
+test("unknown explicit run model uses conservative fallback with run_model source", () => {
+  const config = resolveModelContextConfig(
+    { model: "some-future-model" },
+    { OPENAI_MODEL: "MiniMax-M3" },
+  );
+  assert.equal(config.model, "some-future-model");
+  assert.equal(config.source, "run_model");
+  assert.equal(config.contextWindowTokens, 32_768);
+  assert.equal(config.maxOutputTokens, 4_096);
+});
+
+test("invalid explicit numeric input fails early", () => {
+  assert.throws(() => resolveModelContextConfig({ model: "MiniMax-M3", contextWindowTokens: 0 }));
+  assert.throws(() => resolveModelContextConfig({ model: "MiniMax-M3", maxOutputTokens: 1.5 }));
 });
 
 test("mixed-language estimator is deterministic and conservative", () => {

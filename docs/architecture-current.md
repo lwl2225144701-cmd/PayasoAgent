@@ -1,13 +1,13 @@
 # PayasoAgent 当前架构基线（Current Architecture）
 
-> **文档定位**：当前代码状态的唯一权威说明。以工作区代码为准（基线日期 **2026-08-26**），并如实记录已知缺口。
+> **文档定位**：当前代码状态的唯一权威说明。以工作区代码为准（基线日期 **2026-08-29**），并如实记录已知缺口。
 >
 > **取代（Superseded）**：
 > - `runtime-kernel-freeze.md` —— v1.3.3 Kernel Freeze 基线（已过时，仅存历史）
 > - `v1.0-design.md` + `architecture-v1.0.svg` —— v1.0 设计稿（已过时，仅存历史）
 > - `.trae/documents/minimal-web-ui_plan.md` —— Web UI 实现方案（已按此落地）
 >
-> **版本锚点**：`CURRENT_VERSION = v1.5 + persistent Session/Run + streaming Web`。
+> **版本锚点**：`CURRENT_VERSION = v1.6 + 多 Provider 模型配置 + Run 模型绑定 Context Budget`。
 
 ---
 
@@ -83,12 +83,12 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/state.ts` | AgentState：status / iteration / currentStep / 工具统计 / pendingAction / lastToolError |
 | `src/runtime/scratchpad.ts` | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪 |
 | `src/runtime/context.ts` | ContextManager：按轮分组裁剪，保留 system + 最后一条 user；Messages + Tool Schema 统一预算 |
-| `src/runtime/model-context.ts` | 模型上下文能力配置、环境变量覆盖和保守 token 估算 |
-| `src/runtime/trace.ts` | 结构化事件轨迹（15 类事件，见 §3.3） |
+| `src/runtime/model-context.ts` | 模型上下文能力配置：显式 Run 模型优先（source=`run_model`），环境变量仅 CLI/legacy fallback；保守 token 估算 |
+| `src/runtime/trace.ts` | 结构化事件轨迹（16 类事件，见 §3.3） |
 | `src/runtime/checkpoint.ts` | 最小 JSON 持久化（`.checkpoints/<runId>.json`） |
 | `src/runtime/side-effect.ts` | 副作用三态生命周期 + canonical operation key 去重 |
 | `src/runtime/output-guard.ts` | 单工具结果 16KB 硬上限（UTF-8 安全截断） |
-| `src/llm/llm.ts` | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验） |
+| `src/llm/llm.ts` | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验；`max_tokens` 按当前请求模型逐请求解析） |
 | `src/tools/tools.ts` | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey |
 | `src/tools/filesystem.ts` | listDir / readFile / writeFile（含可写区权限与原子写） |
 | `src/tools/runtime-tools.ts` | searchText / createDir / moveFile / deleteFile / shell |
@@ -97,24 +97,24 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/sandbox-policy.ts` | seatbelt 策略生成（default-deny + 白名单） |
 | `src/host/server.ts` | node:http 服务器 + 统一错误兜底 |
 | `src/host/routes.ts` | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback |
-| `src/host/run-manager.ts` | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running→interrupted |
+| `src/host/run-manager.ts` | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力 |
 | `src/host/run-events.ts` | HostEvent 类型 + SSE 编码 |
 | `src/host/workspace.ts` | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM） |
 | `src/host/persistence/store.ts` | 薄 RunStore 接口（Session/Run CRUD + Event append/list） |
-| `src/host/persistence/sqlite-store.ts` | 原生 `node:sqlite` 实现；默认 `~/.payaso/payaso.db` |
+| `src/host/persistence/sqlite-store.ts` | 原生 `node:sqlite` 实现；默认 `REPO_ROOT/.data/payaso.db`（`PAYASO_DB_PATH` 可覆盖，失败回退 `:memory:`） |
 | `src/host/index.ts` | Host 启动入口（PORT 可覆盖，默认 4500） |
 
 ### 3.2 Web 前端
 
 ```
 web/src/
-├── main.tsx / App.tsx      React 入口 + 三栏布局 + 全局状态
-├── api.ts                  fetch 封装 + SSE EventSource
+├── main.tsx / App.tsx      React 入口 + 布局 + 全局状态
+├── api.ts                  fetch 封装（含 settings/模型配置）+ SSE EventSource
 ├── hooks/useEventStream.ts SSE 连接/重连/按 seq 去重
-├── types.ts                HostSession / HostRun / HostEvent / FileEntry
+├── types.ts                HostSession / HostRun / HostEvent / ModelProviderView / FileEntry
 ├── format.ts               时间/大小格式化
-└── components/             Sidebar / Timeline(思考/工具卡片) / RunHeader
-                            / InputBar / ShellBar / SummaryDrawer / FileModal ...
+└── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片)
+                            / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal / FileModal
 ```
 
 ### 3.3 文档契约：工具清单与 Trace 事件清单
@@ -142,8 +142,8 @@ web/src/
 ```
 for (i = startIter .. MAX_ITERATIONS=10):
   ├─ 0.    注入 Scratchpad 到 system（messages[0]）
-  ├─ 0.5   ContextManager.process() → 按轮裁剪（上限 4000 字符估算）
-  ├─ 1.    chat(messages, getSchemas(), onStreamDelta)
+  ├─ 0.5   ContextManager.process() → 按 Run 模型预算裁剪
+  ├─ 1.    chat(messages, getSchemas(), onStreamDelta, modelConfig?)
   │         ├─ SSE delta → Host 批量持久化 → Web 增量显示
   │         └─ 完整组装 assistant/tool_calls 后才进入 Loop
   │         └─ 无 tool_calls → stripThink → final_answer → status=completed
@@ -156,7 +156,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
               └─ throw   → non_idempotent markUncertain / 其余 recordFailure+重试
 ```
 
-常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）。上下文预算由 `model-context.ts` 按模型能力解析：环境变量优先，其次内置模型表，最后保守 fallback。
+常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：输入参数 > 内置模型表 > 保守 fallback；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
 
 ### 4.2 三层状态职责
 
@@ -173,6 +173,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 - **Operation Identity (v1.5)**：`toolName::canonicalKey`；`canonicalPathKey` 把 `./work/a.txt` 与 `work/a.txt` 归一为同一 key，且不暴露宿主绝对路径。
 - **Sandbox 两层校验**：字符串级（禁 `..`/绝对路径/盘符）+ realpath 级（禁 symlink 逃逸、根不是 symlink、悬空链接拒绝）。
 - **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1`，不延长预算；workspace 沿用不清理。
+- **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力（`tests/model-binding.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
 
 ---
 
@@ -211,8 +212,11 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET | `/runs/:id/files` | 工作区文件树（深度≤6，数量≤500） |
 | GET | `/runs/:id/files/*` | 读取工作区内文件（≤1MB） |
 | GET | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器 |
+| GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id` | 模型提供方 CRUD（内置 + 自定义，密钥只回脱敏值） |
+| GET/POST | `/settings`，`/settings/default` | 默认模型查询 / 设置（providerId + modelId 成对校验） |
+| POST | `/settings/available-models` | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端） |
 
-SSE 事件 = Runtime Trace 16 类 + Host 生命周期 5 类 + `assistant_delta / reasoning_delta`。delta 在 Host 约 60ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
+SSE 事件 = Runtime Trace 16 类 + Host 生命周期 5 类 + `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
 
 ---
 
@@ -256,7 +260,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 15 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序） | `npm run test:all` | **15/15 PASS** |
+| 确定性 18 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序、Run 模型绑定） | `npm run test:all` | 18 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |
@@ -265,7 +269,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 ## 10. 明确非目标（当前不做）
 
-- 多模型/多 Provider 路由、缓存、降级（LLM 层仅实现单 Provider 的有限重试）
+- 模型能力缓存、跨 Provider 自动降级/故障转移（多 Provider 手动选择与 Run 级模型绑定已支持，见 §4.3；LLM 层仍仅做单请求有限重试）
 - 工具执行超时（除 shell 的 10s）：无 AbortController 包装
 - 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排（单个 Run 的 `MAX_ITERATIONS=10` 仍为硬预算）
 - checkpoint 生命周期清理（Trace/Host Event 已由 SQLite 持久化）

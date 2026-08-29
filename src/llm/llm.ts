@@ -5,7 +5,6 @@ import { resolveModelContextConfig } from "../runtime/model-context.js";
 const BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const API_KEY = process.env.OPENAI_API_KEY || "";
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const MODEL_CONTEXT = resolveModelContextConfig();
 const MAX_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 100;
 const MAX_ERROR_BODY_CHARS = 2_000;
@@ -349,10 +348,13 @@ export async function chat(
   const resolvedBaseUrl = endpoint.baseUrl;
   const resolvedApiKey = endpoint.apiKey;
   const resolvedModel = endpoint.model;
+  // max_tokens 必须来自当前实际请求的模型（Run snapshot 或环境 fallback），
+  // 逐请求解析；禁止模块加载时按环境模型冻结能力。
+  const modelContext = resolveModelContextConfig({ model: resolvedModel });
   const body: Record<string, unknown> = {
     model: resolvedModel,
     messages,
-    max_tokens: MODEL_CONTEXT.maxOutputTokens,
+    max_tokens: modelContext.maxOutputTokens,
     stream: process.env.LLM_STREAMING !== "0",
   };
   if (tools?.length) body.tools = tools;

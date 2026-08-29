@@ -217,6 +217,33 @@ try {
     assert.equal(requests[0].authorization, "Bearer sk-provider-key");
     assert.equal(requests[0].model, "model-from-provider");
   });
+  await test("max_tokens follows the requested run model, not the env model (Case 2/3)", async () => {
+    const originalModel = process.env.OPENAI_MODEL;
+    process.env.OPENAI_MODEL = "gpt-4o-mini"; // 环境模型 ≠ Run 模型
+    const bodies: Array<{ model: unknown; max_tokens: unknown }> = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as { model: unknown; max_tokens: unknown });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    };
+    try {
+      // 显式 modelConfig：能力必须来自该模型（MiniMax-M3 注册表：16384）
+      await chat([{ role: "user", content: "hello" }], undefined, undefined, {
+        baseUrl: "https://provider.example/v1",
+        apiKey: "sk-run",
+        model: "MiniMax-M3",
+      });
+      // 无 modelConfig：环境 fallback 路径保持原语义（CLI 兼容）
+      await chat([{ role: "user", content: "hello" }]);
+    } finally {
+      if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+      else process.env.OPENAI_MODEL = originalModel;
+    }
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0].model, "MiniMax-M3");
+    assert.equal(bodies[0].max_tokens, 16_384);
+    assert.equal(bodies[1].model, "gpt-4o-mini");
+    assert.equal(bodies[1].max_tokens, 4_096);
+  });
 } finally {
   globalThis.fetch = originalFetch;
 }
