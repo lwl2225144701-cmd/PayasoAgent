@@ -61,11 +61,23 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
 // ---- 测试开始 ----
 
 (async () => {
-  // 1. 默认内置列表
+  // 1. 默认列表：未配置密钥的内置模板不显示（必须显示已配置的才有意义）
   let list = await getJSON(`${base}/settings/models`);
-  check("GET default builtins", Array.isArray(list.models) && list.models.length === 3);
-  check("default builtin kind", list.models.every((m: any) => m.kind === "builtin"));
-  check("default builtin status", list.models.every((m: any) => m.status === "unconfigured"));
+  check("GET default empty (builtin unconfigured hidden)", Array.isArray(list.models) && list.models.length === 0);
+
+  // 1b. 内置模板入口：templateId 命中未配置内置时补齐配置（不新建记录）
+  let tplAdded = await postJSON(`${base}/settings/models`, {
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    apiKey: "sk-template-1234",
+    models: ["deepseek-chat"],
+    templateId: "deepseek-chat",
+  }, 201);
+  check("template add keeps builtin id", tplAdded.id === "deepseek-chat");
+  check("template add keeps builtin kind", tplAdded.kind === "builtin");
+  check("template add has key", tplAdded.hasApiKey === true && tplAdded.apiKeyMasked === "****1234");
+  let afterTpl = await getJSON(`${base}/settings/models`);
+  check("template add visible in list", afterTpl.models.some((m: any) => m.id === "deepseek-chat" && m.hasApiKey === true));
 
   // 2. 创建 provider
   let created = await postJSON(`${base}/settings/models`, {
@@ -164,7 +176,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
   check("DELETE bad id 400", badIdDel.message === "invalid_model_id");
 
   // 13. 内置 provider 不可删除（返回 404）
-  let builtin = list.models[0];
+  let builtin = list.models.find((m: any) => m.kind === "builtin") ?? { id: "deepseek-chat" };
   let delBuiltinStatus = await (await fetch(`${base}/settings/models/${builtin.id}`, { method: "DELETE" })).status;
   check("DELETE builtin rejected", delBuiltinStatus === 404);
 
@@ -176,10 +188,10 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
   let afterDel = await getJSON(`${base}/settings/models/${created.id}`, 404);
   check("GET after delete 404", afterDel.error === "not_found");
 
-  // 16. 列表最终 3 个内置 + 1 个自定义 Dedup
+  // 16. 列表最终：已配置内置 DeepSeek + 1 个自定义 Dedup（未配置内置隐藏）
   let finalList = await getJSON(`${base}/settings/models`);
-  check("final list count", finalList.models.length === 4);
-  check("final list builtin count", finalList.models.filter((m: any) => m.kind === "builtin").length === 3);
+  check("final list count", finalList.models.length === 2);
+  check("final list builtin count", finalList.models.filter((m: any) => m.kind === "builtin").length === 1);
 
   // 17. 设置默认模型：校验矩阵（未知 404 / 空 400 / 未配置密钥 400）
   let unknownDefault = await postJSON(`${base}/settings/default`, { providerId: "not-exist", model: "m" }, 404);
@@ -188,7 +200,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
   let emptyDefault = await postJSON(`${base}/settings/default`, { providerId: "   " }, 400);
   check("default empty providerId 400", emptyDefault.message === "providerId is required");
 
-  let unconfiguredDefault = await postJSON(`${base}/settings/default`, { providerId: "deepseek-chat", model: "deepseek-chat" }, 400);
+  let unconfiguredDefault = await postJSON(`${base}/settings/default`, { providerId: "openai-gpt4o", model: "gpt-4o" }, 400);
   check("default unconfigured builtin 400", unconfiguredDefault.message === "Provider has no API key configured");
 
   // 18. 默认模型成对保存（providerId + modelId）+ model 目录校验
@@ -242,7 +254,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
 
     // 幂等：导入过一次后不再重复（即使传入不同配置）
     const again = store.importEnvFallback({ baseUrl: "https://api.other.com/v1", apiKey: "sk-another", model: "other-model" });
-    check("env import is once-only", again === null && store.listViews().length === 4);
+    check("env import is once-only", again === null && store.listViews().length === 1);
   }
 
   // 22. 环境配置导入：baseUrl 匹配已有 provider 时填进该 provider（不新建）
@@ -307,7 +319,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
       check("available-models via providerId", JSON.stringify(viaProvider.models) === JSON.stringify(["touch-max", "touch-pro"]));
 
       // 未配置密钥的 provider 且不传 apiKey → 400；缺 baseUrl → 400
-      let noKey = await postJSON(`${base}/settings/available-models`, { baseUrl: "https://api.deepseek.com", providerId: "deepseek-chat" }, 400);
+      let noKey = await postJSON(`${base}/settings/available-models`, { baseUrl: "https://api.stepfun.com/v1", providerId: "stepfun-step" }, 400);
       check("available-models without key 400", noKey.message === "no API key available for this provider");
       let noUrl = await postJSON(`${base}/settings/available-models`, { providerId: touch.id }, 400);
       check("available-models without baseUrl 400", noUrl.message === "baseUrl is required");

@@ -17,6 +17,7 @@ import {
   DatabaseIcon,
   SlidersIcon,
   UserIcon,
+  ChevronDownIcon,
 } from '../icons';
 import { Modal } from '../Modal';
 import styles from './SettingsModal.module.css';
@@ -45,7 +46,15 @@ interface FormState {
   hadApiKey: boolean;
   tags: ModelTag[];
   newTag: string;
+  templateId?: string;
 }
+
+// 内置模板："添加提供方"入口预填的 Provider，与后端 DEFAULT_MODELS 对齐
+const TEMPLATES: Array<{ id: string; name: string; baseUrl: string; model: string; models: string[] }> = [
+  { id: 'deepseek-chat', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  { id: 'openai-gpt4o', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', models: ['gpt-4o', 'gpt-4o-mini', 'o1-preview', 'o1-mini'] },
+  { id: 'stepfun-step', name: 'StepFun', baseUrl: 'https://api.stepfun.com/v1', model: 'step-2-16k', models: ['step-2-16k', 'step-1-8k'] },
+];
 
 function statusLabel(status: ModelProviderView['status']): string {
   switch (status) {
@@ -83,6 +92,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -113,16 +123,23 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
     }
   }, [open]);
 
-  const startAdd = (isBuiltin: boolean) => {
-    if (isBuiltin) {
-      setForm({
-        ...EMPTY_FORM,
-        name: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com',
-        tags: [{ id: 'default', value: 'deepseek-chat' }],
-        hadApiKey: false,
-      });
-      setFormMode('builtin-add');
+  const startAdd = (templateId?: string) => {
+    if (templateId) {
+      const tpl = TEMPLATES.find(t => t.id === templateId);
+      if (tpl) {
+        setForm({
+          ...EMPTY_FORM,
+          name: tpl.name,
+          baseUrl: tpl.baseUrl,
+          tags: tpl.models.map((value, idx) => ({ id: `${tpl.id}-${idx}`, value })),
+          hadApiKey: false,
+          templateId: tpl.id,
+        });
+        setFormMode('builtin-add');
+      } else {
+        setForm({ ...EMPTY_FORM, tags: [] });
+        setFormMode('add');
+      }
     } else {
       setForm({ ...EMPTY_FORM, tags: [] });
       setFormMode('add');
@@ -177,6 +194,9 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
         };
         if (form.apiKey) {
           input.apiKey = form.apiKey;
+        }
+        if (formMode === 'builtin-add' && form.templateId) {
+          input.templateId = form.templateId;
         }
         await createModel(input);
       } else if (formMode === 'edit' && form.id) {
@@ -437,14 +457,42 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
     return (
       <div className={styles.modelsTab}>
         <div className={styles.toolbar}>
-          <button type="button" className={styles.primaryButton} onClick={() => startAdd(true)}>
-            <PlusIcon size={14} />
-            <span>添加提供方</span>
-          </button>
+          <div className={styles.templateMenu}>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={() => setTemplateMenuOpen(v => !v)}
+              aria-haspopup="menu"
+              aria-expanded={templateMenuOpen}
+            >
+              <PlusIcon size={14} />
+              <span>添加提供方</span>
+              <ChevronDownIcon size={13} />
+            </button>
+            {templateMenuOpen && (
+              <div className={styles.templateMenuList} role="menu">
+                {TEMPLATES.map(tpl => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    className={styles.templateMenuItem}
+                    role="menuitem"
+                    onClick={() => {
+                      setTemplateMenuOpen(false);
+                      startAdd(tpl.id);
+                    }}
+                  >
+                    <span className={styles.templateMenuName}>{tpl.name}</span>
+                    <span className={styles.templateMenuModel}>{tpl.model}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             type="button"
             className={styles.secondaryButton}
-            onClick={() => startAdd(false)}
+            onClick={() => startAdd()}
           >
             <PlusIcon size={14} />
             <span>添加自定义提供方</span>

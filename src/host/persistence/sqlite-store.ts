@@ -500,8 +500,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   getModelProvider(id: string): ModelProviderView | null {
-    const provider = this.settings.getModel(id);
-    return provider ? this.settings.listViews().find(p => p.id === id) ?? null : null;
+    return this.settings.getModelView(id);
   }
 
   getModelProviderSecret(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {

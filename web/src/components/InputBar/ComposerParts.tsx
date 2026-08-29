@@ -66,12 +66,12 @@ function PermissionButton() {
   );
 }
 
-// 下拉按 provider × model 展平：每个可选条目是一个具体的 (provider, model) 组合。
-// 只列出已配置密钥且有模型的 provider——未配置的选项选中后也会被后端回退，展示即误导。
-function buildModelOptions(models: ModelProviderView[]): Array<{ providerId: string; providerName: string; model: string }> {
+// 下拉按 Provider 分组：组标题 = Provider 名，组内是其模型目录。
+// 只展示已配置密钥且有模型的 provider——未配置的选项选中后也会被后端回退，展示即误导。
+function buildModelGroups(models: ModelProviderView[]): Array<{ providerId: string; providerName: string; models: string[] }> {
   return models
     .filter(p => p.hasApiKey && p.models.length > 0)
-    .flatMap(p => p.models.map(model => ({ providerId: p.id, providerName: p.name, model })));
+    .map(p => ({ providerId: p.id, providerName: p.name, models: p.models }));
 }
 
 function ModelButton({ currentModel, models = [], onSelectModel }: { currentModel?: ModelSelection; models?: ModelProviderView[]; onSelectModel?: (providerId: string, model: string) => void }) {
@@ -90,9 +90,9 @@ function ModelButton({ currentModel, models = [], onSelectModel }: { currentMode
     }
   }, [open]);
 
-  const options = buildModelOptions(models);
-  const isSelected = (option: { providerId: string; model: string }) =>
-    currentModel?.providerId === option.providerId && currentModel?.model === option.model;
+  const groups = buildModelGroups(models);
+  const isSelected = (providerId: string, model: string) =>
+    currentModel?.providerId === providerId && currentModel?.model === model;
   const label = currentModel
     ? (currentModel.model.length > 18 ? `${currentModel.model.slice(0, 16)}…` : currentModel.model)
     : '选择模型';
@@ -113,24 +113,28 @@ function ModelButton({ currentModel, models = [], onSelectModel }: { currentMode
       </button>
       {open && (
         <div className={styles.modelDropdownMenu} role="listbox">
-          {options.length === 0 ? (
+          {groups.length === 0 ? (
             <div className={styles.modelDropdownEmpty}>请先在设置中配置 API 密钥</div>
           ) : (
-            options.map(option => (
-              <button
-                key={`${option.providerId}:${option.model}`}
-                type="button"
-                className={styles.modelDropdownItem}
-                role="option"
-                aria-selected={isSelected(option)}
-                onClick={() => {
-                  onSelectModel?.(option.providerId, option.model);
-                  setOpen(false);
-                }}
-              >
-                <span className={styles.modelDropdownName}>{option.model}</span>
-                <span className={styles.modelDropdownModel}>{option.providerName}</span>
-              </button>
+            groups.map(group => (
+              <div key={group.providerId} className={styles.modelGroup}>
+                <div className={styles.modelGroupTitle}>{group.providerName}</div>
+                {group.models.map(model => (
+                  <button
+                    key={model}
+                    type="button"
+                    className={styles.modelDropdownItem}
+                    role="option"
+                    aria-selected={isSelected(group.providerId, model)}
+                    onClick={() => {
+                      onSelectModel?.(group.providerId, model);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className={styles.modelDropdownName}>{model}</span>
+                  </button>
+                ))}
+              </div>
             ))
           )}
         </div>

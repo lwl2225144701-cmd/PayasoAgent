@@ -27,6 +27,8 @@ export interface CreateModelProviderInput {
   baseUrl: string;
   apiKey?: string | null;
   models: string[];
+  // 内置模板入口：命中同名未配置内置时补齐密钥/目录，而不是创建新记录
+  templateId?: string;
 }
 
 export interface UpdateModelProviderInput {
@@ -79,6 +81,31 @@ const DEFAULT_MODELS: StoredModelProvider[] = [
   },
 ];
 
+// 从 baseUrl 推导 Provider 的展示名：环境导入创建的 Provider 不用模型名命名，
+// 否则目录扩充后（如 MiniMax-M3 + 8 个模型）每个模型都挂着同一个模型名。
+const KNOWN_PROVIDER_NAMES: Record<string, string> = {
+  "api.minimaxi.com": "MiniMax",
+  "api.openai.com": "OpenAI",
+  "api.deepseek.com": "DeepSeek",
+  "api.stepfun.com": "StepFun",
+  "api.moonshot.cn": "Moonshot",
+  "dashscope.aliyuncs.com": "Qwen",
+  "api.zhipuai.cn": "Zhipu",
+  "api.groq.com": "Groq",
+  "api.anthropic.com": "Anthropic",
+};
+
+function deriveProviderName(baseUrl: string): string {
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase().replace(/^www\./, "");
+    if (KNOWN_PROVIDER_NAMES[host]) return KNOWN_PROVIDER_NAMES[host];
+    const main = host.split(".").find(seg => !seg.startsWith("api")) ?? host;
+    return main.charAt(0).toUpperCase() + main.slice(1);
+  } catch {
+    return "Custom Provider";
+  }
+}
+
 function defaultSettings(): AppSettingsBlob {
   return {
     models: JSON.parse(JSON.stringify(DEFAULT_MODELS)) as StoredModelProvider[],
@@ -130,6 +157,13 @@ export class SettingsStore {
     if (!provider || !provider.models.includes(settings.defaultModelId)) {
       settings.defaultModelId = provider?.models[0] ?? "";
     }
+    // 旧库迁移：早期环境导入曾用模型名命名自定义 Provider（name === models[0]），
+    // 目录扩充后（models.length > 1）名字会与模型混在一起，按 baseUrl 重命名为通用名。
+    for (const p of settings.models) {
+      if (p.kind === "custom" && p.models.length > 1 && p.name === p.models[0]) {
+        p.name = deriveProviderName(p.baseUrl);
+      }
+    }
     return settings;
   }
 
@@ -179,8 +213,12 @@ export class SettingsStore {
     };
   }
 
+  // 列表只暴露"可用的"Provider：自定义始终显示（用户可见可编辑），
+  // 内置仅当已配置密钥时显示 —— 未配置的内置模板不出现在列表里。
   listViews(): ModelProviderView[] {
-    return this.getAllModels().map(p => this.toView(p));
+    return this.getAllModels()
+      .filter(p => p.kind === "custom" || Boolean(p.apiKey))
+      .map(p => this.toView(p));
   }
 
   getDefaultProviderId(): string {
@@ -240,7 +278,9 @@ export class SettingsStore {
       const provider: StoredModelProvider = {
         id: crypto.randomUUID(),
         kind: "custom",
-        name: model,
+        // 用从 baseUrl 推导的通用名（如 api.minimaxi.com → MiniMax），
+        // 避免 provider 名等于模型名、目录扩充后每项重复标注。
+        name: deriveProviderName(baseUrl),
         baseUrl,
         apiKey,
         models: [model],
@@ -264,6 +304,21 @@ export class SettingsStore {
     this.validateUrl(baseUrl);
     if (models.length === 0) throw new Error("models is required");
 
+    const settings = this.readSettings();
+
+    // 内置模板入口：命中未配置的同 ID 内置时直接补齐配置（不新建记录，
+    // 避免与隐藏的内置模板重名冲突）。
+    if (input.templateId) {
+      const builtin = settings.models.find(m => m.id === input.templateId && m.kind === "builtin");
+      if (builtin) {
+        if (apiKey) builtin.apiKey = apiKey;
+        builtin.baseUrl = baseUrl;
+        builtin.models = this.normalizeModels([...builtin.models, ...models]);
+        this.writeSettings(settings);
+        return this.toView(builtin);
+      }
+    }
+
     const id = crypto.randomUUID();
     const provider: StoredModelProvider = {
       id,
@@ -274,7 +329,6 @@ export class SettingsStore {
       models,
     };
 
-    const settings = this.readSettings();
     if (settings.models.some(m => m.name.toLowerCase() === name.toLowerCase() || m.baseUrl.toLowerCase() === baseUrl.toLowerCase())) {
       throw new Error("Provider with same name or baseUrl already exists");
     }
@@ -356,6 +410,13 @@ export class SettingsStore {
     settings.models = next;
     this.writeSettings(settings);
     return true;
+  }
+
+  // 任意存在的 Provider 视图（包括未配置的内置模板）——用于编辑/默认校验，
+  // 与 listViews（只暴露可见列表）语义不同。
+  getModelView(id: string): ModelProviderView | null {
+    const provider = this.getModel(id);
+    return provider ? this.toView(provider) : null;
   }
 
   getModel(id: string): StoredModelProvider | null {
