@@ -1,6 +1,7 @@
 // 前端类型定义 — 对齐后端 HostEvent / HostRun / FileEntry
 
-export type HostRunStatus = "running" | "completed" | "failed" | "stopped" | "interrupted";
+// stopping（v1.6）：用户已请求停止（abort 已发出），执行尚未真正退出
+export type HostRunStatus = "running" | "stopping" | "completed" | "failed" | "stopped" | "interrupted";
 
 export interface HostRun {
   runId: string;
@@ -202,6 +203,13 @@ export interface RunStartedEvent {
   timestamp: string;
 }
 
+// 用户已请求停止（run_stopping）；执行真正退出后才会收到 run_stopped
+export interface RunStoppingEvent {
+  type: "run_stopping";
+  runId: string;
+  timestamp: string;
+}
+
 export interface RunCompletedEvent {
   type: "run_completed";
   runId: string;
@@ -257,6 +265,7 @@ export type TraceEvent =
 
 export type LifecycleEvent =
   | RunStartedEvent
+  | RunStoppingEvent
   | RunCompletedEvent
   | RunFailedEvent
   | RunStoppedEvent

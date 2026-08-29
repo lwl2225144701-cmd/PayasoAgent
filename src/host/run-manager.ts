@@ -10,6 +10,7 @@ import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js"
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
 import type { RunStore, StoredRun, StoredRunStatus, StoredSession, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
+import { isAbortError } from "../util/abort.js";
 import fs from "node:fs";
 
 export type HostRunStatus = StoredRunStatus;
@@ -50,6 +51,9 @@ interface InternalRun extends HostRun {
   workspaceRoot: string;
   providerId?: string;
   baseUrl?: string;
+  // True cancellation (v1.6)：每个活跃 Run 独立的 AbortController；
+  // startAgent 时创建，stop() 触发 abort，Run 真正退出后由 Host 落 stopped。
+  abortController?: AbortController;
 }
 
 export interface SseSink {
@@ -60,6 +64,11 @@ export interface SseSink {
 
 const INTERRUPTED_ERROR = "Host restarted before the Run completed";
 
+// 可取消状态：running（执行中）/ stopping（已请求停止、abort 已发出、执行未退出）
+function isCancellable(status: HostRunStatus): boolean {
+  return status === "running" || status === "stopping";
+}
+
 export class RunManager {
   private runs = new Map<string, InternalRun>();
   private subscribers = new Map<string, Set<SseSink>>();
@@ -69,7 +78,7 @@ export class RunManager {
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
     const now = new Date().toISOString();
     for (const run of this.store.listRuns()) {
-      if (run.status !== "running") continue;
+      if (run.status !== "running" && run.status !== "stopping") continue;
       const interrupted: StoredRun = {
         ...run,
         status: "interrupted",
@@ -106,7 +115,7 @@ export class RunManager {
     if (requestedSessionId) {
       const persisted = this.store.getSession(requestedSessionId);
       if (!persisted) throw new Error("Session not found");
-      if (this.store.listRunsBySession(requestedSessionId).some((item) => item.status === "running")) {
+      if (this.store.listRunsBySession(requestedSessionId).some((item) => isCancellable(item.status))) {
         throw new Error("Session already has a running Run");
       }
       session = { ...persisted, updatedAt: now };
@@ -160,7 +169,8 @@ export class RunManager {
   }
 
   resume(runId: string): boolean {
-    if (this.runs.get(runId)?.status === "running") return false;
+    const active = this.runs.get(runId);
+    if (active && isCancellable(active.status)) return false;
     const persisted = this.store.getRun(runId);
     const checkpoint = loadCheckpoint(runId);
     if (!persisted || !checkpoint) return false;
@@ -214,12 +224,12 @@ export class RunManager {
     const workspaceRoot = session.workspaceRoot;
 
     for (const run of this.runs.values()) {
-      if (run.status === "running" && run.workspaceRoot === workspaceRoot) {
+      if (isCancellable(run.status) && run.workspaceRoot === workspaceRoot) {
         throw new Error("Workspace has a running Run");
       }
     }
     const runningInStore = this.store.listRuns({ includeDeleted: true }).some(
-      (r) => r.workspaceRoot === workspaceRoot && r.status === "running"
+      (r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status)
     );
     if (runningInStore) throw new Error("Workspace has a running Run");
 
@@ -264,7 +274,7 @@ export class RunManager {
     }
 
     const hasRunning = this.store.listRuns({ includeDeleted: true }).some(
-      (r) => r.workspaceRoot === workspaceRoot && r.status === "running"
+      (r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status)
     );
     if (hasRunning) throw new Error("Workspace has a running Run");
 
@@ -301,7 +311,7 @@ export class RunManager {
     if (session.deletedAt) throw new Error("Session already archived");
 
     const hasRunning = [...this.runs.values()].some(
-      (r) => r.sessionId === sessionId && r.status === "running"
+      (r) => r.sessionId === sessionId && isCancellable(r.status)
     );
     if (hasRunning) throw new Error("Session has a running Run");
 
@@ -326,7 +336,7 @@ export class RunManager {
     if (!session.deletedAt) throw new Error("Session has not been archived");
 
     const hasRunning = this.store.listRuns({ includeDeleted: true }).some(
-      (r) => r.sessionId === sessionId && r.status === "running"
+      (r) => r.sessionId === sessionId && isCancellable(r.status)
     );
     if (hasRunning) throw new Error("Session has a running Run");
 
@@ -368,6 +378,12 @@ export class RunManager {
     return errors;
   }
 
+  // True cancellation（v1.6）状态机：
+  //   running  -> stopping（持久化 + run_stopping 事件 + abort signal）
+  //   stopping -> no-op（幂等）
+  //   终态     -> no-op
+  // 此时不立刻置 stopped —— 等 Runtime（LLM/tool/shell）真正退出后，
+  // startAgent 的结束路径才 finish(run, "stopped")。
   stop(runId: string): boolean {
     const run = this.runs.get(runId);
     if (!run) {
@@ -375,13 +391,37 @@ export class RunManager {
       return stored !== null && !this.isSessionDeleted(stored.sessionId);
     }
     if (this.isSessionDeleted(run.sessionId)) return false;
-    if (run.status !== "running") {
-      run.cancelled = true;
-      return true;
-    }
+    // legacy fallback flag：主机制是 abortController.abort()；
+    // 覆盖「abort 之后 agent 才 resolve」的完成竞态判定。
     run.cancelled = true;
-    this.finish(run, "stopped");
+    if (run.status === "running") {
+      if (run.abortController) {
+        this.markStopping(run);
+      } else {
+        // 占位 Run（persist 先于执行的窗口 / startAgent:false）：没有在途执行可等待，
+        // 直接落 stopped（这同时让工作区/会话清理守卫不再被其阻塞）。
+        this.finish(run, "stopped");
+      }
+    }
     return true;
+  }
+
+  private markStopping(run: InternalRun): void {
+    if (run.status !== "running") return;
+    run.status = "stopping";
+    run.updatedAt = new Date().toISOString();
+    this.persistRunSafely(run);
+    this.record(run, { type: "run_stopping", runId: run.runId, timestamp: run.updatedAt });
+    run.abortController?.abort();
+  }
+
+  private finish(run: InternalRun, status: "stopped"): void {
+    // 允许从 running（同步 stop 竞态）或 stopping（真正的取消完成路径）进入
+    if (run.status !== "running" && run.status !== "stopping") return;
+    run.status = status;
+    run.updatedAt = new Date().toISOString();
+    this.persistRunSafely(run);
+    this.record(run, { type: "run_stopped", runId: run.runId, timestamp: run.updatedAt });
   }
 
   list(): HostRun[] {
@@ -498,6 +538,10 @@ export class RunManager {
       if (!deltaTimer) deltaTimer = setTimeout(flushDelta, 16);
     };
 
+    // True cancellation (v1.6)：每次执行一个独立 AbortController（resume 也一样）。
+    const abortController = new AbortController();
+    run.abortController = abortController;
+
     // Run 已经持久化为 running，任何启动失败都必须落为 failed + run_failed，
     // 不允许同步 throw 留下永远 running 的僵尸 Run（模型解析失败也走同一条路）。
     void (async () => {
@@ -514,15 +558,16 @@ export class RunManager {
           workspaceRoot: run.workspaceRoot,
           conversationHistory,
           modelConfig,
+          signal: abortController.signal,
           onStreamDelta: queueDelta,
           onTrace: (event) => {
             flushDelta();
             this.record(run, event);
           },
-          isCancelled: () => run.cancelled,
         });
         flushDelta();
-        if (run.cancelled) {
+        // stop() 之后 agent 才正常 resolve 的竞态：用户意图是停止 → stopped
+        if (run.cancelled || abortController.signal.aborted) {
           this.finish(run, "stopped");
           return;
         }
@@ -539,7 +584,9 @@ export class RunManager {
         });
       } catch (err) {
         flushDelta();
-        if (run.cancelled) {
+        // 用户主动取消（signal 已 abort）→ stopped，绝不算 failed；
+        // 其余 AbortError（非本 Run 的 signal）仍按失败处理。
+        if (run.cancelled || (abortController.signal.aborted && isAbortError(err))) {
           this.finish(run, "stopped");
           return;
         }
@@ -559,14 +606,6 @@ export class RunManager {
       timestamp: run.updatedAt,
       error: message,
     });
-  }
-
-  private finish(run: InternalRun, status: "stopped"): void {
-    if (run.status !== "running") return;
-    run.status = status;
-    run.updatedAt = new Date().toISOString();
-    this.persistRunSafely(run);
-    this.record(run, { type: "run_stopped", runId: run.runId, timestamp: run.updatedAt });
   }
 
   // Persistence precedes SSE. If local storage fails, do not broadcast an

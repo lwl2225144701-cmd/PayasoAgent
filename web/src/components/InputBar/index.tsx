@@ -8,6 +8,8 @@ interface InputBarProps {
   onSend: (text: string) => void;
   onStop?: () => void;
   isRunning?: boolean;
+  // v1.6 True cancellation：停止请求已发出、执行尚未真正退出；停止按钮禁用
+  isStopping?: boolean;
   disabled?: boolean;
   placeholder?: string;
   variant?: 'compact' | 'hero';
@@ -23,6 +25,7 @@ export function InputBar({
   onSend,
   onStop,
   isRunning,
+  isStopping,
   disabled,
   placeholder = '发消息或做任务... / 调用指令 @ 文件或对话',
   variant = 'compact',
@@ -116,6 +119,7 @@ export function InputBar({
           variant="conversation"
           canSend={canSend}
           isRunning={isRunning}
+          isStopping={isStopping}
           onSend={handleSend}
           onStop={onStop}
           currentModel={currentModel}

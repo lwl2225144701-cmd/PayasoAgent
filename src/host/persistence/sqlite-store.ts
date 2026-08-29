@@ -140,7 +140,7 @@ export class SqliteRunStore implements RunStore {
             session_id TEXT NOT NULL,
             turn_index INTEGER NOT NULL,
             task TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'stopped', 'interrupted')),
+            status TEXT NOT NULL CHECK (status IN ('running', 'stopping', 'completed', 'failed', 'stopped', 'interrupted')),
             workspace_root TEXT NOT NULL,
             workspace_name TEXT NOT NULL,
             created_at TEXT NOT NULL,
@@ -170,6 +170,7 @@ export class SqliteRunStore implements RunStore {
         `);
         this.migrateDeletedAt();
         this.migrateLegacyRuns();
+        this.migrateStoppingStatus();
         this.db.exec(`
           CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
@@ -253,6 +254,51 @@ export class SqliteRunStore implements RunStore {
         .run(sessionId, title, row.workspace_root, row.workspace_name, row.created_at, row.updated_at);
       this.db.prepare("UPDATE runs SET session_id = ?, turn_index = ? WHERE run_id = ?").run(sessionId, 1, row.run_id);
     }
+  }
+
+  // v1.6 True Cancellation：status CHECK 约束加入 'stopping'。
+  // SQLite 无法 ALTER CHECK —— 检测旧 DDL 后整表重建（保留全部行与 events 外键）。
+  private migrateStoppingStatus(): void {
+    const table = this.db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'"
+    ).get() as { sql?: string } | undefined;
+    if (!table?.sql || table.sql.includes("'stopping'")) return;
+
+    this.db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE runs_new (
+        run_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        turn_index INTEGER NOT NULL,
+        task TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running', 'stopping', 'completed', 'failed', 'stopped', 'interrupted')),
+        workspace_root TEXT NOT NULL,
+        workspace_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        result TEXT,
+        error TEXT,
+        deleted_at TEXT,
+        model TEXT,
+        provider_id TEXT,
+        base_url TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id),
+        UNIQUE (session_id, turn_index)
+      );
+      INSERT INTO runs_new (
+        run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
+        created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+      )
+      SELECT
+        run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
+        created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+      FROM runs;
+      DROP TABLE runs;
+      ALTER TABLE runs_new RENAME TO runs;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
   }
 
   private deletedFilter(opts?: { includeDeleted?: boolean }): string {

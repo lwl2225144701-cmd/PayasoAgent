@@ -102,6 +102,69 @@ test("legacy Run-only database is migrated one Run per Session", () => {
   migrated.close();
 });
 
+test("pre-v1.6 runs table CHECK (no 'stopping') is rebuilt and accepts stopping", () => {
+  const dbPath = path.join(root, "old-check.db");
+  const legacy = new DatabaseSync(dbPath);
+  legacy.exec(`
+    CREATE TABLE sessions (
+      session_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      workspace_root TEXT NOT NULL,
+      workspace_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
+    );
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      turn_index INTEGER NOT NULL,
+      task TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'stopped', 'interrupted')),
+      workspace_root TEXT NOT NULL,
+      workspace_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      deleted_at TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(session_id),
+      UNIQUE (session_id, turn_index)
+    );
+    CREATE TABLE events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
+      UNIQUE (run_id, seq)
+    );
+    INSERT INTO sessions VALUES ('s-old', 'old session', '${canonicalWorkspace}', 'workspace-A', '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z', NULL);
+    INSERT INTO runs VALUES ('r-old', 's-old', 1, 'old task', 'running', '${canonicalWorkspace}', 'workspace-A', '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z', NULL, NULL, NULL);
+    INSERT INTO events (run_id, seq, type, timestamp, payload) VALUES ('r-old', 1, 'run_started', '2026-08-27T00:00:00.000Z', '{}');
+  `);
+  legacy.close();
+
+  // 旧库打开即触发重建迁移；历史行、事件与外键必须完整保留
+  const store = new SqliteRunStore(dbPath);
+  const old = store.getRun("r-old");
+  assert.equal(old?.status, "running");
+  assert.equal(store.listEvents("r-old").length, 1);
+
+  // 迁移后的 CHECK 允许 stopping（v1.6 状态机），且回读一致
+  store.updateRun({ ...old!, status: "stopping" });
+  assert.equal(store.getRun("r-old")?.status, "stopping");
+  assert.equal(store.listEvents("r-old").length, 1);
+
+  // 重建后再打开仍然稳定（DDL 已是新版，幂等）
+  store.close();
+  const reopened = new SqliteRunStore(dbPath);
+  assert.equal(reopened.getRun("r-old")?.status, "stopping");
+  reopened.close();
+});
+
 test("events retain per-Run sequence and never cross Run boundaries", () => {
   const store = new SqliteRunStore(path.join(root, "events.db"));
   store.createRun(storedRun("run-A"));

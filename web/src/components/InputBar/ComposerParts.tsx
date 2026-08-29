@@ -44,6 +44,8 @@ interface ComposerFooterProps {
   variant: 'hero' | 'conversation';
   canSend: boolean;
   isRunning?: boolean;
+  // v1.6 True cancellation：停止请求已发出，停止按钮禁用
+  isStopping?: boolean;
   onSend: () => void;
   onStop?: () => void;
   currentModel?: ModelSelection;
@@ -143,14 +145,15 @@ function ModelButton({ currentModel, models = [], onSelectModel }: { currentMode
   );
 }
 
-function SubmitButton({ canSend, isRunning, onSend, onStop }: Omit<ComposerFooterProps, 'variant'>) {
+function SubmitButton({ canSend, isRunning, isStopping, onSend, onStop }: Omit<ComposerFooterProps, 'variant'>) {
   return isRunning ? (
     <IconButton
       buttonSize="lg"
       variant="surface"
       shape="circle"
       onClick={onStop}
-      title="停止当前任务"
+      disabled={isStopping}
+      title={isStopping ? '正在停止…' : '停止当前任务'}
     >
       <StopIcon size={16} />
     </IconButton>

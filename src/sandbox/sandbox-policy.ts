@@ -8,6 +8,10 @@ export type SandboxPolicy = {
   workspaceRoot: string;
   readableRoots: string[];
   writableRoots: string[];
+  // v1.6 Network Capability Separation：网络是与文件系统严格分离的独立能力。
+  // fail-closed 默认 false；shell 永远显式 false。未来 Browser/Network 类
+  // capability 由各自的 provider/policy 显式开启，绝不从 shell 继承或由 LLM 参数决定。
+  networkAccess: boolean;
 };
 
 function canonicalizeExisting(input: string): string {
@@ -30,10 +34,15 @@ function isInside(root: string, target: string): boolean {
 /**
  * Create a fail-closed policy. Writable roots must be inside workspaceRoot;
  * readable roots may include explicitly approved system paths.
+ * networkAccess defaults to false (deny) — 安全默认必须是 deny，调用方漏传即拒绝。
  */
 export function createSandboxPolicy(
   workspaceRoot: string,
-  options: { readableRoots?: string[]; writableRoots?: string[] } = {}
+  options: {
+    readableRoots?: string[];
+    writableRoots?: string[];
+    networkAccess?: boolean;
+  } = {}
 ): SandboxPolicy {
   const root = canonicalizeExisting(workspaceRoot);
   const readableRoots = unique([
@@ -50,7 +59,12 @@ export function createSandboxPolicy(
     }
   }
 
-  return { workspaceRoot: root, readableRoots, writableRoots };
+  return {
+    workspaceRoot: root,
+    readableRoots,
+    writableRoots,
+    networkAccess: options.networkAccess ?? false,
+  };
 }
 
 export function canonicalizeSandboxPath(input: string): string {

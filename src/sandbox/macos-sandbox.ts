@@ -5,7 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import {
   createSandboxPolicy,
   canonicalizeSandboxPath,
@@ -93,7 +93,27 @@ export interface MacOSSandboxRunOptions {
   home: string;
   tmpdir: string;
   timeoutMs?: number;
+  // True cancellation (v1.6)：Run 的 AbortSignal；abort 时终止整个进程组并 reject AbortError
+  signal?: AbortSignal;
   onEvent?: (event: MacOSSandboxEvent) => void;
+}
+
+// 终止整个进程组：detached spawn 使 child 成为进程组长（pgid = pid），
+// kill(-pid) 覆盖 sandbox-exec 及其全部子孙（/bin/sh -c 的子命令不会残留）。
+// SIGTERM 给短暂 cleanup 窗口，超时后 SIGKILL 兜底；不引入全局 process manager。
+export function terminateProcessTree(child: ChildProcess, graceMs = 1_000): void {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const signalGroup = (sig: NodeJS.Signals): void => {
+    try {
+      process.kill(-child.pid!, sig);
+    } catch {
+      try { child.kill(sig); } catch { /* already gone */ }
+    }
+  };
+  signalGroup("SIGTERM");
+  const killer = setTimeout(() => signalGroup("SIGKILL"), graceMs);
+  killer.unref?.();
+  child.once("close", () => clearTimeout(killer));
 }
 
 function schemeString(value: string): string {
@@ -144,10 +164,11 @@ function profileFor(policy: SandboxPolicy): string {
     "(allow process-exec)",
     "(allow signal)",
     "(allow sysctl-read)",
-    // Networking is deliberately not redesigned in this phase. Keeping it
-    // allowed preserves the pre-existing shell capability; filesystem access
-    // is still default-deny.
-    "(allow network*)",
+    // Network Capability Separation (v1.6)：文件系统权限 ≠ 网络权限。
+    // deny default 之外再显式 deny/allow network*：deny 在 seatbelt 中优先于
+    // 任何 allow 规则，socket/connect 直接 EPERM。shell 固定 deny —— 未来联网
+    // 能力必须走独立的 Browser/Network provider policy，绝不重新放开 shell。
+    policy.networkAccess ? "(allow network*)" : "(deny network*)",
     // macOS shell selector symlink; target binaries remain covered by /bin.
     '(allow file-read* (literal "/private/var/select/sh"))',
   ];
@@ -202,6 +223,9 @@ export class MacOSSandbox {
     const policy = createSandboxPolicy(workspaceRoot, {
       readableRoots: MACOS_SYSTEM_READ_ROOTS,
       writableRoots: [workspaceRoot],
+      // shell 的网络策略永远显式 false（fail-closed）——不依赖"默认刚好是 deny"，
+      // 也不给调用方留任何隐式放开网络的入口（CLI / Host / Web 同一策略）。
+      networkAccess: false,
     });
     return new MacOSSandbox(policy);
   }
@@ -231,40 +255,90 @@ export class MacOSSandbox {
     const profile = profileFor(this.policy);
 
     return await new Promise<MacOSSandboxResult>((resolve, reject) => {
-      execFile(
+      // detached: child 成为进程组长（pgid = pid），超时/abort 时可整组终止，
+      // 避免 sandbox-exec 被杀后 /bin/sh 的子孙命令继续运行。
+      const child = spawn(
         SANDBOX_EXEC,
         ["-p", profile, SHELL, "-c", command],
-        {
-          cwd,
-          env,
-          timeout,
-          killSignal: "SIGKILL",
-          maxBuffer: MAX_SHELL_OUTPUT * 2,
-        },
-        (err, stdout, stderr) => {
-          const error = err as (Error & { code?: number | string; signal?: NodeJS.Signals; killed?: boolean }) | null;
-          if (error?.code === "ENOENT") {
+        { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      let timedOut = false;
+      let aborted = false;
+
+      const timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        terminateProcessTreeForce(child);
+      }, timeout);
+
+      const onAbort = (): void => {
+        aborted = true;
+        terminateProcessTree(child);
+      };
+      if (options.signal) {
+        if (options.signal.aborted) onAbort();
+        else options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      const settle = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
+        options.signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+
+      child.stdout?.on("data", (chunk: Buffer) => {
+        if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
+      });
+
+      child.on("error", (err) => {
+        settle(() => {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") {
             reject(new Error("macOS OS sandbox launcher unavailable: sandbox-exec"));
+          } else {
+            reject(err);
+          }
+        });
+      });
+
+      child.on("close", (code, signalTerm) => {
+        settle(() => {
+          // abort 后才退出的进程：如果命令已正常跑完（exit 0），按成功处理
+          // （副作用确实发生了，由 Agent 层决定后续）；否则视为被取消。
+          if (aborted && (signalTerm !== null || code !== 0)) {
+            reject(new DOMException("Aborted", "AbortError"));
             return;
           }
-
-          const out = String(stdout ?? "");
-          const errOut = String(stderr ?? "");
-          const exitCode = typeof error?.code === "number" ? error.code : error ? null : 0;
-          const timedOut = !!error?.killed;
-          const denied = exitCode !== 0 && isPermissionDenied(errOut);
+          const denied = code !== 0 && isPermissionDenied(stderr);
           if (denied) options.onEvent?.("denied");
           resolve({
-            exitCode,
-            signal: error?.signal ?? null,
-            stdout: outputLimit(out),
-            stderr: outputLimit(errOut),
+            exitCode: code,
+            signal: signalTerm ?? null,
+            stdout: outputLimit(stdout),
+            stderr: outputLimit(stderr),
             timedOut,
             denied,
           });
-        }
-      );
+        });
+      });
     });
+  }
+}
+
+// 超时路径直接 SIGKILL 整组（与原 execFile killSignal: SIGKILL 语义一致）
+function terminateProcessTreeForce(child: ChildProcess): void {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
   }
 }
 

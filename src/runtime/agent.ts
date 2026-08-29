@@ -18,6 +18,7 @@ import {
   operationIdentity,
   type ExecutedOperation,
 } from "./side-effect.js";
+import { isAbortError, throwIfAborted } from "../util/abort.js";
 import {
   createScratchpad,
   setNextStep,
@@ -56,7 +57,11 @@ export async function runAgent(
     conversationHistory?: ChatMessage[];
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
-    isCancelled?: () => boolean;
+    // True cancellation (v1.6)：Run 的 AbortSignal，是唯一取消机制。
+    // 检查点：迭代边界、每个 tool_call 之前；并传播进 chat()（HTTP/流式）
+    // 与 ToolContext.signal（shell 进程组终止）。Host 在 abort 前负责把
+    // Run 置为 stopping，agent 以 AbortError 退出后由 Host 落 stopped。
+    signal?: AbortSignal;
     modelConfig?: ModelConfig;
   }
 ): Promise<string> {
@@ -117,12 +122,9 @@ export async function runAgent(
 
   try {
     for (let i = startIter; i < MAX_ITERATIONS; i++) {
-      // v1.4 Host stop 支持（受限）：仅在迭代边界检查取消。
-      // 无法打断进行中的单个 LLM await；stop 生效于当前迭代结束、下一轮开始前。
-      // 通过 opts.isCancelled（公开边界）注入，不改 Loop 语义。
-      if (opts?.isCancelled?.()) {
-        throw new Error("[cancelled] run stopped by host");
-      }
+      // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
+      // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
+      throwIfAborted(opts?.signal);
       console.log(`\n--- 迭代 ${i + 1} ---`);
 
       // State: 进入循环，更新迭代次数
@@ -179,7 +181,8 @@ export async function runAgent(
       }
 
       // 1. 调用 LLM 判断下一步
-      const assistantMsg = await chat(messages, schemas, opts?.onStreamDelta, opts?.modelConfig);
+      // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
+      const assistantMsg = await chat(messages, schemas, opts?.onStreamDelta, opts?.modelConfig, opts?.signal);
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;
@@ -235,6 +238,9 @@ export async function runAgent(
 
       // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
       for (const call of assistantMsg.tool_calls) {
+        // True cancellation：工具间检查 —— 前一个工具返回后用户 Stop，
+        // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
+        throwIfAborted(opts?.signal);
         const toolName = call.function.name;
         const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
         // 规范化输入：calculator 用表达式原文；其余工具用规范化 JSON（消除 LLM 序列化空白差异，
@@ -354,6 +360,7 @@ export async function runAgent(
             // ToolContext 由 Runtime 注入：runId/workspaceRoot 均不可见、不可通过 args 覆盖
             const rawResult = await execute(toolName, args, {
               ...toolContext,
+              signal: opts?.signal,
               onSandboxEvent: (event: ToolSandboxEvent) => {
                 if (event.type === "shell_sandbox_started") {
                   printEvent(addEvent(trace, {
@@ -489,6 +496,14 @@ export async function runAgent(
             // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
             if (toolDef?.effect === "non_idempotent") {
               sideEffectGuard.markUncertain(operationIdentity(toolDef, args, toolContext));
+            }
+
+            // True cancellation（v1.6）：abort 是终态 —— 不重试、不写恢复消息、
+            // 不记 failedSteps（uncertain 才是中止时唯一的真实语义）。
+            // checkpoint 保留现场后向上抛出，由 Host 落 stopped。
+            if (isAbortError(err)) {
+              save();
+              throw err;
             }
 
             // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）

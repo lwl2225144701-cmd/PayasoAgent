@@ -155,15 +155,23 @@ test("Run 创建时快照绑定当前 Workspace，之后更换不影响既有 Ru
   }
 });
 
-test("Host stop 记录 run_stopped SSE 终态事件", () => {
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+test("Host stop 状态机：running→stopping→stopped，重复 stop 幂等（Case 2/3）", async () => {
   const originalFetch = globalThis.fetch;
   const originalTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
-  // Keep the run mid-flight (LLM never returns on its own), but make the
-  // request abortable and give it a short budget so the abandoned run-agent
-  // frees its timeout timer instead of keeping the subprocess alive for the
-  // default long request timeout.
-  process.env.LLM_REQUEST_TIMEOUT_MS = "250";
+  // LLM 永不自行返回；abort 时以 AbortError 拒绝（真实取消路径）。
+  // 保留较短超时作为兜底，避免异常路径下子进程被默认长超时拖住。
+  process.env.LLM_REQUEST_TIMEOUT_MS = "2000";
+  const fetchSignals: AbortSignal[] = [];
   globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    if (init?.signal) fetchSignals.push(init.signal);
     init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
   });
   const manager = new RunManager();
@@ -175,9 +183,30 @@ test("Host stop 记录 run_stopped SSE 终态事件", () => {
       end: () => {},
       closed: () => false,
     }), true);
+    await waitFor(() => manager.get(runId)?.status === "running" && fetchSignals.length > 0);
+
     assert.equal(manager.stop(runId), true);
-    assert.equal(manager.get(runId)?.status, "stopped");
+    // Case 2：Stop 点击后必须是 stopping（abort 已发出、执行尚未退出），不能立刻 stopped
+    assert.equal(manager.get(runId)?.status, "stopping");
+    assert.ok(!chunks.some((chunk) => chunk.includes("event: run_stopped")));
+
+    // Runtime 真正退出后才落 stopped
+    await waitFor(() => manager.get(runId)?.status === "stopped");
+    assert.ok(chunks.some((chunk) => chunk.includes("event: run_stopping")));
     assert.ok(chunks.some((chunk) => chunk.includes("event: run_stopped")));
+
+    // Case 3：重复 Stop 幂等 —— 不抛错、不重复终态事件、不出现 completed/failed
+    assert.equal(manager.stop(runId), true);
+    assert.equal(manager.stop(runId), true);
+    assert.equal(chunks.filter((chunk) => chunk.includes("event: run_stopping")).length, 1);
+    assert.equal(chunks.filter((chunk) => chunk.includes("event: run_stopped")).length, 1);
+    assert.equal(
+      chunks.filter((chunk) => chunk.includes("event: run_completed") || chunk.includes("event: run_failed")).length,
+      0,
+    );
+
+    // 取消信号真实到达 fetch（AbortSignal 传播链验证）
+    assert.ok(fetchSignals.length > 0 && fetchSignals.every((s) => s.aborted));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;

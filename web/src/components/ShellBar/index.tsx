@@ -10,6 +10,7 @@ interface ShellBarProps {
 
 const RUN_STATUS_TEXT: Record<HostRun['status'], string | null> = {
   running: '运行中',
+  stopping: '停止中…',
   // Non-running states don't need a persistent pill — the result speaks for itself.
   completed: null,
   failed: null,

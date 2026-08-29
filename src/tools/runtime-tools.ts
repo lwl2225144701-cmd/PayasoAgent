@@ -311,6 +311,7 @@ register({
         cwd: workDir,
         home,
         tmpdir,
+        signal: context.signal,
         onEvent: (event) => {
           if (event === "started") {
             context.onSandboxEvent?.({ type: "shell_sandbox_started", platform: "macos" });

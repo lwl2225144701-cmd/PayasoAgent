@@ -444,6 +444,7 @@ export default function App() {
             onSend={handleCreateRun}
             onStop={handleStopRun}
             isRunning={currentRun.status === 'running'}
+            isStopping={currentRun.status === 'stopping'}
             placeholder="发消息或做任务... / 调用指令 @ 文件或对话"
             disabled={currentRun.status === 'running'}
             currentModel={currentModelSelection ?? undefined}

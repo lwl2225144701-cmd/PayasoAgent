@@ -7,7 +7,7 @@
 > - `v1.0-design.md` + `architecture-v1.0.svg` —— v1.0 设计稿（已过时，仅存历史）
 > - `.trae/documents/minimal-web-ui_plan.md` —— Web UI 实现方案（已按此落地）
 >
-> **版本锚点**：`CURRENT_VERSION = v1.6 + 多 Provider 模型配置 + Run 模型绑定 Context Budget`。
+> **版本锚点**：`CURRENT_VERSION = v1.6 + 多 Provider 模型配置 + Run 模型绑定 Context Budget + True Cancellation + Shell Network Isolation`。
 
 ---
 
@@ -94,7 +94,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tools/runtime-tools.ts` | searchText / createDir / moveFile / deleteFile / shell |
 | `src/sandbox/sandbox-manager.ts` | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace |
 | `src/sandbox/macos-sandbox.ts` | macOS `sandbox-exec` 启动器（timeout 10s、输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门） |
-| `src/sandbox/sandbox-policy.ts` | seatbelt 策略生成（default-deny + 白名单） |
+| `src/sandbox/sandbox-policy.ts` | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false） |
 | `src/host/server.ts` | node:http 服务器 + 统一错误兜底 |
 | `src/host/routes.ts` | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback |
 | `src/host/run-manager.ts` | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力 |
@@ -174,6 +174,8 @@ for (i = startIter .. MAX_ITERATIONS=10):
 - **Sandbox 两层校验**：字符串级（禁 `..`/绝对路径/盘符）+ realpath 级（禁 symlink 逃逸、根不是 symlink、悬空链接拒绝）。
 - **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1`，不延长预算；workspace 沿用不清理。
 - **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力（`tests/model-binding.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
+- **True Cancellation（v1.6）**：AbortSignal 是唯一取消机制，传播链 Host AbortController → runAgent（迭代边界 + tool_call 间检查）→ chat（HTTP/流式）→ ToolContext.signal → shell 进程组终止（detached spawn + SIGTERM→SIGKILL）。状态机 running→stopping（abort 已发出）→stopped（执行真正退出）；重复 stop 幂等。non_idempotent 工具被 abort 打断时保持 uncertain 语义（`tests/cancellation.test.ts` 锁定）。
+- **Shell Network Isolation（v1.6）**：文件系统能力 ≠ 网络能力。profile 在 deny default 之外按 `SandboxPolicy.networkAccess` 显式 `(deny network*)`/`(allow network*)`；shell 固定 deny（curl/perl 等任意运行时的 socket 连接均被 OS 层拒绝，含 localhost），workspace 内文件操作不受影响（`tests/shell-network.test.ts`）。LLM Tool Schema 不暴露任何网络开关——网络权限只来自 Host/Policy，不由模型参数决定。
 
 ---
 
@@ -190,7 +192,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | `createDir` | idempotent | `path:<canonical>` | 单层创建，父目录需存在 |
 | `moveFile` | **non_idempotent** | `src:<canonical>:dst:<canonical>` | 拒绝覆盖已存在目标 |
 | `deleteFile` | idempotent | `path:<canonical>` | 文件不存在幂等返回 |
-| `shell` | **non_idempotent** | `cmd:<command>` | macOS sandbox-exec 执行，cwd=workspaceRoot，timeout 10s，输出 64KB；**fail-closed**：sandbox-exec 不可用（如 macOS 26）时拒绝执行，绝不跑无沙箱 shell |
+| `shell` | **non_idempotent** | `cmd:<command>` | macOS sandbox-exec 执行，cwd=workspaceRoot，timeout 10s，输出 64KB；**网络默认 deny**（独立 capability，shell 永远显式 false）；**fail-closed**：sandbox-exec 不可用（如 macOS 26）时拒绝执行，绝不跑无沙箱 shell |
 
 **写区权限**：`input/` 只读、仅 `work/` 与 `output/` 可写 —— 仅对 legacy per-run sandbox 生效（见 §8 已知缺口 #2）。
 
@@ -207,7 +209,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET/POST | `/sessions/:id/runs` | 获取连续对话轮次 / 在 Session 内创建下一轮 Run |
 | GET | `/runs/:id` | 单个 Run 元数据 |
 | POST | `/runs/:id/resume` | 从 checkpoint 恢复 |
-| POST | `/runs/:id/stop` | 停止（迭代边界生效；见 §8 已知缺口 #4） |
+| POST | `/runs/:id/stop` | True Cancellation：running→stopping（abort signal 全链路传播），执行真正退出后才 stopping→stopped；幂等 |
 | GET | `/runs/:id/events` | SQLite 历史事件回放 + 当前活跃 Run 实时 SSE；支持 Last-Event-ID |
 | GET | `/runs/:id/files` | 工作区文件树（深度≤6，数量≤500） |
 | GET | `/runs/:id/files/*` | 读取工作区内文件（≤1MB） |
@@ -216,7 +218,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET/POST | `/settings`，`/settings/default` | 默认模型查询 / 设置（providerId + modelId 成对校验） |
 | POST | `/settings/available-models` | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端） |
 
-SSE 事件 = Runtime Trace 16 类 + Host 生命周期 5 类 + `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
+SSE 事件 = Runtime Trace 16 类 + Host 生命周期 6 类（含 v1.6 `run_stopping`）+ `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
 
 ---
 
@@ -242,7 +244,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | # | 缺口 | 位置 | 影响与建议 |
 |---|---|---|---|
-| 1 | **shell 沙箱网络放开**：策略含 `(allow network*)`，与注释"Network out of scope"矛盾 | `sandbox/macos-sandbox.ts:114` | shell 可外连/外发数据（仅当沙箱可用时；不可用时 shell 整体禁用，见 #8）。建议网络默认 deny，或至少在 UI/Schema 层明确标注"沙箱不含网络" |
+| ~~1 | **shell 沙箱网络放开**：策略含 `(allow network*)`，与注释"Network out of scope"矛盾~~ **已修复（v1.6 Shell Network Isolation）** | `sandbox/macos-sandbox.ts` | profile 按 `SandboxPolicy.networkAccess` 显式 `(deny network*)`/`(allow network*)`，shell 固定 deny（`forWorkspace` 显式传入 false）；`tests/shell-network.test.ts` 用 localhost TCP server 证明 curl/perl 连接均被 OS 层拒绝，且 allow 模式对照组成功。网络是独立 capability，未来由 Browser/Network provider 提供，不隐式授予 shell |
 | 2 | **正式 Workspace 整根可写（设计边界，非缺口）**：`assertWritableZone` 仅对 legacy Run Sandbox 保留 `work/`/`output/` 白名单 | `tools/filesystem.ts:181` | 用户显式授权的真实 Workspace 是 Agent 项目根，需支持根目录 `work-test.txt` 与项目源码修改；安全边界是不得越出 Workspace Root |
 | 3 | ~~**Checkpoint 写入非原子**~~ **已修复** | `runtime/checkpoint.ts` | 改为同目录唯一 tmp 写入后 `rename` 原子替换；失败时清理 tmp |
 | 4 | ~~**`run_stopped` SSE 事件缺失**~~ **已修复** | `host/run-manager.ts` | `stop()` 不再预先改终态，统一由 `finish(run, "stopped")` 设状态并发布事件 |
@@ -260,7 +262,7 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 18 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序、Run 模型绑定） | `npm run test:all` | 18 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 20 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序、Run 模型绑定、True Cancellation、Shell 网络隔离） | `npm run test:all` | 20 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |
@@ -270,7 +272,8 @@ npm run test:host         # Host API 集成（需 LLM）
 ## 10. 明确非目标（当前不做）
 
 - 模型能力缓存、跨 Provider 自动降级/故障转移（多 Provider 手动选择与 Run 级模型绑定已支持，见 §4.3；LLM 层仍仅做单请求有限重试）
-- 工具执行超时（除 shell 的 10s）：无 AbortController 包装
+- 网络能力粒度控制（域名白名单、代理、流量审计）：shell 只保留 `networkAccess` deny/allow 二态开关；Browser/Network capability 属后续阶段，不通过 shell 实现
+- 工具执行超时（除 shell 的 10s 上限）；LLM 请求已有总超时 + AbortSignal 取消，shell 已支持进程组级取消（v1.6），其余工具取消语义取决于工具自身
 - 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排（单个 Run 的 `MAX_ITERATIONS=10` 仍为硬预算）
 - checkpoint 生命周期清理（Trace/Host Event 已由 SQLite 持久化）
 - 用户鉴权 / 多租户（runId 单租户；Host 仅监听 127.0.0.1）

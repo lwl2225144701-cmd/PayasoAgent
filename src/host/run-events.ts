@@ -7,6 +7,7 @@ import type { TraceEvent } from "../runtime/trace.js";
 // Host 生命周期事件
 export type LifecycleEvent =
   | { type: "run_started"; runId: string; timestamp: string }
+  | { type: "run_stopping"; runId: string; timestamp: string }
   | { type: "run_completed"; runId: string; timestamp: string; result?: string }
   | { type: "run_failed"; runId: string; timestamp: string; error?: string }
   | { type: "run_stopped"; runId: string; timestamp: string }
@@ -27,6 +28,7 @@ export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent;
 export function isLifecycle(ev: HostEvent): ev is LifecycleEvent {
   return (
     ev.type === "run_started" ||
+    ev.type === "run_stopping" ||
     ev.type === "run_completed" ||
     ev.type === "run_failed" ||
     ev.type === "run_stopped" ||

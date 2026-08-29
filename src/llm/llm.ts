@@ -1,6 +1,7 @@
 // 模块 1: LLM 封装 — OpenAI 兼容 chat/completions（纯 fetch，无 SDK 依赖）
 
 import { resolveModelContextConfig } from "../runtime/model-context.js";
+import { isAbortError } from "../util/abort.js";
 
 const BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const API_KEY = process.env.OPENAI_API_KEY || "";
@@ -123,15 +124,24 @@ interface RawResult {
 // One attempt under a single abort timer that stays armed across BOTH the
 // header phase and the body read, so a stalled body (or stalled error body)
 // cannot hang forever. clearTimeout runs only after the body/error is read.
+// True cancellation (v1.6): 外部 signal（Run 的 AbortSignal）与内部超时定时器
+// 组合到同一个 controller；外部 abort 让 fetch/流式读取立即以 AbortError 失败，
+// chat 层不捕获、不重试，直接向上传播。
 async function doRequest(
   url: string,
   body: Record<string, unknown>,
   timeoutMs: number,
   apiKey: string,
   onDelta?: (delta: ChatStreamDelta) => void,
+  signal?: AbortSignal,
 ): Promise<RawResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) onExternalAbort();
+    else signal.addEventListener("abort", onExternalAbort, { once: true });
+  }
   try {
     let res: Response;
     try {
@@ -145,6 +155,8 @@ async function doRequest(
         signal: controller.signal,
       });
     } catch (err) {
+      // 外部取消（用户 Stop）→ 以原始 AbortError 终态上抛，绝不进入重试路径
+      if (signal?.aborted && isAbortError(err)) throw err;
       return {
         status: 0,
         errorBody: "",
@@ -158,7 +170,8 @@ async function doRequest(
       let errorBody = "";
       try {
         errorBody = (await res.text()).slice(0, MAX_ERROR_BODY_CHARS);
-      } catch {
+      } catch (err) {
+        if (signal?.aborted && isAbortError(err)) throw err;
         // Timed out while reading the error body; timedOut below reports it.
         errorBody = "";
       }
@@ -176,13 +189,16 @@ async function doRequest(
       data = contentType.includes("text/event-stream")
         ? { choices: [{ message: await readStreamingMessage(res, onDelta) }] }
         : await res.json();
-    } catch {
+    } catch (err) {
+      // 流式/非流式 body 读取被外部 abort 打断 → 保持 AbortError 语义
+      if (signal?.aborted && isAbortError(err)) throw err;
       return { status: -1, errorBody: "", timedOut: controller.signal.aborted, retryAfter: null };
     }
 
     return { status: 200, data, errorBody: "", timedOut: false, retryAfter: null };
   } finally {
     clearTimeout(timeout);
+    if (signal) signal.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -343,6 +359,7 @@ export async function chat(
   tools?: ToolSchema[],
   onDelta?: (delta: ChatStreamDelta) => void,
   modelConfig?: ModelConfig,
+  signal?: AbortSignal,
 ): Promise<ChatMessage> {
   const endpoint = resolveEndpointConfig(modelConfig);
   const resolvedBaseUrl = endpoint.baseUrl;
@@ -363,7 +380,7 @@ export async function chat(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const timeoutMs = requestTimeoutMs();
-    const result = await doRequest(url, body, timeoutMs, resolvedApiKey, onDelta);
+    const result = await doRequest(url, body, timeoutMs, resolvedApiKey, onDelta, signal);
 
     // Total request timeout (no headers, stalled body, or stalled error body)
     // is terminal: do not auto-retry a long generation.

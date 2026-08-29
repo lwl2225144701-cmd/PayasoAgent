@@ -1,7 +1,8 @@
 import type { HostEvent } from "../run-events.js";
 import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./settings-store.js";
 
-export type StoredRunStatus = "running" | "completed" | "failed" | "stopped" | "interrupted";
+// stopping（v1.6）：用户已请求停止、AbortSignal 已发出，但执行尚未真正退出。
+export type StoredRunStatus = "running" | "stopping" | "completed" | "failed" | "stopped" | "interrupted";
 
 export interface StoredSession {
   sessionId: string;
