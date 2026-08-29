@@ -3,9 +3,13 @@
 
 import { createHostServer } from "./server.js";
 import { RunManager } from "./run-manager.js";
+import { createDefaultRunStore } from "./persistence/sqlite-store.js";
+import { createSecretStore } from "./secrets/secret-store.js";
 
 const port = Number(process.env.PORT ?? 4500);
-const manager = new RunManager();
+// 组合根：SecretStore 在这里创建一次并注入（macOS = Keychain；测试替换为 MemorySecretStore）
+const secretStore = createSecretStore();
+const manager = new RunManager(createDefaultRunStore(secretStore));
 
 // 一次性把 .env 的环境模型配置导入设置并设为默认：
 // 仅在从未导入过时生效；之后模型配置一律以设置面板为准。

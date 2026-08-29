@@ -1,13 +1,17 @@
 import { DatabaseSync } from "node:sqlite";
+import { createSecretStore, providerSecretKey, type SecretStore } from "../secrets/secret-store.js";
 
 export type ModelProviderKind = "builtin" | "custom";
 
+// Provider metadata（SQLite 持久化）。raw apiKey 不在此结构中：
+// 凭证唯一存放在 SecretStore（macOS Keychain），以 providerSecretKey(id) 引用。
 export interface StoredModelProvider {
   id: string;
   kind: ModelProviderKind;
   name: string;
   baseUrl: string;
-  apiKey: string;
+  // 凭证存在性元数据（UI / 解析判定的唯一依据）；真实密钥经 SecretStore 读取
+  hasApiKey: boolean;
   models: string[];
 }
 
@@ -25,12 +29,18 @@ export interface ModelProviderView {
 export interface CreateModelProviderInput {
   name: string;
   baseUrl: string;
+  // 提供即设置凭证（SecretStore）；缺省/空 = 不设置。响应绝不回传 key（只回 hasApiKey）。
   apiKey?: string | null;
   models: string[];
   // 内置模板入口：命中同名未配置内置时补齐密钥/目录，而不是创建新记录
   templateId?: string;
 }
 
+// API Key 编辑三态（明确、可测试）：
+//   undefined  → 保持原 Secret 不变
+//   null       → 删除 Secret（hasApiKey=false）
+//   非空字符串 → 替换 Secret
+//   空字符串   → 拒绝（歧义输入，fail-fast）
 export interface UpdateModelProviderInput {
   name?: string;
   baseUrl?: string;
@@ -46,6 +56,7 @@ export interface DefaultModelSelection {
 
 // settings 表 key='app' 的完整 blob。读写必须整块进行：
 // 任何一次局部重写（例如只写 models）都会把其余字段静默抹掉。
+// 注意：这里只有 metadata —— raw apiKey 永远不进入这个 blob。
 interface AppSettingsBlob {
   models: StoredModelProvider[];
   defaultProviderId: string;
@@ -54,13 +65,18 @@ interface AppSettingsBlob {
   envImported: boolean;
 }
 
+// legacy（< v1.6）blob 中的 provider 形状：含明文 apiKey，构造器迁移后剥离
+interface LegacyStoredModelProvider extends StoredModelProvider {
+  apiKey?: string;
+}
+
 const DEFAULT_MODELS: StoredModelProvider[] = [
   {
     id: "deepseek-chat",
     kind: "builtin",
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
-    apiKey: "",
+    hasApiKey: false,
     models: ["deepseek-chat", "deepseek-reasoner"],
   },
   {
@@ -68,7 +84,7 @@ const DEFAULT_MODELS: StoredModelProvider[] = [
     kind: "builtin",
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    apiKey: "",
+    hasApiKey: false,
     models: ["gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"],
   },
   {
@@ -76,7 +92,7 @@ const DEFAULT_MODELS: StoredModelProvider[] = [
     kind: "builtin",
     name: "StepFun",
     baseUrl: "https://api.stepfun.com/v1",
-    apiKey: "",
+    hasApiKey: false,
     models: ["step-2-16k", "step-1-8k"],
   },
 ];
@@ -117,9 +133,11 @@ function defaultSettings(): AppSettingsBlob {
 
 export class SettingsStore {
   private db: DatabaseSync;
+  private readonly secrets: SecretStore;
 
-  constructor(db: DatabaseSync) {
+  constructor(db: DatabaseSync, secrets: SecretStore = createSecretStore()) {
     this.db = db;
+    this.secrets = secrets;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -130,8 +148,10 @@ export class SettingsStore {
     if (!row) {
       this.writeSettings(defaultSettings());
     } else {
-      // 旧库迁移：readSettings 会补齐缺失字段（如 defaultModelId），回写完成迁移
-      this.writeSettings(this.readSettings());
+      // 旧库迁移：readSettings 会补齐缺失字段（如 defaultModelId / hasApiKey），回写完成迁移
+      const settings = this.readSettings();
+      this.migrateLegacyPlaintextKeys(settings);
+      this.writeSettings(settings);
     }
   }
 
@@ -175,13 +195,31 @@ export class SettingsStore {
     `).run(JSON.stringify(settings));
   }
 
-  public getAllModels(): StoredModelProvider[] {
-    return this.readSettings().models;
+  // v1.6 SecretStore 迁移：legacy blob 中的明文 apiKey → SecretStore，成功后才从
+  // metadata 剥离。顺序不可颠倒（先删 SQLite 再写 Keychain 失败 = 凭证永久丢失）。
+  // 任一写入失败即抛出：blob 保持原样（凭证不丢），Host 以明确错误启动失败，
+  // 绝不静默回退明文。迁移天然幂等：剥离完成后再次启动为 no-op。
+  private migrateLegacyPlaintextKeys(settings: AppSettingsBlob): void {
+    const legacy = settings.models.filter(
+      (m): m is LegacyStoredModelProvider => typeof (m as LegacyStoredModelProvider).apiKey === "string"
+    );
+    if (legacy.length === 0) return;
+    for (const model of legacy) {
+      if (model.apiKey) {
+        this.secrets.set(providerSecretKey(model.id), model.apiKey);
+      }
+    }
+    for (const model of settings.models) {
+      const raw = model as LegacyStoredModelProvider;
+      if (typeof raw.apiKey === "string") {
+        raw.hasApiKey = raw.apiKey.length > 0;
+        delete raw.apiKey;
+      }
+    }
   }
 
-  private maskApiKey(apiKey: string): string {
-    if (!apiKey || apiKey.length <= 4) return "****";
-    return "****" + apiKey.slice(-4);
+  public getAllModels(): StoredModelProvider[] {
+    return this.readSettings().models;
   }
 
   private normalizeModels(models: string[]): string[] {
@@ -199,14 +237,15 @@ export class SettingsStore {
   }
 
   private toView(provider: StoredModelProvider): ModelProviderView {
-    const hasApiKey = Boolean(provider.apiKey);
+    const hasApiKey = Boolean(provider.hasApiKey);
     const status: ModelProviderView["status"] = hasApiKey ? "configured" : "unconfigured";
     return {
       id: provider.id,
       kind: provider.kind,
       name: provider.name,
       baseUrl: provider.baseUrl,
-      apiKeyMasked: this.maskApiKey(provider.apiKey),
+      // 掩码不再来自真实密钥（Host 不为展示读取它），只反映凭证存在性
+      apiKeyMasked: hasApiKey ? "********" : "****",
       hasApiKey,
       models: provider.models,
       status,
@@ -214,10 +253,10 @@ export class SettingsStore {
   }
 
   // 列表只暴露"可用的"Provider：自定义始终显示（用户可见可编辑），
-  // 内置仅当已配置密钥时显示 —— 未配置的内置模板不出现在列表里。
+  // 内置仅当已配置凭证时显示 —— 未配置的内置模板不出现在列表里。
   listViews(): ModelProviderView[] {
     return this.getAllModels()
-      .filter(p => p.kind === "custom" || Boolean(p.apiKey))
+      .filter(p => p.kind === "custom" || Boolean(p.hasApiKey))
       .map(p => this.toView(p));
   }
 
@@ -230,12 +269,12 @@ export class SettingsStore {
   }
 
   // 设置默认模型（provider + model 成对持久化）。校验：provider 必须存在、
-  // 已配置密钥、至少有一个模型；显式传入的 modelId 必须在目录内。
+  // 已配置凭证、至少有一个模型；显式传入的 modelId 必须在目录内。
   setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection {
     const settings = this.readSettings();
     const provider = settings.models.find(m => m.id === providerId);
     if (!provider) throw new Error("Provider not found");
-    if (!provider.apiKey) throw new Error("Provider has no API key configured");
+    if (!provider.hasApiKey) throw new Error("Provider has no API key configured");
     if (provider.models.length === 0) throw new Error("Provider has no models");
     let resolvedModelId: string;
     if (modelId !== undefined && modelId !== "") {
@@ -252,7 +291,8 @@ export class SettingsStore {
 
   // 一次性把 .env 的环境模型配置导入设置：仅当从未导入过时执行（envImported 标记）。
   // baseUrl 与现有 Provider 一致时填入该 Provider（模型不在目录则插到最前），
-  // 否则新建以模型 ID 命名的自定义 Provider；导入后即设为默认。
+  // 否则新建以 baseUrl 推导命名的自定义 Provider；导入后即设为默认。
+  // 凭证路径：.env → SecretStore → metadata(hasApiKey)，key 不写 SQLite。
   importEnvFallback(input: { baseUrl: string; apiKey: string; model: string }): DefaultModelSelection | null {
     const settings = this.readSettings();
     if (settings.envImported) return null;
@@ -268,7 +308,8 @@ export class SettingsStore {
 
     const existing = settings.models.find(m => m.baseUrl.toLowerCase() === baseUrl.toLowerCase());
     if (existing) {
-      existing.apiKey = apiKey;
+      this.secrets.set(providerSecretKey(existing.id), apiKey);
+      existing.hasApiKey = true;
       if (!existing.models.includes(model)) {
         existing.models = [model, ...existing.models];
       }
@@ -282,15 +323,26 @@ export class SettingsStore {
         // 避免 provider 名等于模型名、目录扩充后每项重复标注。
         name: deriveProviderName(baseUrl),
         baseUrl,
-        apiKey,
+        hasApiKey: true,
         models: [model],
       };
+      this.secrets.set(providerSecretKey(provider.id), apiKey);
       settings.models.push(provider);
       settings.defaultProviderId = provider.id;
       settings.defaultModelId = model;
     }
     this.writeSettings(settings);
     return { providerId: settings.defaultProviderId, modelId: settings.defaultModelId };
+  }
+
+  // 凭证读取路径（RunManager / available-models 共用）：metadata + SecretStore 合成。
+  // provider 不存在、未配置凭证、或 SecretStore 中已不存在 → null（调用方 fail-closed）。
+  getProviderCredentials(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {
+    const provider = this.getAllModels().find(m => m.id === id);
+    if (!provider || !provider.hasApiKey) return null;
+    const apiKey = this.secrets.get(providerSecretKey(id));
+    if (!apiKey) return null;
+    return { apiKey, baseUrl: provider.baseUrl, models: provider.models };
   }
 
   addModel(input: CreateModelProviderInput): ModelProviderView {
@@ -307,11 +359,14 @@ export class SettingsStore {
     const settings = this.readSettings();
 
     // 内置模板入口：命中未配置的同 ID 内置时直接补齐配置（不新建记录，
-    // 避免与隐藏的内置模板重名冲突）。
+    // 避免与隐藏的内置模板重名冲突）。凭证先入 SecretStore，成功后才改 metadata。
     if (input.templateId) {
       const builtin = settings.models.find(m => m.id === input.templateId && m.kind === "builtin");
       if (builtin) {
-        if (apiKey) builtin.apiKey = apiKey;
+        if (apiKey) {
+          this.secrets.set(providerSecretKey(builtin.id), apiKey);
+          builtin.hasApiKey = true;
+        }
         builtin.baseUrl = baseUrl;
         builtin.models = this.normalizeModels([...builtin.models, ...models]);
         this.writeSettings(settings);
@@ -320,12 +375,16 @@ export class SettingsStore {
     }
 
     const id = crypto.randomUUID();
+    // 凭证先入 SecretStore，成功后才持久化 metadata（顺序不可颠倒）
+    if (apiKey) {
+      this.secrets.set(providerSecretKey(id), apiKey);
+    }
     const provider: StoredModelProvider = {
       id,
       kind: "custom",
       name,
       baseUrl,
-      apiKey,
+      hasApiKey: Boolean(apiKey),
       models,
     };
 
@@ -363,15 +422,20 @@ export class SettingsStore {
       current[idx].baseUrl = baseUrl;
     }
 
+    // API Key 三态：undefined=保持 / null=删除 Secret / 非空=替换 Secret / ""=拒绝。
+    // Secret 操作先于 metadata 持久化：失败时 metadata 保持原状（不出现
+    // "hasApiKey=false 但 Secret 还在"或反向的不一致状态）。
     if (input.apiKey !== undefined) {
       if (input.apiKey === null) {
-        current[idx].apiKey = "";
+        this.secrets.delete(providerSecretKey(id));
+        current[idx].hasApiKey = false;
       } else {
         const apiKey = input.apiKey.trim();
         if (!apiKey) {
           throw new Error("apiKey must be non-empty or null");
         }
-        current[idx].apiKey = apiKey;
+        this.secrets.set(providerSecretKey(id), apiKey);
+        current[idx].hasApiKey = true;
       }
     }
 
@@ -381,10 +445,10 @@ export class SettingsStore {
       current[idx].models = models;
     }
 
-    // 默认选择的一致性：默认 provider 被清空密钥或模型目录不再包含默认模型时，
+    // 默认选择的一致性：默认 provider 被清空凭证或模型目录不再包含默认模型时，
     // 默认选择一并清空/回退，避免留下指向不可用组合的悬挂默认值。
     if (settings.defaultProviderId === id) {
-      if (!current[idx].apiKey) {
+      if (!current[idx].hasApiKey) {
         settings.defaultProviderId = "";
         settings.defaultModelId = "";
       } else if (!current[idx].models.includes(settings.defaultModelId)) {
@@ -402,6 +466,15 @@ export class SettingsStore {
     if (target?.kind === "builtin") return false;
     const next = settings.models.filter(m => m.id !== id);
     if (next.length === settings.models.length) return false;
+
+    // Secret cleanup：best-effort —— 清理失败不阻塞 metadata 删除（orphan secret
+    // 无安全风险，仅占位），但必须显式记录；不能反过来让 orphan 阻止用户删除 Provider。
+    try {
+      this.secrets.delete(providerSecretKey(id));
+    } catch (err) {
+      console.warn(`[SettingsStore] provider secret cleanup failed (orphan possible): ${(err as Error).message}`);
+    }
+
     // 删除的是默认 provider → 默认选择一并清空（解析时回退到第一个可用 provider）
     if (settings.defaultProviderId === id) {
       settings.defaultProviderId = "";

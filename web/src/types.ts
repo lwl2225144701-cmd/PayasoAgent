@@ -96,6 +96,15 @@ export interface ToolCallEvent extends TraceEventBase {
   args: unknown;
 }
 
+// v1.6：模型生成的 tool_call 未通过 invocation 校验（malformed JSON/非对象/未知工具），
+// 可恢复 invocation error —— 工具不执行，结构化错误回传模型修正
+export interface ToolCallInvalidEvent extends TraceEventBase {
+  type: "tool_call_invalid";
+  toolCallId: string;
+  tool: string;
+  code: "INVALID_ARGUMENT_JSON" | "INVALID_ARGUMENTS" | "TOOL_NOT_FOUND";
+}
+
 export interface ToolResultEvent extends TraceEventBase {
   type: "tool_result";
   tool: string;
@@ -248,6 +257,7 @@ export interface StreamingEvent {
 export type TraceEvent =
   | LlmCallEvent
   | ToolCallEvent
+  | ToolCallInvalidEvent
   | ToolResultEvent
   | ToolResultInvalidEvent
   | FinalAnswerEvent

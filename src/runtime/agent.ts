@@ -1,7 +1,7 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
 import { chat, type ChatMessage, type ChatStreamDelta, type ModelConfig } from "../llm/llm.js";
-import { execute, getTool, getSchemas, validateToolResult, type ToolSandboxEvent } from "../tools/tools.js";
+import { execute, formatToolCallError, getTool, getSchemas, parseToolArguments, toolNotFoundError, validateToolResult, type ToolCallError, type ToolSandboxEvent } from "../tools/tools.js";
 import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
 import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
 import { createWorkspace, canonicalizeWorkspaceRoot } from "../sandbox/sandbox-manager.js";
@@ -119,6 +119,32 @@ export async function runAgent(
       `[恢复] 从 checkpoint 继续: runId=${resume.runId} 已完成 ${scratchpad.completedSteps.length} 步, 重跑迭代 ${startIter + 1}`
     );
   }
+
+  // v1.6 Tool Call Pipeline：invocation error（malformed JSON / 非 object 参数 /
+  // 未知工具）→ 标准化 tool error result（保留 tool_call_id 关联）+ trace +
+  // checkpoint。工具不执行、不创建 side-effect operation，由模型下一轮自行修正。
+  const pushToolCallError = (toolCallId: string, toolName: string, error: ToolCallError): void => {
+    updateState(state, {
+      currentStep: "tool_call_invalid",
+      currentError: `${error.code}: ${error.message}`,
+    });
+    printStateSummary(state);
+    printEvent(
+      addEvent(trace, {
+        type: "tool_call_invalid",
+        toolCallId,
+        tool: toolName,
+        code: error.code,
+      })
+    );
+    console.log(`[Tool Call Invalid] ${toolName}: ${error.code}`);
+    messages.push({
+      role: "tool",
+      tool_call_id: toolCallId,
+      content: formatToolCallError(error),
+    });
+    save();
+  };
 
   try {
     for (let i = startIter; i < MAX_ITERATIONS; i++) {
@@ -242,13 +268,29 @@ export async function runAgent(
         // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
         throwIfAborted(opts?.signal);
         const toolName = call.function.name;
-        const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+
+        // v1.6 Tool Call Pipeline ①②：Parse + Validate。
+        // malformed / 非 object 的 arguments 是可恢复 invocation error：
+        // 工具绝不执行、side-effect 绝不创建，结构化错误回传模型修正。
+        const parsed = parseToolArguments(call.function.arguments);
+        if (!parsed.ok) {
+          pushToolCallError(call.id, toolName, parsed.error);
+          continue;
+        }
+        const args = parsed.args;
+
+        // v1.6 Pipeline ③：Resolve —— 未知工具同样是 invocation error，
+        // 直接回传错误结果，不进入 execution retry（模型修正 ≠ 瞬态重试）。
+        const toolDef = getTool(toolName);
+        if (!toolDef) {
+          pushToolCallError(call.id, toolName, toolNotFoundError(toolName));
+          continue;
+        }
+
         // 规范化输入：calculator 用表达式原文；其余工具用规范化 JSON（消除 LLM 序列化空白差异，
         // 否则同参数换空格写法可绕过 isBlocked 的防重调/防死循环判定）
         const input =
           "expression" in args ? String(args.expression) : JSON.stringify(args);
-
-        const toolDef = getTool(toolName);
 
         // v1.3.2 Side-Effect Safety：non_idempotent 操作生命周期 ——
         //   succeeded  → 回放首次结果，不执行

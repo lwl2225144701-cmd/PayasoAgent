@@ -4,6 +4,13 @@ import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, 
 // stopping（v1.6）：用户已请求停止、AbortSignal 已发出，但执行尚未真正退出。
 export type StoredRunStatus = "running" | "stopping" | "completed" | "failed" | "stopped" | "interrupted";
 
+// 终态（v1.6 Atomic Run Finalization）：终态状态 + 对应终态事件必须原子持久化
+export type TerminalRunStatus = "completed" | "failed" | "stopped";
+
+export function isTerminalRunStatus(status: StoredRunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "stopped";
+}
+
 export interface StoredSession {
   sessionId: string;
   title: string;
@@ -64,6 +71,10 @@ export interface RunStore {
   listRuns(opts?: { includeDeleted?: boolean }): StoredRun[];
   listRunsBySession(sessionId: string, opts?: { includeDeleted?: boolean }): StoredRun[];
   appendEvent(runId: string, event: HostEvent): number;
+  // v1.6 Atomic Run Finalization：terminal 状态更新与 terminal 事件插入必须在
+  // 同一个 SQLite 事务内完成（任一失败 → ROLLBACK，两者都不落库）。
+  // seq 由事务内既有逻辑分配；事件构造是 RunManager 的职责，Store 只负责持久化。
+  finalizeRun(run: StoredRun, event: HostEvent): number;
   listEvents(runId: string): StoredEvent[];
   renameSession(sessionId: string, title: string): void;
   archiveSession(sessionId: string, now: string): number;

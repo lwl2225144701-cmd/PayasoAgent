@@ -1,6 +1,6 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
 // 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: 20 个无 LLM 套件，含 Workspace/Host、Persistence、LLM transport mock、Run 模型绑定、True Cancellation、Shell 网络隔离与 docs contract
+// 覆盖: 22 个无 LLM 套件，含 Workspace/Host、Persistence、LLM transport mock、Run 模型绑定、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、原子终态落盘与 docs contract
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
 //   2. 以子进程退出码判定套件通过与否（各套件内部已实现 失败 → 非 0 退出）
@@ -29,6 +29,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: "model-binding", file: "tests/model-binding.test.ts" },
   { name: "cancellation", file: "tests/cancellation.test.ts" },
   { name: "shell-network", file: "tests/shell-network.test.ts" },
+  { name: "tool-args", file: "tests/tool-args.test.ts" },
+  { name: "finalize", file: "tests/finalize.test.ts" },
   { name: "docs-contract", file: "tests/docs-contract.test.ts" },
   { name: "side-effect", file: "tests/side-effect.test.ts" },
   { name: "workspace-trash", file: "tests/workspace-trash.test.ts" },

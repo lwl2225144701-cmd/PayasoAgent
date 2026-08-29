@@ -121,6 +121,76 @@ export function resolveOperationKey(
   );
 }
 
+// ---- v1.6 Tool Call Invocation Validation ----
+// 模型生成的 tool_call 在执行前经过统一管线：Parse → Validate → Resolve →
+// Side-effect preparation → Execute。Parse/Validate/Resolve 失败是
+// **可恢复的 invocation error**（结构化错误回传模型修正），不是 Runtime fatal。
+// 与 Execution Error（文件系统/shell/业务失败，走既有 retry+recovery）严格分离。
+
+export type ToolCallErrorCode =
+  | "INVALID_ARGUMENT_JSON" // arguments 不是合法 JSON（含空/缺失）
+  | "INVALID_ARGUMENTS"     // 合法 JSON 但不是 object
+  | "TOOL_NOT_FOUND";       // 注册表中不存在该工具
+
+export interface ToolCallError {
+  code: ToolCallErrorCode;
+  // 面向模型的稳定文案（不含解析器内部细节，跨 Node 版本稳定、可测试）
+  message: string;
+}
+
+const INVALID_ARGUMENT_JSON_MESSAGE =
+  "Tool arguments are not valid JSON. Retry this tool call with arguments as one valid JSON object.";
+const INVALID_ARGUMENTS_MESSAGE =
+  'Tool arguments must be a single JSON object, e.g. {"key": "value"}.';
+
+export type ToolArgumentParseResult =
+  | { ok: true; args: Record<string, unknown> }
+  | { ok: false; error: ToolCallError };
+
+// 统一入口：streaming 与 non-streaming 两条传输路径最终都经过这里，
+// 不存在各自的 JSON.parse 分支。不做任何自动修复（不猜模型意图）。
+export function parseToolArguments(
+  rawArguments: string | undefined | null
+): ToolArgumentParseResult {
+  const raw = typeof rawArguments === "string" ? rawArguments.trim() : "";
+  if (!raw) {
+    return {
+      ok: false,
+      error: { code: "INVALID_ARGUMENT_JSON", message: INVALID_ARGUMENT_JSON_MESSAGE },
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // 解析器内部细节只进 trace（由调用方记录），模型只看到稳定文案
+    return {
+      ok: false,
+      error: { code: "INVALID_ARGUMENT_JSON", message: INVALID_ARGUMENT_JSON_MESSAGE },
+    };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    // null / 数组 / 字符串 / 数字：合法 JSON 但不符合 Tool Contract（必须是 object）
+    return {
+      ok: false,
+      error: { code: "INVALID_ARGUMENTS", message: INVALID_ARGUMENTS_MESSAGE },
+    };
+  }
+  return { ok: true, args: parsed as Record<string, unknown> };
+}
+
+export function toolNotFoundError(toolName: string): ToolCallError {
+  return {
+    code: "TOOL_NOT_FOUND",
+    message: `Tool "${toolName}" does not exist. Retry with one of the available tools.`,
+  };
+}
+
+// 标准化 tool result 内容（保留 tool_call_id 关联由 messages 层负责）
+export function formatToolCallError(error: ToolCallError): string {
+  return JSON.stringify({ error: { code: error.code, message: error.message } });
+}
+
 // ---- 工具: calculator ----
 // 失败时直接抛异常（由 agent 捕获并重试），不再返回 Error 字符串
 register({

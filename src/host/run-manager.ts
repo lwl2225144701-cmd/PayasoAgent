@@ -8,7 +8,7 @@ import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
-import type { RunStore, StoredRun, StoredRunStatus, StoredSession, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
+import { isTerminalRunStatus, type RunStore, type StoredRun, type StoredRunStatus, type StoredSession, type ModelProviderView, type CreateModelProviderInput, type UpdateModelProviderInput, type TerminalRunStatus } from "./persistence/store.js";
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
 import { isAbortError } from "../util/abort.js";
 import fs from "node:fs";
@@ -383,7 +383,7 @@ export class RunManager {
   //   stopping -> no-op（幂等）
   //   终态     -> no-op
   // 此时不立刻置 stopped —— 等 Runtime（LLM/tool/shell）真正退出后，
-  // startAgent 的结束路径才 finish(run, "stopped")。
+  // startAgent 的结束路径才 finish(run)（原子终态落盘）。
   stop(runId: string): boolean {
     const run = this.runs.get(runId);
     if (!run) {
@@ -400,7 +400,7 @@ export class RunManager {
       } else {
         // 占位 Run（persist 先于执行的窗口 / startAgent:false）：没有在途执行可等待，
         // 直接落 stopped（这同时让工作区/会话清理守卫不再被其阻塞）。
-        this.finish(run, "stopped");
+        this.finish(run);
       }
     }
     return true;
@@ -415,13 +415,74 @@ export class RunManager {
     run.abortController?.abort();
   }
 
-  private finish(run: InternalRun, status: "stopped"): void {
-    // 允许从 running（同步 stop 竞态）或 stopping（真正的取消完成路径）进入
-    if (run.status !== "running" && run.status !== "stopping") return;
+  // v1.6 Atomic Run Finalization：completed / failed / stopped 三条终态路径
+  // 全部走同一条管线 —— prepare → 原子持久化（status+event 同一事务）→
+  // 提交成功后才应用 memory 并广播 SSE。终态不可覆盖（幂等：已终态 no-op）；
+  // 持久化失败时 Run 保持原非终态、不广播终态，绝不降级为单独 update/append。
+  private finalizeRun(
+    run: InternalRun,
+    status: TerminalRunStatus,
+    extra?: { result?: string; error?: string },
+  ): boolean {
+    if (isTerminalRunStatus(run.status)) return false;
+    const timestamp = new Date().toISOString();
+    // 终态映射（业务语义归 RunManager；Store 只负责原子持久化）
+    const terminalEvent: HostEvent =
+      status === "completed"
+        ? { type: "run_completed", runId: run.runId, timestamp, result: extra?.result }
+        : status === "failed"
+          ? { type: "run_failed", runId: run.runId, timestamp, error: extra?.error }
+          : { type: "run_stopped", runId: run.runId, timestamp };
+    const persisted: StoredRun = {
+      ...this.toStoredRun(run),
+      status,
+      updatedAt: timestamp,
+      ...(status === "completed" ? { result: extra?.result, error: undefined } : {}),
+      ...(status === "failed" ? { error: extra?.error } : {}),
+    };
+
+    let seq: number;
+    try {
+      seq = this.store.finalizeRun(persisted, terminalEvent);
+    } catch (err) {
+      // 持久化失败 ≠ 执行失败：不伪造终态、不广播终态 SSE；Run 保持在原非终态。
+      // 禁止降级为单独 updateRun/appendEvent（会重新制造状态与事件的不一致）。
+      console.error(
+        `[RunManager] terminal finalization failed for ${run.runId} (${run.status} → ${status}): ` +
+        `${(err as Error).message} — run stays ${run.status}, terminal event not broadcast`
+      );
+      return false;
+    }
+    // 提交成功后才应用到内存并发布（memory 不会提前显示未持久化的终态）
     run.status = status;
-    run.updatedAt = new Date().toISOString();
-    this.persistRunSafely(run);
-    this.record(run, { type: "run_stopped", runId: run.runId, timestamp: run.updatedAt });
+    run.updatedAt = timestamp;
+    if (status === "completed") {
+      run.result = extra?.result;
+      run.error = undefined;
+    }
+    if (status === "failed") {
+      run.error = extra?.error;
+    }
+    this.publishEvent(run, terminalEvent, seq);
+    return true;
+  }
+
+  private finish(run: InternalRun): void {
+    // stopped 的进入边：running（同步 stop 竞态 / 占位 Run）或 stopping（取消完成路径）
+    this.finalizeRun(run, "stopped");
+  }
+
+  // v1.6：仅发布已在持久层落库的事件（memory + SSE）；durability 优先于 delivery
+  private publishEvent(run: InternalRun, event: HostEvent, seq: number): void {
+    run.events.push(event);
+    const sinks = this.subscribers.get(run.runId);
+    if (!sinks) return;
+    const chunk = sseEncode(seq, event);
+    for (const sink of sinks) {
+      if (!sink.closed()) {
+        try { sink.write(chunk); } catch { /* isolate one broken SSE client */ }
+      }
+    }
   }
 
   list(): HostRun[] {
@@ -568,26 +629,17 @@ export class RunManager {
         flushDelta();
         // stop() 之后 agent 才正常 resolve 的竞态：用户意图是停止 → stopped
         if (run.cancelled || abortController.signal.aborted) {
-          this.finish(run, "stopped");
+          this.finish(run);
           return;
         }
-        run.status = "completed";
-        run.result = result;
-        run.error = undefined;
-        run.updatedAt = new Date().toISOString();
-        this.persistRunSafely(run);
-        this.record(run, {
-          type: "run_completed",
-          runId: run.runId,
-          timestamp: run.updatedAt,
-          result,
-        });
+        // v1.6：completed 终态原子落盘（status + run_completed 同一事务）
+        this.finalizeRun(run, "completed", { result });
       } catch (err) {
         flushDelta();
         // 用户主动取消（signal 已 abort）→ stopped，绝不算 failed；
         // 其余 AbortError（非本 Run 的 signal）仍按失败处理。
         if (run.cancelled || (abortController.signal.aborted && isAbortError(err))) {
-          this.finish(run, "stopped");
+          this.finish(run);
           return;
         }
         this.failRun(run, (err as Error).message);
@@ -596,21 +648,16 @@ export class RunManager {
   }
 
   private failRun(run: InternalRun, message: string): void {
-    run.status = "failed";
-    run.error = message;
-    run.updatedAt = new Date().toISOString();
-    this.persistRunSafely(run);
-    this.record(run, {
-      type: "run_failed",
-      runId: run.runId,
-      timestamp: run.updatedAt,
-      error: message,
-    });
+    // v1.6：failed 终态与 run_failed 事件原子落盘（与 completed/stopped 同一管线）
+    this.finalizeRun(run, "failed", { error: message });
   }
 
   // Persistence precedes SSE. If local storage fails, do not broadcast an
   // event the product cannot replay after restart; Runtime remains isolated
   // from Host observability failures.
+  // 非终态事件（run_started/stopping/trace/delta）的追加路径：persist → memory → SSE。
+  // 终态事件（run_completed/failed/stopped）不走这里 —— 必须走 finalizeRun 的
+  // 原子管线（status+event 同一事务），避免状态与事件不一致。
   private record(run: InternalRun, event: HostEvent): void {
     let seq: number;
     try {
@@ -794,7 +841,9 @@ export class RunManager {
     if (run.model && run.providerId) {
       const secret = this.store.getModelProviderSecret(run.providerId);
       if (!secret?.apiKey) {
-        throw new Error(`Provider ${run.providerId} API key is missing for run ${run.runId}`);
+        // metadata 标记已配置但 SecretStore 读不到（被清除/Keychain 不可访问）：
+        // fail-closed，绝不带着空凭证去请求 LLM
+        throw new Error(`Provider credentials unavailable for run ${run.runId} (provider ${run.providerId})`);
       }
       const baseUrl = run.baseUrl ?? secret.baseUrl;
       if (!baseUrl) {

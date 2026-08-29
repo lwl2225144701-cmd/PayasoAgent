@@ -21,6 +21,16 @@ export type TraceEvent =
       args: unknown; // 工具参数
     }
   | {
+      // v1.6：模型生成的 tool_call 未通过 invocation 校验（malformed JSON / 非对象 / 未知工具）。
+      // 可恢复的 invocation error —— 工具不执行、不创建 side-effect，结构化错误回传模型修正。
+      type: "tool_call_invalid";
+      step: number;
+      timestamp: string;
+      toolCallId: string;
+      tool: string;
+      code: string; // ToolCallErrorCode（从 tools.js 类型导入，保持字符串字面量供 docs-contract 提取）
+    }
+  | {
       type: "tool_result";
       step: number;
       timestamp: string;
@@ -149,6 +159,12 @@ export type TraceEventInput =
       type: "tool_call";
       tool: string;
       args: unknown;
+    }
+  | {
+      type: "tool_call_invalid";
+      toolCallId: string;
+      tool: string;
+      code: string;
     }
   | {
       type: "tool_result";

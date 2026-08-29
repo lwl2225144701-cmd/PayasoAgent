@@ -7,7 +7,7 @@
 > - `v1.0-design.md` + `architecture-v1.0.svg` —— v1.0 设计稿（已过时，仅存历史）
 > - `.trae/documents/minimal-web-ui_plan.md` —— Web UI 实现方案（已按此落地）
 >
-> **版本锚点**：`CURRENT_VERSION = v1.6 + 多 Provider 模型配置 + Run 模型绑定 Context Budget + True Cancellation + Shell Network Isolation`。
+> **版本锚点**：`CURRENT_VERSION = v1.6 + 多 Provider 模型配置 + Run 模型绑定 Context Budget + True Cancellation + Shell Network Isolation + SecretStore/Keychain`。
 
 ---
 
@@ -84,7 +84,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/scratchpad.ts` | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪 |
 | `src/runtime/context.ts` | ContextManager：按轮分组裁剪，保留 system + 最后一条 user；Messages + Tool Schema 统一预算 |
 | `src/runtime/model-context.ts` | 模型上下文能力配置：显式 Run 模型优先（source=`run_model`），环境变量仅 CLI/legacy fallback；保守 token 估算 |
-| `src/runtime/trace.ts` | 结构化事件轨迹（16 类事件，见 §3.3） |
+| `src/runtime/trace.ts` | 结构化事件轨迹（17 类事件，见 §3.3） |
 | `src/runtime/checkpoint.ts` | 最小 JSON 持久化（`.checkpoints/<runId>.json`） |
 | `src/runtime/side-effect.ts` | 副作用三态生命周期 + canonical operation key 去重 |
 | `src/runtime/output-guard.ts` | 单工具结果 16KB 硬上限（UTF-8 安全截断） |
@@ -97,12 +97,16 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/sandbox-policy.ts` | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false） |
 | `src/host/server.ts` | node:http 服务器 + 统一错误兜底 |
 | `src/host/routes.ts` | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback |
-| `src/host/run-manager.ts` | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力 |
+| `src/host/run-manager.ts` | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running/stopping→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力；终态统一走 finalizeRun 原子管线（status+event 同一事务，幂等，失败不广播） |
 | `src/host/run-events.ts` | HostEvent 类型 + SSE 编码 |
 | `src/host/workspace.ts` | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM） |
 | `src/host/persistence/store.ts` | 薄 RunStore 接口（Session/Run CRUD + Event append/list） |
 | `src/host/persistence/sqlite-store.ts` | 原生 `node:sqlite` 实现；默认 `REPO_ROOT/.data/payaso.db`（`PAYASO_DB_PATH` 可覆盖，失败回退 `:memory:`） |
-| `src/host/index.ts` | Host 启动入口（PORT 可覆盖，默认 4500） |
+| `src/host/persistence/settings-store.ts` | Provider metadata（settings 表 key='app' JSON blob，**无 raw apiKey**）+ 默认项 + .env 一次性导入 + legacy 凭证迁移（先写 SecretStore 后剥 SQLite） |
+| `src/host/secrets/secret-store.ts` | SecretStore 接口 + 稳定 secret key（`model-provider:<id>:api-key`）+ 组合根工厂（macOS=Keychain，其他平台=Unsupported，测试=Memory） |
+| `src/host/secrets/macos-keychain-secret-store.ts` | macOS Keychain：`security` CLI + spawnSync 参数数组（service=PayasoAgent，错误对外脱敏） |
+| `src/host/secrets/memory-secret-store.ts` | MemorySecretStore（仅测试/注入）与 UnsupportedSecretStore（非 macOS 明确失败，不回退明文） |
+| `src/host/index.ts` | Host 启动入口（PORT 可覆盖，默认 4500；组合根：创建 SecretStore 并注入） |
 
 ### 3.2 Web 前端
 
@@ -129,7 +133,7 @@ web/src/
 
 <!-- docs-contract:events -->
 ```json
-["llm_call","tool_call","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
 ```
 <!-- /docs-contract:events -->
 
@@ -147,7 +151,9 @@ for (i = startIter .. MAX_ITERATIONS=10):
   │         ├─ SSE delta → Host 批量持久化 → Web 增量显示
   │         └─ 完整组装 assistant/tool_calls 后才进入 Loop
   │         └─ 无 tool_calls → stripThink → final_answer → status=completed
-  └─ 2.    逐个 tool_call：
+  └─ 2.    逐个 tool_call（v1.6 Invocation Pipeline：Parse → Validate → Resolve →
+        │      Side-effect preparation → Execute；①②③ 失败 = 可恢复 invocation error，
+        │      工具不执行、不创建 side-effect，结构化错误回传模型修正，trace 记 tool_call_invalid）：
         ├─ 2a. non_idempotent → resolveOperation（replay / uncertain / start）
         ├─ 2b. isBlocked 防死循环（同 tool+input 失败超限 / 已 invalid → 禁调）
         ├─ 2c. non_idempotent → begin(opKey) + saveCheckpoint()（persist 失败禁止 execute）
@@ -176,6 +182,8 @@ for (i = startIter .. MAX_ITERATIONS=10):
 - **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力（`tests/model-binding.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
 - **True Cancellation（v1.6）**：AbortSignal 是唯一取消机制，传播链 Host AbortController → runAgent（迭代边界 + tool_call 间检查）→ chat（HTTP/流式）→ ToolContext.signal → shell 进程组终止（detached spawn + SIGTERM→SIGKILL）。状态机 running→stopping（abort 已发出）→stopped（执行真正退出）；重复 stop 幂等。non_idempotent 工具被 abort 打断时保持 uncertain 语义（`tests/cancellation.test.ts` 锁定）。
 - **Shell Network Isolation（v1.6）**：文件系统能力 ≠ 网络能力。profile 在 deny default 之外按 `SandboxPolicy.networkAccess` 显式 `(deny network*)`/`(allow network*)`；shell 固定 deny（curl/perl 等任意运行时的 socket 连接均被 OS 层拒绝，含 localhost），workspace 内文件操作不受影响（`tests/shell-network.test.ts`）。LLM Tool Schema 不暴露任何网络开关——网络权限只来自 Host/Policy，不由模型参数决定。
+- **Provider 凭证隔离（v1.6 SecretStore）**：API Key 唯一存放在 SecretStore（macOS Keychain，service=PayasoAgent，account=`model-provider:<providerId>:api-key`）；SQLite settings blob 只存 metadata（baseUrl/models/hasApiKey）。Settings 读 API（`GET /settings*`）绝不返回 key；Provider 编辑为明确三态（undefined=保持 / 非空=替换 / null=清除）。legacy 明文在启动时自动迁移：**先写 SecretStore 成功后才剥 SQLite**，失败 fail-closed（凭证不丢，Host 明确报错），迁移幂等；删除 Provider 同步 best-effort 清理 Secret。Run 启动时 metadata + SecretStore 合成原子 ModelConfig（`tests/settings.test.ts` Case 1-12 锁定）。
+- **Atomic Run Finalization（v1.6）**：terminal Run persistence 是原子的 —— 终态状态与其对应终态事件在同一个 SQLite 事务内提交（`RunStore.finalizeRun`），COMMIT 前崩溃两者都不存在、COMMIT 后崩溃两者都已落库。不变量：`completed ⇔ run_completed`、`failed ⇔ run_failed`、`stopped ⇔ run_stopped`，且每 Run 至多一个终态/终态事件（重复 finish 幂等 no-op）。顺序固定：Runtime 终局 → 原子持久化 → 内存发布 → SSE（durability 优先于 delivery；持久化失败不广播终态、不降级为单独 update/append，Run 保持原非终态）。stopping 为非终态中间态，独立持久化，不与 run_stopped 混写（`tests/finalize.test.ts` 锁定）。
 
 ---
 
@@ -214,11 +222,11 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET | `/runs/:id/files` | 工作区文件树（深度≤6，数量≤500） |
 | GET | `/runs/:id/files/*` | 读取工作区内文件（≤1MB） |
 | GET | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器 |
-| GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id` | 模型提供方 CRUD（内置 + 自定义，密钥只回脱敏值） |
+| GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id` | 模型提供方 CRUD；**读 API 只回 hasApiKey/mask，key 绝不出 Host**（写入路径：key → SecretStore） |
 | GET/POST | `/settings`，`/settings/default` | 默认模型查询 / 设置（providerId + modelId 成对校验） |
 | POST | `/settings/available-models` | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端） |
 
-SSE 事件 = Runtime Trace 16 类 + Host 生命周期 6 类（含 v1.6 `run_stopping`）+ `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
+SSE 事件 = Runtime Trace 17 类 + Host 生命周期 6 类（含 v1.6 `run_stopping`）+ `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
 
 ---
 
@@ -253,7 +261,7 @@ npm run test:host         # Host API 集成（需 LLM）
 | 7 | ~~**LLM 层无重试、无防御解析、无流式输出**~~ **已修复** | `llm/llm.ts` | 默认解析 OpenAI-compatible SSE，正文/推理增量输出，Tool Call 参数完整组装并校验后才执行；保留 240s 总超时、有限重试、JSON fallback 与响应形状校验 |
 | 8 | ~~os-sandbox / workspace 两个确定性套件 FAIL~~ **已修复**：`sandbox-exec` 在某些外层受限运行环境中无法应用 profile（`sandbox_apply: Operation not permitted`，exit 71） | `sandbox/macos-sandbox.ts`、`tools/runtime-tools.ts`、`tests/os-sandbox.test.ts`、`tests/workspace.test.ts` | 修复 = 运行时能力探测 `probeSandboxAvailability()` + **fail-closed 门**；不可用则 shell 拒绝执行，可用则跑完整隔离矩阵。该能力取决于实际运行上下文，不应仅按 macOS 版本判断 |
 | 9 | **system（含 Scratchpad）的模型视图尚未单独压缩** | `runtime/context.ts`、`runtime/scratchpad.ts` | 已去除固定 4000 字符限制，改为按模型配置输入/输出/安全预算，并以 `context_usage` 观测 Messages/Tool Schema/Scratchpad；若未来实测接近窗口，再增加有界 Scratchpad Model View |
-| 10 | **`.env` 存真实 API 密钥**（不入库，但磁盘明文） | 项目根 `.env` | 建议轮换 + 后续引入密钥管理 |
+| 10 | ~~**`.env` 存真实 API 密钥**（不入库，但磁盘明文）~~ **部分修复（v1.6 SecretStore）**：SQLite 明文已迁移至 Keychain，`.env` 本身仍为磁盘明文 | 项目根 `.env` | 导入完成后建议从 `.env` 移除 `OPENAI_API_KEY` 行；后续可加"导入后清理"提示 |
 | 11 | ~~**思考标签保留在历史**~~ **已修复** | `runtime/agent.ts` | `reasoning_content` 与 content 内嵌 `<think>` 块都不再写入下一轮 messages/checkpoint；Trace 仍可记录 provider reasoning 供观测 |
 
 ---
@@ -262,7 +270,8 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 20 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序、Run 模型绑定、True Cancellation、Shell 网络隔离） | `npm run test:all` | 20 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 21 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序、Run 模型绑定、True Cancellation、Shell 网络隔离、Secret 隔离/迁移、Malformed Tool Call 恢复） | `npm run test:all` | 21 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| Keychain 集成（独立运行，不进 run-all） | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP |
 | Host 集成 | `npm run test:host` | 需 LLM |
 | Agent E2E | `npm test` | 需 LLM |
 | 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |

@@ -305,8 +305,9 @@ async function readStreamingMessage(
     .sort(([a], [b]) => a - b)
     .map(([, call]) => {
       if (!call.id || !call.name) throw new Error("LLM streaming response has incomplete tool_call");
-      // Validate completeness now; Runtime must never execute partial JSON.
-      JSON.parse(call.arguments);
+      // arguments 的 JSON 有效性不在传输层校验：stream 与 non-stream 统一交给
+      // Runtime 的 parseToolArguments（可恢复 invocation error，见 tools.ts）。
+      // 这里只校验协议形状（id/name 必须存在）。
       return { id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } };
     });
   return {

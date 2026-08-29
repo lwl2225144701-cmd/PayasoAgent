@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { HostEvent } from "../run-events.js";
 import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView, StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./store.js";
 import { SettingsStore } from "./settings-store.js";
+import { createSecretStore, type SecretStore } from "../secrets/secret-store.js";
 
 // Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
 const REPO_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -93,7 +94,7 @@ export class SqliteRunStore implements RunStore {
   private closed = false;
   private settings!: SettingsStore;
 
-  constructor(dbPath: string = resolvePayasoDbPath()) {
+  constructor(dbPath: string = resolvePayasoDbPath(), secrets: SecretStore = createSecretStore()) {
     let actualPath = dbPath;
     let initialized = false;
     const attempts: Array<{ path: string; error: string }> = [];
@@ -108,7 +109,7 @@ export class SqliteRunStore implements RunStore {
         }
         opened = new DatabaseSync(actualPath);
         this.db = opened;
-        this.settings = new SettingsStore(this.db);
+        this.settings = new SettingsStore(this.db, secrets);
         if (actualPath !== ":memory:") {
           try { fs.chmodSync(actualPath, 0o600); } catch { /* best effort */ }
         }
@@ -497,6 +498,17 @@ export class SqliteRunStore implements RunStore {
     return row.seq;
   }
 
+  // v1.6 Atomic Run Finalization：terminal status 更新 + terminal 事件插入在同一
+  // 事务内提交 —— COMMIT 前崩溃则两者都不存在，COMMIT 后崩溃则两者都已落库。
+  // 任一步失败 ROLLBACK（Run 保持原状态、terminal event 不存在）。seq 在事务内
+  // 用 appendEvent 的既有分配逻辑生成，不绕开序号生成。
+  finalizeRun(run: StoredRun, event: HostEvent): number {
+    return this.tx(() => {
+      this.updateRun(run);
+      return this.appendEvent(run.runId, event);
+    });
+  }
+
   listEvents(runId: string): StoredEvent[] {
     const rows = this.db.prepare(
       "SELECT seq, payload FROM events WHERE run_id = ? ORDER BY seq ASC"
@@ -550,9 +562,8 @@ export class SqliteRunStore implements RunStore {
   }
 
   getModelProviderSecret(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {
-    const provider = this.settings.getModel(id);
-    if (!provider) return null;
-    return { apiKey: provider.apiKey, baseUrl: provider.baseUrl, models: provider.models };
+    // 凭证经 SecretStore（macOS Keychain）读取；metadata 只提供 hasApiKey
+    return this.settings.getProviderCredentials(id);
   }
 
   getDefaultProviderId(): string {
@@ -590,6 +601,6 @@ export class SqliteRunStore implements RunStore {
   }
 }
 
-export function createDefaultRunStore(): SqliteRunStore {
-  return new SqliteRunStore(resolvePayasoDbPath());
+export function createDefaultRunStore(secrets: SecretStore = createSecretStore()): SqliteRunStore {
+  return new SqliteRunStore(resolvePayasoDbPath(), secrets);
 }

@@ -514,7 +514,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
                   </div>
                   <div className={styles.cardMeta}>{m.baseUrl}</div>
                   <div className={styles.cardMeta}>
-                    API Key：{m.hasApiKey ? m.apiKeyMasked : '未设置'}
+                    API Key：{m.hasApiKey ? '已配置' : '未设置'}
                   </div>
                   <div className={styles.cardMeta}>
                     状态：<span className={styles.statusText} data-status={m.status}>{statusLabel(m.status)}</span>
