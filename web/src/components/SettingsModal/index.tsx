@@ -5,7 +5,9 @@ import {
   updateModel,
   deleteModel,
   setDefaultModel,
+  getDefaultModel,
   fetchAvailableModels,
+  previewAvailableModels,
 } from '../../api';
 import type { ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from '../../types';
 import {
@@ -17,7 +19,6 @@ import {
   DatabaseIcon,
   SlidersIcon,
   UserIcon,
-  ChevronDownIcon,
 } from '../icons';
 import { Modal } from '../Modal';
 import styles from './SettingsModal.module.css';
@@ -30,7 +31,7 @@ interface SettingsModalProps {
   onSaved?: () => void;
 }
 
-type FormMode = 'list' | 'add' | 'builtin-add' | 'edit';
+type FormMode = 'list' | 'add' | 'edit';
 
 interface ModelTag {
   id: string;
@@ -46,15 +47,7 @@ interface FormState {
   hadApiKey: boolean;
   tags: ModelTag[];
   newTag: string;
-  templateId?: string;
 }
-
-// 内置模板："添加提供方"入口预填的 Provider，与后端 DEFAULT_MODELS 对齐
-const TEMPLATES: Array<{ id: string; name: string; baseUrl: string; model: string; models: string[] }> = [
-  { id: 'deepseek-chat', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'] },
-  { id: 'openai-gpt4o', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o', models: ['gpt-4o', 'gpt-4o-mini', 'o1-preview', 'o1-mini'] },
-  { id: 'stepfun-step', name: 'StepFun', baseUrl: 'https://api.stepfun.com/v1', model: 'step-2-16k', models: ['step-2-16k', 'step-1-8k'] },
-];
 
 function statusLabel(status: ModelProviderView['status']): string {
   switch (status) {
@@ -92,14 +85,15 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [defaultId, setDefaultId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await listModels();
+      const [resp, defResp] = await Promise.all([listModels(), getDefaultModel()]);
       setModels(resp.models);
+      setDefaultId(defResp.defaultProviderId || null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`加载模型列表失败：${msg}`);
@@ -123,27 +117,9 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
     }
   }, [open]);
 
-  const startAdd = (templateId?: string) => {
-    if (templateId) {
-      const tpl = TEMPLATES.find(t => t.id === templateId);
-      if (tpl) {
-        setForm({
-          ...EMPTY_FORM,
-          name: tpl.name,
-          baseUrl: tpl.baseUrl,
-          tags: tpl.models.map((value, idx) => ({ id: `${tpl.id}-${idx}`, value })),
-          hadApiKey: false,
-          templateId: tpl.id,
-        });
-        setFormMode('builtin-add');
-      } else {
-        setForm({ ...EMPTY_FORM, tags: [] });
-        setFormMode('add');
-      }
-    } else {
-      setForm({ ...EMPTY_FORM, tags: [] });
-      setFormMode('add');
-    }
+  const startAdd = () => {
+    setForm({ ...EMPTY_FORM, tags: [] });
+    setFormMode('add');
     setCustomOpen(false);
     setError(null);
   };
@@ -186,7 +162,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
 
     setSaving(true);
     try {
-      if (formMode === 'add' || formMode === 'builtin-add') {
+      if (formMode === 'add') {
         const input: CreateModelProviderInput = {
           name,
           baseUrl,
@@ -194,9 +170,6 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
         };
         if (form.apiKey) {
           input.apiKey = form.apiKey;
-        }
-        if (formMode === 'builtin-add' && form.templateId) {
-          input.templateId = form.templateId;
         }
         await createModel(input);
       } else if (formMode === 'edit' && form.id) {
@@ -273,57 +246,67 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
   const modelsFromTags = () => form.tags.map(t => t.value);
 
   // 拉取 OpenAI 兼容端点的可用模型并合并进目录（点保存才落库）。
-  // 编辑已有 Provider 且密钥留空时由后端使用存储的密钥（明文不出服务端）。
+  // 编辑已有 Provider 时通过 providerId 读取服务端配置；
+  // 新增 Provider 时通过 baseUrl + apiKey 临时预检（不落盘）。
   const handleFetchModels = async () => {
     setError(null);
-    const baseUrl = form.baseUrl.trim();
-    const apiKey = form.apiKey.trim();
-    if (!baseUrl) {
-      setError('请先填写 API 地址。');
-      return;
-    }
-    const useStoredKey = formMode === 'edit' && !apiKey;
-    if (!apiKey && !useStoredKey) {
-      setError('请先填写 API 密钥后再获取可用模型。');
-      return;
-    }
-    setFetchingModels(true);
-    try {
-      const resp = await fetchAvailableModels({
-        baseUrl,
-        apiKey: apiKey || undefined,
-        providerId: useStoredKey ? form.id : undefined,
-      });
-      const known = new Set(form.tags.map(t => t.value));
-      const added = resp.models
-        .filter(m => !known.has(m))
-        .map(value => ({ id: crypto.randomUUID(), value }));
-      let tags = [...form.tags, ...added];
-      if (tags.length > 50) {
-        tags = tags.slice(0, 50);
-        setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
+    if (formMode === 'edit' && form.id) {
+      setFetchingModels(true);
+      try {
+        const resp = await fetchAvailableModels({ providerId: form.id });
+        const known = new Set(form.tags.map(t => t.value));
+        const added = resp.models
+          .filter(m => !known.has(m))
+          .map(value => ({ id: crypto.randomUUID(), value }));
+        let tags = [...form.tags, ...added];
+        if (tags.length > 50) {
+          tags = tags.slice(0, 50);
+          setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
+        }
+        setForm(prev => ({ ...prev, tags }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`获取可用模型失败：${msg}`);
+      } finally {
+        setFetchingModels(false);
       }
-      setForm(prev => ({ ...prev, tags }));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(`获取可用模型失败：${msg}`);
-    } finally {
-      setFetchingModels(false);
+    } else if (formMode === 'add') {
+      if (!form.baseUrl || !form.apiKey) {
+        setError('请填写 API 地址与 API 密钥后再拉取可用模型。');
+        return;
+      }
+      setFetchingModels(true);
+      try {
+        const resp = await previewAvailableModels({ baseUrl: form.baseUrl, apiKey: form.apiKey });
+        const known = new Set(form.tags.map(t => t.value));
+        const added = resp.models
+          .filter(m => !known.has(m))
+          .map(value => ({ id: crypto.randomUUID(), value }));
+        let tags = [...form.tags, ...added];
+        if (tags.length > 50) {
+          tags = tags.slice(0, 50);
+          setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
+        }
+        setForm(prev => ({ ...prev, tags }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`获取可用模型失败：${msg}`);
+      } finally {
+        setFetchingModels(false);
+      }
+    } else {
+      setError('请先保存 Provider 后再拉取可用模型。');
     }
   };
 
   const renderModelsTab = () => {
     if (formMode !== 'list') {
-      const isBuiltin = formMode === 'edit' && form.kind === 'builtin';
       const hasApiKey = formMode === 'edit' && (form.hadApiKey || form.apiKey.length > 0);
-      const title = formMode === 'builtin-add' ? '添加提供方' : formMode === 'add' ? '添加自定义提供方' : '编辑提供方';
+      const title = formMode === 'add' ? '添加自定义提供方' : '编辑提供方';
       return (
         <div className={styles.formCard}>
           <div className={styles.formHeader}>
             <h3 className={styles.formTitle}>{title}</h3>
-            {isBuiltin && (
-              <span className={styles.officialBadge}>{form.name} official</span>
-            )}
           </div>
           {error && <div className={styles.error}>{error}</div>}
           <div className={styles.field}>
@@ -343,7 +326,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
               value={form.apiKey}
               onChange={e => setForm(prev => ({ ...prev, apiKey: e.target.value }))}
               placeholder={
-                isBuiltin && hasApiKey
+                hasApiKey
                   ? '已配置——输入新值可替换'
                   : formMode === 'edit'
                     ? '留空 = 不修改'
@@ -387,7 +370,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
                       type="button"
                       className={styles.linkButton}
                       onClick={handleFetchModels}
-                      disabled={fetchingModels}
+                      disabled={fetchingModels || (formMode === 'edit' ? !form.id : !form.baseUrl || !form.apiKey)}
                     >
                       {fetchingModels ? '获取中…' : '获取可用模型'}
                     </button>
@@ -457,41 +440,9 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
     return (
       <div className={styles.modelsTab}>
         <div className={styles.toolbar}>
-          <div className={styles.templateMenu}>
-            <button
-              type="button"
-              className={styles.primaryButton}
-              onClick={() => setTemplateMenuOpen(v => !v)}
-              aria-haspopup="menu"
-              aria-expanded={templateMenuOpen}
-            >
-              <PlusIcon size={14} />
-              <span>添加提供方</span>
-              <ChevronDownIcon size={13} />
-            </button>
-            {templateMenuOpen && (
-              <div className={styles.templateMenuList} role="menu">
-                {TEMPLATES.map(tpl => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    className={styles.templateMenuItem}
-                    role="menuitem"
-                    onClick={() => {
-                      setTemplateMenuOpen(false);
-                      startAdd(tpl.id);
-                    }}
-                  >
-                    <span className={styles.templateMenuName}>{tpl.name}</span>
-                    <span className={styles.templateMenuModel}>{tpl.model}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
           <button
             type="button"
-            className={styles.secondaryButton}
+            className={styles.primaryButton}
             onClick={() => startAdd()}
           >
             <PlusIcon size={14} />
@@ -510,6 +461,9 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
                 <div className={styles.cardMain}>
                   <div className={styles.cardTitleRow}>
                     <span className={styles.cardTitle}>{m.name}</span>
+                    {m.id === defaultId && (
+                      <span className={styles.defaultBadge}>默认</span>
+                    )}
                     <span className={styles.statusDot} data-status={m.status} title={statusLabel(m.status)} />
                   </div>
                   <div className={styles.cardMeta}>{m.baseUrl}</div>
@@ -531,13 +485,14 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
                   <button
                     type="button"
                     className={styles.textButton}
-                    disabled={!m.hasApiKey}
-                    title={m.hasApiKey ? undefined : '请先配置 API 密钥'}
+                    disabled={!m.hasApiKey || m.id === defaultId}
+                    title={!m.hasApiKey ? '请先配置 API 密钥' : m.id === defaultId ? '当前默认提供方' : undefined}
                     onClick={async () => {
                       setError(null);
                       try {
                         await setDefaultModel(m.id, m.models[0] ?? '');
-                        // 通知 App 刷新默认模型
+                        // 立即在卡片上显示"当前默认"，并通知 App 刷新底部下拉
+                        setDefaultId(m.id);
                         window.dispatchEvent(new CustomEvent('settings:defaultChanged', { detail: { providerId: m.id } }));
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err);
@@ -545,7 +500,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
                       }
                     }}
                   >
-                    设为默认
+                    {m.id === defaultId ? '当前默认' : '设为默认'}
                   </button>
                   {m.kind === 'custom' && (
                     <button

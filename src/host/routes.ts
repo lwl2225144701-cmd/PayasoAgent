@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { RunManager, type SseSink } from "./run-manager.js";
 import { fetchAvailableModels } from "./available-models.js";
+import { canonicalizeProviderBaseUrl } from "./provider-url.js";
 import type { CreateModelProviderInput, UpdateModelProviderInput } from "./persistence/store.js";
 import {
   resolveWorkspacePath,
@@ -25,6 +26,89 @@ const MAX_BODY_BYTES = 64 * 1024; // Host JSON 请求体上限
 const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 const SAFE_SESSION_ID = SAFE_RUN_ID;
 const WORKSPACE_DIRS = ["input", "work", "output"];
+
+// Host API Token（进程内存唯一，不进入 URL/日志/前端状态）
+let hostApiToken: string | null = null;
+export function setHostApiToken(token: string | null): void {
+  hostApiToken = token;
+}
+
+// 判断是否为开发模式（Vite dev server 5173 仅在开发模式允许）
+const isDevMode = process.env.NODE_ENV !== "production" && process.env.VITE_DEV_SERVER !== "0";
+
+// 构建可信 Origin 集合（按实际 Host 端口动态计算）
+function trustedOrigins(hostPort: number): Set<string> {
+  const origins = new Set<string>();
+  if (isDevMode) {
+    origins.add("http://localhost:5173");
+    origins.add("http://127.0.0.1:5173");
+  }
+  origins.add(`http://localhost:${hostPort}`);
+  origins.add(`http://127.0.0.1:${hostPort}`);
+  return origins;
+}
+
+// 脱敏 headers（用于日志）
+function safeHeaders(headers: IncomingMessage["headers"]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === "authorization" || key.toLowerCase() === "cookie") {
+      out[key] = "[redacted]";
+    } else {
+      out[key] = String(value);
+    }
+  }
+  return out;
+}
+
+function checkOrigin(req: IncomingMessage, hostPort: number): void {
+  const origin = req.headers.origin;
+  if (!origin || origin === "null") {
+    // Origin: null 明确拒绝（防止浏览器发来的 null Origin 绕过检查）
+    if (origin === "null") {
+      throw new Error("untrusted origin");
+    }
+    // 未配置 token 时，允许非浏览器请求（未配置 = 不强制鉴权）
+    if (!hostApiToken) return;
+    // 无 Origin 的非浏览器请求必须通过 Authorization header 鉴权
+    const auth = String(req.headers.authorization ?? "");
+    if (!auth.startsWith("Bearer ")) {
+      throw new Error("missing or invalid authorization");
+    }
+    const token = auth.slice("Bearer ".length).trim();
+    if (token.length < 32 || token !== hostApiToken) {
+      throw new Error("missing or invalid authorization");
+    }
+    return;
+  }
+  if (!trustedOrigins(hostPort).has(origin)) {
+    throw new Error("untrusted origin");
+  }
+}
+
+function requireAuth(req: IncomingMessage): void {
+  // 非浏览器无 Origin 请求必须提供 Host API token
+  const origin = req.headers.origin;
+  if (!origin || origin === "null") {
+    // 未配置 token 时，允许非浏览器请求（未配置 = 不强制鉴权）
+    if (!hostApiToken) return;
+    const auth = String(req.headers.authorization ?? "");
+    if (!auth.startsWith("Bearer ")) {
+      throw new Error("missing or invalid authorization");
+    }
+    const token = auth.slice("Bearer ".length).trim();
+    if (token.length < 32 || token !== hostApiToken) {
+      throw new Error("missing or invalid authorization");
+    }
+  }
+}
+
+function requireJsonContentType(req: IncomingMessage): void {
+  const ct = String(req.headers["content-type"] ?? "").toLowerCase();
+  if (!ct.includes("application/json")) {
+    throw new Error("Content-Type must be application/json");
+  }
+}
 
 // 静态文件根目录：项目根/web/dist/（server 从项目根启动，process.cwd() 为项目根）
 const STATIC_ROOT = path.resolve(process.cwd(), "web", "dist");
@@ -224,151 +308,212 @@ function readFileChecked(root: string, rel: string): { ok: true; content: string
 export async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  manager: RunManager
+  manager: RunManager,
+  hostPort?: number,
 ): Promise<void> {
   const s = segs(req);
   const method = req.method ?? "GET";
+  const port = hostPort ?? Number(req.socket.localPort) ?? 4500;
 
   if (s[0] === "settings") {
-    if (s.length === 2 && s[1] === "models") {
-      if (method === "GET") {
+    try {
+      if (s.length === 2 && s[1] === "models") {
+        if (method === "GET") {
+          try {
+            const views = manager.listModelProviders();
+            return sendJson(res, 200, { models: views });
+          } catch (err) {
+            console.error("[settings] list models failed", err);
+            return bad(res, "list_models_failed");
+          }
+        }
+        if (method === "POST") {
+          requireJsonContentType(req);
+          checkOrigin(req, port);
+          requireAuth(req);
+          let body: CreateModelProviderInput;
+          try {
+            body = (await readBody(req)) as unknown as CreateModelProviderInput;
+          } catch (err) {
+            if (err instanceof RequestBodyTooLargeError) {
+              return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+            }
+            throw err;
+          }
+          try {
+            if (typeof body.name !== "string" || typeof body.baseUrl !== "string" || !Array.isArray(body.models)) {
+              return bad(res, "invalid_request_body");
+            }
+            const created = manager.addModelProvider(body);
+            return sendJson(res, 201, created);
+          } catch (err) {
+            console.error("[settings] add model failed", err);
+            return bad(res, (err as Error).message || "add_model_failed");
+          }
+        }
+        return notFound(res);
+      }
+      if (s.length === 3 && s[1] === "models") {
+        const id = s[2];
+        // 仅接受 UUID（自定义 Provider 的 id 全部为 UUID；内置模板已移除）
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        if (!isUuid) {
+          return bad(res, "invalid_model_id");
+        }
+        if (method === "PATCH") {
+          requireJsonContentType(req);
+          checkOrigin(req, port);
+          requireAuth(req);
+          let body: UpdateModelProviderInput;
+          try {
+            body = (await readBody(req)) as unknown as UpdateModelProviderInput;
+          } catch (err) {
+            if (err instanceof RequestBodyTooLargeError) {
+              return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+            }
+            throw err;
+          }
+          try {
+            if (body.name !== undefined && typeof body.name !== "string") {
+              return bad(res, "invalid_request_body");
+            }
+            if (body.baseUrl !== undefined && typeof body.baseUrl !== "string") {
+              return bad(res, "invalid_request_body");
+            }
+            if (body.apiKey !== undefined && body.apiKey !== null && typeof body.apiKey !== "string") {
+              return bad(res, "invalid_request_body");
+            }
+            if (body.models !== undefined && !Array.isArray(body.models)) {
+              return bad(res, "invalid_request_body");
+            }
+            const updated = manager.updateModelProvider(id, body);
+            if (!updated) return notFound(res);
+            return sendJson(res, 200, updated);
+          } catch (err) {
+            console.error("[settings] update model failed", err);
+            return bad(res, (err as Error).message || "update_model_failed");
+          }
+        }
+        if (method === "DELETE") {
+          checkOrigin(req, port);
+          requireAuth(req);
+          const ok = manager.deleteModelProvider(id);
+          if (!ok) return notFound(res);
+          return sendJson(res, 200, { deleted: true });
+        }
+        return notFound(res);
+      }
+      if (s.length === 2 && s[1] === "default" && method === "POST") {
+        requireJsonContentType(req);
+        checkOrigin(req, port);
+        requireAuth(req);
+        let body: Record<string, unknown>;
         try {
-          const views = manager.listModelProviders();
-          return sendJson(res, 200, { models: views });
+          body = await readBody(req);
+        } catch {
+          return bad(res, "invalid_request_body");
+        }
+        const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+        if (!providerId) return bad(res, "providerId is required");
+        // 未知 provider → 404；存在但未配置密钥/无模型/模型不在目录 → 400
+        if (!manager.getModelProvider(providerId)) return notFound(res);
+        const model = typeof body.model === "string" ? body.model.trim() : undefined;
+        if (model !== undefined && !model) return bad(res, "model must be non-empty when provided");
+        try {
+          const result = manager.setDefaultModel(providerId, model);
+          return sendJson(res, 200, { defaultProviderId: result.providerId, defaultModelId: result.modelId });
         } catch (err) {
-          console.error("[settings] list models failed", err);
-          return bad(res, "list_models_failed");
+          return bad(res, (err as Error).message);
         }
       }
-      if (method === "POST") {
-        let body: CreateModelProviderInput;
+      if (s.length === 1 && s[0] === "settings" && method === "GET") {
+        return sendJson(res, 200, {
+          defaultProviderId: manager.getDefaultProviderId(),
+          defaultModelId: manager.getDefaultModelId(),
+        });
+      }
+      if (s.length === 2 && s[1] === "available-models" && method === "POST") {
+        // 拉取 OpenAI 兼容端点的可用模型目录。凭证只来自服务端已保存配置，
+        // 禁止客户端通过此接口外带 Secret 或指定任意 endpoint（SSRF 防线）。
+        // 新增 Provider 时的临时预检走独立接口 /settings/available-models/preview。
+        requireJsonContentType(req);
+        checkOrigin(req, port);
+        requireAuth(req);
+        let body: Record<string, unknown>;
         try {
-          body = (await readBody(req)) as unknown as CreateModelProviderInput;
+          body = await readBody(req);
         } catch (err) {
           if (err instanceof RequestBodyTooLargeError) {
             return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
           }
           throw err;
         }
-        try {
-          if (typeof body.name !== "string" || typeof body.baseUrl !== "string" || !Array.isArray(body.models)) {
-            return bad(res, "invalid_request_body");
-          }
-          const created = manager.addModelProvider(body);
-          return sendJson(res, 201, created);
-        } catch (err) {
-          console.error("[settings] add model failed", err);
-          return bad(res, (err as Error).message || "add_model_failed");
-        }
-      }
-      return notFound(res);
-    }
-    if (s.length === 3 && s[1] === "models") {
-      const id = s[2];
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      const knownBuiltins = new Set(["deepseek-chat", "openai-gpt4o", "stepfun-step"]);
-      const isBuiltin = knownBuiltins.has(id);
-      if (!isUuid && !isBuiltin) {
-        return bad(res, "invalid_model_id");
-      }
-      if (method === "PATCH") {
-        let body: UpdateModelProviderInput;
-        try {
-          body = (await readBody(req)) as unknown as UpdateModelProviderInput;
-        } catch (err) {
-          if (err instanceof RequestBodyTooLargeError) {
-            return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
-          }
-          throw err;
-        }
-        try {
-          if (body.name !== undefined && typeof body.name !== "string") {
-            return bad(res, "invalid_request_body");
-          }
-          if (body.baseUrl !== undefined && typeof body.baseUrl !== "string") {
-            return bad(res, "invalid_request_body");
-          }
-          if (body.apiKey !== undefined && body.apiKey !== null && typeof body.apiKey !== "string") {
-            return bad(res, "invalid_request_body");
-          }
-          if (body.models !== undefined && !Array.isArray(body.models)) {
-            return bad(res, "invalid_request_body");
-          }
-          const updated = manager.updateModelProvider(id, body);
-          if (!updated) return notFound(res);
-          return sendJson(res, 200, updated);
-        } catch (err) {
-          console.error("[settings] update model failed", err);
-          return bad(res, (err as Error).message || "update_model_failed");
-        }
-      }
-      if (method === "DELETE") {
-        const ok = manager.deleteModelProvider(id);
-        if (!ok) return notFound(res);
-        return sendJson(res, 200, { deleted: true });
-      }
-      return notFound(res);
-    }
-    if (s.length === 2 && s[1] === "default" && method === "POST") {
-      let body: Record<string, unknown>;
-      try {
-        body = await readBody(req);
-      } catch (err) {
-        if (err instanceof RequestBodyTooLargeError) {
-          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
-        }
-        throw err;
-      }
-      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
-      if (!providerId) return bad(res, "providerId is required");
-      // 未知 provider → 404；存在但未配置密钥/无模型/模型不在目录 → 400
-      if (!manager.getModelProvider(providerId)) return notFound(res);
-      const model = typeof body.model === "string" ? body.model.trim() : undefined;
-      if (model !== undefined && !model) return bad(res, "model must be non-empty when provided");
-      try {
-        const result = manager.setDefaultModel(providerId, model);
-        return sendJson(res, 200, { defaultProviderId: result.providerId, defaultModelId: result.modelId });
-      } catch (err) {
-        return bad(res, (err as Error).message);
-      }
-    }
-    if (s.length === 1 && s[0] === "settings" && method === "GET") {
-      return sendJson(res, 200, {
-        defaultProviderId: manager.getDefaultProviderId(),
-        defaultModelId: manager.getDefaultModelId(),
-      });
-    }
-    if (s.length === 2 && s[1] === "available-models" && method === "POST") {
-      // 拉取 OpenAI 兼容端点的可用模型目录。apiKey 可显式传入（添加表单），
-      // 或留空并传 providerId 以使用存储的密钥（编辑表单，密钥只在服务端使用）。
-      let body: Record<string, unknown>;
-      try {
-        body = await readBody(req);
-      } catch (err) {
-        if (err instanceof RequestBodyTooLargeError) {
-          return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
-        }
-        throw err;
-      }
-      const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
-      const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
-      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
-      if (!baseUrl) return bad(res, "baseUrl is required");
-      let effectiveKey = apiKey;
-      if (!effectiveKey && providerId) {
+        const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+        if (!providerId) return bad(res, "providerId is required");
+        const provider = manager.getModelProvider(providerId);
+        if (!provider) return bad(res, "provider not found or not configured");
         const secret = manager.getModelProviderSecret(providerId);
-        if (!secret?.apiKey) return bad(res, "no API key available for this provider");
-        effectiveKey = secret.apiKey;
+        if (!secret?.apiKey) return bad(res, "provider has no API key configured");
+        // 协议白名单 + 规范化：仅 https: 或本地 loopback http:（开发模式）
+        let targetUrl: string;
+        try {
+          targetUrl = canonicalizeProviderBaseUrl(provider.baseUrl, { allowLoopbackHttp: true });
+        } catch (err) {
+          return bad(res, (err as Error).message || "baseUrl protocol not allowed");
+        }
+        try {
+          const models = await fetchAvailableModels(targetUrl, secret.apiKey);
+          return sendJson(res, 200, { models });
+        } catch (err) {
+          return bad(res, (err as Error).message);
+        }
       }
-      if (!effectiveKey) return bad(res, "apiKey is required");
-      try {
-        const models = await fetchAvailableModels(baseUrl, effectiveKey);
-        return sendJson(res, 200, { models });
-      } catch (err) {
-        return bad(res, (err as Error).message);
+      if (s.length === 3 && s[1] === "available-models" && s[2] === "preview" && method === "POST") {
+        // 新增 Provider 时的临时预检：用表单中的 baseUrl + apiKey 拉取模型目录。
+        // 凭证不落盘、不进日志、不回显；仍受 fetchAvailableModelsSafe 保护
+        // （协议白名单、凭证拒绝、loopback 限制、响应大小限制）。需鉴权。
+        requireJsonContentType(req);
+        checkOrigin(req, port);
+        requireAuth(req);
+        let body: Record<string, unknown>;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (err instanceof RequestBodyTooLargeError) {
+            return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+          }
+          throw err;
+        }
+        const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+        const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+        if (!baseUrl || !apiKey) return bad(res, "baseUrl and apiKey are required");
+        // 协议白名单 + 规范化：仅 https: 或本地 loopback http:（开发模式）
+        let targetUrl: string;
+        try {
+          targetUrl = canonicalizeProviderBaseUrl(baseUrl, { allowLoopbackHttp: true });
+        } catch (err) {
+          return bad(res, (err as Error).message || "baseUrl protocol not allowed");
+        }
+        try {
+          const models = await fetchAvailableModels(targetUrl, apiKey);
+          return sendJson(res, 200, { models });
+        } catch (err) {
+          return bad(res, (err as Error).message);
+        }
       }
+      return notFound(res);
+    } catch (err) {
+      if (err instanceof Error && err.message === "untrusted origin") {
+        return bad(res, "untrusted origin");
+      }
+      if (err instanceof Error && err.message === "missing or invalid authorization") {
+        return bad(res, "missing or invalid authorization");
+      }
+      if (err instanceof Error && err.message === "Content-Type must be application/json") {
+        return bad(res, "invalid_content_type");
+      }
+      throw err;
     }
-    return notFound(res);
   }
 
   // Current Workspace: the native picker is Host-owned because browsers do
@@ -378,10 +523,14 @@ export async function handleRequest(
       return sendJson(res, 200, { workspace: workspacePublicView(getWorkspace()) });
     }
     if (s.length === 1 && method === "DELETE") {
+      checkOrigin(req, port);
+      requireAuth(req);
       clearWorkspace();
       return sendJson(res, 200, { workspace: null });
     }
     if (s.length === 2 && s[1] === "open" && method === "POST") {
+      checkOrigin(req, port);
+      requireAuth(req);
       try {
         const workspace = await openWorkspacePicker();
         return sendJson(res, 200, {
@@ -393,6 +542,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 2 && s[1] === "rename" && method === "POST") {
+      checkOrigin(req, port);
+      requireAuth(req);
       let body: Record<string, unknown>;
       try {
         body = await readBody(req);
@@ -413,6 +564,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 2 && s[1] === "delete" && method === "POST") {
+      checkOrigin(req, port);
+      requireAuth(req);
       let body: Record<string, unknown>;
       try {
         body = await readBody(req);
@@ -438,6 +591,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 2 && s[1] === "restore" && method === "POST") {
+      checkOrigin(req, port);
+      requireAuth(req);
       let body: Record<string, unknown>;
       try {
         body = await readBody(req);
@@ -456,6 +611,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 2 && s[1] === "purge" && method === "POST") {
+      checkOrigin(req, port);
+      requireAuth(req);
       let body: Record<string, unknown>;
       try {
         body = await readBody(req);
@@ -487,6 +644,8 @@ export async function handleRequest(
       return session ? sendJson(res, 200, session) : notFound(res);
     }
     if (s.length === 2 && method === "PATCH") {
+      checkOrigin(req, port);
+      requireAuth(req);
       let body: Record<string, unknown>;
       try {
         body = await readBody(req);
@@ -510,6 +669,8 @@ export async function handleRequest(
         return runs ? sendJson(res, 200, { runs }) : notFound(res);
       }
       if (method === "POST") {
+        checkOrigin(req, port);
+        requireAuth(req);
         let body: Record<string, unknown>;
         try {
           body = await readBody(req);
@@ -530,6 +691,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 3 && method === "POST" && s[2] === "archive") {
+      checkOrigin(req, port);
+      requireAuth(req);
       try {
         return sendJson(res, 200, manager.archiveSession(sessionId));
       } catch (err) {
@@ -537,6 +700,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 3 && method === "POST" && s[2] === "restore") {
+      checkOrigin(req, port);
+      requireAuth(req);
       try {
         return sendJson(res, 200, manager.restoreSession(sessionId));
       } catch (err) {
@@ -544,6 +709,8 @@ export async function handleRequest(
       }
     }
     if (s.length === 3 && method === "POST" && s[2] === "delete") {
+      checkOrigin(req, port);
+      requireAuth(req);
       try {
         return sendJson(res, 200, manager.deleteSession(sessionId));
       } catch (err) {
@@ -564,6 +731,14 @@ export async function handleRequest(
   if (s.length === 1) {
     if (method === "GET") return sendJson(res, 200, { runs: manager.list() });
     if (method === "POST") {
+      // Content-Length 检查在 auth 之前：超大请求直接 413，减少无谓的鉴权开销
+      const declared = Number(req.headers["content-length"]);
+      if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+        req.resume();
+        return sendJson(res, 413, { error: "payload_too_large", maxBytes: MAX_BODY_BYTES });
+      }
+      checkOrigin(req, port);
+      requireAuth(req);
       let body: Record<string, unknown>;
       try {
         body = await readBody(req);
@@ -603,18 +778,27 @@ export async function handleRequest(
   switch (s[2]) {
     case "events": {
       if (method !== "GET") return notFound(res);
+      // SSE：验证 token（通过 Authorization header，不使用 query）
+      checkOrigin(req, port);
+      requireAuth(req);
       return handleSse(req, res, manager, runId);
     }
     case "resume": {
       if (method !== "POST") return notFound(res);
+      checkOrigin(req, port);
+      requireAuth(req);
       return manager.resume(runId) ? sendJson(res, 202, { runId, status: "running" }) : notFound(res);
     }
     case "stop": {
       if (method !== "POST") return notFound(res);
+      checkOrigin(req, port);
+      requireAuth(req);
       return manager.stop(runId) ? sendJson(res, 202, { runId, status: "stopped" }) : notFound(res);
     }
     case "files": {
       if (method !== "GET") return notFound(res);
+      checkOrigin(req, port);
+      requireAuth(req);
       // GET /runs/:id/files → 列文件
       if (s.length === 3) {
         const run = manager.get(runId);

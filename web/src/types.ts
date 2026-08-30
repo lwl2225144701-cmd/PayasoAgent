@@ -51,8 +51,6 @@ export interface CreateModelProviderInput {
   baseUrl: string;
   apiKey?: string;
   models: string[];
-  // 内置模板入口：命中同名未配置内置时补齐配置
-  templateId?: string;
 }
 
 export interface UpdateModelProviderInput {

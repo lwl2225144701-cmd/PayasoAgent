@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { createSecretStore, providerSecretKey, type SecretStore } from "../secrets/secret-store.js";
+import { canonicalizeProviderBaseUrl } from "../provider-url.js";
 
 export type ModelProviderKind = "builtin" | "custom";
 
@@ -32,8 +33,6 @@ export interface CreateModelProviderInput {
   // 提供即设置凭证（SecretStore）；缺省/空 = 不设置。响应绝不回传 key（只回 hasApiKey）。
   apiKey?: string | null;
   models: string[];
-  // 内置模板入口：命中同名未配置内置时补齐密钥/目录，而不是创建新记录
-  templateId?: string;
 }
 
 // API Key 编辑三态（明确、可测试）：
@@ -70,32 +69,14 @@ interface LegacyStoredModelProvider extends StoredModelProvider {
   apiKey?: string;
 }
 
-const DEFAULT_MODELS: StoredModelProvider[] = [
-  {
-    id: "deepseek-chat",
-    kind: "builtin",
-    name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com",
-    hasApiKey: false,
-    models: ["deepseek-chat", "deepseek-reasoner"],
-  },
-  {
-    id: "openai-gpt4o",
-    kind: "builtin",
-    name: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    hasApiKey: false,
-    models: ["gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"],
-  },
-  {
-    id: "stepfun-step",
-    kind: "builtin",
-    name: "StepFun",
-    baseUrl: "https://api.stepfun.com/v1",
-    hasApiKey: false,
-    models: ["step-2-16k", "step-1-8k"],
-  },
-];
+// 内置模板已移除（产品决策：仅保留"添加自定义提供方"）。
+// 新库不再有任何预置 Provider；默认选择为空，由用户创建后自行设定。
+const DEFAULT_MODELS: StoredModelProvider[] = [];
+
+// 旧内置模板 id 白名单：用于迁移识别历史 builtin 记录。
+// 早期 schema 可能缺少 kind 字段（kind 为 undefined），故除 kind==="builtin" 外，
+// 也按 id 命中这些固定 id 来兜底清理，避免"隐藏的内置"继续占用名字/出现在列表。
+const BUILTIN_PROVIDER_IDS = new Set(["deepseek-chat", "openai-gpt4o", "stepfun-step"]);
 
 // 从 baseUrl 推导 Provider 的展示名：环境导入创建的 Provider 不用模型名命名，
 // 否则目录扩充后（如 MiniMax-M3 + 8 个模型）每个模型都挂着同一个模型名。
@@ -172,6 +153,24 @@ export class SettingsStore {
       console.error(`[SettingsStore] settings blob is corrupted, falling back to defaults: ${(err as Error).message}`);
       settings = fallback;
     }
+    // 内置模板概念移除（仅保留自定义提供方）：一次性清理历史 builtin 记录，
+    // 连同其 Secret 一并删除，避免"隐藏的内置"继续占用名字或出现在任何视图。
+    // 兼容旧 schema：kind 丢失（undefined）的内置模板按 id 白名单兜底识别。
+    const isLegacyBuiltin = (p: StoredModelProvider): boolean =>
+      p.kind === "builtin" || (p.kind == null && BUILTIN_PROVIDER_IDS.has(p.id));
+    const builtins = settings.models.filter(isLegacyBuiltin);
+    if (builtins.length > 0) {
+      for (const b of builtins) {
+        try { this.secrets.delete(providerSecretKey(b.id)); } catch { /* best-effort */ }
+      }
+      settings.models = settings.models.filter(p => !isLegacyBuiltin(p));
+      if (settings.defaultProviderId && !settings.models.some(m => m.id === settings.defaultProviderId)) {
+        settings.defaultProviderId = "";
+        settings.defaultModelId = "";
+      }
+      // 持久化回写，避免下次启动再次重复清理（幂等但保持库干净）
+      this.writeSettings(settings);
+    }
     // 旧库迁移 / 目录变化后的安全网：默认模型必须仍在默认 provider 的模型目录里
     const provider = settings.models.find(m => m.id === settings.defaultProviderId);
     if (!provider || !provider.models.includes(settings.defaultModelId)) {
@@ -231,8 +230,11 @@ export class SettingsStore {
   }
 
   private validateUrl(url: string): void {
-    if (!/^https?:\/\/\S+$/i.test(url)) {
-      throw new Error("baseUrl must be a valid HTTP/HTTPS URL");
+    // 统一走 provider-url 校验模块：协议白名单、凭证拒绝、HTTP 仅限 loopback、空 hostname 拒绝
+    try {
+      canonicalizeProviderBaseUrl(url, { allowLoopbackHttp: false });
+    } catch (err) {
+      throw new Error((err as Error).message || "baseUrl must be a valid HTTP/HTTPS URL");
     }
   }
 
@@ -252,12 +254,9 @@ export class SettingsStore {
     };
   }
 
-  // 列表只暴露"可用的"Provider：自定义始终显示（用户可见可编辑），
-  // 内置仅当已配置凭证时显示 —— 未配置的内置模板不出现在列表里。
+  // 列表暴露所有自定义 Provider（内置模板已移除，无隐藏项）。
   listViews(): ModelProviderView[] {
-    return this.getAllModels()
-      .filter(p => p.kind === "custom" || Boolean(p.hasApiKey))
-      .map(p => this.toView(p));
+    return this.getAllModels().map(p => this.toView(p));
   }
 
   getDefaultProviderId(): string {
@@ -351,34 +350,24 @@ export class SettingsStore {
     const apiKey = (input.apiKey ?? "").trim();
     const models = this.normalizeModels(input.models);
 
+    // 1. 标准化输入 + 基础校验
     if (!name) throw new Error("name is required");
     if (!baseUrl) throw new Error("baseUrl is required");
     this.validateUrl(baseUrl);
     if (models.length === 0) throw new Error("models is required");
 
+    // 2. 读取 settings（校验前快照，用于后续判断）
     const settings = this.readSettings();
 
-    // 内置模板入口：命中未配置的同 ID 内置时直接补齐配置（不新建记录，
-    // 避免与隐藏的内置模板重名冲突）。凭证先入 SecretStore，成功后才改 metadata。
-    if (input.templateId) {
-      const builtin = settings.models.find(m => m.id === input.templateId && m.kind === "builtin");
-      if (builtin) {
-        if (apiKey) {
-          this.secrets.set(providerSecretKey(builtin.id), apiKey);
-          builtin.hasApiKey = true;
-        }
-        builtin.baseUrl = baseUrl;
-        builtin.models = this.normalizeModels([...builtin.models, ...models]);
-        this.writeSettings(settings);
-        return this.toView(builtin);
-      }
+    // 3. 通用创建：业务校验必须在 Secret 写入之前完成
+    const existing = settings.models.find(
+      m => m.name.toLowerCase() === name.toLowerCase() || m.baseUrl.toLowerCase() === baseUrl.toLowerCase()
+    );
+    if (existing) {
+      throw new Error(`Provider with same name or baseUrl already exists: ${existing.name} (${existing.baseUrl})`);
     }
 
     const id = crypto.randomUUID();
-    // 凭证先入 SecretStore，成功后才持久化 metadata（顺序不可颠倒）
-    if (apiKey) {
-      this.secrets.set(providerSecretKey(id), apiKey);
-    }
     const provider: StoredModelProvider = {
       id,
       kind: "custom",
@@ -388,13 +377,24 @@ export class SettingsStore {
       models,
     };
 
-    if (settings.models.some(m => m.name.toLowerCase() === name.toLowerCase() || m.baseUrl.toLowerCase() === baseUrl.toLowerCase())) {
-      throw new Error("Provider with same name or baseUrl already exists");
+    // 4. 所有业务校验通过后，再写入 Secret
+    let secretWritten = false;
+    let secretKey = providerSecretKey(id);
+    try {
+      if (apiKey) {
+        this.secrets.set(secretKey, apiKey);
+        secretWritten = true;
+      }
+      settings.models.push(provider);
+      this.writeSettings(settings);
+      return this.toView(provider);
+    } catch (err) {
+      // 补偿：删除本次新增 Secret，防止孤儿凭证
+      if (secretWritten) {
+        try { this.secrets.delete(secretKey); } catch { /* best-effort compensation */ }
+      }
+      throw err;
     }
-
-    settings.models.push(provider);
-    this.writeSettings(settings);
-    return this.toView(provider);
   }
 
   updateModel(id: string, input: UpdateModelProviderInput): ModelProviderView | null {
@@ -403,6 +403,18 @@ export class SettingsStore {
     const idx = current.findIndex(m => m.id === id);
     if (idx === -1) return null;
 
+    // 保存旧 Secret 状态，以便 writeSettings 失败时恢复（补偿事务）
+    const oldHasApiKey = current[idx].hasApiKey;
+    let oldApiKey: string | null = null;
+    if (oldHasApiKey) {
+      oldApiKey = this.secrets.get(providerSecretKey(id));
+      if (oldApiKey === null) {
+        // 元数据显示有 Secret，但 SecretStore 中不存在 → fail-closed
+        throw new Error("Provider credentials inconsistent; contact support");
+      }
+    }
+
+    // 先做所有业务校验，再修改 Secret
     if (input.name !== undefined) {
       const name = input.name.trim();
       if (!name) throw new Error("name is required");
@@ -422,13 +434,21 @@ export class SettingsStore {
       current[idx].baseUrl = baseUrl;
     }
 
+    if (input.models !== undefined) {
+      const models = this.normalizeModels(input.models);
+      if (models.length === 0) throw new Error("models is required");
+      current[idx].models = models;
+    }
+
     // API Key 三态：undefined=保持 / null=删除 Secret / 非空=替换 Secret / ""=拒绝。
-    // Secret 操作先于 metadata 持久化：失败时 metadata 保持原状（不出现
-    // "hasApiKey=false 但 Secret 还在"或反向的不一致状态）。
+    // Secret 操作在 metadata 持久化之前完成；若 metadata 持久化失败，则回滚 Secret 到旧状态。
+    let secretMutated = false;
+    let newSecretWritten = false;
     if (input.apiKey !== undefined) {
       if (input.apiKey === null) {
         this.secrets.delete(providerSecretKey(id));
         current[idx].hasApiKey = false;
+        secretMutated = true;
       } else {
         const apiKey = input.apiKey.trim();
         if (!apiKey) {
@@ -436,17 +456,13 @@ export class SettingsStore {
         }
         this.secrets.set(providerSecretKey(id), apiKey);
         current[idx].hasApiKey = true;
+        secretMutated = true;
+        newSecretWritten = true;
       }
     }
 
-    if (input.models !== undefined) {
-      const models = this.normalizeModels(input.models);
-      if (models.length === 0) throw new Error("models is required");
-      current[idx].models = models;
-    }
-
-    // 默认选择的一致性：默认 provider 被清空凭证或模型目录不再包含默认模型时，
-    // 默认选择一并清空/回退，避免留下指向不可用组合的悬挂默认值。
+    // 默认选择一致性：在 API Key 状态更新后再检查（避免旧值导致的悬挂默认引用；
+    // 例如清除默认 Provider 的凭证时 hasApiKey 刚变为 false，必须立即清空默认引用）
     if (settings.defaultProviderId === id) {
       if (!current[idx].hasApiKey) {
         settings.defaultProviderId = "";
@@ -456,37 +472,96 @@ export class SettingsStore {
       }
     }
 
-    this.writeSettings(settings);
+    // 持久化 metadata
+    try {
+      this.writeSettings(settings);
+    } catch (err) {
+      // 补偿：恢复旧 Secret 状态
+      if (secretMutated) {
+        if (oldHasApiKey) {
+          if (oldApiKey !== null) {
+            try {
+              this.secrets.set(providerSecretKey(id), oldApiKey);
+            } catch (secretErr) {
+              // 补偿失败：返回统一的脱敏一致性错误
+              console.error(`[SettingsStore] updateModel recovery failed for ${id}: ${(secretErr as Error).message}`);
+              throw new Error("settings_consistency_recovery_failed");
+            }
+          }
+        } else {
+          // 原来无 Secret，本次新增了 Secret → 删除本次新增
+          if (newSecretWritten) {
+            try {
+              this.secrets.delete(providerSecretKey(id));
+            } catch (secretErr) {
+              console.error(`[SettingsStore] updateModel recovery delete failed for ${id}: ${(secretErr as Error).message}`);
+              throw new Error("settings_consistency_recovery_failed");
+            }
+          }
+        }
+      }
+      throw err;
+    }
     return this.toView(current[idx]);
   }
 
   deleteModel(id: string): boolean {
     const settings = this.readSettings();
     const target = settings.models.find(m => m.id === id);
-    if (target?.kind === "builtin") return false;
+    if (!target) return false;
+
     const next = settings.models.filter(m => m.id !== id);
     if (next.length === settings.models.length) return false;
 
-    // Secret cleanup：best-effort —— 清理失败不阻塞 metadata 删除（orphan secret
-    // 无安全风险，仅占位），但必须显式记录；不能反过来让 orphan 阻止用户删除 Provider。
-    try {
-      this.secrets.delete(providerSecretKey(id));
-    } catch (err) {
-      console.warn(`[SettingsStore] provider secret cleanup failed (orphan possible): ${(err as Error).message}`);
+    // 读取旧 Secret 状态，以便 metadata 删除失败时恢复
+    const oldHasApiKey = target.hasApiKey;
+    let oldSecretValue: string | null = null;
+    if (oldHasApiKey) {
+      oldSecretValue = this.secrets.get(providerSecretKey(id));
     }
 
-    // 删除的是默认 provider → 默认选择一并清空（解析时回退到第一个可用 provider）
+    // 删除资格校验通过后，先删 Secret
+    let secretDeleted = false;
+    try {
+      if (oldHasApiKey) {
+        this.secrets.delete(providerSecretKey(id));
+      }
+      secretDeleted = true;
+    } catch (err) {
+      // Secret 删除失败则中止，避免前端收到 deleted=true 但 Secret 仍可被使用的半完成状态
+      console.error(`[SettingsStore] provider secret delete failed for ${id}: ${(err as Error).message}`);
+      throw new Error("Failed to delete provider credentials");
+    }
+
+    // 删除的是默认 provider → 默认选择一并清空（与 metadata 在同一次写入中完成）
     if (settings.defaultProviderId === id) {
       settings.defaultProviderId = "";
       settings.defaultModelId = "";
     }
     settings.models = next;
-    this.writeSettings(settings);
+
+    try {
+      this.writeSettings(settings);
+    } catch (err) {
+      // metadata 删除失败：尝试恢复 Secret
+      if (secretDeleted && oldHasApiKey) {
+        if (oldSecretValue !== null) {
+          try {
+            this.secrets.set(providerSecretKey(id), oldSecretValue);
+          } catch (secretErr) {
+            console.error(`[SettingsStore] deleteModel recovery failed for ${id}: ${(secretErr as Error).message}`);
+            throw new Error("settings_consistency_recovery_failed");
+          }
+        } else {
+          // 原来有 Secret 标记但读取不到值 → 不恢复（保持已删状态）
+        }
+      }
+      throw err;
+    }
     return true;
   }
 
-  // 任意存在的 Provider 视图（包括未配置的内置模板）——用于编辑/默认校验，
-  // 与 listViews（只暴露可见列表）语义不同。
+  // 任意存在的 Provider 视图——用于编辑/默认校验（内置模板已移除）。
   getModelView(id: string): ModelProviderView | null {
     const provider = this.getModel(id);
     return provider ? this.toView(provider) : null;

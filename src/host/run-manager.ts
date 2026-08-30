@@ -12,6 +12,7 @@ import { isTerminalRunStatus, type RunStore, type StoredRun, type StoredRunStatu
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
 import { isAbortError } from "../util/abort.js";
 import fs from "node:fs";
+import path from "node:path";
 
 export type HostRunStatus = StoredRunStatus;
 
@@ -54,6 +55,9 @@ interface InternalRun extends HostRun {
   // True cancellation (v1.6)：每个活跃 Run 独立的 AbortController；
   // startAgent 时创建，stop() 触发 abort，Run 真正退出后由 Host 落 stopped。
   abortController?: AbortController;
+  // v1.6.1：执行链 promise 句柄（fire-and-forget 任务的引用）。
+  // close() 用它等待执行链真正结束（而非仅状态变终态），避免 Store 关闭后 agent 仍在写库。
+  agentPromise?: Promise<void>;
 }
 
 export interface SseSink {
@@ -70,8 +74,11 @@ function isCancellable(status: HostRunStatus): boolean {
 }
 
 export class RunManager {
+  private acceptingNewRuns = true;
   private runs = new Map<string, InternalRun>();
   private subscribers = new Map<string, Set<SseSink>>();
+  private lifecycle: "open" | "closing" | "closed" = "open";
+  private closePromise?: Promise<void>;
 
   constructor(private readonly store: RunStore = createDefaultRunStore()) {
     // A process restart cannot leave persisted rows pretending to execute.
@@ -100,7 +107,56 @@ export class RunManager {
     return !session || session.deletedAt !== undefined;
   }
 
+  private ensureOpen(): void {
+    if (this.lifecycle !== "open") {
+      throw new Error("RunManager is not accepting new runs");
+    }
+  }
+
+  close(): Promise<void> {
+    if (this.lifecycle === "closed") return Promise.resolve();
+    if (this.lifecycle === "closing" && this.closePromise) return this.closePromise;
+
+    this.lifecycle = "closing";
+    this.acceptingNewRuns = false;
+    this.closePromise = (async () => {
+      const activeRuns = [...this.runs.values()];
+      const waitPromises: Promise<void>[] = [];
+      for (const run of activeRuns) {
+        if (isCancellable(run.status) && run.abortController) {
+          run.cancelled = true;
+          run.abortController.abort();
+        }
+        // 等待状态进入终态（超时则强制 finish）
+        waitPromises.push(this.waitForRunTerminal(run.runId, 10_000));
+        // 等待执行链真正结束（带 cap），确保 Store 关闭前 agent 不再写库
+        waitPromises.push(this.waitAgentSettled(run, 2_000));
+      }
+      await Promise.all(waitPromises);
+
+      // 关闭所有 SSE 连接
+      for (const sinks of this.subscribers.values()) {
+        for (const sink of sinks) {
+          try { sink.end(); } catch { /* ignore shutdown write failures */ }
+        }
+      }
+      this.subscribers.clear();
+
+      // 关闭持久层（只关闭一次）
+      try {
+        this.store.close();
+      } catch {
+        // ignore store close errors
+      }
+
+      this.lifecycle = "closed";
+    })();
+
+    return this.closePromise;
+  }
+
   create(task: string): string {
+    this.ensureOpen();
     return this.createInSession(task).runId;
   }
 
@@ -109,6 +165,7 @@ export class RunManager {
     requestedSessionId?: string,
     opts?: { workspaceName?: string; startAgent?: boolean },
   ): { runId: string; sessionId: string } {
+    this.ensureOpen();
     const runId = crypto.randomUUID();
     const now = new Date().toISOString();
     let session: StoredSession;
@@ -123,8 +180,6 @@ export class RunManager {
     } else {
       let workspace = getWorkspace();
       if (opts?.workspaceName) {
-        // Bind a brand-new Session to an existing (historical) Workspace: inherit
-        // its canonical root without ever exposing the absolute path to the client.
         const reference = this.store.findSessionByWorkspaceName(opts.workspaceName);
         if (reference) workspace = { rootPath: reference.workspaceRoot, name: opts.workspaceName };
       }
@@ -169,6 +224,7 @@ export class RunManager {
   }
 
   resume(runId: string): boolean {
+    this.ensureOpen();
     const active = this.runs.get(runId);
     if (active && isCancellable(active.status)) return false;
     const persisted = this.store.getRun(runId);
@@ -176,7 +232,13 @@ export class RunManager {
     if (!persisted || !checkpoint) return false;
 
     // Historical binding is immutable. Never fall back to currentWorkspace.
-    if (checkpoint.workspaceRoot && checkpoint.workspaceRoot !== persisted.workspaceRoot) return false;
+    // Resolve symlinks (macOS /var -> /private/var) before comparing.
+    const normalizeRoot = (root: string): string => {
+      try { return fs.realpathSync(root); } catch { return path.resolve(root); }
+    };
+    const persistedRoot = persisted.workspaceRoot ? normalizeRoot(persisted.workspaceRoot) : "";
+    const checkpointRoot = checkpoint.workspaceRoot ? normalizeRoot(checkpoint.workspaceRoot) : "";
+    if (checkpointRoot && persistedRoot && checkpointRoot !== persistedRoot) return false;
 
     const now = new Date().toISOString();
     const workspaceRoot = persisted.workspaceRoot || checkpoint.workspaceRoot || getRunWorkspaceRoot(runId);
@@ -554,14 +616,34 @@ export class RunManager {
     this.subscribers.get(runId)?.delete(sink);
   }
 
-  close(): void {
-    for (const sinks of this.subscribers.values()) {
-      for (const sink of sinks) {
-        try { sink.end(); } catch { /* ignore shutdown write failures */ }
-      }
+  private async waitForRunTerminal(runId: string, timeoutMs: number): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const run = this.runs.get(runId);
+      if (!run || isTerminalRunStatus(run.status)) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
-    this.subscribers.clear();
-    this.store.close();
+    // 超时后强制终止（理论上 abort 已发出，这里做最后清理）
+    const run = this.runs.get(runId);
+    if (run && isCancellable(run.status)) {
+      this.finish(run);
+    }
+  }
+
+  // 等待执行链（agentPromise）真正 settle，带 cap 防卡死。
+  // 主要目的：close() 关闭 Store 之前保证没有 agent 继续写库。
+  private async waitAgentSettled(run: InternalRun, capMs: number): Promise<void> {
+    const p = run.agentPromise;
+    if (!p) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      p.catch(() => {}),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, capMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 
   private startAgent(
@@ -605,7 +687,7 @@ export class RunManager {
 
     // Run 已经持久化为 running，任何启动失败都必须落为 failed + run_failed，
     // 不允许同步 throw 留下永远 running 的僵尸 Run（模型解析失败也走同一条路）。
-    void (async () => {
+    run.agentPromise = (async () => {
       let modelConfig: ModelConfig | undefined;
       try {
         modelConfig = this.modelConfigForRun(run);
@@ -837,21 +919,21 @@ export class RunManager {
 
   // Run 快照绑定了 provider/model 时，必须仍能组成完整元组（密钥可能事后被清除）；
   // 组不出来就 fail-closed 抛错，由 startAgent 落为 failed Run。
+  // 安全语义：Resume 必须使用当前完整配置（当前 baseUrl + 当前 Secret），
+  // 禁止历史 baseUrl 与当前 Secret 混用；模型也必须在当前 provider 目录中。
   private modelConfigForRun(run: InternalRun): ModelConfig | undefined {
-    if (run.model && run.providerId) {
+    if (run.providerId && run.model) {
       const secret = this.store.getModelProviderSecret(run.providerId);
-      if (!secret?.apiKey) {
-        // metadata 标记已配置但 SecretStore 读不到（被清除/Keychain 不可访问）：
-        // fail-closed，绝不带着空凭证去请求 LLM
-        throw new Error(`Provider credentials unavailable for run ${run.runId} (provider ${run.providerId})`);
+      const provider = this.store.getModelProvider(run.providerId);
+      if (!secret?.apiKey || !provider) {
+        throw new Error(`Provider ${run.providerId} is not available for run ${run.runId}`);
       }
-      const baseUrl = run.baseUrl ?? secret.baseUrl;
-      if (!baseUrl) {
-        throw new Error(`Provider ${run.providerId} baseUrl is missing for run ${run.runId}`);
+      if (!provider.models.includes(run.model)) {
+        throw new Error(`Model ${run.model} is no longer in provider ${run.providerId} catalog`);
       }
       return {
         providerId: run.providerId,
-        baseUrl,
+        baseUrl: secret.baseUrl,
         apiKey: secret.apiKey,
         model: run.model,
       };

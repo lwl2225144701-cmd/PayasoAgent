@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import http from "node:http";
+import net from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { createHostServer } from "../src/host/server.js";
 import { RunManager } from "../src/host/run-manager.js";
@@ -21,7 +23,10 @@ fs.mkdirSync(ROOT, { recursive: true });
 
 // SecretStore 注入 Memory 实现：确定性测试绝不触碰用户本机 Keychain
 const secretStore = new MemorySecretStore();
-const server = createHostServer(new RunManager(createDefaultRunStore(secretStore)));
+const store = createDefaultRunStore(secretStore);
+const manager = new RunManager(store);
+const TEST_TOKEN = "test-token-00000000000000000000000000000000";
+const server = createHostServer(manager, TEST_TOKEN);
 await new Promise<void>((r) => server.listen(0, () => r()));
 const port = (server.address() as { port: number }).port;
 const base = `http://127.0.0.1:${port}`;
@@ -32,8 +37,12 @@ function check(name: string, cond: boolean, detail = ""): void {
   else { failed++; console.log(`  [FAIL] ${name}${detail ? " — " + detail : ""}`); }
 }
 
+async function authHeaders(): Promise<Record<string, string>> {
+  return { Authorization: `Bearer ${TEST_TOKEN}` };
+}
+
 async function getRunStatus(runId: string): Promise<{ status: string }> {
-  const body = await (await fetch(`${base}/runs/${runId}`)).json();
+  const body = await (await fetch(`${base}/runs/${runId}`, { headers: await authHeaders() })).json();
   return { status: body.status };
 }
 function cleanupCheckpoint(runId: string): void {
@@ -41,57 +50,119 @@ function cleanupCheckpoint(runId: string): void {
 }
 
 async function getJSON(url: string, expectedStatus = 200): Promise<any> {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: await authHeaders() });
+  const text = await res.text().catch(() => "");
+  if (res.status !== expectedStatus) {
+    console.error(`GET ${url} failed: ${res.status} ${text}`);
+  }
   check(`${url} status ${expectedStatus}`, res.status === expectedStatus, `got ${res.status}`);
-  return res.status === 204 ? null : res.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 async function postJSON(url: string, body: any, expectedStatus = 200): Promise<any> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(body),
   });
+  const text = await res.text().catch(() => "");
+  if (res.status !== expectedStatus) {
+    console.error(`POST ${url} failed: ${res.status} ${text}`);
+  }
   check(`${url} status ${expectedStatus}`, res.status === expectedStatus, `got ${res.status}`);
-  return res.status === 204 ? null : res.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 async function patchJSON(url: string, body: any, expectedStatus = 200): Promise<any> {
   const res = await fetch(url, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(body),
   });
+  const text = await res.text().catch(() => "");
+  if (res.status !== expectedStatus) {
+    console.error(`PATCH ${url} failed: ${res.status} ${text}`);
+  }
   check(`${url} status ${expectedStatus}`, res.status === expectedStatus, `got ${res.status}`);
-  return res.status === 204 ? null : res.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 async function delJSON(url: string, expectedStatus = 200): Promise<any> {
-  const res = await fetch(url, { method: "DELETE" });
+  const res = await fetch(url, { method: "DELETE", headers: await authHeaders() });
+  const text = await res.text().catch(() => "");
+  if (res.status !== expectedStatus) {
+    console.error(`DELETE ${url} failed: ${res.status} ${text}`);
+  }
   check(`${url} status ${expectedStatus}`, res.status === expectedStatus, `got ${res.status}`);
-  return res.status === 204 ? null : res.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function postJSONWithOrigin(url: string, body: any, origin: string, expectedStatus = 200): Promise<{ status: number }> {
+  const u = new URL(url);
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const client = net.connect({ host: u.hostname, port: Number(u.port) }, () => {
+      const headers = [
+        `POST ${u.pathname} HTTP/1.1`,
+        `Host: ${u.host}`,
+        `Origin: ${origin}`,
+        "Content-Type: application/json",
+        `Content-Length: ${Buffer.byteLength(payload)}`,
+        "Connection: close",
+        "",
+        payload,
+      ].join("\r\n");
+      client.write(headers);
+    });
+    const chunks: Buffer[] = [];
+    client.on("data", (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buf);
+    });
+    client.on("end", () => {
+      const raw = Buffer.concat(chunks).toString();
+      const match = raw.match(/HTTP\/\d\.\d (\d+)/);
+      console.log(`[raw request] status=${match ? match[1] : "?"} raw=${raw.slice(0, 200)}`);
+      resolve({ status: match ? parseInt(match[1], 10) : 0 });
+    });
+    client.on("error", reject);
+  });
 }
 
 // ---- 测试开始 ----
 
 (async () => {
-  // 1. 默认列表：未配置密钥的内置模板不显示（必须显示已配置的才有意义）
+  // 1. 默认列表：新库无内置模板，列表为空
   let list = await getJSON(`${base}/settings/models`);
-  check("GET default empty (builtin unconfigured hidden)", Array.isArray(list.models) && list.models.length === 0);
+  check("GET default empty (no builtins)", Array.isArray(list.models) && list.models.length === 0);
 
-  // 1b. 内置模板入口：templateId 命中未配置内置时补齐配置（不新建记录）
+  // 1b. 创建带凭证的 provider（替代原内置模板入口，builtin 已移除）
   let tplAdded = await postJSON(`${base}/settings/models`, {
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
     apiKey: "sk-template-1234",
     models: ["deepseek-chat"],
-    templateId: "deepseek-chat",
   }, 201);
-  check("template add keeps builtin id", tplAdded.id === "deepseek-chat");
-  check("template add keeps builtin kind", tplAdded.kind === "builtin");
+  check("template add keeps custom kind", tplAdded.kind === "custom");
   check("template add has key", tplAdded.hasApiKey === true && tplAdded.apiKeyMasked === "********");
   let afterTpl = await getJSON(`${base}/settings/models`);
-  check("template add visible in list", afterTpl.models.some((m: any) => m.id === "deepseek-chat" && m.hasApiKey === true));
+  check("template add visible in list", afterTpl.models.some((m: any) => m.id === tplAdded.id && m.hasApiKey === true));
 
   // 2. 创建 provider
   let created = await postJSON(`${base}/settings/models`, {
@@ -115,7 +186,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
     apiKey: "sk-other",
     models: ["other"],
   }, 400);
-  check("POST dup name 400", dupName.message === "Provider with same name or baseUrl already exists");
+  check("POST dup name 400", dupName.message === "Provider with same name or baseUrl already exists: TestProvider (https://api.test.com)");
 
   // 4. 重复 baseUrl 拒绝
   let dupUrl = await postJSON(`${base}/settings/models`, {
@@ -124,7 +195,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
     apiKey: "sk-other",
     models: ["other"],
   }, 400);
-  check("POST dup baseUrl 400", dupUrl.message === "Provider with same name or baseUrl already exists");
+  check("POST dup baseUrl 400", dupUrl.message === "Provider with same name or baseUrl already exists: TestProvider (https://api.test.com)");
 
   // 5. 非法 URL 拒绝
   let badUrl = await postJSON(`${base}/settings/models`, {
@@ -133,7 +204,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
     apiKey: "sk-bad",
     models: ["bad"],
   }, 400);
-  check("POST bad url 400", badUrl.message === "baseUrl must be a valid HTTP/HTTPS URL");
+  check("POST bad url 400", badUrl.message === "baseUrl protocol not allowed");
 
   // 6. models 去重
   let deduped = await postJSON(`${base}/settings/models`, {
@@ -189,10 +260,12 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
   let badIdDel = await delJSON(`${base}/settings/models/not-a-uuid`, 400);
   check("DELETE bad id 400", badIdDel.message === "invalid_model_id");
 
-  // 13. 内置 provider 不可删除（返回 404）
-  let builtin = list.models.find((m: any) => m.kind === "builtin") ?? { id: "deepseek-chat" };
-  let delBuiltinStatus = await (await fetch(`${base}/settings/models/${builtin.id}`, { method: "DELETE" })).status;
-  check("DELETE builtin rejected", delBuiltinStatus === 404);
+  // 13. 删除不存在的 provider 返回 404（内置模板已移除，无"不可删内置"语义）
+  let delMissingStatus = await (await fetch(`${base}/settings/models/${crypto.randomUUID()}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  })).status;
+  check("DELETE missing provider 404", delMissingStatus === 404);
 
   // 14. 删除成功返回 { deleted: true }
   let deleted = await delJSON(`${base}/settings/models/${created.id}`);
@@ -202,10 +275,10 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
   let afterDel = await getJSON(`${base}/settings/models/${created.id}`, 404);
   check("GET after delete 404", afterDel.error === "not_found");
 
-  // 16. 列表最终：已配置内置 DeepSeek + 1 个自定义 Dedup（未配置内置隐藏）
+  // 16. 列表最终：DeepSeek + Dedup 两个自定义（无内置模板）
   let finalList = await getJSON(`${base}/settings/models`);
   check("final list count", finalList.models.length === 2);
-  check("final list builtin count", finalList.models.filter((m: any) => m.kind === "builtin").length === 1);
+  check("final list builtin count", finalList.models.filter((m: any) => m.kind === "builtin").length === 0);
 
   // 17. 设置默认模型：校验矩阵（未知 404 / 空 400 / 未配置密钥 400）
   let unknownDefault = await postJSON(`${base}/settings/default`, { providerId: "not-exist", model: "m" }, 404);
@@ -214,8 +287,14 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
   let emptyDefault = await postJSON(`${base}/settings/default`, { providerId: "   " }, 400);
   check("default empty providerId 400", emptyDefault.message === "providerId is required");
 
-  let unconfiguredDefault = await postJSON(`${base}/settings/default`, { providerId: "openai-gpt4o", model: "gpt-4o" }, 400);
-  check("default unconfigured builtin 400", unconfiguredDefault.message === "Provider has no API key configured");
+  // 未配置密钥的 provider 设默认 → 400
+  let noKeyProv = await postJSON(`${base}/settings/models`, {
+    name: "NoKeyProvider",
+    baseUrl: "https://api.nokey.com",
+    models: ["nk-chat"],
+  }, 201);
+  let unconfiguredDefault = await postJSON(`${base}/settings/default`, { providerId: noKeyProv.id, model: "nk-chat" }, 400);
+  check("default unconfigured provider 400", unconfiguredDefault.message === "Provider has no API key configured");
 
   // 18. 默认模型成对保存（providerId + modelId）+ model 目录校验
   let defaultProvider = await postJSON(`${base}/settings/models`, {
@@ -271,7 +350,7 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
     check("env import is once-only", again === null && store.listViews().length === 1);
   }
 
-  // 22. 环境配置导入：baseUrl 匹配已有 provider 时填进该 provider（不新建）
+  // 22. 环境配置导入：无内置模板，匹配不到时新建自定义 provider（不新建则填已有）
   {
     const store = new SettingsStore(new DatabaseSync(":memory:"), new MemorySecretStore());
     const imported = store.importEnvFallback({
@@ -279,10 +358,10 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
       apiKey: "sk-openai-env-5678",
       model: "gpt-4o",
     });
-    check("env import matched builtin", imported?.providerId === "openai-gpt4o" && imported.modelId === "gpt-4o");
-    const openai = store.listViews().find(p => p.id === "openai-gpt4o");
-    check("env import filled builtin key", !!openai && openai.hasApiKey && openai.apiKeyMasked === "********");
-    check("env import kept builtin catalog", !!openai && openai.models.includes("gpt-4o") && openai.models.length >= 4);
+    check("env import created custom", imported !== null && imported.modelId === "gpt-4o");
+    const openai = imported ? store.listViews().find(p => p.id === imported.providerId) : undefined;
+    check("env import filled custom key", !!openai && openai.hasApiKey && openai.apiKeyMasked === "********");
+    check("env import kept catalog", !!openai && openai.models.includes("gpt-4o") && openai.models.length >= 1);
   }
 
   // 23. 获取可用模型：OpenAI 兼容 GET /models 的解析（去重、trim、排序、错误分支）
@@ -327,16 +406,19 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
 
       let viaProvider = await postJSON(
         `${base}/settings/available-models`,
-        { baseUrl: touch.baseUrl, providerId: touch.id },
+        { providerId: touch.id },
         200,
       );
       check("available-models via providerId", JSON.stringify(viaProvider.models) === JSON.stringify(["touch-max", "touch-pro"]));
 
-      // 未配置密钥的 provider 且不传 apiKey → 400；缺 baseUrl → 400
-      let noKey = await postJSON(`${base}/settings/available-models`, { baseUrl: "https://api.stepfun.com/v1", providerId: "stepfun-step" }, 400);
-      check("available-models without key 400", noKey.message === "no API key available for this provider");
-      let noUrl = await postJSON(`${base}/settings/available-models`, { providerId: touch.id }, 400);
-      check("available-models without baseUrl 400", noUrl.message === "baseUrl is required");
+      // 未配置密钥的 provider → 400
+      const noKeyProv = await postJSON(`${base}/settings/models`, {
+        name: "NoKeyProv",
+        baseUrl: "https://api.nokey2.com",
+        models: ["nk2-chat"],
+      }, 201);
+      let noKey = await postJSON(`${base}/settings/available-models`, { providerId: noKeyProv.id }, 400);
+      check("available-models without key 400", noKey.message === "provider has no API key configured");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -415,9 +497,9 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
     } finally {
       globalThis.fetch = originalFetch;
     }
-    const runJson = JSON.stringify(await (await fetch(`${base}/runs/${runId12}`)).json());
-    const eventsText = await (await fetch(`${base}/runs/${runId12}/events?live=0`)).text();
-    const settingsAll = JSON.stringify(await (await fetch(`${base}/settings/models`)).json());
+    const runJson = JSON.stringify(await (await fetch(`${base}/runs/${runId12}`, { headers: await authHeaders() })).json());
+    const eventsText = await (await fetch(`${base}/runs/${runId12}/events?live=0`, { headers: await authHeaders() })).text();
+    const settingsAll = JSON.stringify(await (await fetch(`${base}/settings/models`, { headers: await authHeaders() })).json());
     const dbAfter = fs.readFileSync(dbPath);
     check("Case12: no secret in run JSON / SSE events / settings / SQLite",
       !runJson.includes(SECRET) && !eventsText.includes(SECRET) && !settingsAll.includes(SECRET) && !dbAfter.includes(SECRET));
@@ -527,6 +609,386 @@ async function delJSON(url: string, expectedStatus = 200): Promise<any> {
       check("Case9: run completed with merged ModelConfig", status9 === "completed", `status=${status9}`);
       check("Case9: Authorization used SecretStore value", authHeader === "Bearer sk-resolution-42", `got ${authHeader}`);
       cleanupCheckpoint(created9.runId);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 29. SSRF/Origin 防线：available-models 拒绝客户端 baseUrl、要求 providerId、Origin 校验
+  {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (input, init) => {
+        if (String(input).includes("api.evil.com")) {
+          return new Response(JSON.stringify({ data: [{ id: "evil" }] }), { status: 200 });
+        }
+        if (String(input).includes("ssrf-test.example.com")) {
+          const auth = ((init?.headers ?? {}) as Record<string, string>).Authorization ?? "";
+          check("SSRF: available-models used stored key", auth === "Bearer sk-ssrf-test");
+          return new Response(JSON.stringify({ data: [{ id: "ssrf-chat" }] }), { status: 200 });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      // 先创建一个带密钥的 provider 用于测试
+      const testProv = await postJSON(`${base}/settings/models`, {
+        name: "SSRFTestProvider",
+        baseUrl: "https://ssrf-test.example.com/v1",
+        apiKey: "sk-ssrf-test",
+        models: ["ssrf-chat"],
+      }, 201);
+
+      // 无 providerId → 400
+      const noProvider = await postJSON(`${base}/settings/available-models`, { baseUrl: "https://api.openai.com/v1" }, 400);
+      check("SSRF: missing providerId 400", noProvider.message === "providerId is required");
+
+      // 传了 baseUrl 但无 providerId（客户端试图指定 endpoint）→ 400
+      const withBaseUrl = await postJSON(`${base}/settings/available-models`, { baseUrl: "https://api.evil.com/v1", apiKey: "sk" }, 400);
+      check("SSRF: client-supplied baseUrl rejected", withBaseUrl.message === "providerId is required");
+
+      // 未知 providerId → 400
+      const unknownProv = await postJSON(`${base}/settings/available-models`, { providerId: "unknown-id" }, 400);
+      check("SSRF: unknown providerId 400", unknownProv.message === "provider not found or not configured");
+
+      // 有 providerId 但无 apiKey → 400（使用未配置密钥的 provider）
+      const noKeyProv2 = await postJSON(`${base}/settings/models`, {
+        name: "NoKeyProv2",
+        baseUrl: "https://api.nokey3.com",
+        models: ["nk3-chat"],
+      }, 201);
+      const noKey = await postJSON(`${base}/settings/available-models`, { providerId: noKeyProv2.id }, 400);
+      check("SSRF: provider without key 400", noKey.message === "provider has no API key configured");
+
+      // 正确 providerId → 200（使用存储的 baseUrl + apiKey）
+      const ok = await postJSON(`${base}/settings/available-models`, { providerId: testProv.id }, 200);
+      check("SSRF: valid providerId 200", Array.isArray(ok.models));
+
+      // Origin 校验：无 Origin 头（服务端调用）→ 200；非法 Origin → 400
+      const noOriginRes = await fetch(`${base}/settings/available-models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${TEST_TOKEN}` },
+        body: JSON.stringify({ providerId: testProv.id }),
+      });
+      check("SSRF: no Origin allowed", noOriginRes.status === 200);
+
+      const badOriginRes = await postJSONWithOrigin(`${base}/settings/available-models`, { providerId: testProv.id }, "https://evil.com", 400);
+      check("SSRF: bad Origin rejected", badOriginRes.status === 400);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 29b. preview 临时预检接口：/settings/available-models/preview
+  // 用于新增 Provider 时用表单 baseUrl+apiKey 拉取目录；凭证不落盘、不写日志。
+  {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (input, init) => {
+        const url = String(input);
+        if (url.includes("preview-target.example.com")) {
+          const auth = ((init?.headers ?? {}) as Record<string, string>).Authorization ?? "";
+          check("preview: used form apiKey", auth === "Bearer sk-preview-form");
+          return new Response(JSON.stringify({ data: [{ id: "preview-chat" }, { id: "preview-flash" }] }), { status: 200 });
+        }
+        if (url.includes("127.0.0.1:60666")) {
+          return new Response(JSON.stringify({ data: [{ id: "loopback-chat" }] }), { status: 200 });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      // 缺 baseUrl / apiKey → 400
+      const noBaseUrl = await postJSON(`${base}/settings/available-models/preview`, { apiKey: "sk-x" }, 400);
+      check("preview: missing baseUrl 400", noBaseUrl.message === "baseUrl and apiKey are required");
+      const noKey = await postJSON(`${base}/settings/available-models/preview`, { baseUrl: "https://a.com/v1" }, 400);
+      check("preview: missing apiKey 400", noKey.message === "baseUrl and apiKey are required");
+
+      // 非 https / 非 loopback http → 400（协议白名单）
+      const ftpUrl = await postJSON(`${base}/settings/available-models/preview`, { baseUrl: "ftp://a.com/v1", apiKey: "sk-x" }, 400);
+      check("preview: ftp rejected 400", ftpUrl.message === "baseUrl protocol not allowed");
+      const evilHttp = await postJSON(`${base}/settings/available-models/preview`, { baseUrl: "http://api.evil.com/v1", apiKey: "sk-x" }, 400);
+      check("preview: non-loopback http rejected 400", evilHttp.message === "baseUrl protocol not allowed");
+
+      // 正确 https → 200，mock 校验 Authorization 使用表单 apiKey（不落盘、不回显）
+      const okHttps = await postJSON(`${base}/settings/available-models/preview`, {
+        baseUrl: "https://preview-target.example.com/v1",
+        apiKey: "sk-preview-form",
+      }, 200);
+      check("preview: https ok 200", Array.isArray(okHttps.models) && okHttps.models.includes("preview-chat"));
+
+      // loopback http（开发模式）→ 200
+      const okLoopback = await postJSON(`${base}/settings/available-models/preview`, {
+        baseUrl: "http://127.0.0.1:60666/v1",
+        apiKey: "sk-loopback",
+      }, 200);
+      check("preview: loopback http ok 200", Array.isArray(okLoopback.models) && okLoopback.models.includes("loopback-chat"));
+
+      // Origin 校验同样生效
+      const badOrigin = await postJSONWithOrigin(`${base}/settings/available-models/preview`, { baseUrl: "https://preview-target.example.com/v1", apiKey: "sk-x" }, "https://evil.com", 400);
+      check("preview: bad Origin rejected 400", badOrigin.status === 400);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 30. SettingsStore 补偿：add/update/delete 的跨存储一致性
+  // 两类真实故障注入：
+  //   (a) SecretStore 本身失败（failNext）
+  //   (b) metadata 写入失败（SQLite BEFORE UPDATE 触发器 RAISE(ABORT)）—— Secret 已成功写入后的补偿回滚
+  {
+    const failingSecretStore = new (class extends MemorySecretStore {
+      failNext = false;
+      set(key: string, value: string): void {
+        if (this.failNext) {
+          this.failNext = false;
+          throw new Error("secret store boom");
+        }
+        super.set(key, value);
+      }
+      delete(key: string): void {
+        if (this.failNext) {
+          this.failNext = false;
+          throw new Error("secret store boom");
+        }
+        super.delete(key);
+      }
+    })();
+
+    // 在 settings 表上安装 BEFORE UPDATE 触发器：任何 metadata 写入都 RAISE(ABORT)
+    function addMetaWriteFailTrigger(db: DatabaseSync): void {
+      db.exec(`CREATE TRIGGER fail_meta_write BEFORE UPDATE ON settings
+               BEGIN SELECT RAISE(ABORT, 'injected metadata failure'); END`);
+    }
+
+    // Case A1: SecretStore.set 失败 → addModel 抛错，无孤儿 secret
+    {
+      const db = new DatabaseSync(path.join(ROOT, "fail-add-secret.db"));
+      db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      db.exec("INSERT INTO settings (key, value) VALUES ('app', '{\"models\":[],\"defaultProviderId\":\"\",\"defaultModelId\":\"\"}')");
+      const store = new SettingsStore(db, failingSecretStore);
+      failingSecretStore.failNext = true;
+      try {
+        store.addModel({ name: "FailAddSecret", baseUrl: "https://fail.add.secret", apiKey: "sk-fail-add", models: ["m"] });
+      } catch {
+        // expected
+      }
+      check("Compensation A1: secret set failure leaves no orphan secret", !failingSecretStore.get("model-provider:fail-add-secret:api-key") && failingSecretStore.get("model-provider:fail-add-secret:api-key") === null);
+    }
+
+    // Case A2: SecretStore.set 成功 + metadata 写失败（触发器）→ 补偿删除 Secret
+    {
+      const db = new DatabaseSync(path.join(ROOT, "fail-add-meta.db"));
+      db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      db.exec("INSERT INTO settings (key, value) VALUES ('app', '{\"models\":[],\"defaultProviderId\":\"\",\"defaultModelId\":\"\"}')");
+      const store = new SettingsStore(db, failingSecretStore); // 构造函数迁移完成后才能装触发器
+      addMetaWriteFailTrigger(db);
+      const idBefore = JSON.parse((db.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string }).value).models.length;
+      try {
+        store.addModel({ name: "FailAddMeta", baseUrl: "https://fail.add.meta", apiKey: "sk-fail-add", models: ["m"] });
+        check("Compensation A2: metadata failure throws", false, "expected throw");
+      } catch {
+        check("Compensation A2: metadata failure throws", true);
+      }
+      // Secret 必须被补偿删除（真实命中"写入成功 → metadata 失败 → 回滚"路径）
+      check("Compensation A2: orphan secret compensated", failingSecretStore.get("model-provider:fail-add-meta:api-key") === null, `got ${JSON.stringify(failingSecretStore.get("model-provider:fail-add-meta:api-key"))}`);
+      const row = db.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string } | undefined;
+      check("Compensation A2: metadata unchanged", row ? JSON.parse(row.value).models.length === idBefore : false);
+    }
+
+    // Case B1: SecretStore.set 失败 → updateModel 抛错，secret 保持旧值
+    {
+      const db2 = new DatabaseSync(path.join(ROOT, "fail-update-secret.db"));
+      db2.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      db2.exec("INSERT INTO settings (key, value) VALUES ('app', '{\"models\":[{\"id\":\"up1\",\"name\":\"Up1\",\"baseUrl\":\"https://up1\",\"hasApiKey\":true,\"models\":[\"m\"],\"kind\":\"custom\"}],\"defaultProviderId\":\"\",\"defaultModelId\":\"\"}')");
+      const store2 = new SettingsStore(db2, failingSecretStore);
+      failingSecretStore.set("model-provider:up1:api-key", "old-secret");
+      failingSecretStore.failNext = true;
+      try {
+        store2.updateModel("up1", { name: "Up1Renamed", apiKey: "new-secret" });
+      } catch {
+        // expected
+      }
+      check("Compensation B1: secret write failure keeps old secret", failingSecretStore.get("model-provider:up1:api-key") === "old-secret");
+    }
+
+    // Case B2: 新 Secret 写入成功 + metadata 写失败（触发器）→ 恢复旧 Secret
+    {
+      const db2 = new DatabaseSync(path.join(ROOT, "fail-update-meta.db"));
+      db2.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      db2.exec("INSERT INTO settings (key, value) VALUES ('app', '{\"models\":[{\"id\":\"up2\",\"name\":\"Up2\",\"baseUrl\":\"https://up2\",\"hasApiKey\":true,\"models\":[\"m\"],\"kind\":\"custom\"}],\"defaultProviderId\":\"\",\"defaultModelId\":\"\"}')");
+      const store2 = new SettingsStore(db2, failingSecretStore); // 先构造，后装触发器
+      addMetaWriteFailTrigger(db2);
+      failingSecretStore.set("model-provider:up2:api-key", "old-secret");
+      try {
+        store2.updateModel("up2", { name: "Up2Renamed", apiKey: "new-secret" });
+        check("Compensation B2: metadata failure throws", false, "expected throw");
+      } catch {
+        check("Compensation B2: metadata failure throws", true);
+      }
+      // 新 Secret 写入后 metadata 失败 → 必须回滚到旧 Secret（真实命中回滚路径）
+      check("Compensation B2: secret rolled back to old", failingSecretStore.get("model-provider:up2:api-key") === "old-secret", `got ${JSON.stringify(failingSecretStore.get("model-provider:up2:api-key"))}`);
+      // 默认引用检查在 hasApiKey 更新后执行：清空默认 provider 凭证必须立即清空默认引用
+      check("Compensation B2: default reference not dangling", JSON.parse((db2.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string }).value).defaultProviderId === "");
+    }
+
+    // Case B3: 默认 provider 被清空凭证（apiKey: null）→ 默认引用必须立即清空（顺序修复回归）
+    {
+      const db2 = new DatabaseSync(path.join(ROOT, "default-clear-api-key.db"));
+      db2.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      db2.exec("INSERT INTO settings (key, value) VALUES ('app', '{\"models\":[{\"id\":\"dp1\",\"name\":\"DP1\",\"baseUrl\":\"https://dp1\",\"hasApiKey\":true,\"models\":[\"m1\"],\"kind\":\"custom\"}],\"defaultProviderId\":\"dp1\",\"defaultModelId\":\"m1\"}')");
+      const store2 = new SettingsStore(db2, failingSecretStore);
+      failingSecretStore.set("model-provider:dp1:api-key", "dp-secret");
+      const updated = store2.updateModel("dp1", { apiKey: null });
+      check("Default-clear: update returns hasApiKey=false", updated?.hasApiKey === false);
+      const row = db2.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string } | undefined;
+      const parsed = row ? JSON.parse(row.value) : { defaultProviderId: "dp1", defaultModelId: "m1" };
+      check("Default-clear: defaultProviderId cleared", parsed.defaultProviderId === "", `got ${JSON.stringify(parsed.defaultProviderId)}`);
+      check("Default-clear: defaultModelId cleared", parsed.defaultModelId === "", `got ${JSON.stringify(parsed.defaultModelId)}`);
+      check("Default-clear: secret deleted", failingSecretStore.get("model-provider:dp1:api-key") === null);
+    }
+
+    // Case C1: SecretStore.delete 失败 → metadata 不被删除（防止 orphan secret）
+    {
+      const db3 = new DatabaseSync(path.join(ROOT, "fail-delete-secret.db"));
+      db3.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      const json = JSON.stringify({
+        models: [{ id: "del1", name: "Del1", baseUrl: "https://del1", hasApiKey: true, models: ["m"], kind: "custom" }],
+        defaultProviderId: "",
+        defaultModelId: "",
+      });
+      db3.exec(`INSERT INTO settings (key, value) VALUES ('app', '${json}')`);
+      const store3 = new SettingsStore(db3, failingSecretStore);
+      failingSecretStore.set("model-provider:del1:api-key", "del-secret");
+      failingSecretStore.failNext = true;
+      try {
+        store3.deleteModel("del1");
+      } catch {
+        // expected
+      }
+      const afterRow = db3.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string } | undefined;
+      const after = afterRow ? JSON.parse(afterRow.value) : { models: [] };
+      check("Compensation C1: secret delete failure preserves metadata", after.models.length === 1);
+    }
+
+    // Case C2: Secret 删除成功 + metadata 写失败（触发器）→ 恢复 Secret
+    {
+      const db3 = new DatabaseSync(path.join(ROOT, "fail-delete-meta.db"));
+      db3.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+      const json = JSON.stringify({
+        models: [{ id: "del2", name: "Del2", baseUrl: "https://del2", hasApiKey: true, models: ["m"], kind: "custom" }],
+        defaultProviderId: "",
+        defaultModelId: "",
+      });
+      db3.exec(`INSERT INTO settings (key, value) VALUES ('app', '${json}')`);
+      const store3 = new SettingsStore(db3, failingSecretStore); // 先构造，后装触发器
+      addMetaWriteFailTrigger(db3);
+      failingSecretStore.set("model-provider:del2:api-key", "del-secret");
+      try {
+        store3.deleteModel("del2");
+        check("Compensation C2: metadata failure throws", false, "expected throw");
+      } catch {
+        check("Compensation C2: metadata failure throws", true);
+      }
+      // Secret 删除后 metadata 失败 → 必须恢复 Secret（真实命中恢复路径）
+      check("Compensation C2: secret restored after metadata failure", failingSecretStore.get("model-provider:del2:api-key") === "del-secret", `got ${JSON.stringify(failingSecretStore.get("model-provider:del2:api-key"))}`);
+      const row = db3.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string } | undefined;
+      check("Compensation C2: metadata preserved", row ? JSON.parse(row.value).models.length === 1 : false);
+    }
+  }
+
+  // 31. Resume 安全：必须使用当前完整 provider 配置，禁止历史 baseUrl
+  {
+    const originalFetch = globalThis.fetch;
+    let lastBaseUrl = "";
+    try {
+      globalThis.fetch = (async (input, init) => {
+        const url = String(input);
+        if (url.includes("api.resume-test.com") || url.includes("api.new-base.com")) {
+          lastBaseUrl = url;
+          return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "resumed" } }] }), { status: 200 });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      // 创建 provider 并设为默认
+      const prov = await postJSON(`${base}/settings/models`, {
+        name: "ResumeTestProvider",
+        baseUrl: "https://api.resume-test.com/v1",
+        apiKey: "sk-resume-test",
+        models: ["resume-chat"],
+      }, 201);
+      await postJSON(`${base}/settings/default`, { providerId: prov.id, model: "resume-chat" }, 200);
+
+      // 创建 Run
+      const run = await postJSON(`${base}/runs`, { task: "resume test" }, 202);
+      const deadline = Date.now() + 10000;
+      let status = "running";
+      while (Date.now() < deadline) {
+        status = (await getRunStatus(run.runId)).status;
+        if (status !== "running" && status !== "stopping") break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      check("Resume: initial run completed", status === "completed", `status=${status}`);
+
+      // 修改 provider baseUrl
+      await patchJSON(`${base}/settings/models/${prov.id}`, { baseUrl: "https://api.new-base.com/v1" }, 200);
+
+      // Resume Run → 应使用新 baseUrl，而非历史 baseUrl
+      const resumed = await postJSON(`${base}/runs/${run.runId}/resume`, {}, 202);
+      check("Resume: accepted", !!resumed.runId);
+
+      const deadline2 = Date.now() + 10000;
+      let status2 = "running";
+      while (Date.now() < deadline2) {
+        status2 = (await getRunStatus(run.runId)).status;
+        if (status2 !== "running" && status2 !== "stopping") break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      check("Resume: run completed after baseUrl change", status2 === "completed", `status=${status2}`);
+      check("Resume: used current baseUrl", lastBaseUrl.includes("api.new-base.com"), `got ${lastBaseUrl}`);
+      cleanupCheckpoint(run.runId);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 32. Host 关闭：停止接受新 Run，取消活跃 Run，原子终态
+  {
+    const originalFetch = globalThis.fetch;
+    let cancelled = false;
+    try {
+      globalThis.fetch = (async (input, init) => {
+        if (String(input).includes("api.slow-echo.com")) {
+          await new Promise((r) => setTimeout(r, 5000));
+          return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "late" } }] }), { status: 200 });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      const prov = await postJSON(`${base}/settings/models`, {
+        name: "SlowProvider",
+        baseUrl: "https://api.slow-echo.com/v1",
+        apiKey: "sk-slow",
+        models: ["slow-chat"],
+      }, 201);
+
+      const run = await postJSON(`${base}/runs`, { task: "slow task" }, 202);
+      const deadline = Date.now() + 3000;
+      let status = "running";
+      while (Date.now() < deadline) {
+        status = (await getRunStatus(run.runId)).status;
+        if (status !== "running" && status !== "stopping") break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      check("Shutdown: run started", status === "running" || status === "stopping");
+
+      // 直接关闭 RunManager（不关 server），验证活跃 Run 被取消
+      await manager.close();
+      await new Promise((r) => setTimeout(r, 500));
+
+      const raw = manager.getRaw(run.runId);
+      const finalStatus = raw ? raw.status : "missing";
+      check("Shutdown: run stopped/cancelled", finalStatus === "stopped" || finalStatus === "interrupted", `got ${finalStatus}`);
+      cleanupCheckpoint(run.runId);
     } finally {
       globalThis.fetch = originalFetch;
     }

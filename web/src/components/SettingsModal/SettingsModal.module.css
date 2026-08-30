@@ -225,55 +225,6 @@
   gap: 10px;
 }
 
-.templateMenu {
-  position: relative;
-  display: inline-flex;
-}
-
-.templateMenuList {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  min-width: 180px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 5px;
-  box-shadow: var(--shadow-pop);
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-}
-
-.templateMenuItem {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  width: 100%;
-  padding: 7px 9px;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.templateMenuItem:hover {
-  background: var(--bg-hover);
-}
-
-.templateMenuName {
-  font-weight: 600;
-}
-
-.templateMenuModel {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
 .primaryButton {
   display: inline-flex;
   align-items: center;
@@ -584,6 +535,17 @@
   font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.defaultBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 1px 6px;
+  flex-shrink: 0;
 }
 
 .cardMeta {

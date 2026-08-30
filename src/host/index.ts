@@ -11,6 +11,14 @@ const port = Number(process.env.PORT ?? 4500);
 const secretStore = createSecretStore();
 const manager = new RunManager(createDefaultRunStore(secretStore));
 
+// Host API Token（进程内存唯一，不进入 URL/日志/前端状态）
+const HOST_API_TOKEN = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+import { setHostApiToken } from "./routes.js";
+setHostApiToken(HOST_API_TOKEN);
+console.log(`[auth] Host API token ready (do not share)`);
+
+const server = createHostServer(manager, HOST_API_TOKEN);
+
 // 一次性把 .env 的环境模型配置导入设置并设为默认：
 // 仅在从未导入过时生效；之后模型配置一律以设置面板为准。
 if (process.env.OPENAI_API_KEY) {
@@ -23,8 +31,6 @@ if (process.env.OPENAI_API_KEY) {
     console.log(`[settings] 已从环境变量导入模型配置并设为默认: ${imported.modelId}`);
   }
 }
-
-const server = createHostServer(manager);
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`Payaso Host API listening on http://localhost:${port}`);
@@ -40,14 +46,39 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`  POST /workspace/open       打开本地文件夹`);
 });
 
-// 优雅退出：关闭 SSE 连接
+// 优雅退出：异步幂等关闭
+let shuttingDown = false;
+const SHUTDOWN_TIMEOUT_MS = 15_000; // 略大于 RunManager 的 10s 等待
+
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n收到 ${signal}，开始关闭...`);
+
+  // 停止接收新 HTTP 连接
+  server.close(() => {
+    console.log("HTTP server 已停止接收新连接");
+  });
+
+  // 强制退出兜底 timer（覆盖完整 shutdown deadline）
+  const forceTimer = setTimeout(() => {
+    console.log("Shutdown timeout，强制退出");
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS).unref?.();
+
+  try {
+    await manager.close();
+    console.log("RunManager 已关闭");
+    if (forceTimer) clearTimeout(forceTimer);
+    process.exit(0);
+  } catch (err) {
+    console.error("Shutdown error:", err);
+    process.exit(1);
+  }
+}
+
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
-    console.log(`\n收到 ${sig}，关闭 server...`);
-    // Close SSE and SQLite before waiting for node:http connections to drain.
-    manager.close();
-    server.close(() => process.exit(0));
-    // 兜底：强制退出
-    setTimeout(() => process.exit(0), 2000).unref?.();
+    void shutdown(sig);
   });
 }

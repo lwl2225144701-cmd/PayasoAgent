@@ -49,6 +49,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaultModel, setDefaultModelState] = useState<DefaultModelView | null>(null);
   const [models, setModels] = useState<ModelProviderView[]>([]);
+  const previousDefaultModelRef = useRef<DefaultModelView | null>(null);
+  const modelSaveVersionRef = useRef(0);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -56,12 +58,26 @@ export default function App() {
   }, []);
 
   const handleSelectModel = useCallback((providerId: string, model: string) => {
-    // 乐观更新；持久化失败提示用户，下次 refresh 会与服务端对齐
-    setDefaultModelState({ defaultProviderId: providerId, defaultModelId: model });
-    setDefaultModel(providerId, model).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`默认模型保存失败：${msg}`);
-    });
+    const previous = previousDefaultModelRef.current ?? { defaultProviderId: "", defaultModelId: "" };
+    const next = { defaultProviderId: providerId, defaultModelId: model };
+    setDefaultModelState(next);
+    previousDefaultModelRef.current = next;
+
+    const version = ++modelSaveVersionRef.current;
+    setDefaultModel(providerId, model)
+      .then(() => {
+        if (version === modelSaveVersionRef.current) {
+          // 最新请求成功：确认 UI
+        }
+      })
+      .catch((err: unknown) => {
+        if (version === modelSaveVersionRef.current) {
+          const msg = err instanceof Error ? err.message : String(err);
+          showToast(`默认模型保存失败：${msg}`);
+          setDefaultModelState(previous);
+          previousDefaultModelRef.current = previous;
+        }
+      });
   }, [showToast]);
 
   const refreshRuns = useCallback(async () => {
@@ -138,14 +154,15 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // 监听 Settings 默认模型变更
+  // 监听 Settings 默认模型变更（含在 Settings 内点"设为默认"）
   useEffect(() => {
     const handler = () => {
+      void refreshModels();
       void refreshDefaultModel();
     };
     window.addEventListener('settings:defaultChanged', handler);
     return () => window.removeEventListener('settings:defaultChanged', handler);
-  }, [refreshDefaultModel]);
+  }, [refreshDefaultModel, refreshModels]);
 
   const currentRun = runs.find(r => r.runId === currentRunId) ?? null;
 
@@ -467,6 +484,7 @@ export default function App() {
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
+            void refreshModels();
             void refreshDefaultModel();
           }}
         />

@@ -183,9 +183,19 @@ export function setDefaultModel(providerId: string, model: string): Promise<Defa
 }
 
 // 拉取 OpenAI 兼容端点的可用模型目录。
-// 编辑已有 Provider 且密钥留空时传 providerId，由后端使用存储的密钥（不回传明文）。
-export function fetchAvailableModels(input: { baseUrl: string; apiKey?: string; providerId?: string }): Promise<{ models: string[] }> {
+// 仅使用服务端已保存的 Provider 配置（providerId），由 Host 读取其 baseUrl 与 apiKey。
+// 不允许前端传入 baseUrl 或 apiKey（SSRF / Secret 外带防线）。
+export function fetchAvailableModels(input: { providerId: string }): Promise<{ models: string[] }> {
   return jsonFetch('/settings/available-models', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+// 新增 Provider 时的临时预检：用表单中的 baseUrl + apiKey 拉取模型目录。
+// 凭证不落盘、不进日志、不回显；由 Host 走 /settings/available-models/preview（需鉴权、协议白名单）。
+export function previewAvailableModels(input: { baseUrl: string; apiKey: string }): Promise<{ models: string[] }> {
+  return jsonFetch('/settings/available-models/preview', {
     method: 'POST',
     body: JSON.stringify(input),
   });
