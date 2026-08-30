@@ -114,6 +114,21 @@ try {
     check("Case2: perl connection never reached the server", serverConnections === beforePerl,
       `connections delta=${serverConnections - beforePerl}`);
 
+    // Full access only lifts filesystem containment; network remains denied.
+    const fullSandbox = MacOSSandbox.forWorkspace(workspaceRoot, "full-access");
+    const beforeFull = serverConnections;
+    const fullCurl = await fullSandbox.run(`curl -s --max-time 3 http://127.0.0.1:${port}/`, shellOptions);
+    check("Full access: network remains denied", fullCurl.exitCode !== 0 && serverConnections === beforeFull,
+      `exit=${fullCurl.exitCode}, connections delta=${serverConnections - beforeFull}`);
+
+    const fullOutside = path.join(os.tmpdir(), `payaso-full-access-${Date.now()}.txt`);
+    fs.writeFileSync(fullOutside, "FULL-READ");
+    const fullRead = await fullSandbox.run(`cat ${JSON.stringify(fullOutside)}`, shellOptions);
+    check("Full access: host filesystem read is allowed",
+      fullRead.exitCode === 0 && fullRead.stdout.includes("FULL-READ"),
+      `exit=${fullRead.exitCode}, out=${fullRead.stdout.slice(0, 80)}`);
+    fs.rmSync(fullOutside, { force: true });
+
     // ---- 对照组：networkAccess: true 时同一 perl socket 成功 ----
     // （证明拒绝来自 sandbox policy 本身，而不是命令黑名单或环境故障）
     const allowSandbox = new MacOSSandbox(createSandboxPolicy(workspaceRoot, {

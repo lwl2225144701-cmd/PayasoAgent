@@ -16,6 +16,7 @@ import { execute, type ToolContext, type ToolSandboxEvent } from "../src/tools/t
 import "../src/tools/runtime-tools.js";
 import { probeSandboxAvailability } from "../src/sandbox/macos-sandbox.js";
 import { createWorkspace, cleanupWorkspace } from "../src/sandbox/sandbox-manager.js";
+import type { PermissionMode } from "../src/permission-mode.js";
 
 if (process.platform !== "darwin") {
   console.log("OS sandbox tests skipped: macOS only");
@@ -34,17 +35,18 @@ function shQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
-async function shell(command: string, events?: ToolSandboxEvent[]): Promise<string> {
+async function shell(command: string, events?: ToolSandboxEvent[], permissionMode: PermissionMode = "workspace-write"): Promise<string> {
   return execute("shell", { command }, {
     runId: RUN,
     workspaceRoot: work,
+    permissionMode,
     onSandboxEvent: events ? (event) => events.push(event) : undefined,
   });
 }
 
-async function expectDenied(command: string, events?: ToolSandboxEvent[]): Promise<void> {
+async function expectDenied(command: string, events?: ToolSandboxEvent[], permissionMode: PermissionMode = "workspace-write"): Promise<void> {
   await assert.rejects(
-    () => shell(command, events),
+    () => shell(command, events, permissionMode),
     (err: unknown) =>
       err instanceof Error &&
       err.message === "Shell operation denied by workspace sandbox." &&
@@ -99,11 +101,31 @@ async function runMatrix(): Promise<void> {
   await expectDenied("sh -c " + shQuote("printf child > " + shQuote(outside)));
   assert.equal(fs.readFileSync(outside, "utf8"), "keep");
 
+  // Read Only keeps Workspace readable but denies every write, including shell
+  // redirection and writes from child processes.
+  fs.writeFileSync(path.join(work, "readonly.txt"), "readable", "utf8");
+  const readOnlyResult = await shell("cat readonly.txt", undefined, "read-only");
+  assert.ok(readOnlyResult.includes("readable"));
+  await expectDenied("printf changed > readonly.txt", undefined, "read-only");
+  await expectDenied("sh -c " + shQuote("printf child > child-readonly.txt"), undefined, "read-only");
+  assert.equal(fs.readFileSync(path.join(work, "readonly.txt"), "utf8"), "readable");
+  assert.ok(!fs.existsSync(path.join(work, "child-readonly.txt")));
+
+  // Full access lifts the filesystem boundary for the process tree while the
+  // independent network policy remains deny (covered by shell-network.test.ts).
+  const fullRead = await shell("cat " + shQuote(outside), undefined, "full-access");
+  assert.ok(fullRead.includes("keep"));
+  await shell("sh -c " + shQuote("printf full-child > " + shQuote(outside)), undefined, "full-access");
+  assert.equal(fs.readFileSync(outside, "utf8"), "full-child");
+  fs.writeFileSync(outside, "keep", "utf8");
+
   console.log("macOS OS sandbox tests: PASS");
   console.log("  workspace read/write/create/delete: PASS");
   console.log("  workspace-external absolute read/write/delete: DENIED");
   console.log("  /tmp write: DENIED");
   console.log("  child shell inheritance: DENIED");
+  console.log("  read-only workspace writes: DENIED");
+  console.log("  full-access host filesystem: ALLOWED");
 }
 
 try {

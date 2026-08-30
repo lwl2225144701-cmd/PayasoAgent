@@ -1,5 +1,6 @@
 import type { HostEvent } from "../run-events.js";
 import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./settings-store.js";
+import type { PermissionMode } from "../../permission-mode.js";
 
 // stopping（v1.6）：用户已请求停止、AbortSignal 已发出，但执行尚未真正退出。
 export type StoredRunStatus = "running" | "stopping" | "completed" | "failed" | "stopped" | "interrupted";
@@ -31,6 +32,7 @@ export interface StoredRun {
   status: StoredRunStatus;
   workspaceRoot: string;
   workspaceName: string;
+  permissionMode?: PermissionMode;
   createdAt: string;
   updatedAt: string;
   result?: string;

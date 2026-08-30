@@ -7,6 +7,7 @@ import type { Scratchpad } from "./scratchpad.js";
 import type { ChatMessage } from "../llm/llm.js";
 import type { AgentState } from "./state.js";
 import type { ExecutedOperation } from "./side-effect.js";
+import type { PermissionMode } from "../permission-mode.js";
 
 // checkpoint 保存目录（项目根 .checkpoints/，已加入 .gitignore）
 const CHECKPOINT_DIR = path.join(process.cwd(), ".checkpoints");
@@ -20,6 +21,7 @@ export interface Checkpoint {
   messages: ChatMessage[]; // 完整消息历史（恢复后继续发给 LLM）
   state: AgentState; // Agent State 快照（恢复 runId/task/统计字段）
   workspaceRoot?: string; // Host/Runtime-only canonical root；resume 沿用原 Run 绑定
+  permissionMode?: PermissionMode; // Runtime-only 文件系统权限快照；resume 不允许升级
   // v1.3 Side-Effect Safety：已成功执行的 non_idempotent 操作（resume 防重放）
   sideEffects?: ExecutedOperation[];
   savedAt: string; // 保存时间

@@ -21,10 +21,10 @@
 }
 
 .timeline {
-  width: min(920px, calc(100% - 48px));
+  width: min(880px, calc(100% - 48px));
   max-width: none;
   margin: 0 auto;
-  padding: 30px 12px 60px;
+  padding: 34px 12px 72px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -52,7 +52,7 @@
 .userBlock {
   width: fit-content;
   max-width: min(62%, 940px);
-  margin: 0 0 34px;
+  margin: 0 0 30px;
   align-self: flex-end;
   text-align: right;
 }
@@ -64,7 +64,7 @@
   border: 1px solid var(--color-message-user-border);
   border-radius: 10px;
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.01em;
@@ -83,6 +83,120 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+
+/* ===== Execution summary: process is secondary to the final answer ===== */
+
+.executionPanel {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 20px;
+  overflow: hidden;
+  background: rgba(21, 24, 30, 0.28);
+  border: 1px solid rgba(58, 68, 82, 0.34);
+  border-radius: 8px;
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  opacity: 0.72;
+  transition: width 0.18s ease, opacity 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.executionPanel:hover {
+  opacity: 0.94;
+  background: rgba(21, 24, 30, 0.42);
+  border-color: rgba(58, 68, 82, 0.5);
+}
+
+.executionPanelOpen {
+  width: 100%;
+  opacity: 1;
+  background: rgba(21, 24, 30, 0.72);
+  border-color: rgba(58, 68, 82, 0.62);
+}
+
+.executionSummary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: auto;
+  min-width: 236px;
+  min-height: 34px;
+  padding: 6px 9px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.executionSummary:hover {
+  background: rgba(37, 43, 53, 0.34);
+}
+
+.executionStateIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--accent-blue);
+}
+
+.executionStateRunning .runDot {
+  width: 6px;
+  height: 6px;
+}
+
+.executionTitle {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.executionMeta {
+  min-width: 0;
+  flex: 0 1 auto;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.executionFailed {
+  color: var(--color-danger-text);
+}
+
+.executionChevron {
+  margin-left: 5px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: transform 0.18s ease;
+}
+
+.executionChevronOpen {
+  transform: rotate(90deg);
+}
+
+.executionBody {
+  padding: 4px 14px 13px 40px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.processStep + .processStep {
+  margin-top: 3px;
+}
+
+.processNote {
+  margin: 3px 0 10px;
+  padding-left: 1px;
+  opacity: 0.74;
+}
+
+.processNote p {
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 /* ===== Global running banner (shown only before first tool starts) ===== */
@@ -130,7 +244,7 @@
 
 .toolList {
   list-style: none;
-  margin: 4px 0 12px;
+  margin: 5px 0 9px;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -324,8 +438,15 @@
 /* ===== Final answer flows naturally after the tool messages. ===== */
 
 .finalBlock {
-  margin-top: 14px;
-  padding: 8px 0 0;
+  margin-top: 2px;
+  padding: 2px 2px 0;
+}
+
+.finalTime {
+  display: block;
+  margin-top: 16px;
+  color: var(--text-muted);
+  font-size: 11.5px;
 }
 
 .finalError {
@@ -341,7 +462,7 @@
 
 .attachList {
   list-style: none;
-  margin: 18px 0 0;
+  margin: 8px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -350,30 +471,59 @@
 .attachList li {
   padding: 0;
 }
-.attachBtn {
+.attachCard {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 8px 12px;
-  background: transparent;
+  width: min(520px, 100%);
+  padding: 11px 12px;
+  background: var(--color-surface-subtle);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 9px;
   text-align: left;
   color: var(--text-primary);
-  cursor: pointer;
   transition: border-color 0.12s ease, background 0.12s ease;
 }
-.attachBtn:hover {
+.attachCard:hover {
   border-color: var(--color-brand-border);
-  background: var(--color-brand-soft);
+  background: var(--color-surface-hover);
 }
-.attachBtn svg {
+.attachCard svg {
   color: var(--accent-blue);
   flex-shrink: 0;
 }
-.attachName {
+
+.artifacts {
+  margin-top: 24px;
+}
+
+.artifactsTitle {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.attachIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  background: var(--color-brand-soft);
+  border-radius: 7px;
+  color: var(--accent-blue);
+}
+
+.attachInfo {
+  display: flex;
+  min-width: 0;
   flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachName {
   min-width: 0;
   font-size: 13px;
   font-weight: 500;
@@ -385,6 +535,50 @@
   font-size: 11.5px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.attachAction {
+  padding: 5px 8px;
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-brand-hover);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.attachAction:hover {
+  background: var(--color-brand-soft);
+}
+
+.attachActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.attachBrowserAction {
+  padding: 5px 9px;
+  background: var(--color-brand-soft);
+  border: 1px solid var(--color-brand-border);
+  border-radius: 6px;
+  color: var(--color-brand-hover);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.attachBrowserAction:hover {
+  background: rgba(91, 141, 239, 0.18);
+  border-color: rgba(91, 141, 239, 0.4);
+}
+
+.fileActionError {
+  margin-top: 8px;
+  color: var(--color-danger-text);
+  font-size: 12px;
 }
 
 /* ===== Responsive ===== */

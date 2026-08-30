@@ -23,7 +23,7 @@ export function ThinkBlock({ text }: ThinkBlockProps) {
           <ThinkIcon size={16} className={styles.atomIcon} />
           <ChevronDownIcon size={14} className={styles.hoverIcon} />
         </span>
-        <span className={styles.label}>Think</span>
+        <span className={styles.label}>思考过程</span>
         {!open && (
           <>
             <span className={styles.separator}>·</span>

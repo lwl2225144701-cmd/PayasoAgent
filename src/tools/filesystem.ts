@@ -12,6 +12,7 @@ import {
   assertInsideRoot,
   getRunWorkspaceRoot,
 } from "../sandbox/sandbox-manager.js";
+import { storedPermissionMode } from "../permission-mode.js";
 
 // 最大读取限制：超过则返回 invalid result，不把大文件塞进 Context
 export const MAX_READ_BYTES = 1024 * 1024; // 1MB
@@ -25,7 +26,36 @@ function rejectPath(rel: string): never {
 
 // 解析 + 双重校验（resolvePath 字符串级 + assertInsideWorkspace 真实路径级）
 // 任何逃逸（.. / 绝对路径 / symlink 指向外部）→ BLOCKED（tool_error）
-function guardPath(context: ToolContext, rel: string): string {
+function canonicalHostPath(workspaceRoot: string, input: string): string {
+  const candidate = path.isAbsolute(input)
+    ? path.resolve(input)
+    : path.resolve(workspaceRoot, input);
+  // Resolve every existing ancestor so paths traversing directory symlinks are
+  // canonical even when the final file does not exist yet.
+  let existing = candidate;
+  const suffix: string[] = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(existing);
+      return path.join(real, ...suffix);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      const parent = path.dirname(existing);
+      if (parent === existing) throw err;
+      suffix.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
+}
+
+export function resolveAuthorizedPath(context: ToolContext, rel: string): string {
+  if (storedPermissionMode(context.permissionMode) === "full-access") {
+    try {
+      return canonicalHostPath(context.workspaceRoot, rel);
+    } catch {
+      rejectPath(rel);
+    }
+  }
   try {
     const real = resolveWorkspacePath(context.workspaceRoot, rel);
     assertInsideRoot(context.workspaceRoot, real);
@@ -41,8 +71,10 @@ function guardPath(context: ToolContext, rel: string): string {
 // 若路径非法（穿越/绝对），返回 null，由调用方回退保守处理。
 export function canonicalPathKey(context: ToolContext, rel: string): string | null {
   try {
-    const real = resolveWorkspacePath(context.workspaceRoot, rel);
-    assertInsideRoot(context.workspaceRoot, real);
+    const real = resolveAuthorizedPath(context, rel);
+    if (storedPermissionMode(context.permissionMode) === "full-access") {
+      return `host:${real.split(path.sep).join("/")}`;
+    }
     const relKey = path.relative(context.workspaceRoot, real);
     // 统一分隔符为 "/"（跨平台稳定）；剥离头部 "./"
     const norm = relKey.split(path.sep).join("/").replace(/^\.\//, "");
@@ -67,7 +99,7 @@ function isProbablyBinary(buf: Buffer): boolean {
 register({
   name: "listDir",
   description:
-    "列出沙箱工作区内目录的条目（名称与类型 file/directory），不递归。path 为工作区内相对路径，如 work",
+    "列出目录条目（名称与类型 file/directory），不递归。Read Only/Workspace Write 下 path 必须是 Workspace 相对路径；Full access 下也可使用绝对路径。",
   // 只读目录枚举，无副作用
   effect: "read",
   // 路径类工具：归一化相对路径为操作 key（./ 与根段 → 同一 key，不暴露宿主绝对路径）
@@ -86,7 +118,7 @@ register({
   execute: async (args, context) => {
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
-    const real = guardPath(context, rel);
+    const real = resolveAuthorizedPath(context, rel);
     let st: fs.Stats;
     try {
       st = fs.lstatSync(real);
@@ -114,7 +146,7 @@ register({
 register({
   name: "readFile",
   description:
-    "读取沙箱工作区内文本文件内容（UTF-8，最大 1MB，不支持二进制）。path 为工作区内相对路径，如 input/demo.txt",
+    "读取文本文件内容（UTF-8，最大 1MB，不支持二进制）。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。",
   // 只读文件读取，无副作用
   effect: "read",
   // 路径类工具：归一化相对路径为操作 key
@@ -133,7 +165,7 @@ register({
   execute: async (args, context) => {
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
-    const real = guardPath(context, rel);
+    const real = resolveAuthorizedPath(context, rel);
     let st: fs.Stats;
     try {
       st = fs.lstatSync(real);
@@ -174,6 +206,11 @@ const WRITABLE_TOP_LEVEL = new Set(["work", "output"]);
 
 // 权限规则的字符串级首段校验：禁止写入 input/，也禁止任何非白名单顶层目录
 export function assertWritableZone(rel: string, context: ToolContext): void {
+  const permissionMode = storedPermissionMode(context.permissionMode);
+  if (permissionMode === "read-only") {
+    throw new Error("操作被拒绝：当前 Run 为 Read Only，禁止修改文件系统");
+  }
+  if (permissionMode === "full-access") return;
   // Legacy no-Workspace mode keeps input/ read-only and work/output writable.
   // An explicitly authorized real Workspace is writable throughout its root.
   const legacyRoot = path.resolve(getRunWorkspaceRoot(context.runId));
@@ -193,7 +230,7 @@ export function assertWritableZone(rel: string, context: ToolContext): void {
 register({
   name: "writeFile",
   description:
-    "向当前 Workspace 写文本文件（UTF-8，单次≤1MB，原子写入）。path 必须是 Workspace 内相对路径，如 src/note.txt 或 work-test.txt；父目录必须已存在。",
+    "写入文本文件（UTF-8，单次≤1MB，原子写入）。Read Only 禁止；Workspace Write 仅限 Workspace 相对路径；Full access 可用绝对路径。父目录必须已存在。",
   parameters: {
     type: "object",
     properties: {
@@ -228,7 +265,7 @@ register({
     }
 
     // 权限规则②：resolvePath（字符串级：禁止 ../、绝对路径）+ assertInsideWorkspace（真实路径级：symlink 逃逸）双重校验
-    const real = guardPath(context, rel);
+    const real = resolveAuthorizedPath(context, rel);
 
     // 父目录必须已存在（暂不自动创建任意目录）
     let dirSt: fs.Stats;

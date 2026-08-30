@@ -13,6 +13,7 @@ import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.
 import { isAbortError } from "../util/abort.js";
 import fs from "node:fs";
 import path from "node:path";
+import { DEFAULT_PERMISSION_MODE, storedPermissionMode, type PermissionMode } from "../permission-mode.js";
 
 export type HostRunStatus = StoredRunStatus;
 
@@ -30,6 +31,7 @@ export interface HostRun {
   model?: string;
   providerId?: string;
   baseUrl?: string;
+  permissionMode: PermissionMode;
 }
 
 export interface HostSession {
@@ -163,7 +165,7 @@ export class RunManager {
   createInSession(
     task: string,
     requestedSessionId?: string,
-    opts?: { workspaceName?: string; startAgent?: boolean },
+    opts?: { workspaceName?: string; startAgent?: boolean; permissionMode?: PermissionMode },
   ): { runId: string; sessionId: string } {
     this.ensureOpen();
     const runId = crypto.randomUUID();
@@ -196,6 +198,7 @@ export class RunManager {
     const previousRuns = this.store.listRunsBySession(session.sessionId);
     const conversationHistory = this.conversationHistory(previousRuns);
     const resolved = this.resolveModelConfig();
+    const permissionMode = opts?.permissionMode ?? DEFAULT_PERMISSION_MODE;
     const run: InternalRun = {
       runId,
       sessionId: session.sessionId,
@@ -211,6 +214,7 @@ export class RunManager {
       model: resolved?.model,
       providerId: resolved?.providerId,
       baseUrl: resolved?.baseUrl,
+      permissionMode,
     };
 
     // Persist before execution starts, so every Runtime event has a parent Run.
@@ -239,6 +243,8 @@ export class RunManager {
     const persistedRoot = persisted.workspaceRoot ? normalizeRoot(persisted.workspaceRoot) : "";
     const checkpointRoot = checkpoint.workspaceRoot ? normalizeRoot(checkpoint.workspaceRoot) : "";
     if (checkpointRoot && persistedRoot && checkpointRoot !== persistedRoot) return false;
+    const persistedPermission = storedPermissionMode(persisted.permissionMode);
+    if (checkpoint.permissionMode && checkpoint.permissionMode !== persistedPermission) return false;
 
     const now = new Date().toISOString();
     const workspaceRoot = persisted.workspaceRoot || checkpoint.workspaceRoot || getRunWorkspaceRoot(runId);
@@ -260,6 +266,7 @@ export class RunManager {
       model: persisted.model,
       providerId: persisted.providerId,
       baseUrl: persisted.baseUrl,
+      permissionMode: persistedPermission,
     };
     this.store.updateRun(this.toStoredRun(run));
     this.runs.set(runId, run);
@@ -699,6 +706,7 @@ export class RunManager {
         const result = await runAgent(task, resume, {
           runId: run.runId,
           workspaceRoot: run.workspaceRoot,
+          permissionMode: run.permissionMode,
           conversationHistory,
           modelConfig,
           signal: abortController.signal,
@@ -776,6 +784,7 @@ export class RunManager {
       status: run.status,
       workspaceRoot: run.workspaceRoot,
       workspaceName: run.workspace?.name ?? "",
+      permissionMode: run.permissionMode,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       result: run.result,
@@ -801,6 +810,7 @@ export class RunManager {
       model: run.model,
       providerId: run.providerId,
       baseUrl: run.baseUrl,
+      permissionMode: run.permissionMode,
     };
   }
 
@@ -816,6 +826,10 @@ export class RunManager {
       result: run.result,
       error: run.error,
       workspace: run.workspaceName ? { name: run.workspaceName } : undefined,
+      model: run.model,
+      providerId: run.providerId,
+      baseUrl: run.baseUrl,
+      permissionMode: storedPermissionMode(run.permissionMode),
     };
   }
 

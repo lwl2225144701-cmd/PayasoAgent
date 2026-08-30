@@ -22,7 +22,7 @@ import {
   setDefaultModel,
   stopRun,
 } from './api';
-import type { DefaultModelView, FileEntry, HostRun, HostSession, ModelProviderView, ModelSelection, WorkspaceView } from './types';
+import type { DefaultModelView, FileEntry, HostRun, HostSession, ModelProviderView, ModelSelection, PermissionMode, WorkspaceView } from './types';
 import styles from './App.module.css';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
@@ -47,6 +47,7 @@ export default function App() {
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('workspace-write');
   const [defaultModel, setDefaultModelState] = useState<DefaultModelView | null>(null);
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const previousDefaultModelRef = useRef<DefaultModelView | null>(null);
@@ -208,6 +209,7 @@ export default function App() {
         trimmed,
         currentSessionId ?? undefined,
         preferredWorkspaceName ?? undefined,
+        permissionMode,
       );
       const isNewSession = !currentSessionId;
       // 立刻把刚创建的 Run 合并进 runs 数组（乐观更新），避免等 refreshRuns 回来之前 landing 分支还在显示
@@ -220,6 +222,7 @@ export default function App() {
         workspace: workspace ?? undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        permissionMode: resp.permissionMode,
       };
       setCurrentSessionId(resp.sessionId);
       setCurrentRunId(resp.runId);
@@ -249,7 +252,7 @@ export default function App() {
       console.error('Failed to create run:', err);
       alert(`任务创建失败：${msg}`);
     }
-  }, [currentSessionId, currentSessionRuns.length, preferredWorkspaceName, refreshSessions, workspace]);
+  }, [currentSessionId, currentSessionRuns.length, permissionMode, preferredWorkspaceName, refreshSessions, workspace]);
 
   const handleRunTerminal = useCallback(() => {
     // SSE 已携带终态；这里只做一次持久化状态对账，不启动后台轮询。
@@ -452,6 +455,8 @@ export default function App() {
               currentModel={currentModelSelection ?? undefined}
               models={models}
               onSelectModel={handleSelectModel}
+              permissionMode={permissionMode}
+              onSelectPermission={setPermissionMode}
             />
           </div>
         )}
@@ -467,6 +472,8 @@ export default function App() {
             currentModel={currentModelSelection ?? undefined}
             models={models}
             onSelectModel={handleSelectModel}
+            permissionMode={permissionMode}
+            onSelectPermission={setPermissionMode}
           />
         )}
       </div>

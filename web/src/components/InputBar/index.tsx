@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { ChevronDownIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
-import type { ModelProviderView, ModelSelection } from '../../types';
+import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import styles from './InputBar.module.css';
 
 interface InputBarProps {
@@ -19,6 +19,8 @@ interface InputBarProps {
   currentModel?: ModelSelection;
   models?: ModelProviderView[];
   onSelectModel?: (providerId: string, model: string) => void;
+  permissionMode: PermissionMode;
+  onSelectPermission: (mode: PermissionMode) => void;
 }
 
 export function InputBar({
@@ -35,6 +37,8 @@ export function InputBar({
   currentModel,
   models = [],
   onSelectModel,
+  permissionMode,
+  onSelectPermission,
 }: InputBarProps) {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -97,6 +101,8 @@ export function InputBar({
             currentModel={currentModel}
             models={models}
             onSelectModel={onSelectModel}
+            permissionMode={permissionMode}
+            onSelectPermission={onSelectPermission}
           />
         </div>
       </div>
@@ -125,6 +131,8 @@ export function InputBar({
           currentModel={currentModel}
           models={models}
           onSelectModel={onSelectModel}
+          permissionMode={permissionMode}
+          onSelectPermission={onSelectPermission}
         />
       </div>
     </div>

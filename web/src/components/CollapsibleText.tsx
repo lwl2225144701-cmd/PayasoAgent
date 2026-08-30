@@ -1,4 +1,6 @@
-import { Fragment, type CSSProperties, type ReactNode, useState } from 'react';
+import { type CSSProperties, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import styles from './CollapsibleText.module.css';
 
 interface CollapsibleTextProps {
@@ -13,9 +15,9 @@ interface CollapsibleTextProps {
  * Renders long text with a "显示更多" (show more) footer when it exceeds `maxChars`.
  * Preserves whitespace and line breaks.
  */
-export function CollapsibleText({ text, maxChars = 800, maxLinesSoft }: CollapsibleTextProps) {
+export function CollapsibleText({ text, maxChars = 0, maxLinesSoft }: CollapsibleTextProps) {
   const [open, setOpen] = useState(false);
-  const clamped = !open && text.length > maxChars;
+  const clamped = maxChars > 0 && !open && text.length > maxChars;
   const display = clamped ? `${text.slice(0, maxChars)}…` : text;
   const lineClampStyle: CSSProperties | undefined =
     !open && maxLinesSoft
@@ -29,8 +31,19 @@ export function CollapsibleText({ text, maxChars = 800, maxLinesSoft }: Collapsi
 
   return (
     <div className={styles.root}>
-      <div className={styles.text} style={lineClampStyle}>{renderInlineMarkdown(display)}</div>
-      {text.length > maxChars && (
+      <div className={styles.text} style={lineClampStyle}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a: ({ children, ...props }) => (
+              <a {...props} target="_blank" rel="noreferrer">{children}</a>
+            ),
+          }}
+        >
+          {display}
+        </ReactMarkdown>
+      </div>
+      {maxChars > 0 && text.length > maxChars && (
         <button
           type="button"
           className={styles.toggle}
@@ -42,16 +55,4 @@ export function CollapsibleText({ text, maxChars = 800, maxLinesSoft }: Collapsi
       )}
     </div>
   );
-}
-
-function renderInlineMarkdown(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return <code className={styles.inlineCode} key={index}>{part.slice(1, -1)}</code>;
-    }
-    return <Fragment key={index}>{part}</Fragment>;
-  });
 }

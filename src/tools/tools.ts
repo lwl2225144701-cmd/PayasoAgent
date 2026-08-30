@@ -5,11 +5,15 @@
 // - 模型决定"做什么"，Runtime 决定"在哪里执行"。
 
 import type { ToolSchema } from "../llm/llm.js";
+import type { PermissionMode } from "../permission-mode.js";
 
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
   runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
   workspaceRoot: string; // Host/Runtime 授权并 canonicalize 的真实工作根，LLM 不可见不可覆盖
+  // Host 在 Run 创建时固化的文件系统能力；缺省仅用于兼容旧 CLI/测试调用。
+  // Agent Tool Schema 不包含此字段，LLM 无法自行升级。
+  permissionMode?: PermissionMode;
   // True cancellation (v1.6)：Run 的 AbortSignal；长任务工具（shell 及未来 browser/computer）
   // 必须监听并尽快终止，读类/原子文件工具可忽略。与 runId 一样由 Runtime 注入，LLM 不可见。
   signal?: AbortSignal;

@@ -2,6 +2,7 @@
 
 // stopping（v1.6）：用户已请求停止（abort 已发出），执行尚未真正退出
 export type HostRunStatus = "running" | "stopping" | "completed" | "failed" | "stopped" | "interrupted";
+export type PermissionMode = 'read-only' | 'workspace-write' | 'full-access';
 
 export interface HostRun {
   runId: string;
@@ -15,6 +16,7 @@ export interface HostRun {
   error?: string;
   workspace?: WorkspaceView;
   model?: string;
+  permissionMode: PermissionMode;
 }
 
 export interface HostSession {

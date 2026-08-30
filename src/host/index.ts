@@ -42,6 +42,7 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`  GET  /runs/:id/events     SSE 事件流`);
   console.log(`  GET  /runs/:id/files      列 workspace 文件`);
   console.log(`  GET  /runs/:id/files/*    读 workspace 文件`);
+  console.log(`  POST /runs/:id/files/*/open  用默认浏览器打开 HTML`);
   console.log(`  GET  /workspace            当前 Workspace`);
   console.log(`  POST /workspace/open       打开本地文件夹`);
 });

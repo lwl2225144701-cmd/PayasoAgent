@@ -1,8 +1,9 @@
 import { forwardRef, useState, useRef, useEffect, type ChangeEventHandler, type KeyboardEventHandler } from 'react';
-import type { ModelProviderView, ModelSelection } from '../../types';
+import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import {
   ArrowUpIcon,
   ChevronDownIcon,
+  CheckIcon,
   ShieldIcon,
   StopIcon,
 } from '../icons';
@@ -51,20 +52,78 @@ interface ComposerFooterProps {
   currentModel?: ModelSelection;
   models?: ModelProviderView[];
   onSelectModel?: (providerId: string, model: string) => void;
+  permissionMode: PermissionMode;
+  onSelectPermission: (mode: PermissionMode) => void;
 }
 
-function PermissionButton() {
+const PERMISSION_OPTIONS: Array<{ mode: PermissionMode; label: string; description: string }> = [
+  { mode: 'read-only', label: 'Read Only', description: '只能读取 Workspace' },
+  { mode: 'workspace-write', label: 'Workspace Write', description: '可以修改 Workspace' },
+  { mode: 'full-access', label: 'Full access', description: '可以读写宿主文件系统' },
+];
+
+function PermissionButton({ mode, onSelect }: { mode: PermissionMode; onSelect: (mode: PermissionMode) => void }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const current = PERMISSION_OPTIONS.find(option => option.mode === mode) ?? PERMISSION_OPTIONS[1];
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    if (!open) return;
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const select = (next: PermissionMode) => {
+    if (next === 'full-access' && mode !== 'full-access') {
+      const confirmed = window.confirm(
+        'Full access 允许 Agent 读取、修改和删除当前用户可访问的宿主文件。网络权限不会因此开放。\n\n确认启用 Full access？',
+      );
+      if (!confirmed) return;
+    }
+    onSelect(next);
+    setOpen(false);
+  };
+
   return (
-    <button
-      className={styles.permissionButton}
-      type="button"
-      title="当前 Workspace 权限"
-      aria-label="Workspace Write 权限"
-    >
-      <ShieldIcon size={16} />
-      <span>Workspace Write</span>
-      <ChevronDownIcon size={13} />
-    </button>
+    <div className={styles.permissionDropdown} ref={containerRef}>
+      <button
+        className={`${styles.permissionButton} ${mode === 'full-access' ? styles.permissionButtonDanger : ''}`}
+        type="button"
+        title={`当前文件系统权限：${current.label}`}
+        aria-label={`${current.label} 权限`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+      >
+        <ShieldIcon size={16} />
+        <span>{current.label}</span>
+        <ChevronDownIcon size={13} />
+      </button>
+      {open && (
+        <div className={styles.permissionDropdownMenu} role="listbox" aria-label="文件系统权限">
+          {PERMISSION_OPTIONS.map(option => (
+            <button
+              key={option.mode}
+              type="button"
+              className={`${styles.permissionDropdownItem} ${option.mode === 'full-access' ? styles.permissionDropdownItemDanger : ''}`}
+              role="option"
+              aria-selected={mode === option.mode}
+              onClick={() => select(option.mode)}
+            >
+              <ShieldIcon size={17} />
+              <span className={styles.permissionOptionText}>
+                <span className={styles.permissionOptionLabel}>{option.label}</span>
+                <span className={styles.permissionOptionDescription}>{option.description}</span>
+              </span>
+              {mode === option.mode && <CheckIcon size={16} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -178,7 +237,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
     return (
       <div className={styles.heroFooter}>
         <div className={styles.heroTools}>
-          <PermissionButton />
+          <PermissionButton mode={props.permissionMode} onSelect={props.onSelectPermission} />
           <ModelButton currentModel={props.currentModel} models={props.models} onSelectModel={props.onSelectModel} />
         </div>
         <div className={styles.heroActions}>{action}</div>
@@ -188,7 +247,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
 
   return (
     <div className={styles.conversationFooter}>
-      <PermissionButton />
+      <PermissionButton mode={props.permissionMode} onSelect={props.onSelectPermission} />
       <div className={styles.conversationActions}>
         <ModelButton currentModel={props.currentModel} models={props.models} onSelectModel={props.onSelectModel} />
         {action}

@@ -11,6 +11,7 @@ import { ContextManager } from "./context.js";
 import { estimateTextTokens, resolveModelContextConfig } from "./model-context.js";
 import { guardToolOutput } from "./output-guard.js";
 import { saveCheckpoint } from "./checkpoint.js";
+import { DEFAULT_PERMISSION_MODE, storedPermissionMode, type PermissionMode } from "../permission-mode.js";
 import {
   createSideEffectGuard,
   markExecuted,
@@ -38,6 +39,16 @@ const SYSTEM_PROMPT = `你是一个助手，可以使用工具帮助用户完成
 遇到任何计算任务，必须调用 calculator 工具获取结果，禁止自行计算。
 当不需要工具时，直接给出最终答案。`;
 
+function permissionSystemPrompt(mode: PermissionMode): string {
+  if (mode === "read-only") {
+    return "当前文件系统权限为 Read Only：只能读取当前 Workspace，禁止创建、修改、移动或删除文件；Shell 同样不可写。网络权限独立且当前不可用。";
+  }
+  if (mode === "full-access") {
+    return "当前文件系统权限为 Full access：可以使用绝对路径读写当前宿主用户有权访问的文件，仍受 macOS 用户权限、ACL、TCC 与 SIP 限制。网络权限独立且当前不可用。";
+  }
+  return "当前文件系统权限为 Workspace Write：可以读写当前 Workspace，禁止访问 Workspace 外文件。网络权限独立且当前不可用。";
+}
+
 // 去除推理模型（如 MiniMax-M3）内嵌的 <think> 思考标签
 function stripThink(text: string): string {
   let out = text.replace(/<think>[\s\S]*?<\/think>/g, "");
@@ -50,10 +61,11 @@ function stripThink(text: string): string {
 // opts.runId: 可选，供测试固定 runId（默认仍随机生成；resume 时忽略，沿用 checkpoint 的 runId）
 export async function runAgent(
   task: string,
-  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; sideEffects?: ExecutedOperation[] },
+  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; permissionMode?: PermissionMode; sideEffects?: ExecutedOperation[] },
   opts?: {
     runId?: string;
     workspaceRoot?: string;
+    permissionMode?: PermissionMode;
     conversationHistory?: ChatMessage[];
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
@@ -73,7 +85,10 @@ export async function runAgent(
   const workspaceRoot = canonicalizeWorkspaceRoot(
     resume?.workspaceRoot ?? opts?.workspaceRoot ?? legacyWorkspaceRoot
   );
-  const toolContext = { runId, workspaceRoot };
+  const permissionMode = resume
+    ? storedPermissionMode(resume.permissionMode ?? opts?.permissionMode)
+    : (opts?.permissionMode ?? DEFAULT_PERMISSION_MODE);
+  const toolContext = { runId, workspaceRoot, permissionMode };
 
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
@@ -91,7 +106,7 @@ export async function runAgent(
   let messages: ChatMessage[] = resume
     ? resume.messages
     : [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: `${SYSTEM_PROMPT}\n${permissionSystemPrompt(permissionMode)}` },
         ...conversationHistory,
         { role: "user", content: task },
       ];
@@ -109,6 +124,7 @@ export async function runAgent(
       messages,
       state,
       workspaceRoot,
+      permissionMode,
       sideEffects: sideEffectGuard.snapshot(),
     });
     console.log(`[Checkpoint] saved → ${file}`);

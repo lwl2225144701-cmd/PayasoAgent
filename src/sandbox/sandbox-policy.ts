@@ -3,11 +3,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from "../permission-mode.js";
 
 export type SandboxPolicy = {
   workspaceRoot: string;
   readableRoots: string[];
   writableRoots: string[];
+  permissionMode: PermissionMode;
   // v1.6 Network Capability Separation：网络是与文件系统严格分离的独立能力。
   // fail-closed 默认 false；shell 永远显式 false。未来 Browser/Network 类
   // capability 由各自的 provider/policy 显式开启，绝不从 shell 继承或由 LLM 参数决定。
@@ -41,16 +43,18 @@ export function createSandboxPolicy(
   options: {
     readableRoots?: string[];
     writableRoots?: string[];
+    permissionMode?: PermissionMode;
     networkAccess?: boolean;
   } = {}
 ): SandboxPolicy {
   const root = canonicalizeExisting(workspaceRoot);
+  const permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
   const readableRoots = unique([
     root,
     ...(options.readableRoots ?? []).map(canonicalizeExisting),
   ]);
   const writableRoots = unique([
-    ...(options.writableRoots ?? [root]).map(canonicalizeExisting),
+    ...(options.writableRoots ?? (permissionMode === "workspace-write" ? [root] : [])).map(canonicalizeExisting),
   ]);
 
   for (const writable of writableRoots) {
@@ -63,6 +67,7 @@ export function createSandboxPolicy(
     workspaceRoot: root,
     readableRoots,
     writableRoots,
+    permissionMode,
     networkAccess: options.networkAccess ?? false,
   };
 }

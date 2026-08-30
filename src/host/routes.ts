@@ -19,6 +19,8 @@ import {
   openWorkspacePicker,
   workspacePublicView,
 } from "./workspace.js";
+import { DEFAULT_PERMISSION_MODE, isPermissionMode, type PermissionMode } from "../permission-mode.js";
+import { openFileInDefaultBrowser } from "./default-browser.js";
 
 const MAX_FILE_BYTES = 1024 * 1024; // 读文件大小上限
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
@@ -26,6 +28,12 @@ const MAX_BODY_BYTES = 64 * 1024; // Host JSON 请求体上限
 const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 const SAFE_SESSION_ID = SAFE_RUN_ID;
 const WORKSPACE_DIRS = ["input", "work", "output"];
+
+function requestPermissionMode(value: unknown): PermissionMode {
+  if (value === undefined) return DEFAULT_PERMISSION_MODE;
+  if (!isPermissionMode(value)) throw new Error("invalid_permission_mode");
+  return value;
+}
 
 // Host API Token（进程内存唯一，不进入 URL/日志/前端状态）
 let hostApiToken: string | null = null;
@@ -690,9 +698,12 @@ export async function handleRequest(
         }
         const task = typeof body.task === "string" ? body.task.trim() : "";
         if (!task) return bad(res, "缺少 task");
+        let permissionMode: PermissionMode;
+        try { permissionMode = requestPermissionMode(body.permissionMode); }
+        catch { return bad(res, "invalid_permission_mode"); }
         try {
-          const created = manager.createInSession(task, sessionId);
-          return sendJson(res, 202, { ...created, status: "running" });
+          const created = manager.createInSession(task, sessionId, { permissionMode });
+          return sendJson(res, 202, { ...created, status: "running", permissionMode });
         } catch (err) {
           return bad(res, (err as Error).message);
         }
@@ -762,9 +773,12 @@ export async function handleRequest(
       if (requestedSessionId && !SAFE_SESSION_ID.test(requestedSessionId)) return bad(res, "非法 sessionId");
       const workspaceName = typeof body.workspaceName === "string" ? body.workspaceName.trim() : undefined;
       if (workspaceName && workspaceName.length > 120) return bad(res, "workspaceName 过长");
+      let permissionMode: PermissionMode;
+      try { permissionMode = requestPermissionMode(body.permissionMode); }
+      catch { return bad(res, "invalid_permission_mode"); }
       try {
-        const created = manager.createInSession(task, requestedSessionId, { workspaceName });
-        return sendJson(res, 202, { ...created, status: "running" });
+        const created = manager.createInSession(task, requestedSessionId, { workspaceName, permissionMode });
+        return sendJson(res, 202, { ...created, status: "running", permissionMode });
       } catch (err) {
         return bad(res, (err as Error).message);
       }
@@ -804,9 +818,26 @@ export async function handleRequest(
       return manager.stop(runId) ? sendJson(res, 202, { runId, status: "stopped" }) : notFound(res);
     }
     case "files": {
-      if (method !== "GET") return notFound(res);
       checkOrigin(req, port);
       requireAuth(req);
+      // POST /runs/:id/files/<rel>/open → 交给 macOS 默认应用打开。
+      // 路径在 Host 内重新 canonicalize，前端永远拿不到宿主绝对路径。
+      if (method === "POST" && s.length >= 5 && s[s.length - 1] === "open") {
+        const run = manager.get(runId);
+        if (!run) return notFound(res);
+        const root = manager.getWorkspaceRoot(runId);
+        if (!root) return notFound(res);
+        const rel = s.slice(3, -1).join("/");
+        try {
+          await openFileInDefaultBrowser(root, rel);
+          return sendJson(res, 200, { runId, name: rel, opened: true });
+        } catch (err) {
+          const message = (err as Error).message;
+          if (message.includes("only HTML")) return bad(res, "only HTML files can be opened in the browser");
+          return bad(res, "file cannot be opened in the default browser");
+        }
+      }
+      if (method !== "GET") return notFound(res);
       // GET /runs/:id/files → 列文件
       if (s.length === 3) {
         const run = manager.get(runId);

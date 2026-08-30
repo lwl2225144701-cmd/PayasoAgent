@@ -7,6 +7,7 @@ import type { HostEvent } from "../run-events.js";
 import type { RunStore, StoredEvent, StoredRun, StoredRunStatus, StoredSession, DeletedWorkspaceView, StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./store.js";
 import { SettingsStore } from "./settings-store.js";
 import { createSecretStore, type SecretStore } from "../secrets/secret-store.js";
+import { storedPermissionMode } from "../../permission-mode.js";
 
 // Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
 const REPO_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -23,6 +24,7 @@ interface RunRow {
   status: string;
   workspace_root: string;
   workspace_name: string;
+  permission_mode: string;
   created_at: string;
   updated_at: string;
   result: string | null;
@@ -61,6 +63,7 @@ function mapRun(row: RunRow): StoredRun {
     status: row.status as StoredRunStatus,
     workspaceRoot: row.workspace_root,
     workspaceName: row.workspace_name,
+    permissionMode: storedPermissionMode(row.permission_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -144,6 +147,8 @@ export class SqliteRunStore implements RunStore {
             status TEXT NOT NULL CHECK (status IN ('running', 'stopping', 'completed', 'failed', 'stopped', 'interrupted')),
             workspace_root TEXT NOT NULL,
             workspace_name TEXT NOT NULL,
+            permission_mode TEXT NOT NULL DEFAULT 'workspace-write'
+              CHECK (permission_mode IN ('read-only', 'workspace-write', 'full-access')),
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             result TEXT,
@@ -172,6 +177,7 @@ export class SqliteRunStore implements RunStore {
         this.migrateDeletedAt();
         this.migrateLegacyRuns();
         this.migrateStoppingStatus();
+        this.migratePermissionMode();
         this.db.exec(`
           CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
@@ -276,6 +282,8 @@ export class SqliteRunStore implements RunStore {
         status TEXT NOT NULL CHECK (status IN ('running', 'stopping', 'completed', 'failed', 'stopped', 'interrupted')),
         workspace_root TEXT NOT NULL,
         workspace_name TEXT NOT NULL,
+        permission_mode TEXT NOT NULL DEFAULT 'workspace-write'
+          CHECK (permission_mode IN ('read-only', 'workspace-write', 'full-access')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         result TEXT,
@@ -289,16 +297,25 @@ export class SqliteRunStore implements RunStore {
       );
       INSERT INTO runs_new (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
       )
       SELECT
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+        'workspace-write', created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
       FROM runs;
       DROP TABLE runs;
       ALTER TABLE runs_new RENAME TO runs;
       COMMIT;
       PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  private migratePermissionMode(): void {
+    const columns = this.db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
+    if (columns.some((column) => column.name === "permission_mode")) return;
+    this.db.exec(`
+      ALTER TABLE runs ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'workspace-write'
+        CHECK (permission_mode IN ('read-only', 'workspace-write', 'full-access'));
     `);
   }
 
@@ -424,8 +441,8 @@ export class SqliteRunStore implements RunStore {
     this.db.prepare(`
       INSERT INTO runs (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       run.runId,
       run.sessionId,
@@ -434,6 +451,7 @@ export class SqliteRunStore implements RunStore {
       run.status,
       run.workspaceRoot,
       run.workspaceName,
+      storedPermissionMode(run.permissionMode),
       run.createdAt,
       run.updatedAt,
       nullable(run.result),
@@ -449,7 +467,7 @@ export class SqliteRunStore implements RunStore {
     const result = this.db.prepare(`
       UPDATE runs SET
         session_id = ?, turn_index = ?, task = ?, status = ?, workspace_root = ?, workspace_name = ?,
-        created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?,
+        permission_mode = ?, created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?,
         model = ?, provider_id = ?, base_url = ?
       WHERE run_id = ?
     `).run(
@@ -459,6 +477,7 @@ export class SqliteRunStore implements RunStore {
       run.status,
       run.workspaceRoot,
       run.workspaceName,
+      storedPermissionMode(run.permissionMode),
       run.createdAt,
       run.updatedAt,
       nullable(run.result),

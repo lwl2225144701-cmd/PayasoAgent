@@ -39,10 +39,25 @@ export function formatDurationMs(ms: number): string {
 }
 
 export function stripThinkTags(text: string): { visible: string; thinking: string | null } {
-  const thinkMatch = text.match(/<think[^>]*>([\s\S]*?)<\/think>/i);
-  if (!thinkMatch) return { visible: text.trim(), thinking: null };
-  const thinking = thinkMatch[1].trim();
-  const visible = text.replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '').trim();
+  const thinkingParts: string[] = [];
+  let visible = text.replace(/<think[^>]*>([\s\S]*?)<\/think>/gi, (_match, content: string) => {
+    if (content.trim()) thinkingParts.push(content.trim());
+    return '';
+  });
+
+  // Streaming responses can expose an opening tag before the closing tag has
+  // arrived. Treat the unfinished suffix as thinking instead of leaking the
+  // literal tag and private process text into the answer.
+  const unfinished = visible.match(/<think[^>]*>/i);
+  if (unfinished?.index != null) {
+    const start = unfinished.index;
+    const content = visible.slice(start + unfinished[0].length).trim();
+    if (content) thinkingParts.push(content);
+    visible = visible.slice(0, start);
+  }
+
+  visible = visible.replace(/<\/?think[^>]*>/gi, '').trim();
+  const thinking = thinkingParts.join('\n\n').trim();
   return { visible, thinking: thinking || null };
 }
 

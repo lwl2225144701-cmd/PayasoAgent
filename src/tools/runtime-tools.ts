@@ -8,29 +8,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { register, type ToolContext } from "./tools.js";
-import { resolveWorkspacePath, assertInsideRoot } from "../sandbox/sandbox-manager.js";
 import { MacOSSandbox, probeSandboxAvailability, type MacOSSandboxResult } from "../sandbox/macos-sandbox.js";
-import { canonicalPathKey, assertWritableZone } from "./filesystem.js";
+import { canonicalPathKey, assertWritableZone, resolveAuthorizedPath } from "./filesystem.js";
+import { storedPermissionMode } from "../permission-mode.js";
 
 // 与 filesystem.ts 保持一致的最大限幅
 const MAX_TEXT_BYTES = 1024 * 1024; // 1MB
-// 拒绝路径的统一脱敏消息（不泄露宿主机绝对路径）
-function rejectPath(rel: string): never {
-  throw new Error(
-    `路径被拒绝（仅允许工作区内相对路径，禁止穿越/绝对路径/symlink 逃逸）: ${rel}`
-  );
-}
-
-function guardPath(context: ToolContext, rel: string): string {
-  try {
-    const real = resolveWorkspacePath(context.workspaceRoot, rel);
-    assertInsideRoot(context.workspaceRoot, real);
-    return real;
-  } catch {
-    rejectPath(rel);
-  }
-}
-
 // v1.5: 归一化相对路径为稳定的 operation key（复用 filesystem.canonicalPathKey）
 function normPathKey(context: ToolContext, rel: string): string | null {
   return canonicalPathKey(context, rel);
@@ -41,7 +24,7 @@ function normPathKey(context: ToolContext, rel: string): string | null {
 register({
   name: "searchText",
   description:
-    "在沙箱工作区内文本文件中查找子串（UTF-8，单文件≤1MB）。path 为工作区内相对文件路径，pattern 为要查找的文本。返回匹配上下文行数与位置；无匹配返回 0。",
+    "在文本文件中查找子串（UTF-8，单文件≤1MB）。Read Only/Workspace Write 下仅限 Workspace；Full access 可用绝对路径。",
   effect: "read",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
@@ -63,7 +46,7 @@ register({
     const pattern = String(args.pattern ?? "");
     if (!rel) throw new Error("缺少参数 path");
     if (!pattern) throw new Error("缺少参数 pattern");
-    const real = guardPath(context, rel);
+    const real = resolveAuthorizedPath(context, rel);
 
     let st: fs.Stats;
     try {
@@ -123,7 +106,7 @@ register({
 register({
   name: "createDir",
   description:
-    "在当前 Workspace 内创建单个目录。path 必须是 Workspace 内相对目录路径；父目录必须已存在；已存在则幂等返回。",
+    "创建单个目录。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录必须已存在。",
   effect: "idempotent",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
@@ -141,7 +124,7 @@ register({
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
     assertWritableZone(rel, context);
-    const real = guardPath(context, rel);
+    const real = resolveAuthorizedPath(context, rel);
 
     // 父目录必须已存在
     const parent = path.dirname(real);
@@ -174,7 +157,7 @@ register({
 register({
   name: "moveFile",
   description:
-    "移动当前 Workspace 内文件。source/target 均必须是 Workspace 内相对路径。会破坏源位置（非幂等）。",
+    "移动文件。Read Only 禁止；Workspace Write 的 source/target 仅限 Workspace；Full access 可用绝对路径。会破坏源位置。",
   effect: "non_idempotent",
   getOperationKey: (args, context) => {
     const src = String(args.source ?? "").trim();
@@ -198,8 +181,8 @@ register({
     if (!dst) throw new Error("缺少参数 target");
     assertWritableZone(src, context);
     assertWritableZone(dst, context);
-    const realSrc = guardPath(context, src);
-    const realDst = guardPath(context, dst);
+    const realSrc = resolveAuthorizedPath(context, src);
+    const realDst = resolveAuthorizedPath(context, dst);
 
     try {
       if (!fs.lstatSync(realSrc).isFile()) throw new Error("源不是普通文件");
@@ -230,7 +213,7 @@ register({
 register({
   name: "deleteFile",
   description:
-    "删除当前 Workspace 内文件（不递归删除目录）。path 必须是 Workspace 内相对文件路径；文件不存在则幂等返回。",
+    "删除文件（不递归删除目录）。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。",
   effect: "idempotent",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
@@ -248,7 +231,7 @@ register({
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
     assertWritableZone(rel, context);
-    const real = guardPath(context, rel);
+    const real = resolveAuthorizedPath(context, rel);
 
     try {
       const st = fs.lstatSync(real);
@@ -270,7 +253,7 @@ register({
 register({
   name: "shell",
   description:
-    "在当前 Workspace 根目录执行一条 shell 命令（macOS OS Sandbox，非交互，timeout 10s，输出限 64KB）。命令及其子进程只能读写当前 Workspace。",
+    "执行一条 shell 命令（macOS OS Sandbox，cwd=Workspace，非交互，timeout 10s，输出限64KB）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；所有模式及子进程均禁止网络。",
   effect: "non_idempotent",
   getOperationKey: (args) => `cmd:${String(args.command ?? "").trim()}`,
   parameters: {
@@ -297,16 +280,19 @@ register({
     }
 
     const workspaceRoot = context.workspaceRoot;
+    const permissionMode = storedPermissionMode(context.permissionMode);
     const workDir = workspaceRoot;
     // HOME/TMPDIR must stay under the same authorized root. Use an ephemeral
     // per-call directory so npm/tsx caches never become project artifacts.
-    const runtimeDir = fs.mkdtempSync(path.join(workspaceRoot, ".payaso-shell-"));
-    const home = runtimeDir;
-    const tmpdir = runtimeDir;
+    const runtimeDir = permissionMode === "read-only"
+      ? null
+      : fs.mkdtempSync(path.join(workspaceRoot, ".payaso-shell-"));
+    const home = runtimeDir ?? workspaceRoot;
+    const tmpdir = runtimeDir ?? workspaceRoot;
 
     let result: MacOSSandboxResult;
     try {
-      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot);
+      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode);
       result = await sandbox.run(cmd, {
         cwd: workDir,
         home,
@@ -325,7 +311,7 @@ register({
         },
       });
     } finally {
-      fs.rmSync(runtimeDir, { recursive: true, force: true });
+      if (runtimeDir) fs.rmSync(runtimeDir, { recursive: true, force: true });
     }
 
     if (result.denied) {

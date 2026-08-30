@@ -11,11 +11,12 @@ import type {
 } from '../../types';
 import { formatBytes, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
-import { listFiles } from '../../api';
+import { listFiles, openFileInDefaultBrowser } from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { ThinkBlock } from './ThinkBlock';
 import { ToolActionRow } from './ToolActionRow';
+import { CheckIcon, ChevronRightIcon } from '../icons';
 import styles from './Timeline.module.css';
 
 interface TimelineProps {
@@ -44,6 +45,76 @@ interface ReasoningBlock {
   visible: string;
 }
 
+function ExecutionPanel({
+  groups,
+  thinking,
+  running,
+}: {
+  groups: ToolStepGroup[];
+  thinking: string;
+  running: boolean;
+}) {
+  const [open, setOpen] = useState(running);
+  const wasRunning = useRef(running);
+  const tools = groups.flatMap(group => group.tools);
+  const failedCount = tools.filter(tool => tool.status === 'failed').length;
+  const hasDetails = Boolean(thinking) || tools.length > 0 || groups.some(group => group.reasoning?.visible);
+
+  useEffect(() => {
+    if (running) setOpen(true);
+    else if (wasRunning.current) setOpen(false);
+    wasRunning.current = running;
+  }, [running]);
+
+  if (!hasDetails && !running) return null;
+
+  return (
+    <section className={`${styles.executionPanel} ${open ? styles.executionPanelOpen : ''}`}>
+      <button
+        type="button"
+        className={styles.executionSummary}
+        onClick={() => setOpen(value => !value)}
+        aria-expanded={open}
+      >
+        <span className={`${styles.executionStateIcon} ${running ? styles.executionStateRunning : ''}`}>
+          {running ? <span className={styles.runDot} /> : <CheckIcon size={14} />}
+        </span>
+        <span className={styles.executionTitle}>{running ? '正在执行' : '执行完成'}</span>
+        <span className={styles.executionMeta}>
+          {tools.length > 0 ? `${tools.length} 个操作` : '正在分析'}
+          {failedCount > 0 && <span className={styles.executionFailed}> · {failedCount} 个失败</span>}
+        </span>
+        <ChevronRightIcon size={15} className={`${styles.executionChevron} ${open ? styles.executionChevronOpen : ''}`} />
+      </button>
+
+      {open && (
+        <div className={styles.executionBody}>
+          {thinking && <ThinkBlock text={thinking} />}
+          {groups.map((group, index) => (
+            <div key={`process-${group.step}-${index}`} className={styles.processStep}>
+              {group.tools.length > 0 && (
+                <ul className={styles.toolList} aria-label="工具">
+                  {group.tools.map(tool => (
+                    <ToolActionRow
+                      key={tool.operationKey ?? `${tool.tool}-${tool.startedAt}`}
+                      data={tool}
+                    />
+                  ))}
+                </ul>
+              )}
+              {group.reasoning?.visible && (
+                <div className={styles.processNote}>
+                  <CollapsibleText text={group.reasoning.visible} maxChars={520} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Timeline({ run, embedded = false, showFiles = true, onRunTerminal }: TimelineProps) {
   // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
@@ -55,6 +126,8 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
     run?.status === 'running' ? onRunTerminal : undefined,
   );
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
+  const [openedInBrowser, setOpenedInBrowser] = useState<string | null>(null);
+  const [fileActionError, setFileActionError] = useState<string | null>(null);
   const [producedFiles, setProducedFiles] = useState<Record<string, FileEntry[]> | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
@@ -98,6 +171,17 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
     autoScrollRef.current = atBottom;
   };
 
+  const openInBrowser = async (file: FileEntry) => {
+    if (!run) return;
+    setFileActionError(null);
+    try {
+      await openFileInDefaultBrowser(run.runId, file.name);
+      setOpenedInBrowser(file.name);
+    } catch {
+      setFileActionError('无法使用默认浏览器打开该文件。');
+    }
+  };
+
   const structure = useMemo<BuildOut | null>(() => {
     if (!run) return null;
     return buildStructure(run, events, producedFiles ?? {});
@@ -114,17 +198,13 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
   const {
     runStarted,
     finalAnswer,
+    finalTimestamp,
     finalError,
     producedFiles: files,
     lastStepRunning,
     toolSteps,
     globalThinking,
   } = structure;
-
-  // Do we have any tool that's currently in progress? If so, the tool itself
-  // carries the visual status and we don't need an extra "正在处理…" banner.
-  const anyToolRunning = toolSteps.some(g => g.tools.some(t => t.status === 'running'));
-  const showGlobalRunningBanner = lastStepRunning && !anyToolRunning && !finalAnswer;
 
   // Has any work actually been performed? (tools + visible reasoning + final answer).
   const hasAnyWork =
@@ -142,46 +222,7 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
 
         {hasAnyWork ? (
           <section className={styles.agentBlock}>
-            {/* Extremely light temporary global status. Only shown if no running tool exists yet. */}
-            {showGlobalRunningBanner && (
-              <div className={styles.globalRunning}>
-                <span className={styles.runDot} aria-hidden="true" />
-                <span className={styles.runText}>正在处理…</span>
-              </div>
-            )}
-
-            {globalThinking && <ThinkBlock text={globalThinking} />}
-
-            {toolSteps.map((grp, grpIdx) => {
-              const reasoning = grp.reasoning;
-              const showVisible = reasoning
-                && reasoning.visible
-                && !isDuplicateOfFinal(reasoning.visible, finalAnswer);
-
-              return (
-                <div key={`step-${grp.step}-${grpIdx}`} className={styles.stepBlock}>
-                  {/* Tool rows. */}
-                  {grp.tools.length > 0 && (
-                    <ul className={styles.toolList} aria-label="工具">
-                      {grp.tools.map(t => (
-                        <ToolActionRow
-                          key={t.operationKey ?? `${t.tool}-${t.startedAt}`}
-                          data={t}
-                        />
-                      ))}
-                    </ul>
-                  )}
-
-                  {/* Step-wise visible assistant text. */}
-                  {showVisible && (
-                    <div className={styles.assistantTextBlock}>
-                      <CollapsibleText text={reasoning!.visible} />
-                      <time className={styles.time}>{formatTime(reasoning!.timestamp)}</time>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            <ExecutionPanel groups={toolSteps} thinking={globalThinking} running={lastStepRunning} />
 
             {/* Final result — exactly once, no card, no success badge. */}
             {finalAnswer && (
@@ -193,22 +234,33 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
                   </div>
                 )}
                 {files.length > 0 && (
-                  <ul className={styles.attachList}>
-                    {files.map(f => (
-                      <li key={f.name}>
-                        <button
-                          type="button"
-                          className={styles.attachBtn}
-                          onClick={() => setOpenFile(f)}
-                        >
-                          <FileIcon />
-                          <span className={styles.attachName}>{f.name}</span>
-                          <span className={styles.attachSize}>{formatBytes(f.size)}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className={styles.artifacts}>
+                    <div className={styles.artifactsTitle}>生成的文件</div>
+                    <ul className={styles.attachList}>
+                      {files.map(f => (
+                        <li key={f.name}>
+                          <div className={styles.attachCard}>
+                            <span className={styles.attachIcon}><FileIcon /></span>
+                            <span className={styles.attachInfo}>
+                              <span className={styles.attachName}>{f.name}</span>
+                              <span className={styles.attachSize}>{formatBytes(f.size)}</span>
+                            </span>
+                            <span className={styles.attachActions}>
+                              <button type="button" className={styles.attachAction} onClick={() => setOpenFile(f)}>
+                                查看
+                              </button>
+                              <button type="button" className={styles.attachBrowserAction} onClick={() => void openInBrowser(f)}>
+                                {openedInBrowser === f.name ? '已打开' : '打开'}
+                              </button>
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {fileActionError && <div className={styles.fileActionError}>{fileActionError}</div>}
+                  </div>
                 )}
+                <time className={styles.finalTime}>{formatTime(finalTimestamp)}</time>
               </div>
             )}
             {!finalAnswer && finalError && run.status !== 'running' && (
@@ -244,6 +296,7 @@ function FileIcon() {
 interface BuildOut {
   runStarted: HostEvent | undefined;
   finalAnswer: string | null;
+  finalTimestamp: string;
   finalError: string | null;
   producedFiles: FileEntry[];
   toolSteps: ToolStepGroup[];
@@ -280,6 +333,12 @@ function buildStructure(
       .map((event) => event.delta)
       .join('');
     finalAnswer = streamed || null;
+  }
+  let finalThinking: string | null = null;
+  if (finalAnswer) {
+    const parsedFinal = stripThinkTags(finalAnswer);
+    finalAnswer = parsedFinal.visible || null;
+    finalThinking = parsedFinal.thinking;
   }
 
   const finalError: string | null =
@@ -323,6 +382,9 @@ function buildStructure(
     .filter((event): event is StreamingEvent => event.type === 'reasoning_delta')
     .map((event) => event.delta)
     .join('');
+  if (finalThinking) {
+    globalThinkingAcc += `${globalThinkingAcc ? '\n\n' : ''}${finalThinking}`;
+  }
 
   for (const step of stepNumbers) {
     const stepEvents = byStep.get(step) ?? [];
@@ -336,7 +398,9 @@ function buildStructure(
         const thinkingParts = [parsedResponse.thinking, parsedReasoning.thinking ?? parsedReasoning.visible]
           .filter((part): part is string => Boolean(part?.trim()));
         const thinking = thinkingParts.join('\n\n') || null;
-        const visible = parsedResponse.visible;
+        const visible = isDuplicateOfFinal(parsedResponse.visible, finalAnswer)
+          ? ''
+          : parsedResponse.visible;
         if (thinking) globalThinkingAcc += `${globalThinkingAcc ? '\n\n' : ''}${thinking}`;
         // status line is computed once globally, not per step (no multi-line states).
         reasoning = {
@@ -388,6 +452,10 @@ function buildStructure(
   return {
     runStarted,
     finalAnswer,
+    finalTimestamp:
+      (finalEv && 'timestamp' in finalEv ? finalEv.timestamp : undefined)
+      ?? (completedEv && 'timestamp' in completedEv ? completedEv.timestamp : undefined)
+      ?? run.updatedAt,
     finalError,
     producedFiles,
     toolSteps,

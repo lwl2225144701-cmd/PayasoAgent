@@ -1,4 +1,4 @@
-import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelView } from './types';
+import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelView, PermissionMode } from './types';
 
 const API_BASE = '';
 
@@ -21,11 +21,12 @@ export function createRun(
   task: string,
   sessionId?: string,
   workspaceName?: string,
-): Promise<{ runId: string; sessionId: string; status: string }> {
+  permissionMode: PermissionMode = 'workspace-write',
+): Promise<{ runId: string; sessionId: string; status: string; permissionMode: PermissionMode }> {
   const url = sessionId ? `/sessions/${sessionId}/runs` : '/runs';
   return jsonFetch(url, {
     method: 'POST',
-    body: JSON.stringify(workspaceName ? { task, workspaceName } : { task }),
+    body: JSON.stringify(workspaceName ? { task, workspaceName, permissionMode } : { task, permissionMode }),
   });
 }
 
@@ -83,6 +84,10 @@ export function listFiles(runId: string): Promise<{ runId: string; files: FileEn
 
 export function readFile(runId: string, filePath: string): Promise<{ runId: string; name: string; content: string }> {
   return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}`);
+}
+
+export function openFileInDefaultBrowser(runId: string, filePath: string): Promise<{ runId: string; name: string; opened: true }> {
+  return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}/open`, { method: 'POST' });
 }
 
 // SSE 事件连接：订阅所有事件类型，回调收到 HostEvent

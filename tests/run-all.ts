@@ -1,6 +1,6 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
 // 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: 26 个无 LLM 套件，含 Workspace/Host、Persistence、LLM transport mock、Run 模型绑定、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、原子终态落盘、docs contract、Host Auth/URL 校验/Keychain 契约/幂等关闭
+// 覆盖: 29 个无 LLM 套件，含三档文件系统权限、Workspace/Host、Persistence、前端输出清理、默认浏览器打开边界、LLM transport mock、Run 模型绑定、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、原子终态落盘、docs contract、Host Auth/URL 校验/Keychain 契约/幂等关闭
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
 //   2. 以子进程退出码判定套件通过与否（各套件内部已实现 失败 → 非 0 退出）
@@ -20,6 +20,9 @@ const SUITES: { name: string; file: string }[] = [
   { name: "operation-replay", file: "tests/operation-replay.test.ts" },
   { name: "output-guard", file: "tests/output-guard.test.ts" },
   { name: "runtime-tools", file: "tests/runtime-tools.test.ts" },
+  { name: "frontend-format", file: "tests/frontend-format.test.ts" },
+  { name: "default-browser", file: "tests/default-browser.test.ts" },
+  { name: "permissions", file: "tests/permissions.test.ts" },
   { name: "os-sandbox", file: "tests/os-sandbox.test.ts" },
   { name: "workspace", file: "tests/workspace.test.ts" },
   { name: "context", file: "tests/context.test.ts" },

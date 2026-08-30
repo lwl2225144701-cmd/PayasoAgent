@@ -115,11 +115,14 @@ export function assertInsideWorkspace(runId: string, targetPath: string): void {
 // user-selected workspaces. Non-existing targets are checked via their nearest
 // existing ancestor; symlink traversal remains fail-closed.
 export function assertInsideRoot(rootPath: string, targetPath: string): void {
-  const root = path.resolve(rootPath);
+  // root/abs 都取 realpath：macOS /var 是 /private/var 的 symlink，
+  // 仅 path.resolve 不解析 symlink，会导致"逃出 workspace"误判。
+  const root = realpathOfNearestExisting(path.resolve(rootPath));
   const abs = path.resolve(String(targetPath));
+  const realAbs = realpathOfNearestExisting(abs);
 
   // 3.1 字符串级：绝对路径必须位于 root 之下（快速失败，拒绝明显的逃逸）
-  if (abs !== root && !abs.startsWith(root + path.sep)) {
+  if (realAbs !== root && !realAbs.startsWith(root + path.sep)) {
     throw new Error(`逃出 workspace: ${targetPath}`);
   }
 
@@ -135,11 +138,11 @@ export function assertInsideRoot(rootPath: string, targetPath: string): void {
   }
 
   // 3.3 真实路径级：基准 = root 的 realpath（处理 macOS /var→/private/var 等系统级 symlink）
-  const realBase = realpathOfNearestExisting(root);
-  let cur = abs;
+  const realBase = root; // root 已在上方通过 realpathOfNearestExisting 解析
+  let cur = realAbs;
   for (;;) {
     // 未越出字符串 root 才继续；越出说明目标及所有祖先都不存在 → fail-closed
-    if (cur !== root && !cur.startsWith(root + path.sep)) {
+    if (cur !== realBase && !cur.startsWith(realBase + path.sep)) {
       throw new Error(`无法解析到 sandbox 内的路径: ${targetPath}`);
     }
     try {
