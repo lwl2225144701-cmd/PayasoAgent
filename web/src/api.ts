@@ -3,8 +3,11 @@ import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelPr
 const API_BASE = '';
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
+  // mode:'cors' 确保同源请求也携带 Origin header（规范行为：cors 模式总是发送 Origin）。
+  // 否则同源 GET 不带 Origin，会被 Host 误判为"非浏览器请求"而要求 token 鉴权。
   const resp = await fetch(API_BASE + url, {
     ...init,
+    mode: 'cors',
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   });
   if (!resp.ok) {

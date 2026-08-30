@@ -68,9 +68,14 @@ function checkOrigin(req: IncomingMessage, hostPort: number): void {
     if (origin === "null") {
       throw new Error("untrusted origin");
     }
+    // 无 Origin 的只读请求（GET/HEAD）放行：
+    // 浏览器同源 GET 默认不带 Origin（规范行为），本地进程读取只读数据
+    // 与直接读 SQLite 等价，风险可控；写操作仍要求 token。
+    const method = (req.method ?? "GET").toUpperCase();
+    if (method === "GET" || method === "HEAD") return;
     // 未配置 token 时，允许非浏览器请求（未配置 = 不强制鉴权）
     if (!hostApiToken) return;
-    // 无 Origin 的非浏览器请求必须通过 Authorization header 鉴权
+    // 无 Origin 的写请求必须通过 Authorization header 鉴权
     const auth = String(req.headers.authorization ?? "");
     if (!auth.startsWith("Bearer ")) {
       throw new Error("missing or invalid authorization");
@@ -87,9 +92,12 @@ function checkOrigin(req: IncomingMessage, hostPort: number): void {
 }
 
 function requireAuth(req: IncomingMessage): void {
-  // 非浏览器无 Origin 请求必须提供 Host API token
+  // 非浏览器无 Origin 请求必须提供 Host API token（只读 GET/HEAD 在 checkOrigin 已放行）
   const origin = req.headers.origin;
   if (!origin || origin === "null") {
+    if (origin === "null") throw new Error("untrusted origin");
+    const method = (req.method ?? "GET").toUpperCase();
+    if (method === "GET" || method === "HEAD") return;
     // 未配置 token 时，允许非浏览器请求（未配置 = 不强制鉴权）
     if (!hostApiToken) return;
     const auth = String(req.headers.authorization ?? "");

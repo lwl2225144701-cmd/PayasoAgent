@@ -15,6 +15,20 @@ export function createHostServer(manager: RunManager = new RunManager(), apiToke
     const hostPort = Number(req.socket.localPort) ?? 4500;
     handleRequest(req, res, manager, hostPort).catch((err) => {
       if (!res.writableEnded) {
+        // 已知边界错误（Origin/鉴权/Content-Type）转成 400，而不是笼统的 500
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === "untrusted origin" || msg === "missing or invalid authorization") {
+          const b = JSON.stringify({ error: "bad_request", message: msg });
+          res.writeHead(400, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(b) });
+          res.end(b);
+          return;
+        }
+        if (msg === "Content-Type must be application/json") {
+          const b = JSON.stringify({ error: "bad_request", message: "invalid_content_type" });
+          res.writeHead(400, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(b) });
+          res.end(b);
+          return;
+        }
         console.error("[server] unhandled request error:", err);
         const b = JSON.stringify({ error: "internal" });
         res.writeHead(500, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(b) });
