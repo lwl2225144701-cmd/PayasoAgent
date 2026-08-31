@@ -1,6 +1,6 @@
 # PayasoAgent 当前架构基线（Current Architecture）
 
-> **文档定位**：当前代码状态的唯一权威说明。以工作区代码为准（基线日期 **2026-08-29**），并如实记录已知缺口。
+> **文档定位**：当前代码状态的唯一权威说明。以工作区代码为准（基线日期 **2026-08-31**，v1.6 Release Closure），并如实记录已知缺口。
 >
 > **取代（Superseded）**：
 > - `runtime-kernel-freeze.md` —— v1.3.3 Kernel Freeze 基线（已过时，仅存历史）
@@ -233,15 +233,17 @@ SSE 事件 = Runtime Trace 17 类 + Host 生命周期 6 类（含 v1.6 `run_stop
 ## 7. 运行方式
 
 ```bash
+# 要求 Node.js >= 22.5（node:sqlite；.nvmrc 固定 22，CI 同为 Node 22 / macOS）
 npm install
-cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL
+(cd web && npm install)   # 前端独立 Vite 工程，依赖单独安装
+cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可在 Web 设置面板配置）
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 确定性套件（无 LLM）
-npm test                  # Agent E2E（需 LLM）
-npm run test:stress       # 压测 23 场景（需 LLM）
+npm run test:all          # 29 个确定性套件（无 LLM）
 npm run test:host         # Host API 集成（需 LLM）
+npm test                  # Agent E2E（需 LLM）
+npm run test:stress       # 压测 26 场景（需 LLM）
 ```
 
 ---
@@ -270,11 +272,11 @@ npm run test:host         # Host API 集成（需 LLM）
 
 | 套件 | 命令 | 状态 |
 |---|---|---|
-| 确定性 21 套件（含 Session 连续上下文、旧库迁移、流式解析/Tool Call 拼装、SQLite 事件顺序、Run 模型绑定、True Cancellation、Shell 网络隔离、Secret 隔离/迁移、Malformed Tool Call 恢复） | `npm run test:all` | 21 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 29 套件（无 LLM，秒级；含三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、docs contract、Host Auth、Provider URL 校验、Keychain 契约、幂等关闭） | `npm run test:all` | 29 套件全绿为合并门槛（CI 固定执行）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all） | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP |
-| Host 集成 | `npm run test:host` | 需 LLM |
+| Host 集成 | `npm run test:host` | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过 |
 | Agent E2E | `npm test` | 需 LLM |
-| 压测 | `npm run test:stress` | 23 场景，需 LLM，非确定性 |
+| 压测 | `npm run test:stress` | 26 场景，需 LLM，非确定性 |
 
 ---
 

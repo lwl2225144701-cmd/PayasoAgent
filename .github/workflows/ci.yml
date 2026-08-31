@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    # macOS runner：shell 沙箱（sandbox-exec）与 Keychain 相关套件均为 darwin 能力；
+    # 沙箱不可用的环境下 shell 用例按 fail-closed 预期走 DENIED 分支。
+    runs-on: macos-latest
+    env:
+      # test:host 需要真实 LLM；未配置 secret 时该步骤自动跳过（见下方 if）。
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install web dependencies
+        run: cd web && npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Deterministic test suites (no LLM)
+        run: npm run test:all
+
+      - name: Host integration tests (requires LLM credentials)
+        if: env.OPENAI_API_KEY != ''
+        env:
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+        run: |
+          # test:host 通过 tsx --env-file=.env 读取配置，CI 中从 secrets 生成
+          printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY" > .env
+          printf 'OPENAI_BASE_URL=%s\n' "${OPENAI_BASE_URL:-https://api.openai.com/v1}" >> .env
+          printf 'OPENAI_MODEL=%s\n' "${OPENAI_MODEL:-gpt-4o-mini}" >> .env
+          npm run test:host
+
+      - name: Build web
+        run: npm run build:web

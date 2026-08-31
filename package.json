@@ -1,8 +1,11 @@
 {
   "name": "payaso-agent",
-  "version": "1.0.0",
-  "description": "Minimal runnable Agent: LLM-driven tool-calling loop",
+  "version": "1.6.0",
+  "description": "PayasoAgent: LLM-driven tool-calling agent runtime with Host API (HTTP+SSE) and React Web UI",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "start": "npm run build:web && npm run host",
     "cli": "tsx --env-file=.env src/cli.ts",
