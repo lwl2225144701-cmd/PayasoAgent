@@ -1,11 +1,12 @@
 // Deterministic model-context configuration, estimation, and trimming tests.
 
 import assert from "node:assert/strict";
-import { ContextManager } from "../src/runtime/context.js";
+import { ContextManager } from "../src/harness/context-manager.js";
+import { DefaultContextHarness } from "../src/harness/context-harness.js";
 import {
   estimateTextTokens,
   resolveModelContextConfig,
-} from "../src/runtime/model-context.js";
+} from "../src/harness/model-context.js";
 import type { ChatMessage, ToolSchema } from "../src/llm/llm.js";
 
 let passed = 0;
@@ -118,20 +119,59 @@ test("tool schemas count toward the input budget", () => {
   assert.equal(usage.overBudget, true);
 });
 
-test("old history is trimmed but mandatory system/user remain", () => {
+test("old complete turns are trimmed while current turn stays chronological", () => {
   const manager = new ContextManager(120);
   const messages: ChatMessage[] = [
     { role: "system", content: "system" },
-    { role: "user", content: "task" },
-    { role: "assistant", content: "old".repeat(80) },
-    { role: "tool", tool_call_id: "old", content: "old-result".repeat(40) },
-    { role: "assistant", content: "recent" },
+    { role: "user", content: "old-task" },
+    { role: "assistant", content: "old".repeat(100) },
+    { role: "user", content: "current-task" },
+    { role: "assistant", content: "current-tool-call" },
+    { role: "tool", tool_call_id: "current", content: "current-result" },
   ];
   const { messages: trimmed, usage } = manager.process(messages);
   assert.equal(trimmed[0].role, "system");
   assert.equal(trimmed[1].role, "user");
+  assert.equal(trimmed[1].content, "current-task");
+  assert.deepEqual(trimmed.slice(2).map((message) => message.role), ["assistant", "tool"]);
   assert.ok(usage.trimmedMessages > 0);
   assert.equal(usage.overBudget, false);
+});
+
+test("Harness builds a temporary model view without mutating the transcript", () => {
+  const harness = new DefaultContextHarness({
+    permissionMode: "read-only",
+    model: "MiniMax-M3",
+  });
+  const transcript = harness.createTranscript("current task", [
+    { role: "user", content: "previous question" },
+    { role: "assistant", content: "previous answer" },
+  ]);
+  const original = structuredClone(transcript);
+  const view = harness.prepareTurn(transcript, {
+    task: "current task",
+    completedSteps: [],
+    failedSteps: [],
+    invalidSteps: [],
+    nextStep: null,
+    lastResult: "",
+  }, []);
+
+  assert.deepEqual(transcript, original, "canonical transcript must remain unchanged");
+  assert.match(view.messages[0].content, /Read Only/);
+  assert.match(view.messages[0].content, /执行进度 Scratchpad/);
+  assert.doesNotMatch(transcript[0].content, /执行进度 Scratchpad/);
+});
+
+test("Harness removes provider reasoning and inline think text from history", () => {
+  const harness = new DefaultContextHarness({ permissionMode: "workspace-write", model: "MiniMax-M3" });
+  const sanitized = harness.sanitizeAssistantMessage({
+    role: "assistant",
+    content: "<think>secret</think> visible",
+    reasoning_content: "provider reasoning",
+  });
+  assert.equal(sanitized.content, "visible");
+  assert.equal(sanitized.reasoning_content, undefined);
 });
 
 console.log(`\nContext tests: ${passed} passed / ${failed} failed`);

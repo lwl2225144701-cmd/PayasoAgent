@@ -3,6 +3,7 @@
 // 边界：只通过公开边界 runAgent 调用 Runtime；不持久化 Runtime checkpoint 内容。
 
 import { runAgent } from "../runtime/agent.js";
+import { DefaultContextHarness } from "../harness/context-harness.js";
 import type { ChatMessage, ChatStreamDelta, ModelConfig } from "../llm/llm.js";
 import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
@@ -709,6 +710,12 @@ export class RunManager {
           permissionMode: run.permissionMode,
           conversationHistory,
           modelConfig,
+          contextHarness: new DefaultContextHarness({
+            permissionMode: run.permissionMode,
+            // No configured provider is a supported CLI/test compatibility
+            // path; both Harness and LLM then resolve the same env fallback.
+            model: modelConfig?.model,
+          }),
           signal: abortController.signal,
           onStreamDelta: queueDelta,
           onTrace: (event) => {

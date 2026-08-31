@@ -1,6 +1,6 @@
 // 模块 1: LLM 封装 — OpenAI 兼容 chat/completions（纯 fetch，无 SDK 依赖）
 
-import { resolveModelContextConfig } from "../runtime/model-context.js";
+import { resolveModelContextConfig } from "../harness/model-context.js";
 import { isAbortError } from "../util/abort.js";
 
 const BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";

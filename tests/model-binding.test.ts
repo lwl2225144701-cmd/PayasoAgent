@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { runAgent } from "../src/runtime/agent.js";
 import { checkpointPath } from "../src/runtime/checkpoint.js";
-import { resolveModelContextConfig } from "../src/runtime/model-context.js";
+import { resolveModelContextConfig } from "../src/harness/model-context.js";
 import type { TraceEvent } from "../src/runtime/trace.js";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-model-binding-"));

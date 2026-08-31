@@ -1,12 +1,5 @@
-// Model context capabilities and conservative token estimation.
-// Host/Runtime owns these values; they are never exposed as LLM tool arguments.
-//
-// v1.6 模型身份规则：当前 Run 选择什么模型，Context Budget 就必须按什么模型计算。
-// - 显式路径（传入 model，即 Run 的 model snapshot）：能力只由该模型决定
-//   （输入参数 > 注册表 > 保守兜底），环境变量完全不参与 —— 禁止
-//   "Run 用模型 A、能力按环境模型 B 计算"。
-// - 环境路径（未传 model，CLI / legacy）：环境变量按原语义生效
-//   （OPENAI_MODEL 选择模型，数值变量覆盖注册表）。
+// Harness-owned model context capabilities and conservative token estimation.
+// These values shape the model view; they are never exposed as tool arguments.
 
 export type ModelContextSource = "run_model" | "env" | "model_registry" | "fallback";
 
@@ -39,8 +32,6 @@ const FALLBACK_MAX_OUTPUT_TOKENS = 4_096;
 const MODEL_CAPABILITIES: ModelCapability[] = [
   {
     pattern: /^MiniMax-M3$/i,
-    // Official M3 API page advertises up to 1M and guarantees at least 512K.
-    // Use the guaranteed lower bound unless the Host explicitly overrides it.
     contextWindowTokens: 512_000,
     maxOutputTokens: 16_384,
   },
@@ -91,7 +82,6 @@ export function resolveModelContextConfig(
   input: ModelContextInput = {},
   env: Record<string, string | undefined> = process.env
 ): ModelContextConfig {
-  // 显式模型路径（Run snapshot）：数值环境变量不参与，防止环境模型变相决定能力
   const explicitModel = input.model?.trim();
   if (explicitModel) {
     const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(explicitModel));
@@ -110,7 +100,6 @@ export function resolveModelContextConfig(
     });
   }
 
-  // 环境变量路径（CLI / legacy）：与 v1.5 语义保持一致
   const model = env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
   const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(model));
   const configuredWindow = positiveIntegerEnv(env.MODEL_CONTEXT_WINDOW_TOKENS, "MODEL_CONTEXT_WINDOW_TOKENS");
@@ -129,9 +118,6 @@ export function resolveModelContextConfig(
   });
 }
 
-// Conservative mixed-text estimate for providers without a local tokenizer:
-// ASCII-heavy JSON is estimated at 3 chars/token; each non-ASCII code point is
-// counted as one token. The separate safety reserve absorbs provider variance.
 export function estimateTextTokens(text: string): number {
   let ascii = 0;
   let nonAscii = 0;

@@ -7,8 +7,7 @@ import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searc
 import { createWorkspace, canonicalizeWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
-import { ContextManager } from "./context.js";
-import { estimateTextTokens, resolveModelContextConfig } from "./model-context.js";
+import { DefaultContextHarness, type AgentContextHarness } from "../harness/context-harness.js";
 import { guardToolOutput } from "./output-guard.js";
 import { saveCheckpoint } from "./checkpoint.js";
 import { DEFAULT_PERMISSION_MODE, storedPermissionMode, type PermissionMode } from "../permission-mode.js";
@@ -28,33 +27,11 @@ import {
   isBlocked,
   clearFailure,
   recordInvalid,
-  toSystemText,
   printScratchpad,
 } from "./scratchpad.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
-
-const SYSTEM_PROMPT = `你是一个助手，可以使用工具帮助用户完成任务。
-遇到任何计算任务，必须调用 calculator 工具获取结果，禁止自行计算。
-当不需要工具时，直接给出最终答案。`;
-
-function permissionSystemPrompt(mode: PermissionMode): string {
-  if (mode === "read-only") {
-    return "当前文件系统权限为 Read Only：只能读取当前 Workspace，禁止创建、修改、移动或删除文件；Shell 同样不可写。网络权限独立且当前不可用。";
-  }
-  if (mode === "full-access") {
-    return "当前文件系统权限为 Full access：可以使用绝对路径读写当前宿主用户有权访问的文件，仍受 macOS 用户权限、ACL、TCC 与 SIP 限制。网络权限独立且当前不可用。";
-  }
-  return "当前文件系统权限为 Workspace Write：可以读写当前 Workspace，禁止访问 Workspace 外文件。网络权限独立且当前不可用。";
-}
-
-// 去除推理模型（如 MiniMax-M3）内嵌的 <think> 思考标签
-function stripThink(text: string): string {
-  let out = text.replace(/<think>[\s\S]*?<\/think>/g, "");
-  if (out.includes("<think>")) out = out.split("<think>")[0]; // 未闭合的思考块
-  return out.trim();
-}
 
 // Agent 核心循环（只新增 State/Trace/Checkpoint 记录，不改 Loop 逻辑）
 // resume: 传入 checkpoint 则从中断点恢复执行（State/Scratchpad/Messages 一并恢复）
@@ -75,6 +52,9 @@ export async function runAgent(
     // Run 置为 stopping，agent 以 AbortError 退出后由 Host 落 stopped。
     signal?: AbortSignal;
     modelConfig?: ModelConfig;
+    // Harness owns the model-visible projection. Host/tests may inject a
+    // different implementation without changing Runtime execution semantics.
+    contextHarness?: AgentContextHarness;
   }
 ): Promise<string> {
   // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
@@ -93,23 +73,19 @@ export async function runAgent(
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
   const trace = createTrace(runId, opts?.onTrace);
-  // 模型能力绑定当前 Run 实际选中的模型（model snapshot）；
-  // 无显式 modelConfig 时（CLI / legacy）才回退环境变量路径。
-  const modelContext = resolveModelContextConfig({ model: opts?.modelConfig?.model });
-  const contextManager = new ContextManager(modelContext.maxInputTokens);
+  // Context Harness：决定模型看到的指令、历史视图、Scratchpad 视图与预算。
+  // Runtime 只持有完整 transcript，并消费 prepareTurn() 的临时模型视图。
+  const contextHarness = opts?.contextHarness ?? new DefaultContextHarness({
+    permissionMode,
+    model: opts?.modelConfig?.model,
+  });
+  const modelContext = contextHarness.modelContext;
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
-  const conversationHistory = (opts?.conversationHistory ?? [])
-    .filter((message) => message.role === "user" || message.role === "assistant")
-    .map((message) => ({ role: message.role, content: message.content } as ChatMessage));
   let messages: ChatMessage[] = resume
     ? resume.messages
-    : [
-        { role: "system", content: `${SYSTEM_PROMPT}\n${permissionSystemPrompt(permissionMode)}` },
-        ...conversationHistory,
-        { role: "user", content: task },
-      ];
+    : contextHarness.createTranscript(task, opts?.conversationHistory);
   // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
   const startIter = resume ? Math.max(0, resume.iteration - 1) : 0;
 
@@ -173,17 +149,10 @@ export async function runAgent(
       updateState(state, { iteration: i + 1, currentStep: "llm_call" });
       printStateSummary(state);
 
-      // 0. 将 Scratchpad 注入 system（独立对象，不随 messages 裁剪丢失）
-      const scratchpadText = toSystemText(scratchpad);
-      messages[0] = {
-        role: "system",
-        content: SYSTEM_PROMPT + "\n\n" + scratchpadText,
-      };
-
-      // 0.5 上下文裁剪（Scratchpad 不在 messages 中，裁剪不影响其完整性）
+      // 0. Harness 投影本轮模型视图。完整 transcript 不被裁剪或改写；
+      // system / permission / Scratchpad 和历史预算全部由 Harness 决定。
       const schemas = getSchemas();
-      const ctx = contextManager.process(messages, schemas);
-      messages = ctx.messages;
+      const ctx = contextHarness.prepareTurn(messages, scratchpad, schemas);
       printEvent(
         addEvent(trace, {
           type: "context_trim",
@@ -202,7 +171,7 @@ export async function runAgent(
           inputBudgetTokens: ctx.usage.inputBudgetTokens,
           messageTokens: ctx.usage.messageTokens,
           toolSchemaTokens: ctx.usage.toolSchemaTokens,
-          scratchpadTokens: estimateTextTokens(scratchpadText),
+          scratchpadTokens: ctx.scratchpadTokens,
           estimatedInputTokens: ctx.usage.estimatedInputTokens,
           usageRatio: ctx.usage.usageRatio,
           trimmedMessages: ctx.usage.trimmedMessages,
@@ -224,11 +193,11 @@ export async function runAgent(
 
       // 1. 调用 LLM 判断下一步
       // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
-      const assistantMsg = await chat(messages, schemas, opts?.onStreamDelta, opts?.modelConfig, opts?.signal);
+      const assistantMsg = await chat(ctx.messages, schemas, opts?.onStreamDelta, opts?.modelConfig, opts?.signal);
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
-      const { reasoning_content, ...assistantHistoryMessage } = assistantMsg;
-      assistantHistoryMessage.content = stripThink(assistantHistoryMessage.content);
+      const { reasoning_content } = assistantMsg;
+      const assistantHistoryMessage = contextHarness.sanitizeAssistantMessage(assistantMsg);
       messages.push(assistantHistoryMessage);
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
@@ -246,7 +215,7 @@ export async function runAgent(
       // 2. LLM 决策日志：是否选择工具
       if (!assistantMsg.tool_calls?.length) {
         console.log("[LLM 决策] 未选择工具 → 生成最终答案");
-        const answer = stripThink(assistantMsg.content);
+        const answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
 
         // Trace: 最终答案 + 总执行步骤数
         printEvent(
