@@ -2,15 +2,13 @@
 
 import { chat, type ChatMessage, type ChatStreamDelta, type ModelConfig } from "../llm/llm.js";
 import { execute, formatToolCallError, getTool, getSchemas, parseToolArguments, toolNotFoundError, validateToolResult, type ToolCallError, type ToolSandboxEvent } from "../tools/tools.js";
-import "../tools/filesystem.js"; // 副作用：注册只读沙箱文件工具（listDir / readFile）+ 受控写入 writeFile
-import "../tools/runtime-tools.js"; // 副作用：注册 Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
-import { createWorkspace, canonicalizeWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "./trace.js";
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { DefaultContextHarness, type AgentContextHarness } from "../harness/context-harness.js";
 import { guardToolOutput } from "./output-guard.js";
 import { saveCheckpoint } from "./checkpoint.js";
-import { DEFAULT_PERMISSION_MODE, storedPermissionMode, type PermissionMode } from "../permission-mode.js";
+import { storedPermissionMode, type PermissionMode } from "../permission-mode.js";
+import type { AgentExecutionContext } from "./contracts.js";
 import {
   createSideEffectGuard,
   markExecuted,
@@ -35,14 +33,12 @@ const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RET
 
 // Agent 核心循环（只新增 State/Trace/Checkpoint 记录，不改 Loop 逻辑）
 // resume: 传入 checkpoint 则从中断点恢复执行（State/Scratchpad/Messages 一并恢复）
-// opts.runId: 可选，供测试固定 runId（默认仍随机生成；resume 时忽略，沿用 checkpoint 的 runId）
+// executionContext: 由 Host/bootstrap 授权并注入；Runtime 不创建 Workspace、不升级权限。
 export async function runAgent(
   task: string,
-  resume?: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; permissionMode?: PermissionMode; sideEffects?: ExecutedOperation[] },
-  opts?: {
-    runId?: string;
-    workspaceRoot?: string;
-    permissionMode?: PermissionMode;
+  resume: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; permissionMode?: PermissionMode; sideEffects?: ExecutedOperation[] } | undefined,
+  opts: {
+    executionContext: AgentExecutionContext;
     conversationHistory?: ChatMessage[];
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
@@ -57,27 +53,29 @@ export async function runAgent(
     contextHarness?: AgentContextHarness;
   }
 ): Promise<string> {
-  // 一次 Agent Run = 唯一 runId（State/Trace/Checkpoint 共用；resume 沿用原 runId）
-  const runId = resume ? resume.state.runId : (opts?.runId ?? crypto.randomUUID());
-
-  // Sandbox: 确保当前 runId 工作区存在（input/work/output）；resume 沿用原工作区（幂等复用，不做 cleanup）
-  const legacyWorkspaceRoot = createWorkspace(runId);
-  const workspaceRoot = canonicalizeWorkspaceRoot(
-    resume?.workspaceRoot ?? opts?.workspaceRoot ?? legacyWorkspaceRoot
-  );
-  const permissionMode = resume
-    ? storedPermissionMode(resume.permissionMode ?? opts?.permissionMode)
-    : (opts?.permissionMode ?? DEFAULT_PERMISSION_MODE);
+  const { executionContext } = opts;
+  const runId = resume ? resume.state.runId : executionContext.runId;
+  if (executionContext.runId !== runId) {
+    throw new Error("Execution context runId does not match Runtime state");
+  }
+  const workspaceRoot = executionContext.workspaceRoot;
+  const permissionMode = executionContext.permissionMode;
+  if (resume?.workspaceRoot && resume.workspaceRoot !== workspaceRoot) {
+    throw new Error("Execution context Workspace does not match checkpoint");
+  }
+  if (resume?.permissionMode && storedPermissionMode(resume.permissionMode) !== permissionMode) {
+    throw new Error("Execution context permission does not match checkpoint");
+  }
   const toolContext = { runId, workspaceRoot, permissionMode };
 
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
-  const trace = createTrace(runId, opts?.onTrace);
+  const trace = createTrace(runId, opts.onTrace);
   // Context Harness：决定模型看到的指令、历史视图、Scratchpad 视图与预算。
   // Runtime 只持有完整 transcript，并消费 prepareTurn() 的临时模型视图。
-  const contextHarness = opts?.contextHarness ?? new DefaultContextHarness({
+  const contextHarness = opts.contextHarness ?? new DefaultContextHarness({
     permissionMode,
-    model: opts?.modelConfig?.model,
+    model: opts.modelConfig?.model,
   });
   const modelContext = contextHarness.modelContext;
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
@@ -85,7 +83,7 @@ export async function runAgent(
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
   let messages: ChatMessage[] = resume
     ? resume.messages
-    : contextHarness.createTranscript(task, opts?.conversationHistory);
+    : contextHarness.createTranscript(task, opts.conversationHistory);
   // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
   const startIter = resume ? Math.max(0, resume.iteration - 1) : 0;
 
@@ -142,7 +140,7 @@ export async function runAgent(
     for (let i = startIter; i < MAX_ITERATIONS; i++) {
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
-      throwIfAborted(opts?.signal);
+      throwIfAborted(opts.signal);
       console.log(`\n--- 迭代 ${i + 1} ---`);
 
       // State: 进入循环，更新迭代次数
@@ -193,7 +191,7 @@ export async function runAgent(
 
       // 1. 调用 LLM 判断下一步
       // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
-      const assistantMsg = await chat(ctx.messages, schemas, opts?.onStreamDelta, opts?.modelConfig, opts?.signal);
+      const assistantMsg = await chat(ctx.messages, schemas, opts.onStreamDelta, opts.modelConfig, opts.signal);
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content } = assistantMsg;
@@ -251,7 +249,7 @@ export async function runAgent(
       for (const call of assistantMsg.tool_calls) {
         // True cancellation：工具间检查 —— 前一个工具返回后用户 Stop，
         // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
-        throwIfAborted(opts?.signal);
+        throwIfAborted(opts.signal);
         const toolName = call.function.name;
 
         // v1.6 Tool Call Pipeline ①②：Parse + Validate。
@@ -387,7 +385,7 @@ export async function runAgent(
             // ToolContext 由 Runtime 注入：runId/workspaceRoot 均不可见、不可通过 args 覆盖
             const rawResult = await execute(toolName, args, {
               ...toolContext,
-              signal: opts?.signal,
+              signal: opts.signal,
               onSandboxEvent: (event: ToolSandboxEvent) => {
                 if (event.type === "shell_sandbox_started") {
                   printEvent(addEvent(trace, {

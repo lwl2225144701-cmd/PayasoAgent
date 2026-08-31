@@ -11,6 +11,7 @@ import path from "node:path";
 
 // 触发工具注册（副作用：register 到全局注册表）
 import { getSchemas } from "../src/tools/tools.js";
+import "../src/tools/builtin-tools.js";
 import "../src/tools/filesystem.js";
 import "../src/tools/runtime-tools.js";
 

@@ -6,6 +6,7 @@
 
 import { runAgent } from "./runtime/agent.js";
 import { loadCheckpoint } from "./runtime/checkpoint.js";
+import { createAgentExecutionContext } from "./bootstrap/runtime-bootstrap.js";
 
 const args = process.argv.slice(2);
 
@@ -34,7 +35,13 @@ if (resumeId) {
   }
   console.log(`任务: ${cp.task}（恢复执行）`);
   try {
-    const answer = await runAgent(cp.task, cp);
+    const answer = await runAgent(cp.task, cp, {
+      executionContext: createAgentExecutionContext({
+        runId: cp.runId,
+        workspaceRoot: cp.workspaceRoot,
+        permissionMode: cp.permissionMode,
+      }),
+    });
     console.log(`\n最终答案: ${answer}`);
   } catch (err) {
     console.error(`\n[Error] ${(err as Error).message}`);
@@ -43,7 +50,10 @@ if (resumeId) {
 } else {
   console.log(`任务: ${task}`);
   try {
-    const answer = await runAgent(task, undefined, runIdOpt ? { runId: runIdOpt } : undefined);
+    const runId = runIdOpt ?? crypto.randomUUID();
+    const answer = await runAgent(task, undefined, {
+      executionContext: createAgentExecutionContext({ runId }),
+    });
     console.log(`\n最终答案: ${answer}`);
   } catch (err) {
     console.error(`\n[Error] ${(err as Error).message}`);

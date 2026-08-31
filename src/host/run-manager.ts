@@ -4,6 +4,7 @@
 
 import { runAgent } from "../runtime/agent.js";
 import { DefaultContextHarness } from "../harness/context-harness.js";
+import { createAgentExecutionContext } from "../bootstrap/runtime-bootstrap.js";
 import type { ChatMessage, ChatStreamDelta, ModelConfig } from "../llm/llm.js";
 import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
@@ -705,9 +706,11 @@ export class RunManager {
       }
       try {
         const result = await runAgent(task, resume, {
-          runId: run.runId,
-          workspaceRoot: run.workspaceRoot,
-          permissionMode: run.permissionMode,
+          executionContext: createAgentExecutionContext({
+            runId: run.runId,
+            workspaceRoot: run.workspaceRoot,
+            permissionMode: run.permissionMode,
+          }),
           conversationHistory,
           modelConfig,
           contextHarness: new DefaultContextHarness({

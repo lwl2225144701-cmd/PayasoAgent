@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { runAgent } from "../src/runtime/agent.js";
+import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
 import { checkpointPath, loadCheckpoint } from "../src/runtime/checkpoint.js";
 import { register, execute, type ToolContext } from "../src/tools/tools.js";
 import {
@@ -122,7 +123,7 @@ try {
     }) as typeof fetch;
 
     const pending = runAgent("c1", undefined, {
-      runId: "cancel-llm",
+      executionContext: createAgentExecutionContext({ runId: "cancel-llm" }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -146,7 +147,7 @@ try {
     }) as typeof fetch;
 
     const answer = await runAgent("c4", undefined, {
-      runId: "cancel-probe",
+      executionContext: createAgentExecutionContext({ runId: "cancel-probe" }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -169,7 +170,7 @@ try {
     }) as typeof fetch;
 
     const pending = runAgent("c6", undefined, {
-      runId: "cancel-after-tool",
+      executionContext: createAgentExecutionContext({ runId: "cancel-after-tool" }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -189,7 +190,7 @@ try {
     }) as typeof fetch;
 
     const pending = runAgent("c8", undefined, {
-      runId: "cancel-non-idem",
+      executionContext: createAgentExecutionContext({ runId: "cancel-non-idem" }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });

@@ -7,11 +7,13 @@
 | Host | Workspace、Session/Run、模型与权限授权、持久化、API | 拼接模型上下文、执行 Tool Loop |
 | Harness | system/权限指令、conversation history 投影、Scratchpad 模型视图、Tool Schema 与 token 预算、模型响应清理 | 执行工具、重试副作用、保存产品状态 |
 | Runtime | Agent Loop、工具调用、重试与 Recovery、Side-Effect Safety、取消、执行状态 | 决定模型看到哪些历史、模型上下文窗口配置 |
+| Bootstrap | 注册具体 Tool、创建旧 Sandbox fallback、canonicalize Workspace Root、组装 `AgentExecutionContext` | Agent 决策、上下文投影、产品持久化 |
 
 ## 当前调用关系
 
 ```text
 Host 选择 Workspace / Model / Permission
+  ↓ Bootstrap 生成 AgentExecutionContext 并注册本地 Tool
   ↓
 Runtime 持有完整 transcript 与执行状态
   ↓ 每轮 prepareTurn
@@ -34,3 +36,7 @@ LLM → Runtime Tool Loop
 - `src/harness/instructions.ts`：基础与权限指令
 - `src/harness/scratchpad-view.ts`：Runtime Scratchpad 到模型文本的投影
 - `src/runtime/agent.ts`：仅调用 Harness，不再自行拼接或裁剪模型上下文
+- `src/bootstrap/runtime-bootstrap.ts`：具体 Tool 与 Workspace 执行上下文的装配入口
+- `src/runtime/contracts.ts`：Runtime 消费的最小 `AgentExecutionContext` 契约
+
+Runtime 只接受已经授权的 `runId + workspaceRoot + permissionMode`。它不会自行选择目录、创建真实 Workspace、canonicalize 用户路径或注册 File/Shell Tool；checkpoint resume 与执行上下文不一致时会在 LLM/Tool 执行前 fail closed。

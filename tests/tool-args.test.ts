@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runAgent } from "../src/runtime/agent.js";
+import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
 import { checkpointPath, loadCheckpoint } from "../src/runtime/checkpoint.js";
 import { parseToolArguments, register, type ToolContext } from "../src/tools/tools.js";
 import { createWorkspace, canonicalizeWorkspaceRoot } from "../src/sandbox/sandbox-manager.js";
@@ -137,8 +138,7 @@ try {
     }) as typeof fetch;
 
     const answer = await runAgent("修我", undefined, {
-      runId: "tool-args-recover",
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: "tool-args-recover", workspaceRoot }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
       onTrace: (ev) => traces.push(ev as { type: string; code?: string; tool?: string }),
@@ -177,8 +177,7 @@ try {
     }) as typeof fetch;
     const traces: Array<{ type: string; code?: string }> = [];
     const answer = await runAgent(`c4-${idx}`, undefined, {
-      runId: `tool-args-obj-${idx}`,
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: `tool-args-obj-${idx}`, workspaceRoot }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
       onTrace: (ev) => traces.push(ev as { type: string; code?: string }),
@@ -200,8 +199,7 @@ try {
     }) as typeof fetch;
     const traces: Array<{ type: string; code?: string }> = [];
     const answer = await runAgent("c5", undefined, {
-      runId: "tool-args-unknown",
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: "tool-args-unknown", workspaceRoot }),
       modelConfig: MODEL_CONFIG,
       onTrace: (ev) => traces.push(ev as { type: string; code?: string }),
     });
@@ -225,8 +223,7 @@ try {
     }) as typeof fetch;
 
     const answer = await runAgent("c6", undefined, {
-      runId: "tool-args-stream",
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: "tool-args-stream", workspaceRoot }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
       onTrace: (ev) => traces.push(ev as { type: string; code?: string }),
@@ -252,8 +249,7 @@ try {
         : okResponse("done");
     }) as typeof fetch;
     const answer = await runAgent("c8", undefined, {
-      runId: "tool-args-nonidem",
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: "tool-args-nonidem", workspaceRoot }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -280,8 +276,7 @@ try {
       return okResponse("should-not-happen");
     }) as typeof fetch;
     const pending = runAgent("c9", undefined, {
-      runId: "tool-args-abort",
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: "tool-args-abort", workspaceRoot }),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -305,8 +300,7 @@ try {
       return okResponse("42");
     }) as typeof fetch;
     const answer = await runAgent("c11", undefined, {
-      runId: "tool-args-valid",
-      workspaceRoot,
+      executionContext: createAgentExecutionContext({ runId: "tool-args-valid", workspaceRoot }),
       modelConfig: MODEL_CONFIG,
     });
     check("Case11: valid tool call path unchanged", answer === "42" && calls === 2);

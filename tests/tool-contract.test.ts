@@ -3,6 +3,7 @@
 // 验证：Schema 无 runId / Runtime 注入正确 runId / args 无法覆盖 runId / 现有工具行为不变
 
 import assert from "node:assert/strict";
+import "../src/tools/builtin-tools.js";
 import {
   register,
   execute,

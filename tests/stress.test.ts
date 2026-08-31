@@ -20,6 +20,7 @@ import {
 } from "../src/sandbox/sandbox-manager.js";
 import { register, execute, type ToolContext } from "../src/tools/tools.js";
 import { runAgent } from "../src/runtime/agent.js";
+import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
 import { loadCheckpoint, checkpointPath } from "../src/runtime/checkpoint.js";
 
 const PROJECT_ROOT = process.cwd();
@@ -167,7 +168,9 @@ async function expectReject(fn: () => Promise<unknown>, label: string, errs: str
 
 async function runAgentTask(task: string, runId: string): Promise<{ answer: string; error?: string }> {
   try {
-    const answer = await runAgent(task, undefined, { runId });
+    const answer = await runAgent(task, undefined, {
+      executionContext: createAgentExecutionContext({ runId }),
+    });
     console.log(`最终答案: ${answer}`);
     return { answer };
   } catch (e) {
@@ -930,7 +933,13 @@ async function runWorkerScenario(id: string, resumeId?: string): Promise<void> {
         resumePreCompleted = cp.scratchpad.completedSteps.map((s) => `${s.tool}|${s.input}`);
         let answer = "";
         try {
-          answer = await runAgent(cp.task, cp);
+          answer = await runAgent(cp.task, cp, {
+            executionContext: createAgentExecutionContext({
+              runId: cp.runId,
+              workspaceRoot: cp.workspaceRoot,
+              permissionMode: cp.permissionMode,
+            }),
+          });
           console.log(`最终答案: ${answer}`);
         } catch (e) {
           answer = `(resume 异常) ${(e as Error).message}`;

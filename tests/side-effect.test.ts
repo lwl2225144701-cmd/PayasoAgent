@@ -3,6 +3,7 @@
 //       循环级"同 key 只执行一次，重复请求回放首次结果"；不同 key 正常执行；executing/uncertain 不重放。
 
 import assert from "node:assert/strict";
+import "../src/tools/builtin-tools.js";
 import { register, execute, getTool, type ToolContext } from "../src/tools/tools.js";
 import {
   createSideEffectGuard,
