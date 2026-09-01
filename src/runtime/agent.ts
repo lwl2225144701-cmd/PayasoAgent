@@ -92,8 +92,9 @@ export async function runAgent(
   // Runtime 只持有完整 transcript，并消费 prepareTurn() 的临时模型视图。
   const contextHarness = opts.contextHarness ?? new DefaultContextHarness({
     permissionMode,
-    model: opts.modelConfig?.model,
+    modelConfig: opts.modelConfig,
   });
+  contextHarness.restoreState(resume?.harnessState);
   const modelContext = contextHarness.modelContext;
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
@@ -117,6 +118,7 @@ export async function runAgent(
       workspaceRoot,
       permissionMode,
       sideEffects: sideEffectGuard.snapshot(),
+      harnessState: contextHarness.snapshotState(),
     });
     observer.log(`[Checkpoint] saved → ${file}`);
   };
@@ -165,7 +167,7 @@ export async function runAgent(
       // 0. Harness 投影本轮模型视图。完整 transcript 不被裁剪或改写；
       // system / permission / Scratchpad 和历史预算全部由 Harness 决定。
       const schemas = getSchemas();
-      const ctx = contextHarness.prepareTurn(messages, scratchpad, schemas);
+      const ctx = await contextHarness.prepareTurn(messages, scratchpad, schemas, opts.signal);
       emit({
         type: "context_trim",
         beforeMessages: ctx.usage.beforeMessages,
@@ -187,6 +189,14 @@ export async function runAgent(
         trimmedMessages: ctx.usage.trimmedMessages,
         overBudget: ctx.usage.overBudget,
       });
+      if (ctx.compaction) {
+        emit({
+          type: "context_compaction",
+          summarizedMessages: ctx.compaction.summarizedMessages,
+          totalSummarizedMessages: ctx.compaction.totalSummarizedMessages,
+          summaryTokens: ctx.compaction.summaryTokens,
+        });
+      }
       if (ctx.usage.beforeMessages !== ctx.usage.afterMessages) {
         observer.log(`\n=== Context ===`);
         observer.log(`before:\n${ctx.usage.beforeMessages} messages`);

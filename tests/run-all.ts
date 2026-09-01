@@ -1,6 +1,6 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
 // 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: 30 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
+// 覆盖: 31 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
 //   Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、
 //   Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、
 //   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、docs contract、
@@ -32,6 +32,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: "workspace", file: "tests/workspace.test.ts" },
   { name: "context", file: "tests/context.test.ts" },
   { name: "context-budget", file: "tests/context-budget.test.ts" },
+  { name: "context-compaction", file: "tests/context-compaction.test.ts" },
   { name: "persistence", file: "tests/persistence.test.ts" },
   { name: "llm", file: "tests/llm.test.ts" },
   { name: "model-binding", file: "tests/model-binding.test.ts" },

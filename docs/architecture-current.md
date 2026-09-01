@@ -87,10 +87,13 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/scratchpad.ts`                       | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪                                                                                                    |
 | `src/harness/context-harness.ts`                  | Harness 入口：生成当轮临时模型视图，统一指令、历史、Scratchpad 与响应清理                                                                                                                              |
 | `src/harness/context-manager.ts`                  | ContextManager：只裁剪当前请求视图，按完整历史 turn 淘汰；保留 system + 当前 user turn；Messages + Tool Schema 统一预算                                                                                       |
+| `src/harness/context-state.ts`                    | 可恢复的 Harness 状态：conversation summary 与已摘要前缀计数；随 checkpoint 保存                                                                                                                        |
+| `src/harness/conversation-summarizer.ts`          | 增量结构化摘要适配器；只总结即将从模型视图移出的完整旧轮，不删除 canonical transcript                                                                                                                       |
+| `src/harness/scratchpad-view.ts`                  | Scratchpad 的有界模型投影：最近步骤、字段截断与硬 token 上限                                                                                                                                          |
 | `src/harness/model-context.ts`                    | 模型上下文能力配置：显式 Run 模型优先（source=`run_model`），环境变量仅 CLI/legacy fallback；保守 token 估算                                                                                                |
 | `src/bootstrap/runtime-bootstrap.ts`              | 默认本地 Runtime 装配：注册 File/Shell Tool，创建 legacy Run sandbox，canonicalize Host 授权的 Workspace，并注入执行上下文、checkpoint writer 与 Console Observer                                                    |
 | `src/runtime/contracts.ts`                        | Runtime 输入契约：Host/bootstrap 注入 `runId + workspaceRoot + permissionMode`，模型不可覆盖                                                                                                                   |
-| `src/runtime/trace.ts`                            | 结构化事件轨迹（17 类事件，见 §3.3）                                                                                                                                                         |
+| `src/runtime/trace.ts`                            | 结构化事件轨迹（18 类事件，见 §3.3）                                                                                                                                                         |
 | `src/runtime/checkpoint-port.ts`                  | Runtime checkpoint 快照契约与 `CheckpointWriter` 持久化端口，不含文件系统实现                                                                                                                        |
 | `src/persistence/file-checkpoint-store.ts`        | 默认本地 JSON checkpoint 适配器：`.checkpoints/<runId>.json` 原子写、读取与路径管理                                                                                                                |
 | `src/runtime/observer-port.ts`                    | Runtime 诊断观察端口；接收隔离快照，Observer 修改或抛错均不影响执行语义                                                                                                                                    |
@@ -145,7 +148,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -158,8 +161,9 @@ web/src/
 
 ```
 for (i = startIter .. MAX_ITERATIONS=10):
-  ├─ 0.    注入 Scratchpad 到 system（messages[0]）
-  ├─ 0.5   ContextManager.process() → 按 Run 模型预算裁剪
+  ├─ 0.    注入有界 Scratchpad + 已有 Conversation Summary 到 system
+  ├─ 0.5   超过输入预算 80% → 按完整旧轮增量摘要，压至约 65%
+  │         canonical transcript 不删除；Harness state 随 checkpoint 恢复
   ├─ 1.    chat(messages, getSchemas(), onStreamDelta, modelConfig?)
   │         ├─ SSE delta → Host 批量持久化 → Web 增量显示
   │         └─ 完整组装 assistant/tool_calls 后才进入 Loop
@@ -182,8 +186,9 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | 模块         | 内容                                  | 持久化          | LLM 可见       | 裁剪影响    |
 | ---------- | ----------------------------------- | ------------ | ------------ | ------- |
 | State      | runId/status/iteration/统计/lastError | ✔ checkpoint | ✗            | ✗       |
-| Scratchpad | completed/failed/invalid/nextStep   | ✔ checkpoint | ✔（注入 system） | ✗       |
-| Messages   | ChatML 历史                           | ✔ checkpoint | ✔            | ✔（按轮丢弃） |
+| Scratchpad | completed/failed/invalid/nextStep   | ✔ checkpoint | ✔（有界投影）     | 仅模型视图截断 |
+| Harness Summary | 旧完整轮的结构化增量摘要               | ✔ checkpoint | ✔（注入 system） | 增量替换旧前缀 |
+| Messages   | 完整 canonical ChatML 历史               | ✔ checkpoint | ✔（最近完整轮）   | 原文不删除   |
 
 ### 4.3 关键保证（与测试对应）
 
@@ -196,6 +201,8 @@ for (i = startIter .. MAX_ITERATIONS=10):
 * **Sandbox 两层校验**：字符串级（禁 `..`/绝对路径/盘符）+ realpath 级（禁 symlink 逃逸、根不是 symlink、悬空链接拒绝）。
 
 * **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1`，不延长预算；workspace 沿用不清理。
+
+* **Context Compaction V1**：输入估算超过当前 Run 模型预算的 80% 时，Harness 从最旧完整轮开始选取前缀并增量更新结构化 summary，目标回落到约 65%；模型视图使用 `system + bounded scratchpad + summary + recent complete rounds + current turn`。完整 transcript 永不因 compaction 删除，summary 状态随 checkpoint/resume 恢复；`context_compaction` trace 可审计。
 
 * **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力（`tests/model-binding.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
 
@@ -248,7 +255,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET/POST | `/settings`，`/settings/default`                             | 默认模型查询 / 设置（providerId + modelId 成对校验）                                              |
 | POST     | `/settings/available-models`                                | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端）                                       |
 
-SSE 事件 = Runtime Trace 17 类 + Host 生命周期 6 类（含 v1.6 `run_stopping`）+ `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
+SSE 事件 = Runtime Trace 18 类 + Host 生命周期 6 类（含 v1.6 `run_stopping`）+ `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
 
 ***
 
@@ -284,7 +291,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 | 6     | **~~`readBody`~~~~无大小限制~~**  **已修复**                                                                                                      | `host/routes.ts`                                                                                         | Run JSON 请求体限制 64KB；同时检查 `Content-Length` 和实际流式字节，超限返回 413                                                                                                                                                                                                                          |
 | 7     | **~~LLM 层无重试、无防御解析、无流式输出~~** **已修复**                                                                                                      | `llm/llm.ts`                                                                                             | 默认解析 OpenAI-compatible SSE，正文/推理增量输出，Tool Call 参数完整组装并校验后才执行；保留 240s 总超时、有限重试、JSON fallback 与响应形状校验                                                                                                                                                                                 |
 | 8     | ~~os-sandbox / workspace 两个确定性套件 FAIL~~ **已修复**：`sandbox-exec` 在某些外层受限运行环境中无法应用 profile（`sandbox_apply: Operation not permitted`，exit 71） | `sandbox/macos-sandbox.ts`、`tools/runtime-tools.ts`、`tests/os-sandbox.test.ts`、`tests/workspace.test.ts` | 修复 = 运行时能力探测 `probeSandboxAvailability()` + **fail-closed 门**；不可用则 shell 拒绝执行，可用则跑完整隔离矩阵。该能力取决于实际运行上下文，不应仅按 macOS 版本判断                                                                                                                                                              |
-| 9     | **system（含 Scratchpad）的模型视图尚未单独压缩**                                                                                                       | `harness/context-harness.ts`、`harness/scratchpad-view.ts`                                                | 已从 Runtime 拆入 Harness，并按模型配置输入/输出/安全预算，以 `context_usage` 观测 Messages/Tool Schema/Scratchpad；若未来实测接近窗口，再在 Harness 增加有界 Scratchpad Model View                                                                                                                                                 |
+| 9     | **~~system（含 Scratchpad）的模型视图尚未单独压缩~~** **已修复（Context Compaction V1）**                                                                    | `harness/context-harness.ts`、`harness/scratchpad-view.ts`                                                | Scratchpad 有界投影；旧完整轮增量 summary；canonical transcript 不删除；summary 随 checkpoint 恢复，并以 `context_compaction` / `context_usage` 观测                                                                                                                                            |
 | 10    | **~~`.env`~~~~存真实 API 密钥~~** ~~（不入库，但磁盘明文）~~ **部分修复（v1.6 SecretStore）**：SQLite 明文已迁移至 Keychain，`.env` 本身仍为磁盘明文                            | 项目根 `.env`                                                                                               | 导入完成后建议从 `.env` 移除 `OPENAI_API_KEY` 行；后续可加"导入后清理"提示                                                                                                                                                                                                                                 |
 | 11    | **~~思考标签保留在历史~~** **已修复**                                                                                                                 | `runtime/agent.ts`                                                                                       | `reasoning_content` 与 content 内嵌 `<think>` 块都不再写入下一轮 messages/checkpoint；Trace 仍可记录 provider reasoning 供观测                                                                                                                                                                          |
 
@@ -294,7 +301,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 29 套件（无 LLM，秒级；含三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、docs contract、Host Auth、Provider URL 校验、Keychain 契约、幂等关闭） | `npm run test:all`               | 29 套件全绿为合并门槛（CI 固定执行）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 31 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、docs contract） | `npm run test:all`               | 31 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

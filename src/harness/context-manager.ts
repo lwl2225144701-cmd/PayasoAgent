@@ -67,14 +67,15 @@ export class ContextManager {
     return rebuild();
   }
 
-  process(messages: ChatMessage[], tools: ToolSchema[] = []): {
+  process(messages: ChatMessage[], tools: ToolSchema[] = [], targetInputTokens = this.maxInputTokens): {
     messages: ChatMessage[];
     usage: ContextUsage;
   } {
     const beforeMessages = messages.length;
     const beforeMessageTokens = this.estimateTokens(messages);
     const toolSchemaTokens = estimateJsonTokens(tools);
-    const messageBudget = Math.max(0, this.maxInputTokens - toolSchemaTokens);
+    const effectiveTarget = Math.min(this.maxInputTokens, Math.max(0, targetInputTokens));
+    const messageBudget = Math.max(0, effectiveTarget - toolSchemaTokens);
     const trimmed = this.trimMessages(messages, messageBudget);
     const messageTokens = this.estimateTokens(trimmed);
     const estimatedInputTokens = messageTokens + toolSchemaTokens;

@@ -88,6 +88,14 @@ export type TraceEvent =
       overBudget: boolean;
     }
   | {
+      type: "context_compaction";
+      step: number;
+      timestamp: string;
+      summarizedMessages: number;
+      totalSummarizedMessages: number;
+      summaryTokens: number;
+    }
+  | {
       type: "recovery_decision";
       step: number;
       timestamp: string;
@@ -210,6 +218,12 @@ export type TraceEventInput =
       usageRatio: number;
       trimmedMessages: number;
       overBudget: boolean;
+    }
+  | {
+      type: "context_compaction";
+      summarizedMessages: number;
+      totalSummarizedMessages: number;
+      summaryTokens: number;
     }
   | {
       type: "recovery_decision";

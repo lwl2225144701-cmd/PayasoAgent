@@ -6,6 +6,7 @@ import type { PermissionMode } from "../permission-mode.js";
 import type { AgentState } from "./state.js";
 import type { Scratchpad } from "./scratchpad.js";
 import type { ExecutedOperation } from "./side-effect.js";
+import type { ContextHarnessState } from "../harness/context-state.js";
 
 export interface CheckpointSnapshot {
   runId: string;
@@ -18,6 +19,7 @@ export interface CheckpointSnapshot {
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
   sideEffects?: ExecutedOperation[];
+  harnessState?: ContextHarnessState;
 }
 
 export interface Checkpoint extends CheckpointSnapshot {

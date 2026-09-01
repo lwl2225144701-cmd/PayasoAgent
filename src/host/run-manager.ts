@@ -718,7 +718,7 @@ export class RunManager {
             permissionMode: run.permissionMode,
             // No configured provider is a supported CLI/test compatibility
             // path; both Harness and LLM then resolve the same env fallback.
-            model: modelConfig?.model,
+            modelConfig,
           }),
           signal: abortController.signal,
           onStreamDelta: queueDelta,

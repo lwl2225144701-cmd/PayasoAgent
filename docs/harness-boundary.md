@@ -1,6 +1,6 @@
 # Runtime / Harness / Host 职责边界
 
-当前第一阶段只重构职责，不引入摘要节点、Memory、RAG 或新的 Compaction 行为。
+当前已进入 Context Compaction V1：引入可恢复的增量 conversation summary，但不引入长期 Memory、RAG 或会话树系统。
 
 | 层 | 负责 | 不负责 |
 | --- | --- | --- |
@@ -19,14 +19,15 @@ Runtime 持有完整 transcript 与执行状态
   ↓ 每轮 prepareTurn
 Harness 生成临时 model view
   ├─ base system + permission
-  ├─ Scratchpad view
-  ├─ 可保留的完整历史轮
+  ├─ bounded Scratchpad view
+  ├─ conversation summary
+  ├─ recent complete rounds
   └─ 当前 user turn
   ↓
 LLM → Runtime Tool Loop
 ```
 
-`Runtime` 决定 checkpoint 的提交时机和快照内容，并只调用 `CheckpointWriter` 端口；默认本地适配器负责 `.checkpoints` 路径、JSON 编码与 tmp + rename 原子写。Harness 的预算裁剪只影响当轮请求，不再反向覆盖 checkpoint。后续摘要/Compaction 应继续在 Harness 内实现，并以新的模型视图替换策略接入，不修改 Runtime 的 Tool、Side-Effect、Recovery 或 Cancellation 语义。
+`Runtime` 决定 checkpoint 的提交时机和快照内容，并只调用 `CheckpointWriter` 端口；默认本地适配器负责 `.checkpoints` 路径、JSON 编码与 tmp + rename 原子写。Harness 的预算裁剪与摘要只影响当轮请求，不反向覆盖 canonical transcript。摘要状态作为 `harnessState` 随 checkpoint 恢复，不修改 Runtime 的 Tool、Side-Effect、Recovery 或 Cancellation 语义。
 
 Runtime 的诊断输出只调用 `RuntimeObserver`。默认 Console Observer 位于 `src/observability/`；Host 的结构化 Trace/SSE 仍走 `onTrace`。Observer 收到的是隔离快照，且其异常会被吞并，不得通过修改对象或抛错改变执行、checkpoint 或副作用安全结果。
 
@@ -37,6 +38,8 @@ Runtime 的诊断输出只调用 `RuntimeObserver`。默认 Console Observer 位
 - `src/harness/model-context.ts`：模型窗口、输出预留、安全预留与 token 估算
 - `src/harness/instructions.ts`：基础与权限指令
 - `src/harness/scratchpad-view.ts`：Runtime Scratchpad 到模型文本的投影
+- `src/harness/context-state.ts`：可恢复的 summary 与已摘要消息计数
+- `src/harness/conversation-summarizer.ts`：旧完整轮的增量结构化摘要
 - `src/runtime/agent.ts`：仅调用 Harness，不再自行拼接或裁剪模型上下文
 - `src/bootstrap/runtime-bootstrap.ts`：具体 Tool 与 Workspace 执行上下文的装配入口
 - `src/runtime/contracts.ts`：Runtime 消费的最小 `AgentExecutionContext` 契约
