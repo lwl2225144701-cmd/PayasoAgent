@@ -81,9 +81,7 @@
   padding: 0 12px 8px;
 }
 
-.metaButton,
-.permissionButton,
-.modelButton {
+.metaButton {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -104,9 +102,7 @@
   white-space: nowrap;
 }
 
-.metaButton:hover:not(:disabled),
-.permissionButton:hover,
-.modelButton:hover {
+.metaButton:hover:not(:disabled) {
   color: var(--text-primary);
 }
 
@@ -188,43 +184,6 @@
   gap: 10px;
 }
 
-.permissionButton {
-  height: 38px;
-  padding: 0 8px;
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 560;
-  min-width: 0;
-}
-
-.permissionButton:hover,
-.modelButton:hover {
-  background: var(--color-surface-hover);
-}
-
-.permissionButtonDanger {
-  color: var(--color-danger, #f87171);
-  background: color-mix(in srgb, var(--color-danger, #ef4444) 10%, transparent);
-}
-
-.modelButton {
-  height: 38px;
-  padding: 0 7px 0 10px;
-  border-radius: 10px;
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
-  font-weight: 560;
-  min-width: 0;
-}
-
-.permissionButton span,
-.modelButton span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
 @media (max-width: 640px) {
   .inputBar {
     padding: 10px 14px 14px;
@@ -261,85 +220,11 @@
     border-radius: 20px;
   }
 
-  .permissionButton,
-  .modelButton {
-    max-width: 42%;
-  }
-
-  .permissionButton span,
-  .modelButton span {
-    max-width: 64px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 }
 
 .modelDropdown {
   position: relative;
   display: inline-flex;
-}
-
-.permissionDropdown {
-  position: relative;
-  display: inline-flex;
-}
-
-.permissionDropdownMenu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: 280px;
-  padding: 6px;
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-default);
-  border-radius: 14px;
-  box-shadow: var(--shadow-lg);
-  z-index: 60;
-}
-
-.permissionDropdownItem {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 18px;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-}
-
-.permissionDropdownItem:hover,
-.permissionDropdownItem[aria-selected="true"] {
-  background: var(--color-surface-hover);
-}
-
-.permissionDropdownItemDanger {
-  color: var(--color-danger, #f87171);
-}
-
-.permissionOptionText {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 2px;
-}
-
-.permissionOptionLabel {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.permissionOptionDescription {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .modelDropdownMenu {

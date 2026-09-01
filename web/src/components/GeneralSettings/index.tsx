@@ -1,4 +1,4 @@
-import type { ChangeEvent, KeyboardEvent, ReactNode, WheelEvent } from 'react';
+import type { KeyboardEvent, ReactNode, WheelEvent } from 'react';
 import type { PermissionMode } from '../../types';
 import {
   MAX_CONVERSATION_FONT_SIZE,
@@ -7,8 +7,9 @@ import {
   type LanguageMode,
 } from '../../preferences';
 import type { ThemeMode } from '../../theme';
-import { ChevronDownIcon, ShieldIcon } from '../icons';
+import { ChevronDownIcon } from '../icons';
 import { AppearanceSettings } from '../AppearanceSettings';
+import { PermissionDropdown } from '../PermissionDropdown';
 import styles from './GeneralSettings.module.css';
 
 interface GeneralSettingsProps {
@@ -22,12 +23,6 @@ interface GeneralSettingsProps {
   onFontSizeChange: (size: ConversationFontSize) => void;
 }
 
-const PERMISSION_OPTIONS: Array<{ value: PermissionMode; label: string }> = [
-  { value: 'read-only', label: 'Read Only' },
-  { value: 'workspace-write', label: 'Workspace Write' },
-  { value: 'full-access', label: 'Full access' },
-];
-
 export function GeneralSettings({
   themeMode,
   onThemeModeChange,
@@ -38,34 +33,15 @@ export function GeneralSettings({
   fontSize,
   onFontSizeChange,
 }: GeneralSettingsProps) {
-  const handlePermissionChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const next = event.target.value as PermissionMode;
-    if (next === 'full-access' && permissionMode !== 'full-access') {
-      const confirmed = window.confirm(
-        'Full access 允许 Agent 读取、修改和删除当前用户可访问的宿主文件。网络权限不会因此开放。\n\n确认启用 Full access？',
-      );
-      if (!confirmed) return;
-    }
-    onPermissionModeChange(next);
-  };
-
   return (
     <div className={styles.settings}>
       <SettingRow title="权限" description="选择新会话的默认权限模式">
-        <div className={styles.selectWrap}>
-          <ShieldIcon size={16} />
-          <select
-            className={styles.select}
-            value={permissionMode}
-            onChange={handlePermissionChange}
-            aria-label="默认权限模式"
-          >
-            {PERMISSION_OPTIONS.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <ChevronDownIcon size={14} className={styles.selectChevron} />
-        </div>
+        <PermissionDropdown
+          mode={permissionMode}
+          onChange={onPermissionModeChange}
+          ariaLabel="默认权限模式"
+          placement="down"
+        />
       </SettingRow>
 
       <SettingRow title="语言" className={styles.languageRow}>
