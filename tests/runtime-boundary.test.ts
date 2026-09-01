@@ -10,6 +10,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-runtime-boundary-"));
 process.env.SANDBOX_ROOT = path.join(root, "sandbox");
 
 const { runAgent } = await import("../src/runtime/agent.js");
+const { silentRuntimeObserver } = await import("../src/runtime/observer-port.js");
 const { getSchemas } = await import("../src/tools/tools.js");
 
 assert.equal(getSchemas().length, 0, "Runtime import must not register concrete tools");
@@ -79,12 +80,15 @@ try {
           throw new Error("checkpoint should not be written for mismatched context");
         },
       },
+      observer: silentRuntimeObserver,
     }),
     /runId does not match/
   );
   assert.equal(llmCalled, false);
 
   const snapshots: Array<{ runId: string; status: string; workspaceRoot?: string }> = [];
+  const observedEvents: string[] = [];
+  const observedStates: string[] = [];
   globalThis.fetch = async () => new Response(JSON.stringify({
     choices: [{ message: { role: "assistant", content: "boundary done" } }],
   }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -95,6 +99,16 @@ try {
         snapshots.push(snapshot);
         return `memory://${snapshot.runId}`;
       },
+    },
+    observer: {
+      log: () => {},
+      state: (state, detail) => {
+        observedStates.push(`${detail}:${state.status}`);
+        (state as { status: string }).status = "failed";
+      },
+      scratchpad: () => {},
+      traceEvent: (event) => observedEvents.push(event.type),
+      trace: () => {},
     },
     modelConfig: {
       baseUrl: "https://provider.example/v1",
@@ -107,6 +121,31 @@ try {
   assert.equal(snapshots[0]?.runId, explicit.runId);
   assert.equal(snapshots[0]?.status, "completed");
   assert.equal(snapshots[0]?.workspaceRoot, explicit.workspaceRoot);
+  assert.deepEqual(observedEvents, ["context_trim", "context_usage", "llm_call", "final_answer"]);
+  assert.ok(observedStates.includes("summary:completed"));
+  assert.ok(observedStates.includes("full:completed"));
+
+  const resilientContext = createAgentExecutionContext({
+    runId: "boundary-observer-failure",
+    workspaceRoot: realRoot,
+  });
+  const resilientAnswer = await runAgent("observer failure", undefined, {
+    executionContext: resilientContext,
+    checkpointWriter: { save: () => "memory://observer-failure" },
+    observer: {
+      log: () => { throw new Error("observer log failed"); },
+      state: () => { throw new Error("observer state failed"); },
+      scratchpad: () => { throw new Error("observer scratchpad failed"); },
+      traceEvent: () => { throw new Error("observer event failed"); },
+      trace: () => { throw new Error("observer trace failed"); },
+    },
+    modelConfig: {
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "gpt-4o-mini",
+    },
+  });
+  assert.equal(resilientAnswer, "boundary done", "observer failure must not change execution");
 } finally {
   globalThis.fetch = originalFetch;
   fs.rmSync(root, { recursive: true, force: true });

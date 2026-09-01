@@ -55,8 +55,8 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 ┌───────────────▼─────────────────────────────────────────────┐
 │ Runtime Kernel (src/runtime/ + src/llm/ + src/tools/)        │
 │  agent.ts: Agent Loop（迭代/重试/恢复/防死循环）              │
-│  state.ts · scratchpad.ts · checkpoint-port.ts · trace.ts    │
-│  side-effect.ts · output-guard.ts                             │
+│  state.ts · scratchpad.ts · checkpoint-port.ts · observer-port.ts │
+│  trace.ts · side-effect.ts · output-guard.ts                  │
 │  llm.ts: OpenAI 兼容 chat/completions(fetch,无 SDK)          │
 │  tools/tools.ts: 注册表/执行/Schema/effect 契约              │
 │  tools/filesystem.ts + runtime-tools.ts: 10 个工具           │
@@ -69,7 +69,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 └─────────────────────────────────────────────────────────────┘
 ```
 
-依赖方向（无环）：`Host/CLI → Bootstrap → Runtime`；Runtime 通过 Harness 生成模型视图、通过 `CheckpointWriter` 提交恢复快照；默认文件 checkpoint 适配器不被 Runtime 反向依赖。
+依赖方向（无环）：`Host/CLI → Bootstrap → Runtime`；Runtime 通过 Harness 生成模型视图、通过 `CheckpointWriter` 提交恢复快照、通过 `RuntimeObserver` 发布诊断观测；默认文件 checkpoint 与 Console Observer 适配器均不被 Runtime 反向依赖。
 
 ***
 
@@ -88,11 +88,13 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/harness/context-harness.ts`                  | Harness 入口：生成当轮临时模型视图，统一指令、历史、Scratchpad 与响应清理                                                                                                                              |
 | `src/harness/context-manager.ts`                  | ContextManager：只裁剪当前请求视图，按完整历史 turn 淘汰；保留 system + 当前 user turn；Messages + Tool Schema 统一预算                                                                                       |
 | `src/harness/model-context.ts`                    | 模型上下文能力配置：显式 Run 模型优先（source=`run_model`），环境变量仅 CLI/legacy fallback；保守 token 估算                                                                                                |
-| `src/bootstrap/runtime-bootstrap.ts`              | 默认本地 Runtime 装配：注册 File/Shell Tool，创建 legacy Run sandbox，canonicalize Host 授权的 Workspace，并注入执行上下文与默认 checkpoint writer                                                               |
+| `src/bootstrap/runtime-bootstrap.ts`              | 默认本地 Runtime 装配：注册 File/Shell Tool，创建 legacy Run sandbox，canonicalize Host 授权的 Workspace，并注入执行上下文、checkpoint writer 与 Console Observer                                                    |
 | `src/runtime/contracts.ts`                        | Runtime 输入契约：Host/bootstrap 注入 `runId + workspaceRoot + permissionMode`，模型不可覆盖                                                                                                                   |
 | `src/runtime/trace.ts`                            | 结构化事件轨迹（17 类事件，见 §3.3）                                                                                                                                                         |
 | `src/runtime/checkpoint-port.ts`                  | Runtime checkpoint 快照契约与 `CheckpointWriter` 持久化端口，不含文件系统实现                                                                                                                        |
 | `src/persistence/file-checkpoint-store.ts`        | 默认本地 JSON checkpoint 适配器：`.checkpoints/<runId>.json` 原子写、读取与路径管理                                                                                                                |
+| `src/runtime/observer-port.ts`                    | Runtime 诊断观察端口；接收隔离快照，Observer 修改或抛错均不影响执行语义                                                                                                                                    |
+| `src/observability/console-runtime-observer.ts`   | 默认 CLI/本地 stdout 渲染器；Runtime 源码不直接输出控制台                                                                                                                                          |
 | `src/runtime/side-effect.ts`                      | 副作用三态生命周期 + canonical operation key 去重                                                                                                                                         |
 | `src/runtime/output-guard.ts`                     | 单工具结果 16KB 硬上限（UTF-8 安全截断）                                                                                                                                                     |
 | `src/llm/llm.ts`                                  | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验；`max_tokens` 按当前请求模型逐请求解析）                                             |

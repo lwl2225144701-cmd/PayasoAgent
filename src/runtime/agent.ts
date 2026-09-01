@@ -2,13 +2,14 @@
 
 import { chat, type ChatMessage, type ChatStreamDelta, type ModelConfig } from "../llm/llm.js";
 import { execute, formatToolCallError, getTool, getSchemas, parseToolArguments, toolNotFoundError, validateToolResult, type ToolCallError, type ToolSandboxEvent } from "../tools/tools.js";
-import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "./trace.js";
-import { createState, updateState, printState, printStateSummary } from "./state.js";
+import { createTrace, addEvent, type TraceEvent, type TraceEventInput } from "./trace.js";
+import { createState, updateState } from "./state.js";
 import { DefaultContextHarness, type AgentContextHarness } from "../harness/context-harness.js";
 import { guardToolOutput } from "./output-guard.js";
 import { storedPermissionMode } from "../permission-mode.js";
 import type { AgentExecutionContext } from "./contracts.js";
 import type { CheckpointSnapshot, CheckpointWriter } from "./checkpoint-port.js";
+import { protectRuntimeObserver, type RuntimeObserver } from "./observer-port.js";
 import {
   createSideEffectGuard,
   markExecuted,
@@ -24,7 +25,6 @@ import {
   isBlocked,
   clearFailure,
   recordInvalid,
-  printScratchpad,
 } from "./scratchpad.js";
 
 const MAX_ITERATIONS = 10; // 最大循环次数限制
@@ -40,6 +40,7 @@ export async function runAgent(
     executionContext: AgentExecutionContext;
     // Required Runtime port: composition chooses the persistence adapter.
     checkpointWriter: CheckpointWriter;
+    observer: RuntimeObserver;
     conversationHistory?: ChatMessage[];
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
@@ -68,10 +69,25 @@ export async function runAgent(
     throw new Error("Execution context permission does not match checkpoint");
   }
   const toolContext = { runId, workspaceRoot, permissionMode };
+  const observer = protectRuntimeObserver(opts.observer);
+  const emit = (input: TraceEventInput): TraceEvent => {
+    const event = addEvent(trace, input);
+    observer.traceEvent(structuredClone(event));
+    return event;
+  };
 
   // State: 新建或从 checkpoint 恢复
   const state = resume ? resume.state : createState(task, runId);
   const trace = createTrace(runId, opts.onTrace);
+  const observeState = (detail: "summary" | "full"): void => {
+    observer.state(structuredClone(state), detail);
+  };
+  const observeScratchpad = (): void => {
+    observer.scratchpad(structuredClone(scratchpad));
+  };
+  const observeTrace = (): void => {
+    observer.trace({ run_id: trace.run_id, events: structuredClone(trace.events) });
+  };
   // Context Harness：决定模型看到的指令、历史视图、Scratchpad 视图与预算。
   // Runtime 只持有完整 transcript，并消费 prepareTurn() 的临时模型视图。
   const contextHarness = opts.contextHarness ?? new DefaultContextHarness({
@@ -102,11 +118,11 @@ export async function runAgent(
       permissionMode,
       sideEffects: sideEffectGuard.snapshot(),
     });
-    console.log(`[Checkpoint] saved → ${file}`);
+    observer.log(`[Checkpoint] saved → ${file}`);
   };
 
   if (resume) {
-    console.log(
+    observer.log(
       `[恢复] 从 checkpoint 继续: runId=${resume.runId} 已完成 ${scratchpad.completedSteps.length} 步, 重跑迭代 ${startIter + 1}`
     );
   }
@@ -119,16 +135,14 @@ export async function runAgent(
       currentStep: "tool_call_invalid",
       currentError: `${error.code}: ${error.message}`,
     });
-    printStateSummary(state);
-    printEvent(
-      addEvent(trace, {
-        type: "tool_call_invalid",
-        toolCallId,
-        tool: toolName,
-        code: error.code,
-      })
-    );
-    console.log(`[Tool Call Invalid] ${toolName}: ${error.code}`);
+    observeState("summary");
+    emit({
+      type: "tool_call_invalid",
+      toolCallId,
+      tool: toolName,
+      code: error.code,
+    });
+    observer.log(`[Tool Call Invalid] ${toolName}: ${error.code}`);
     messages.push({
       role: "tool",
       tool_call_id: toolCallId,
@@ -142,46 +156,42 @@ export async function runAgent(
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
       throwIfAborted(opts.signal);
-      console.log(`\n--- 迭代 ${i + 1} ---`);
+      observer.log(`\n--- 迭代 ${i + 1} ---`);
 
       // State: 进入循环，更新迭代次数
       updateState(state, { iteration: i + 1, currentStep: "llm_call" });
-      printStateSummary(state);
+      observeState("summary");
 
       // 0. Harness 投影本轮模型视图。完整 transcript 不被裁剪或改写；
       // system / permission / Scratchpad 和历史预算全部由 Harness 决定。
       const schemas = getSchemas();
       const ctx = contextHarness.prepareTurn(messages, scratchpad, schemas);
-      printEvent(
-        addEvent(trace, {
-          type: "context_trim",
-          beforeMessages: ctx.usage.beforeMessages,
-          afterMessages: ctx.usage.afterMessages,
-        })
-      );
-      printEvent(
-        addEvent(trace, {
-          type: "context_usage",
-          model: modelContext.model,
-          configSource: modelContext.source,
-          contextWindowTokens: modelContext.contextWindowTokens,
-          maxOutputTokens: modelContext.maxOutputTokens,
-          safetyTokens: modelContext.safetyTokens,
-          inputBudgetTokens: ctx.usage.inputBudgetTokens,
-          messageTokens: ctx.usage.messageTokens,
-          toolSchemaTokens: ctx.usage.toolSchemaTokens,
-          scratchpadTokens: ctx.scratchpadTokens,
-          estimatedInputTokens: ctx.usage.estimatedInputTokens,
-          usageRatio: ctx.usage.usageRatio,
-          trimmedMessages: ctx.usage.trimmedMessages,
-          overBudget: ctx.usage.overBudget,
-        })
-      );
+      emit({
+        type: "context_trim",
+        beforeMessages: ctx.usage.beforeMessages,
+        afterMessages: ctx.usage.afterMessages,
+      });
+      emit({
+        type: "context_usage",
+        model: modelContext.model,
+        configSource: modelContext.source,
+        contextWindowTokens: modelContext.contextWindowTokens,
+        maxOutputTokens: modelContext.maxOutputTokens,
+        safetyTokens: modelContext.safetyTokens,
+        inputBudgetTokens: ctx.usage.inputBudgetTokens,
+        messageTokens: ctx.usage.messageTokens,
+        toolSchemaTokens: ctx.usage.toolSchemaTokens,
+        scratchpadTokens: ctx.scratchpadTokens,
+        estimatedInputTokens: ctx.usage.estimatedInputTokens,
+        usageRatio: ctx.usage.usageRatio,
+        trimmedMessages: ctx.usage.trimmedMessages,
+        overBudget: ctx.usage.overBudget,
+      });
       if (ctx.usage.beforeMessages !== ctx.usage.afterMessages) {
-        console.log(`\n=== Context ===`);
-        console.log(`before:\n${ctx.usage.beforeMessages} messages`);
-        console.log(`after:\n${ctx.usage.afterMessages} messages`);
-        console.log(`trimmed:\n${ctx.usage.trimmedMessages}`);
+        observer.log(`\n=== Context ===`);
+        observer.log(`before:\n${ctx.usage.beforeMessages} messages`);
+        observer.log(`after:\n${ctx.usage.afterMessages} messages`);
+        observer.log(`trimmed:\n${ctx.usage.trimmedMessages}`);
       }
       if (ctx.usage.overBudget) {
         throw new Error(
@@ -200,30 +210,26 @@ export async function runAgent(
       messages.push(assistantHistoryMessage);
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
-      printEvent(
-        addEvent(trace, {
-          type: "llm_call",
-          messageCount: messages.length,
-          iteration: i + 1,
-          response: assistantMsg.content,
-          reasoning: reasoning_content,
-          hasToolCalls: !!assistantMsg.tool_calls?.length,
-        })
-      );
+      emit({
+        type: "llm_call",
+        messageCount: messages.length,
+        iteration: i + 1,
+        response: assistantMsg.content,
+        reasoning: reasoning_content,
+        hasToolCalls: !!assistantMsg.tool_calls?.length,
+      });
 
       // 2. LLM 决策日志：是否选择工具
       if (!assistantMsg.tool_calls?.length) {
-        console.log("[LLM 决策] 未选择工具 → 生成最终答案");
+        observer.log("[LLM 决策] 未选择工具 → 生成最终答案");
         const answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
 
         // Trace: 最终答案 + 总执行步骤数
-        printEvent(
-          addEvent(trace, {
-            type: "final_answer",
-            content: answer,
-            totalSteps: i + 1,
-          })
-        );
+        emit({
+          type: "final_answer",
+          content: answer,
+          totalSteps: i + 1,
+        });
 
         // State: 完成（清空当前错误与待执行动作；历史错误保留在 lastToolError / failedSteps / Trace）
         updateState(state, {
@@ -232,19 +238,19 @@ export async function runAgent(
           currentError: undefined,
           pendingAction: undefined,
         });
-        printStateSummary(state);
+        observeState("summary");
         // Checkpoint: 完成时保存
         save("completed");
-        printState(state);
-        printScratchpad(scratchpad);
-        printTrace(trace);
+        observeState("full");
+        observeScratchpad();
+        observeTrace();
         return answer;
       }
 
       const toolNames = assistantMsg.tool_calls
         .map((c) => c.function.name)
         .join(", ");
-      console.log(`[LLM 决策] 选择工具: ${toolNames}`);
+      observer.log(`[LLM 决策] 选择工具: ${toolNames}`);
 
       // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
       for (const call of assistantMsg.tool_calls) {
@@ -285,17 +291,15 @@ export async function runAgent(
           // 注入 ToolContext（runId + workspaceRoot）供路径工具归一化 identity；LLM 不可覆盖
           const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext);
           if (disposition.kind === "replay") {
-            console.log(
+            observer.log(
               `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`
             );
-            printEvent(
-              addEvent(trace, {
-                type: "side_effect_skip",
-                tool: toolName,
-                key: operationIdentity(toolDef, args, toolContext),
-                replayed: true,
-              })
-            );
+            emit({
+              type: "side_effect_skip",
+              tool: toolName,
+              key: operationIdentity(toolDef, args, toolContext),
+              replayed: true,
+            });
             messages.push({ role: "tool", tool_call_id: call.id, content: disposition.result });
             continue;
           }
@@ -304,14 +308,12 @@ export async function runAgent(
               `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, toolContext)}）` +
               `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
               `请勿再次使用相同参数调用；请修正参数、换其他方法或向用户说明。`;
-            console.log(`[Side-Effect Uncertain] ${uncertainMsg}`);
-            printEvent(
-              addEvent(trace, {
-                type: "side_effect_uncertain",
-                tool: toolName,
-                key: operationIdentity(toolDef, args, toolContext),
-              })
-            );
+            observer.log(`[Side-Effect Uncertain] ${uncertainMsg}`);
+            emit({
+              type: "side_effect_uncertain",
+              tool: toolName,
+              key: operationIdentity(toolDef, args, toolContext),
+            });
             messages.push({ role: "tool", tool_call_id: call.id, content: uncertainMsg });
             continue;
           }
@@ -320,7 +322,7 @@ export async function runAgent(
         // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
         if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
           const blockMsg = `工具 ${toolName} 参数 "${input}" 已产生无效结果或失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明原因。`;
-          console.log(`[Blocked] ${blockMsg}`);
+          observer.log(`[Blocked] ${blockMsg}`);
 
           // State: 记录被禁状态（不推进步骤）
           updateState(state, {
@@ -333,7 +335,7 @@ export async function runAgent(
               retries: MAX_RETRY + 1,
             },
           });
-          printStateSummary(state);
+          observeState("summary");
 
           // 将禁止消息返回 LLM，由其重新决策
           messages.push({
@@ -350,17 +352,15 @@ export async function runAgent(
           toolCalls: state.toolCalls + 1,
           pendingAction: { tool: toolName, input },
         });
-        printStateSummary(state);
+        observeState("summary");
 
-        console.log(`[Tool 调用] ${toolName}(${call.function.arguments})`);
+        observer.log(`[Tool 调用] ${toolName}(${call.function.arguments})`);
 
         // Scratchpad: 记录计划执行的下一步（未完成，不进 completedSteps）
         setNextStep(scratchpad, { tool: toolName, input });
 
         // Trace: 工具调用前
-        printEvent(
-          addEvent(trace, { type: "tool_call", tool: toolName, args })
-        );
+        emit({ type: "tool_call", tool: toolName, args });
 
         // 工具执行 + 重试（最多 MAX_RETRY 次）；重试耗尽进入失败恢复
         // v1.3.1 修复：non_idempotent（高风险副作用）禁止自动 Retry ——
@@ -375,7 +375,7 @@ export async function runAgent(
             save();
           } catch (persistErr) {
             const persistMsg = `[Side-Effect Persist Failed] 无法持久化 operation executing 状态（${opKey}），禁止执行 non_idempotent 工具: ${(persistErr as Error).message}`;
-            console.log(persistMsg);
+            observer.log(persistMsg);
             throw new Error(persistMsg);
           }
         }
@@ -389,16 +389,16 @@ export async function runAgent(
               signal: opts.signal,
               onSandboxEvent: (event: ToolSandboxEvent) => {
                 if (event.type === "shell_sandbox_started") {
-                  printEvent(addEvent(trace, {
+                  emit({
                     type: "shell_sandbox_started",
                     platform: event.platform,
-                  }));
+                  });
                 } else {
-                  printEvent(addEvent(trace, {
+                  emit({
                     type: "shell_sandbox_denied",
                     platform: event.platform,
                     reason: event.reason,
-                  }));
+                  });
                 }
               },
             });
@@ -410,17 +410,15 @@ export async function runAgent(
             // ---- v1.3.3 Tool Output Guard：validation 之后，任何进入 Runtime 状态 / LLM Context 的内容一律受限 ----
             const guarded = guardToolOutput(rawResult);
             if (guarded.truncated) {
-              printEvent(
-                addEvent(trace, {
-                  type: "tool_output_truncated",
-                  tool: toolName,
-                  originalBytes: guarded.originalBytes,
-                  returnedBytes: guarded.returnedBytes,
-                })
-              );
+              emit({
+                type: "tool_output_truncated",
+                tool: toolName,
+                originalBytes: guarded.originalBytes,
+                returnedBytes: guarded.returnedBytes,
+              });
             }
             const result = guarded.content; // 后续所有使用处（trace/scratchpad/messages/recovery）均为受限结果
-            console.log(`[Tool 返回] ${result}`);
+            observer.log(`[Tool 返回] ${result}`);
 
             // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）
             if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, toolContext);
@@ -432,7 +430,7 @@ export async function runAgent(
               pendingAction: undefined,
               currentError: undefined,
             });
-            printStateSummary(state);
+            observeState("summary");
 
             if (!vr.valid) {
               // 结果无效：不进 completedSteps、不计入失败，单独计入 invalidToolResults
@@ -441,17 +439,15 @@ export async function runAgent(
                 currentStep: "tool_result_invalid",
                 currentError: `结果无效: ${vr.reason ?? ""}`,
               });
-              printStateSummary(state);
+              observeState("summary");
 
               // Trace: 结果无效事件（区别于 tool_result / tool_error）
-              printEvent(
-                addEvent(trace, {
-                  type: "tool_result_invalid",
-                  tool: toolName,
-                  result,
-                  reason: vr.reason ?? "结果无效",
-                })
-              );
+              emit({
+                type: "tool_result_invalid",
+                tool: toolName,
+                result,
+                reason: vr.reason ?? "结果无效",
+              });
 
               // Scratchpad: 记录无效结果（不进 completedSteps）
               recordInvalid(scratchpad, {
@@ -460,7 +456,7 @@ export async function runAgent(
                 result,
                 reason: vr.reason ?? "结果无效",
               });
-              printScratchpad(scratchpad);
+              observeScratchpad();
 
               // 将"执行成功但结果无效"作为恢复消息回传 LLM，由其业务决策
               const recoveryMsg =
@@ -481,29 +477,25 @@ export async function runAgent(
             }
 
             // Trace: 工具结果（含耗时，仅结果有效时记录 tool_result）
-            printEvent(
-              addEvent(trace, {
-                type: "tool_result",
-                tool: toolName,
-                result,
-                durationMs,
-              })
-            );
+            emit({
+              type: "tool_result",
+              tool: toolName,
+              result,
+              durationMs,
+            });
 
             // Scratchpad: 工具成功 → 当前步骤移入 completedSteps，清空 nextStep，并解禁该参数
             completeStep(scratchpad, result);
             clearFailure(scratchpad, toolName, input);
-            printScratchpad(scratchpad);
-            printEvent(
-              addEvent(trace, {
-                type: "scratchpad_update",
-                currentStep: scratchpad.nextStep
-                  ? `${scratchpad.nextStep.tool}(${scratchpad.nextStep.input})`
-                  : "(等待 LLM 决策)",
-                completedSteps: scratchpad.completedSteps.length,
-                lastResult: scratchpad.lastResult,
-              })
-            );
+            observeScratchpad();
+            emit({
+              type: "scratchpad_update",
+              currentStep: scratchpad.nextStep
+                ? `${scratchpad.nextStep.tool}(${scratchpad.nextStep.input})`
+                : "(等待 LLM 决策)",
+              completedSteps: scratchpad.completedSteps.length,
+              lastResult: scratchpad.lastResult,
+            });
 
             // 4. 将工具结果返回给 LLM
             messages.push({
@@ -516,7 +508,7 @@ export async function runAgent(
             break; // 成功，跳出重试
           } catch (err) {
             const msg = (err as Error).message;
-            console.log(`[Tool 错误] ${toolName}: ${msg}`);
+            observer.log(`[Tool 错误] ${toolName}: ${msg}`);
 
             // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
             // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
@@ -536,15 +528,13 @@ export async function runAgent(
             recordFailure(scratchpad, { tool: toolName, input, error: msg });
 
             // Trace: 工具错误事件
-            printEvent(
-              addEvent(trace, {
-                type: "tool_error",
-                tool: toolName,
-                error: msg,
-                attempt,
-                exhausted: attempt > effectiveRetries,
-              })
-            );
+            emit({
+              type: "tool_error",
+              tool: toolName,
+              error: msg,
+              attempt,
+              exhausted: attempt > effectiveRetries,
+            });
 
             // State: 错误状态（当前错误 + 失败历史 lastToolError，不推进步骤）
             updateState(state, {
@@ -552,26 +542,24 @@ export async function runAgent(
               currentError: msg,
               lastToolError: { tool: toolName, input, error: msg, retries: attempt },
             });
-            printStateSummary(state);
+            observeState("summary");
             // Checkpoint: 工具失败后保存
             save();
 
             if (attempt > effectiveRetries) {
               // 重试耗尽 → 失败恢复：将错误作为消息返回 LLM，由其决策
-              console.log(
+              observer.log(
                 `[恢复] 工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，将错误返回 LLM 由其决策`
               );
               // State: 工具失败（仅当所有重试均失败）
               updateState(state, {
                 failedToolCalls: state.failedToolCalls + 1,
               });
-              printEvent(
-                addEvent(trace, {
-                  type: "recovery_decision",
-                  tool: toolName,
-                  decision: `工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
-                })
-              );
+              emit({
+                type: "recovery_decision",
+                tool: toolName,
+                decision: `工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
+              });
               messages.push({
                 role: "tool",
                 tool_call_id: call.id,
@@ -579,7 +567,7 @@ export async function runAgent(
               });
               break; // 跳出重试，外层循环继续 → LLM 重新决策
             }
-            console.log(
+            observer.log(
               `[重试 ${attempt}/${effectiveRetries}] 工具 ${toolName} 失败，正在重试...`
             );
           }
@@ -590,25 +578,23 @@ export async function runAgent(
   } catch (err) {
     // State: 失败
     updateState(state, { status: "failed", currentStep: "error" });
-    printStateSummary(state);
+    observeState("summary");
     // Checkpoint: 失败时保存（含错误状态，可 resume）
     save("failed");
-    printState(state);
+    observeState("full");
     // Trace: 错误
-    printEvent(
-      addEvent(trace, { type: "error", message: (err as Error).message })
-    );
-    printTrace(trace);
+    emit({ type: "error", message: (err as Error).message });
+    observeTrace();
     throw err;
   }
 
   // 超出最大迭代次数
   updateState(state, { status: "failed", currentStep: "error" });
-  printStateSummary(state);
+  observeState("summary");
   // Checkpoint: 超限时保存
   save("failed");
-  printState(state);
-  printEvent(addEvent(trace, { type: "error", message: "超过最大循环次数限制" }));
-  printTrace(trace);
+  observeState("full");
+  emit({ type: "error", message: "超过最大循环次数限制" });
+  observeTrace();
   throw new Error("超过最大循环次数限制");
 }

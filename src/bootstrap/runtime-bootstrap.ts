@@ -14,6 +14,8 @@ import {
 import type { AgentExecutionContext } from "../runtime/contracts.js";
 import { fileCheckpointWriter } from "../persistence/file-checkpoint-store.js";
 import type { CheckpointWriter } from "../runtime/checkpoint-port.js";
+import { consoleRuntimeObserver } from "../observability/console-runtime-observer.js";
+import type { RuntimeObserver } from "../runtime/observer-port.js";
 
 export interface AgentExecutionContextInput {
   runId: string;
@@ -23,12 +25,16 @@ export interface AgentExecutionContextInput {
 
 export interface DefaultRuntimeServices {
   checkpointWriter: CheckpointWriter;
+  observer: RuntimeObserver;
 }
 
 // Default local adapter wiring. Runtime itself has no dependency on the file
 // checkpoint implementation.
 export function createDefaultRuntimeServices(): DefaultRuntimeServices {
-  return { checkpointWriter: fileCheckpointWriter };
+  return {
+    checkpointWriter: fileCheckpointWriter,
+    observer: consoleRuntimeObserver,
+  };
 }
 
 // Canonicalize an explicitly authorized root. When no real Workspace was

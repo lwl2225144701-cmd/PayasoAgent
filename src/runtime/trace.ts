@@ -279,14 +279,3 @@ export function addEvent(trace: Trace, ev: TraceEventInput): TraceEvent {
   trace.onEvent?.(event);
   return event;
 }
-
-// ---- 实时打印单条事件（每步输出）----
-export function printEvent(ev: TraceEvent): void {
-  console.log(`[Trace] ${JSON.stringify(ev)}`);
-}
-
-// ---- 打印 Trace ----
-export function printTrace(trace: Trace): void {
-  console.log("\n=== Trace 执行轨迹 ===");
-  console.log(JSON.stringify(trace, null, 2));
-}

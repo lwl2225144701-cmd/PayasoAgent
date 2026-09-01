@@ -62,23 +62,3 @@ export function updateState(
 export function getState(state: AgentState): AgentState {
   return { ...state };
 }
-
-// ---- 实时打印状态摘要（单行紧凑，每步输出）----
-export function printStateSummary(state: AgentState): void {
-  const err = state.currentError ? ` | curErr=${state.currentError}` : "";
-  const pending = state.pendingAction
-    ? ` | pending=${state.pendingAction.tool}(${state.pendingAction.input})`
-    : "";
-  const lastErr = state.lastToolError
-    ? ` | lastErr=${state.lastToolError.tool}(${state.lastToolError.input})x${state.lastToolError.retries}`
-    : "";
-  console.log(
-    `[State] ${state.status} | iter=${state.iteration} | step=${state.currentStep} | tools=${state.toolCalls}(ok:${state.successfulToolCalls}/fail:${state.failedToolCalls}/invalid:${state.invalidToolResults})${err}${pending}${lastErr}`
-  );
-}
-
-// ---- 打印当前 State ----
-export function printState(state: AgentState): void {
-  console.log("\n=== Agent State ===");
-  console.log(JSON.stringify(state, null, 2));
-}

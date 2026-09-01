@@ -122,9 +122,3 @@ export function recordInvalid(
   pad.invalidSteps.push({ ...invalid });
   pad.lastResult = typeof invalid.result === "string" ? invalid.result : JSON.stringify(invalid.result);
 }
-
-// 打印当前 Scratchpad（每步实时输出）
-export function printScratchpad(pad: Scratchpad): void {
-  console.log("\n=== Scratchpad ===");
-  console.log(JSON.stringify(pad, null, 2));
-}
