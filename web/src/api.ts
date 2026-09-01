@@ -106,7 +106,7 @@ export function connectSSE(
     'run_started', 'run_stopping', 'run_completed', 'run_failed', 'run_stopped', 'run_interrupted',
     'assistant_delta', 'reasoning_delta',
     'llm_call', 'tool_call', 'tool_call_invalid', 'tool_result', 'tool_result_invalid',
-    'tool_error', 'final_answer', 'context_trim', 'context_usage', 'recovery_decision',
+    'tool_error', 'final_answer', 'context_trim', 'context_usage', 'context_compaction', 'recovery_decision',
     'side_effect_skip', 'side_effect_uncertain', 'tool_output_truncated',
     'shell_sandbox_started', 'shell_sandbox_denied',
     'scratchpad_update', 'error',

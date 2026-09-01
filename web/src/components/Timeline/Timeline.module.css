@@ -199,6 +199,23 @@
   line-height: 1.65;
 }
 
+/* 上下文压缩内务提示：工具步骤之间的一行弱化注释，不成卡片 */
+.compactionNote {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.compactionNote svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
 /* ===== Global running banner (shown only before first tool starts) ===== */
 
 .globalRunning {

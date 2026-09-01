@@ -16,7 +16,7 @@ import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { ThinkBlock } from './ThinkBlock';
 import { ToolActionRow } from './ToolActionRow';
-import { CheckIcon, ChevronRightIcon } from '../icons';
+import { CheckIcon, ChevronRightIcon, ScissorsIcon } from '../icons';
 import styles from './Timeline.module.css';
 
 interface TimelineProps {
@@ -58,7 +58,11 @@ function ExecutionPanel({
   const wasRunning = useRef(running);
   const tools = groups.flatMap(group => group.tools);
   const failedCount = tools.filter(tool => tool.status === 'failed').length;
-  const hasDetails = Boolean(thinking) || tools.length > 0 || groups.some(group => group.reasoning?.visible);
+  const hasDetails =
+    Boolean(thinking)
+    || tools.length > 0
+    || groups.some(group => group.reasoning?.visible)
+    || groups.some(group => group.compactionNote);
 
   useEffect(() => {
     if (running) setOpen(true);
@@ -92,6 +96,12 @@ function ExecutionPanel({
           {thinking && <ThinkBlock text={thinking} />}
           {groups.map((group, index) => (
             <div key={`process-${group.step}-${index}`} className={styles.processStep}>
+              {group.compactionNote && (
+                <div className={styles.compactionNote}>
+                  <ScissorsIcon size={12} />
+                  <span>{group.compactionNote}</span>
+                </div>
+              )}
               {group.tools.length > 0 && (
                 <ul className={styles.toolList} aria-label="工具">
                   {group.tools.map(tool => (
@@ -309,6 +319,8 @@ interface ToolStepGroup {
   step: number;
   reasoning: ReasoningBlock | null;
   tools: ToolCallData[];
+  /** 上下文压缩（compaction）发生在该 step 时的弱化说明，内务事件不成卡片。 */
+  compactionNote?: string | null;
 }
 
 function buildStructure(
@@ -414,23 +426,31 @@ function buildStructure(
 
     const tools = cardsByStep.get(step) ?? [];
 
+    // 上下文压缩是内务事件：每个 step 至多一个，渲染为工具步骤间的弱化注释行。
+    const compactionEv = stepEvents.find(e => e.type === 'context_compaction');
+    const compactionNote =
+      compactionEv && compactionEv.type === 'context_compaction'
+        ? `上下文已压缩 · ${compactionEv.totalSummarizedMessages} 条早期对话已摘要保留要点`
+        : null;
+
     for (const ev of stepEvents) {
       if (ev.type === 'tool_call' || ev.type === 'tool_result' || ev.type === 'tool_error') {
         processedToolsEv.push(ev);
       }
     }
 
-    // Don't emit a step group that has neither reasoning nor tools.
-    if (tools.length === 0 && !reasoning) continue;
+    // Don't emit a step group that has neither reasoning nor tools nor a compaction note.
+    if (tools.length === 0 && !reasoning && !compactionNote) continue;
     // Don't emit a step group where reasoning contains only a pure duplicate of final answer with no tools.
     if (
       tools.length === 0
+      && !compactionNote
       && reasoning
       && (!reasoning.visible || isDuplicateOfFinal(reasoning.visible, finalAnswer))
       && !reasoning.thinkingDetail
     ) continue;
 
-    toolSteps.push({ step, reasoning, tools });
+    toolSteps.push({ step, reasoning, tools, compactionNote });
   }
 
   if (toolSteps.length === 0 && run.status === 'running') {

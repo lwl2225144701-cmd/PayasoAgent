@@ -129,7 +129,7 @@ web/src/
 ├── hooks/useEventStream.ts SSE 连接/重连/按 seq 去重
 ├── types.ts                HostSession / HostRun / HostEvent / ModelProviderView / FileEntry
 ├── format.ts               时间/大小格式化
-└── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片)
+└── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片/压缩提示)
                             / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal / FileModal
 ```
 
@@ -269,7 +269,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 29 个确定性套件（无 LLM）
+npm run test:all          # 31 个确定性套件（无 LLM）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）

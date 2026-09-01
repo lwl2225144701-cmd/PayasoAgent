@@ -156,6 +156,13 @@ export interface ContextUsageEvent extends TraceEventBase {
   overBudget: boolean;
 }
 
+export interface ContextCompactionEvent extends TraceEventBase {
+  type: "context_compaction";
+  summarizedMessages: number; // 本次新摘要的消息数
+  totalSummarizedMessages: number; // 累计已摘要消息数
+  summaryTokens: number; // 摘要占用 token
+}
+
 export interface RecoveryDecisionEvent extends TraceEventBase {
   type: "recovery_decision";
   tool: string;
@@ -264,6 +271,7 @@ export type TraceEvent =
   | ToolErrorEvent
   | ContextTrimEvent
   | ContextUsageEvent
+  | ContextCompactionEvent
   | RecoveryDecisionEvent
   | SideEffectSkipEvent
   | SideEffectUncertainEvent
