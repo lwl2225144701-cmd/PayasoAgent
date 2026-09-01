@@ -9,9 +9,15 @@ import {
   fetchAvailableModels,
   previewAvailableModels,
 } from '../../api';
-import type { ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from '../../types';
+import type {
+  CreateModelProviderInput,
+  ModelProviderView,
+  PermissionMode,
+  UpdateModelProviderInput,
+} from '../../types';
 import type { ThemeMode } from '../../theme';
-import { AppearanceSettings } from '../AppearanceSettings';
+import type { ConversationFontSize, LanguageMode } from '../../preferences';
+import { GeneralSettings } from '../GeneralSettings';
 import {
   CloseIcon,
   PlusIcon,
@@ -32,6 +38,12 @@ interface SettingsModalProps {
   onClose: () => void;
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (mode: PermissionMode) => void;
+  language: LanguageMode;
+  onLanguageChange: (mode: LanguageMode) => void;
+  fontSize: ConversationFontSize;
+  onFontSizeChange: (size: ConversationFontSize) => void;
   onSaved?: () => void;
 }
 
@@ -79,7 +91,19 @@ const EMPTY_FORM: FormState = {
   newTag: '',
 };
 
-export function SettingsModal({ open, onClose, themeMode, onThemeModeChange, onSaved }: SettingsModalProps) {
+export function SettingsModal({
+  open,
+  onClose,
+  themeMode,
+  onThemeModeChange,
+  permissionMode,
+  onPermissionModeChange,
+  language,
+  onLanguageChange,
+  fontSize,
+  onFontSizeChange,
+  onSaved,
+}: SettingsModalProps) {
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const [loading, setLoading] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('list');
@@ -528,11 +552,16 @@ export function SettingsModal({ open, onClose, themeMode, onThemeModeChange, onS
 
   const renderGeneralTab = () => (
     <div className={styles.generalTab}>
-      <div className={styles.generalHeader}>
-        <h3 className={styles.generalTitle}>通用设置</h3>
-        <p className={styles.generalDescription}>调整应用的显示方式和交互偏好。</p>
-      </div>
-      <AppearanceSettings mode={themeMode} onChange={onThemeModeChange} />
+      <GeneralSettings
+        themeMode={themeMode}
+        onThemeModeChange={onThemeModeChange}
+        permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
+        language={language}
+        onLanguageChange={onLanguageChange}
+        fontSize={fontSize}
+        onFontSizeChange={onFontSizeChange}
+      />
     </div>
   );
 

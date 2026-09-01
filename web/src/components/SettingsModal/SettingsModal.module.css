@@ -116,29 +116,7 @@
 
 /* 通用设置 tab */
 .generalTab {
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
-}
-
-.generalHeader {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.generalTitle {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 21px;
-  font-weight: 700;
-}
-
-.generalDescription {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
+  display: block;
 }
 
 @media (max-width: 640px) {

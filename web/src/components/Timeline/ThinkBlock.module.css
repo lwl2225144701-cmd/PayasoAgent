@@ -89,7 +89,7 @@
   border-radius: 0 9px 9px 0;
   background: color-mix(in srgb, var(--color-card-glass) 48%, transparent);
   color: var(--text-secondary);
-  font-size: 15px;
+  font-size: var(--conversation-font-size, 14px);
   line-height: 1.75;
   white-space: pre-wrap;
   word-break: break-word;

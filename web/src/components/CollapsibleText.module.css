@@ -8,7 +8,7 @@
 .text {
   word-break: break-word;
   line-height: 1.78;
-  font-size: 16.5px;
+  font-size: var(--conversation-font-size, 14px);
   color: var(--text-primary);
 }
 
@@ -35,10 +35,10 @@
   letter-spacing: -0.015em;
 }
 
-.text h1 { font-size: 24px; }
-.text h2 { font-size: 20px; }
-.text h3 { font-size: 17px; }
-.text h4 { font-size: 16px; }
+.text h1 { font-size: 1.45em; }
+.text h2 { font-size: 1.22em; }
+.text h3 { font-size: 1.04em; }
+.text h4 { font-size: 1em; }
 
 .text ul,
 .text ol {
@@ -89,7 +89,7 @@
   border-radius: 9px;
   color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: 0.82em;
   line-height: 1.65;
 }
 
@@ -114,7 +114,7 @@
   width: 100%;
   margin: 14px 0 18px;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 0.88em;
 }
 
 .text th,

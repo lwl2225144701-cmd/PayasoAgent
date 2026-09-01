@@ -6,6 +6,7 @@ import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { useThemeMode } from './hooks/useThemeMode';
+import { useGeneralSettings } from './hooks/useGeneralSettings';
 import {
   createRun,
   deleteWorkspaceGroup,
@@ -23,7 +24,7 @@ import {
   setDefaultModel,
   stopRun,
 } from './api';
-import type { DefaultModelView, FileEntry, HostRun, HostSession, ModelProviderView, ModelSelection, PermissionMode, WorkspaceView } from './types';
+import type { DefaultModelView, FileEntry, HostRun, HostSession, ModelProviderView, ModelSelection, WorkspaceView } from './types';
 import styles from './App.module.css';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
@@ -33,6 +34,14 @@ function sessionTitle(task: string): string {
 
 export default function App() {
   const [themeMode, setThemeMode] = useThemeMode();
+  const {
+    permissionMode,
+    setPermissionMode,
+    language,
+    setLanguage,
+    fontSize,
+    setFontSize,
+  } = useGeneralSettings();
   const [runs, setRuns] = useState<HostRun[]>([]);
   const [sessions, setSessions] = useState<HostSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -49,7 +58,6 @@ export default function App() {
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('workspace-write');
   const [defaultModel, setDefaultModelState] = useState<DefaultModelView | null>(null);
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const previousDefaultModelRef = useRef<DefaultModelView | null>(null);
@@ -494,6 +502,12 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
+          permissionMode={permissionMode}
+          onPermissionModeChange={setPermissionMode}
+          language={language}
+          onLanguageChange={setLanguage}
+          fontSize={fontSize}
+          onFontSizeChange={setFontSize}
           onSaved={() => {
             void refreshModels();
             void refreshDefaultModel();
