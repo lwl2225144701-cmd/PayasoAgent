@@ -5,8 +5,8 @@
 //   npm start -- --run-id <runId> "任务"  固定 runId 执行（测试/沙箱预置用，默认随机）
 
 import { runAgent } from "./runtime/agent.js";
-import { loadCheckpoint } from "./runtime/checkpoint.js";
-import { createAgentExecutionContext } from "./bootstrap/runtime-bootstrap.js";
+import { loadCheckpoint } from "./persistence/file-checkpoint-store.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "./bootstrap/runtime-bootstrap.js";
 
 const args = process.argv.slice(2);
 
@@ -41,6 +41,7 @@ if (resumeId) {
         workspaceRoot: cp.workspaceRoot,
         permissionMode: cp.permissionMode,
       }),
+      ...createDefaultRuntimeServices(),
     });
     console.log(`\n最终答案: ${answer}`);
   } catch (err) {
@@ -53,6 +54,7 @@ if (resumeId) {
     const runId = runIdOpt ?? crypto.randomUUID();
     const answer = await runAgent(task, undefined, {
       executionContext: createAgentExecutionContext({ runId }),
+      ...createDefaultRuntimeServices(),
     });
     console.log(`\n最终答案: ${answer}`);
   } catch (err) {

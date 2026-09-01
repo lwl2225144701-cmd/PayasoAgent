@@ -8,8 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { runAgent } from "../src/runtime/agent.js";
-import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
-import { checkpointPath, loadCheckpoint } from "../src/runtime/checkpoint.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../src/bootstrap/runtime-bootstrap.js";
+import { checkpointPath, loadCheckpoint } from "../src/persistence/file-checkpoint-store.js";
 import { register, execute, type ToolContext } from "../src/tools/tools.js";
 import {
   createWorkspace,
@@ -124,6 +124,7 @@ try {
 
     const pending = runAgent("c1", undefined, {
       executionContext: createAgentExecutionContext({ runId: "cancel-llm" }),
+      ...createDefaultRuntimeServices(),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -148,6 +149,7 @@ try {
 
     const answer = await runAgent("c4", undefined, {
       executionContext: createAgentExecutionContext({ runId: "cancel-probe" }),
+      ...createDefaultRuntimeServices(),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -171,6 +173,7 @@ try {
 
     const pending = runAgent("c6", undefined, {
       executionContext: createAgentExecutionContext({ runId: "cancel-after-tool" }),
+      ...createDefaultRuntimeServices(),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });
@@ -191,6 +194,7 @@ try {
 
     const pending = runAgent("c8", undefined, {
       executionContext: createAgentExecutionContext({ runId: "cancel-non-idem" }),
+      ...createDefaultRuntimeServices(),
       modelConfig: MODEL_CONFIG,
       signal: controller.signal,
     });

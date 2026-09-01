@@ -8,8 +8,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runAgent } from "../src/runtime/agent.js";
-import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
-import { checkpointPath, loadCheckpoint } from "../src/runtime/checkpoint.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../src/bootstrap/runtime-bootstrap.js";
+import { checkpointPath, loadCheckpoint } from "../src/persistence/file-checkpoint-store.js";
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-overbudget-"));
 process.env.SANDBOX_ROOT = path.join(base, "runtime-sandbox");
@@ -57,6 +57,7 @@ async function main(): Promise<void> {
         () =>
           runAgent("overbudget task " + "x".repeat(200), undefined, {
             executionContext: createAgentExecutionContext({ runId }),
+            ...createDefaultRuntimeServices(),
             onTrace: (ev) => events.push(ev as { type?: string; message?: string }),
           }),
         /Context budget exceeded/

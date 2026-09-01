@@ -4,9 +4,9 @@
 
 import { runAgent } from "../runtime/agent.js";
 import { DefaultContextHarness } from "../harness/context-harness.js";
-import { createAgentExecutionContext } from "../bootstrap/runtime-bootstrap.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../bootstrap/runtime-bootstrap.js";
 import type { ChatMessage, ChatStreamDelta, ModelConfig } from "../llm/llm.js";
-import { loadCheckpoint, checkpointPath } from "../runtime/checkpoint.js";
+import { loadCheckpoint, checkpointPath } from "../persistence/file-checkpoint-store.js";
 import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
 import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
 import { createDefaultRunStore } from "./persistence/sqlite-store.js";
@@ -711,6 +711,7 @@ export class RunManager {
             workspaceRoot: run.workspaceRoot,
             permissionMode: run.permissionMode,
           }),
+          ...createDefaultRuntimeServices(),
           conversationHistory,
           modelConfig,
           contextHarness: new DefaultContextHarness({

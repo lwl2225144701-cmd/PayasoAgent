@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { MAX_TOOL_OUTPUT_BYTES } from "../src/runtime/output-guard.js";
-import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../src/bootstrap/runtime-bootstrap.js";
 
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-diag700k-"));
 process.env.SANDBOX_ROOT = TEST_ROOT;
@@ -56,7 +56,7 @@ await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const port = (server.address() as AddressInfo).port;
 process.env.OPENAI_BASE_URL = `http://127.0.0.1:${port}/v1`;
 const { runAgent } = await import("../src/runtime/agent.js");
-const { loadCheckpoint } = await import("../src/runtime/checkpoint.js");
+const { loadCheckpoint } = await import("../src/persistence/file-checkpoint-store.js");
 const { createWorkspace } = await import("../src/sandbox/sandbox-manager.js");
 
 const ws = createWorkspace(runId);
@@ -74,6 +74,7 @@ let agentErr = "";
 try {
   answer = await runAgent("请读取 input/big.txt，然后告诉我这个文件有多大（字节数或行数）以及开头的一句话是什么。", undefined, {
     executionContext: createAgentExecutionContext({ runId }),
+    ...createDefaultRuntimeServices(),
   });
 } catch (e) {
   agentErr = (e as Error).message;

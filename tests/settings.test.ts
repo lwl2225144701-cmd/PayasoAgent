@@ -13,7 +13,7 @@ import { RunManager } from "../src/host/run-manager.js";
 import { createDefaultRunStore, SqliteRunStore } from "../src/host/persistence/sqlite-store.js";
 import { SettingsStore } from "../src/host/persistence/settings-store.js";
 import { MemorySecretStore, providerSecretKey } from "../src/host/secrets/secret-store.js";
-import { checkpointPath } from "../src/runtime/checkpoint.js";
+import { checkpointPath } from "../src/persistence/file-checkpoint-store.js";
 import { createWorkspace, getSandboxRoot } from "../src/sandbox/sandbox-manager.js";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-settings-test-"));

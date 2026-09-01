@@ -12,11 +12,23 @@ import {
   getRunWorkspaceRoot,
 } from "../sandbox/sandbox-manager.js";
 import type { AgentExecutionContext } from "../runtime/contracts.js";
+import { fileCheckpointWriter } from "../persistence/file-checkpoint-store.js";
+import type { CheckpointWriter } from "../runtime/checkpoint-port.js";
 
 export interface AgentExecutionContextInput {
   runId: string;
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
+}
+
+export interface DefaultRuntimeServices {
+  checkpointWriter: CheckpointWriter;
+}
+
+// Default local adapter wiring. Runtime itself has no dependency on the file
+// checkpoint implementation.
+export function createDefaultRuntimeServices(): DefaultRuntimeServices {
+  return { checkpointWriter: fileCheckpointWriter };
 }
 
 // Canonicalize an explicitly authorized root. When no real Workspace was

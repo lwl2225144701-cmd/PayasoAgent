@@ -12,7 +12,7 @@ import type { StoredRun, StoredSession } from "../src/host/persistence/store.js"
 import { RunManager } from "../src/host/run-manager.js";
 import { createHostServer } from "../src/host/server.js";
 import { clearWorkspace, getWorkspace, setWorkspace } from "../src/host/workspace.js";
-import { checkpointPath, loadCheckpoint, saveCheckpoint } from "../src/runtime/checkpoint.js";
+import { checkpointPath, loadCheckpoint, saveCheckpoint } from "../src/persistence/file-checkpoint-store.js";
 import { createScratchpad } from "../src/runtime/scratchpad.js";
 import { createState } from "../src/runtime/state.js";
 

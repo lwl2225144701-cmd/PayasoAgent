@@ -11,7 +11,7 @@ import "../src/tools/filesystem.js";
 import "../src/tools/runtime-tools.js";
 import { clearWorkspace, getWorkspace, setWorkspace, workspacePublicView } from "../src/host/workspace.js";
 import { createHostServer, RunManager } from "../src/host/server.js";
-import { checkpointPath, loadCheckpoint, saveCheckpoint } from "../src/runtime/checkpoint.js";
+import { checkpointPath, loadCheckpoint, saveCheckpoint } from "../src/persistence/file-checkpoint-store.js";
 import { probeSandboxAvailability } from "../src/sandbox/macos-sandbox.js";
 import { SqliteRunStore } from "../src/host/persistence/sqlite-store.js";
 import { createScratchpad } from "../src/runtime/scratchpad.js";

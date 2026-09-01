@@ -11,7 +11,7 @@ import type { StreamingEvent } from "../src/host/run-events.js";
 import { SqliteRunStore } from "../src/host/persistence/sqlite-store.js";
 import type { StoredRun, StoredSession } from "../src/host/persistence/store.js";
 import { clearWorkspace, setWorkspace } from "../src/host/workspace.js";
-import { checkpointPath, saveCheckpoint } from "../src/runtime/checkpoint.js";
+import { checkpointPath, saveCheckpoint } from "../src/persistence/file-checkpoint-store.js";
 import { createScratchpad } from "../src/runtime/scratchpad.js";
 import { createState } from "../src/runtime/state.js";
 

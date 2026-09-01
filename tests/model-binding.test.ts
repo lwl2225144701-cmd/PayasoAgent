@@ -7,8 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runAgent } from "../src/runtime/agent.js";
-import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
-import { checkpointPath } from "../src/runtime/checkpoint.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../src/bootstrap/runtime-bootstrap.js";
+import { checkpointPath } from "../src/persistence/file-checkpoint-store.js";
 import { resolveModelContextConfig } from "../src/harness/model-context.js";
 import type { TraceEvent } from "../src/runtime/trace.js";
 
@@ -41,6 +41,7 @@ try {
 
   const answer = await runAgent("验证 Run 模型绑定", undefined, {
     executionContext: createAgentExecutionContext({ runId }),
+    ...createDefaultRuntimeServices(),
     modelConfig: {
       baseUrl: "https://provider.example/v1",
       apiKey: "sk-binding",

@@ -74,10 +74,39 @@ try {
       },
     }, {
       executionContext: explicit,
+      checkpointWriter: {
+        save: () => {
+          throw new Error("checkpoint should not be written for mismatched context");
+        },
+      },
     }),
     /runId does not match/
   );
   assert.equal(llmCalled, false);
+
+  const snapshots: Array<{ runId: string; status: string; workspaceRoot?: string }> = [];
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    choices: [{ message: { role: "assistant", content: "boundary done" } }],
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+  const answer = await runAgent("injected persistence", undefined, {
+    executionContext: explicit,
+    checkpointWriter: {
+      save: (snapshot) => {
+        snapshots.push(snapshot);
+        return `memory://${snapshot.runId}`;
+      },
+    },
+    modelConfig: {
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "gpt-4o-mini",
+    },
+  });
+  assert.equal(answer, "boundary done");
+  assert.equal(snapshots.length, 1, "Runtime must commit through the injected writer");
+  assert.equal(snapshots[0]?.runId, explicit.runId);
+  assert.equal(snapshots[0]?.status, "completed");
+  assert.equal(snapshots[0]?.workspaceRoot, explicit.workspaceRoot);
 } finally {
   globalThis.fetch = originalFetch;
   fs.rmSync(root, { recursive: true, force: true });

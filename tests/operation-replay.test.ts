@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { register } from "../src/tools/tools.js";
-import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../src/bootstrap/runtime-bootstrap.js";
 
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "payaso-opreplay-"));
 process.env.SANDBOX_ROOT = TEST_ROOT;
@@ -104,6 +104,7 @@ try {
     try {
       answer = await mod.runAgent(task, undefined, {
         executionContext: createAgentExecutionContext({ runId }),
+        ...createDefaultRuntimeServices(),
       });
     } catch (e) {
       error = (e as Error).message;

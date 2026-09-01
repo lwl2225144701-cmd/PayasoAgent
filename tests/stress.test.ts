@@ -20,8 +20,8 @@ import {
 } from "../src/sandbox/sandbox-manager.js";
 import { register, execute, type ToolContext } from "../src/tools/tools.js";
 import { runAgent } from "../src/runtime/agent.js";
-import { createAgentExecutionContext } from "../src/bootstrap/runtime-bootstrap.js";
-import { loadCheckpoint, checkpointPath } from "../src/runtime/checkpoint.js";
+import { createAgentExecutionContext, createDefaultRuntimeServices } from "../src/bootstrap/runtime-bootstrap.js";
+import { loadCheckpoint, checkpointPath } from "../src/persistence/file-checkpoint-store.js";
 
 const PROJECT_ROOT = process.cwd();
 const LOG_DIR = path.join(PROJECT_ROOT, ".stress-logs");
@@ -170,6 +170,7 @@ async function runAgentTask(task: string, runId: string): Promise<{ answer: stri
   try {
     const answer = await runAgent(task, undefined, {
       executionContext: createAgentExecutionContext({ runId }),
+      ...createDefaultRuntimeServices(),
     });
     console.log(`最终答案: ${answer}`);
     return { answer };
@@ -939,6 +940,7 @@ async function runWorkerScenario(id: string, resumeId?: string): Promise<void> {
               workspaceRoot: cp.workspaceRoot,
               permissionMode: cp.permissionMode,
             }),
+            ...createDefaultRuntimeServices(),
           });
           console.log(`最终答案: ${answer}`);
         } catch (e) {

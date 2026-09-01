@@ -6,15 +6,14 @@ import { createTrace, addEvent, printEvent, printTrace, type TraceEvent } from "
 import { createState, updateState, printState, printStateSummary } from "./state.js";
 import { DefaultContextHarness, type AgentContextHarness } from "../harness/context-harness.js";
 import { guardToolOutput } from "./output-guard.js";
-import { saveCheckpoint } from "./checkpoint.js";
-import { storedPermissionMode, type PermissionMode } from "../permission-mode.js";
+import { storedPermissionMode } from "../permission-mode.js";
 import type { AgentExecutionContext } from "./contracts.js";
+import type { CheckpointSnapshot, CheckpointWriter } from "./checkpoint-port.js";
 import {
   createSideEffectGuard,
   markExecuted,
   resolveOperation,
   operationIdentity,
-  type ExecutedOperation,
 } from "./side-effect.js";
 import { isAbortError, throwIfAborted } from "../util/abort.js";
 import {
@@ -36,9 +35,11 @@ const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RET
 // executionContext: 由 Host/bootstrap 授权并注入；Runtime 不创建 Workspace、不升级权限。
 export async function runAgent(
   task: string,
-  resume: { runId: string; task: string; status: string; iteration: number; scratchpad: ReturnType<typeof createScratchpad>; messages: ChatMessage[]; state: ReturnType<typeof createState>; workspaceRoot?: string; permissionMode?: PermissionMode; sideEffects?: ExecutedOperation[] } | undefined,
+  resume: CheckpointSnapshot | undefined,
   opts: {
     executionContext: AgentExecutionContext;
+    // Required Runtime port: composition chooses the persistence adapter.
+    checkpointWriter: CheckpointWriter;
     conversationHistory?: ChatMessage[];
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
@@ -89,7 +90,7 @@ export async function runAgent(
 
   // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
   const save = (status?: string) => {
-    const file = saveCheckpoint({
+    const file = opts.checkpointWriter.save({
       runId,
       task: state.task,
       status: status ?? state.status,
