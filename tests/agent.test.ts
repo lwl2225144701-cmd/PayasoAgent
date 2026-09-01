@@ -166,10 +166,10 @@ const TASKS: TestCase[] = [
   // ---- 只读沙箱文件工具（listDir / readFile）----
   // 预置 sandbox/workspaces/e2e-demo 工作区（--run-id 固定），Agent 通过只读工具查看/读取
   {
-    name: "20. 只读沙箱 listDir（查看 work 目录）",
+    name: "20. 只读沙箱 ls（查看 work 目录）",
     prompt: "请查看 work 目录中有哪些文件",
     expect: ["a.txt"],
-    expectTools: ["listDir"],
+    expectTools: ["ls"],
     cliArgs: ["--run-id", "e2e-demo"],
     setup: () => {
       const r = createWorkspace("e2e-demo");
@@ -180,10 +180,10 @@ const TASKS: TestCase[] = [
     teardown: () => cleanupWorkspace("e2e-demo"),
   },
   {
-    name: "21. 只读沙箱 readFile（读取 input/demo.txt）",
+    name: "21. 只读沙箱 read（读取 input/demo.txt）",
     prompt: "请读取 input/demo.txt，并告诉我里面写了什么",
     expect: ["hello sandbox"],
-    expectTools: ["readFile"],
+    expectTools: ["read"],
     cliArgs: ["--run-id", "e2e-demo"],
     setup: () => {
       const r = createWorkspace("e2e-demo");

@@ -41,12 +41,12 @@ try {
   });
 
   await test("Read Only can read inside Workspace", async () => {
-    assert.equal(await execute("readFile", { path: "inside.txt" }, context("read-only")), "inside");
+    assert.equal(await execute("read", { path: "inside.txt" }, context("read-only")), "inside");
   });
 
   await test("Read Only rejects write/create/move/delete", async () => {
     const ctx = context("read-only");
-    await assert.rejects(() => execute("writeFile", { path: "new.txt", content: "x" }, ctx), /Read Only/);
+    await assert.rejects(() => execute("write", { path: "new.txt", content: "x" }, ctx), /Read Only/);
     await assert.rejects(() => execute("createDir", { path: "new-dir" }, ctx), /Read Only/);
     await assert.rejects(() => execute("moveFile", { source: "inside.txt", target: "moved.txt" }, ctx), /Read Only/);
     await assert.rejects(() => execute("deleteFile", { path: "inside.txt" }, ctx), /Read Only/);
@@ -55,7 +55,7 @@ try {
 
   await test("Workspace Write modifies Workspace", async () => {
     const ctx = context("workspace-write");
-    await execute("writeFile", { path: "written.txt", content: "written" }, ctx);
+    await execute("write", { path: "written.txt", content: "written" }, ctx);
     assert.equal(fs.readFileSync(path.join(workspace, "written.txt"), "utf8"), "written");
     await execute("deleteFile", { path: "written.txt" }, ctx);
     assert.ok(!fs.existsSync(path.join(workspace, "written.txt")));
@@ -64,7 +64,7 @@ try {
   await test("Workspace Write rejects absolute path outside Workspace", async () => {
     const target = path.join(outside, "blocked.txt");
     await assert.rejects(
-      () => execute("writeFile", { path: target, content: "blocked" }, context("workspace-write")),
+      () => execute("write", { path: target, content: "blocked" }, context("workspace-write")),
       /路径被拒绝/,
     );
     assert.ok(!fs.existsSync(target));
@@ -73,9 +73,9 @@ try {
   await test("Full access reads and writes absolute host paths", async () => {
     const ctx = context("full-access");
     const existing = path.join(outside, "outside.txt");
-    assert.equal(await execute("readFile", { path: existing }, ctx), "outside");
+    assert.equal(await execute("read", { path: existing }, ctx), "outside");
     const created = path.join(outside, "created.txt");
-    await execute("writeFile", { path: created, content: "full" }, ctx);
+    await execute("write", { path: created, content: "full" }, ctx);
     assert.equal(fs.readFileSync(created, "utf8"), "full");
     await execute("deleteFile", { path: created }, ctx);
     assert.ok(!fs.existsSync(created));

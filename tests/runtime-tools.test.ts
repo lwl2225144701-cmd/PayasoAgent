@@ -29,28 +29,35 @@ function test(name: string, fn: () => void | Promise<void>) {
 }
 
 // ---- 1. 工具已注册 ----
-test("searchText / createDir / moveFile / deleteFile / shell / writeFile 均已注册", () => {
+test("grep / moveFile / deleteFile / shell / write / ls / read / edit 均已注册", () => {
   const names = getSchemas().map((s) => s.function.name);
-  for (const n of ["searchText", "createDir", "moveFile", "deleteFile", "shell", "writeFile"]) {
+  for (const n of ["grep", "moveFile", "deleteFile", "shell", "write", "ls", "read", "edit"]) {
     assert.ok(names.includes(n), `缺少工具 ${n}`);
   }
 });
 
-// ---- 2. writeFile 往返（写入 → readFile 读回）----
-test("writeFile 往返：写入 work/note.txt 后可 readFile 读回", async () => {
-  const w = await execute("writeFile", { path: "work/note.txt", content: "hello" }, ctx);
+test("createDir / searchText / writeFile / listDir / readFile 已移出核心 Schema（hidden 别名）", () => {
+  const names = getSchemas().map((s) => s.function.name);
+  for (const n of ["createDir", "searchText", "writeFile", "listDir", "readFile"]) {
+    assert.ok(!names.includes(n), `${n} 应从核心 Schema 中移除`);
+  }
+});
+
+// ---- 2. write 往返（写入 → read 读回）----
+test("write 往返：写入 work/note.txt 后可 read 读回", async () => {
+  const w = await execute("write", { path: "work/note.txt", content: "hello" }, ctx);
   assert.ok(w.includes("写入成功"), `写入结果: ${w}`);
-  const r = await execute("readFile", { path: "work/note.txt" }, ctx);
+  const r = await execute("read", { path: "work/note.txt" }, ctx);
   assert.equal(r, "hello");
 });
 
-test("writeFile 禁止写入 input/（只读白名单）", async () => {
-  await assert.rejects(() => execute("writeFile", { path: "input/x.txt", content: "no" }, ctx));
+test("write 禁止写入 input/（只读白名单）", async () => {
+  await assert.rejects(() => execute("write", { path: "input/x.txt", content: "no" }, ctx));
 });
 
 // ---- 3. ./ 路径归一化 → 同一 identity ----
-test("writeFile：./work/note.txt 与 work/note.txt 归一化为同一 identity", () => {
-  const t = getTool("writeFile")!;
+test("write：./work/note.txt 与 work/note.txt 归一化为同一 identity", () => {
+  const t = getTool("write")!;
   const a = operationIdentity(t, { path: "./work/note.txt", content: "hello" }, ctx);
   const b = operationIdentity(t, { path: "work/note.txt", content: "hello" }, ctx);
   assert.equal(a, b, `identity 不一致: ${a} vs ${b}`);
@@ -68,7 +75,7 @@ test("moveFile：./work/m/n.txt 与 work/m/n.txt 源/目标归一化为同一 id
 });
 
 test("归一化 identity 不泄露宿主机绝对路径", () => {
-  const t = getTool("writeFile")!;
+  const t = getTool("write")!;
   const key = operationIdentity(t, { path: "./work/note.txt", content: "hello" }, ctx);
   assert.ok(!key.includes(TEST_ROOT), `identity 泄露绝对路径: ${key}`);
 });
@@ -93,6 +100,14 @@ test("moveFile 防重放：成功执行后同 identity 请求回放（idle），
   // 目标内容仍为首次移动后的数据，源没有被再次创建
   assert.equal(fs.readFileSync(path.join(root, "work", "idle-dst.txt"), "utf8"), "data");
   assert.ok(!fs.existsSync(path.join(root, "work", "idle-src.txt")));
+});
+
+// ---- 5. 向后兼容别名仍可执行 ----
+test("writeFile / readFile / listDir / searchText hidden 别名仍可执行", async () => {
+  assert.ok(await execute("writeFile", { path: "work/compat.txt", content: "x" }, ctx), "写入成功");
+  assert.equal(await execute("readFile", { path: "work/compat.txt" }, ctx), "x");
+  assert.match(await execute("listDir", { path: "work" }, ctx), /compat\.txt/);
+  assert.match(await execute("searchText", { path: "work/compat.txt", pattern: "x" }, ctx), /找到 1 处/);
 });
 
 // ---- 汇总 ----

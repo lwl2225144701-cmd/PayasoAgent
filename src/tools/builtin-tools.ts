@@ -1,5 +1,6 @@
-// Default non-filesystem tools. Registration is triggered by application
-// bootstrap so importing the Runtime kernel has no product-tool side effects.
+// 示例/演示工具（已从核心 coding tools 移出）：calculator / getWeather
+// Registration is triggered by application bootstrap so importing the Runtime
+// kernel has no product-tool side effects.
 
 import { register } from "./tools.js";
 

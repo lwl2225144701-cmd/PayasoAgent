@@ -140,7 +140,7 @@ web/src/
 <!-- docs-contract:tools -->
 
 ```json
-["calculator","getWeather","listDir","readFile","writeFile","searchText","createDir","moveFile","deleteFile","shell"]
+["calculator","getWeather","read","write","edit","grep","ls","shell","moveFile","deleteFile"]
 ```
 
 <!-- /docs-contract:tools -->

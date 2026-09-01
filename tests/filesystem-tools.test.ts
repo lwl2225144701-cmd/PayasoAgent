@@ -130,10 +130,20 @@ test("LLM Schema 无 runId、无宿主机绝对路径", () => {
   assert.ok(!json.includes("/Users"), "Schema 中出现 /Users 绝对路径");
 });
 
-test("listDir / readFile 的 Tool Schema 已注册", () => {
+test("ls / read / write 的 Tool Schema 已注册", () => {
   const names = getSchemas().map((s) => s.function.name);
-  assert.ok(names.includes("listDir"));
-  assert.ok(names.includes("readFile"));
+  assert.ok(names.includes("ls"));
+  assert.ok(names.includes("read"));
+  assert.ok(names.includes("write"));
+});
+
+test("向后兼容别名不在 Schema 中但仍可通过 execute 调用", async () => {
+  const names = getSchemas().map((s) => s.function.name);
+  assert.ok(!names.includes("listDir"), "listDir 应从 Schema 中移除");
+  assert.ok(!names.includes("readFile"), "readFile 应从 Schema 中移除");
+  assert.ok(!names.includes("writeFile"), "writeFile 应从 Schema 中移除");
+  assert.equal(await execute("readFile", { path: "input/demo.txt" }, ctx), "hello sandbox");
+  assert.match(await execute("listDir", { path: "work" }, ctx), /a\.txt/);
 });
 
 // ---- 汇总 ----

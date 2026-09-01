@@ -47,6 +47,9 @@ export interface Tool {
   // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
   // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
   validateResult?: (result: unknown) => boolean | { valid: boolean; reason?: string };
+  // v1.7: 向后兼容别名标记。hidden 工具仍可通过 execute() / getTool() 调用，
+  // 但不会暴露在 getSchemas()（LLM 可见 schema）中，避免工具数量膨胀。
+  hidden?: boolean;
 }
 
 // ---- 工具注册表 ----
@@ -67,6 +70,20 @@ export function register(tool: Tool): void {
   registry.set(tool.name, tool);
 }
 
+// v1.7: 注册向后兼容别名。别名与主工具共享同一实现，但不出现在 LLM Schema 中。
+// 用于 readFile→read、writeFile→write、listDir→ls、searchText→grep 等重命名场景。
+export function registerAlias(canonicalName: string, aliasName: string): void {
+  const source = registry.get(canonicalName);
+  if (!source) {
+    throw new Error(`registerAlias 失败：主工具 "${canonicalName}" 未注册`);
+  }
+  registry.set(aliasName, {
+    ...source,
+    name: aliasName,
+    hidden: true,
+  });
+}
+
 // 按名称取工具定义（供 Runtime 读取 effect / getOperationKey 等契约字段）
 export function getTool(name: string): Tool | undefined {
   return registry.get(name);
@@ -84,16 +101,18 @@ export async function execute(
   return tool.execute(args, context);
 }
 
-// 导出为 OpenAI tools 参数格式
+// 导出为 OpenAI tools 参数格式（排除 hidden 别名，保持 LLM 视角工具集精简）
 export function getSchemas(): ToolSchema[] {
-  return [...registry.values()].map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    },
-  }));
+  return [...registry.values()]
+    .filter((t) => !t.hidden)
+    .map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    }));
 }
 
 // v1.2: 运行 Tool 的 validateResult（若存在）；无声明默认结果有效。

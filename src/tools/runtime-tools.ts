@@ -1,97 +1,115 @@
-// 模块: Runtime 工具（searchText / createDir / moveFile / deleteFile / shell）
+// 模块: Runtime 工具（grep / createDir / moveFile / deleteFile / shell）
 // 安全契约与 filesystem.ts 一致：
 // - LLM 只传工作区内相对路径；真实路径由 ToolContext.workspaceRoot + 双重路径校验
 // - 全部显式声明 effect（副作用语义必须明确）
 // - shell 以当前 context.workspaceRoot 为 cwd；文件系统边界由 macOS OS Sandbox 强制执行
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
+// v1.7：searchText → grep（目录递归搜索）；createDir 移出核心（hidden），write 已覆盖其核心场景。
 
 import fs from "node:fs";
 import path from "node:path";
-import { register, type ToolContext } from "./tools.js";
+import { register, registerAlias, type ToolContext } from "./tools.js";
 import { MacOSSandbox, probeSandboxAvailability, type MacOSSandboxResult } from "../sandbox/macos-sandbox.js";
-import { canonicalPathKey, assertWritableZone, resolveAuthorizedPath } from "./filesystem.js";
+import { canonicalPathKey, assertWritableZone, resolveAuthorizedPath, isProbablyBinary, MAX_READ_BYTES } from "./filesystem.js";
 import { storedPermissionMode } from "../permission-mode.js";
 
-// 与 filesystem.ts 保持一致的最大限幅
-const MAX_TEXT_BYTES = 1024 * 1024; // 1MB
-// v1.5: 归一化相对路径为稳定的 operation key（复用 filesystem.canonicalPathKey）
-function normPathKey(context: ToolContext, rel: string): string | null {
-  return canonicalPathKey(context, rel);
-}
-
-// ---- ① searchText ----
-// effect: read —— 纯查询。重点压测：大量匹配 / 超大文本 / 输出过大撑爆 Context
+// ---- ① grep（原 searchText，目录递归搜索）----
 register({
-  name: "searchText",
+  name: "grep",
   description:
-    "在文本文件中查找子串（UTF-8，单文件≤1MB）。Read Only/Workspace Write 下仅限 Workspace；Full access 可用绝对路径。",
+    "在工作区内递归搜索文本子串（非正则）。支持指定文件或目录路径，结果数量可限，所有访问严格限制在 Workspace 内，自动跳过二进制文件与超大文件，禁止跟随 symlink 避免逃逸。",
   effect: "read",
   getOperationKey: (args, context) => {
-    const rel = String(args.path ?? "").trim();
-    const pattern = String(args.pattern ?? "");
-    const key = context ? normPathKey(context, rel) : null;
-    const pathPart = key !== null ? key : JSON.stringify(rel);
-    return `path:${pathPart}:pattern:${pattern}`;
+    const rel = String(args.path ?? ".").trim();
+    const key = context ? canonicalPathKey(context, rel) : null;
+    return `path:${key ?? JSON.stringify(rel)}:pattern:${args.pattern}:max:${args.maxResults ?? 100}`;
   },
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "工作区内相对文件路径，如 work/log.txt" },
       pattern: { type: "string", description: "要查找的文本子串（非正则）" },
+      path: { type: "string", description: "工作区内相对路径，文件或目录（默认当前目录 .）" },
+      maxResults: { type: "number", description: "最多返回的匹配行数（默认 100，上限 500）" },
     },
-    required: ["path", "pattern"],
+    required: ["pattern"],
   },
   execute: async (args, context) => {
-    const rel = String(args.path ?? "").trim();
     const pattern = String(args.pattern ?? "");
-    if (!rel) throw new Error("缺少参数 path");
     if (!pattern) throw new Error("缺少参数 pattern");
+
+    const rel = String(args.path ?? ".").trim();
+    const maxResults = Math.min(Number(args.maxResults ?? 100) || 100, 500);
+
     const real = resolveAuthorizedPath(context, rel);
-
     let st: fs.Stats;
-    try {
-      st = fs.lstatSync(real);
-    } catch {
-      throw new Error(`文件不存在: ${rel}`);
-    }
-    if (st.isDirectory()) throw new Error(`是目录，无法搜索: ${rel}`);
-    if (st.size > MAX_TEXT_BYTES) {
-      return `[sandbox-tool-invalid] 文件过大，无法搜索（限制 ${MAX_TEXT_BYTES} 字节）: ${rel}`;
-    }
-    const buf = fs.readFileSync(real);
+    try { st = fs.lstatSync(real); } catch { throw new Error(`路径不存在: ${rel}`); }
 
-    const isBinary = () => {
-      const sample = buf.length > 8192 ? buf.subarray(0, 8192) : buf;
-      let ctrl = 0;
-      for (const b of sample) {
-        if (b === 0x00) return true;
-        if (b < 0x09 || (b > 0x0d && b < 0x20 && b !== 0x1b)) ctrl++;
+    const matches: Array<{ file: string; line: number; content: string }> = [];
+    let filesVisited = 0;
+    let tooBig = false;
+    let binary = false;
+    const MAX_DEPTH = 32;
+    const MAX_FILES = 5000;
+
+    function searchInFile(filePath: string): "ok" | "too_big" | "binary" | "error" {
+      if (filesVisited >= MAX_FILES) return "error";
+      filesVisited++;
+      let fst: fs.Stats;
+      try { fst = fs.lstatSync(filePath); } catch { return "error"; }
+      if (fst.size > MAX_READ_BYTES) return "too_big";
+      let buf: Buffer;
+      try { buf = fs.readFileSync(filePath); } catch { return "error"; }
+      if (isProbablyBinary(buf)) return "binary";
+      const text = buf.toString("utf8");
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
+        if (lines[i].includes(pattern)) {
+          matches.push({ file: filePath, line: i + 1, content: lines[i] });
+        }
       }
-      return ctrl > sample.length / 10;
-    };
-    if (isBinary()) {
-      return `[sandbox-tool-invalid] 二进制文件，不支持文本搜索: ${rel}`;
+      return "ok";
     }
 
-    const text = buf.toString("utf8");
-    const lines = text.split("\n");
-    let count = 0;
-    let firstLine = -1;
-    let lastLine = -1;
-    const previews: string[] = [];
-    for (let li = 0; li < lines.length; li++) {
-      if (lines[li].includes(pattern)) {
-        count++;
-        if (firstLine < 0) firstLine = li + 1;
-        lastLine = li + 1;
-        if (previews.length < 20) previews.push(`${li + 1}: ${lines[li].slice(0, 80)}`);
+    function walk(dir: string, depth: number): void {
+      if (depth > MAX_DEPTH || filesVisited >= MAX_FILES) return;
+      let entries: fs.Dirent[];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (filesVisited >= MAX_FILES) break;
+        const full = path.join(dir, entry.name);
+        if (entry.isSymbolicLink()) continue; // 跳过 symlink，避免逃逸和无限递归
+        if (entry.isDirectory()) {
+          walk(full, depth + 1);
+        } else if (entry.isFile()) {
+          searchInFile(full);
+        }
       }
     }
-    // 结果长度受限：只回前 20 个匹配 + 统计，避免把大文件全文灌回 Context
-    if (count === 0) return `未在 ${rel} 中找到 "${pattern}"（共${lines.length}行）`;
-    const previewBlock =
-      previews.length > 0 ? `\n匹配（前${previews.length}条）:\n${previews.join("\n")}` : "";
-    return `在 ${rel} 中找到 ${count} 处 "${pattern}"（首行${firstLine}，末行${lastLine}，共${lines.length}行）${previewBlock}`;
+
+    if (st.isFile()) {
+      const status = searchInFile(real);
+      if (status === "too_big") {
+        return `[sandbox-tool-invalid] 文件过大，无法搜索（限制 ${MAX_READ_BYTES} 字节）: ${rel}`;
+      }
+      if (status === "binary") {
+        return `[sandbox-tool-invalid] 二进制文件，不支持文本搜索: ${rel}`;
+      }
+    } else if (st.isDirectory()) {
+      walk(real, 0);
+    } else {
+      throw new Error(`不是文件也不是目录: ${rel}`);
+    }
+
+    if (matches.length === 0) return `未找到 "${pattern}"（${rel}）`;
+
+    const lines: string[] = [];
+    for (const m of matches) {
+      const relPath = path.relative(context.workspaceRoot, m.file);
+      lines.push(`${relPath}:${m.line}:${m.content}`);
+    }
+    const fileCount = new Set(matches.map((m) => m.file)).size;
+    const summary = `找到 ${matches.length} 处匹配（共扫描 ${filesVisited} 个文件）`;
+    return [...lines, summary].join("\n");
   },
   validateResult: (result) => {
     if (typeof result === "string" && result.startsWith("[sandbox-tool-invalid]")) {
@@ -100,17 +118,18 @@ register({
     return true;
   },
 });
+registerAlias("grep", "searchText");
 
-// ---- ② createDir ----
-// effect: idempotent —— 已存在则幂等返回成功；只创建相对路径（父级需已存在）
+// ---- ② createDir（移出核心工具集，write 已支持自动创建父目录）----
+// 保留 hidden 别名，不破坏已有测试和调用方的兼容性
 register({
   name: "createDir",
-  description:
-    "创建单个目录。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录必须已存在。",
+  description: "创建单个目录。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录必须已存在。（已移出核心工具集，write 支持自动创建父目录）",
   effect: "idempotent",
+  hidden: true,
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
-    const key = context ? normPathKey(context, rel) : null;
+    const key = context ? canonicalPathKey(context, rel) : null;
     return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
   },
   parameters: {
@@ -153,7 +172,6 @@ register({
 });
 
 // ---- ③ moveFile ----
-// effect: non_idempotent —— 移动破坏源，重复执行会因源不存在而失败
 register({
   name: "moveFile",
   description:
@@ -162,8 +180,8 @@ register({
   getOperationKey: (args, context) => {
     const src = String(args.source ?? "").trim();
     const dst = String(args.target ?? "").trim();
-    const sk = context ? normPathKey(context, src) : null;
-    const dk = context ? normPathKey(context, dst) : null;
+    const sk = context ? canonicalPathKey(context, src) : null;
+    const dk = context ? canonicalPathKey(context, dst) : null;
     return `src:${sk ?? JSON.stringify(src)}:dst:${dk ?? JSON.stringify(dst)}`;
   },
   parameters: {
@@ -209,7 +227,6 @@ register({
 });
 
 // ---- ④ deleteFile ----
-// effect: idempotent —— 删除不存在的文件幂等返回（第二次当"已不存在"）
 register({
   name: "deleteFile",
   description:
@@ -217,7 +234,7 @@ register({
   effect: "idempotent",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
-    const key = context ? normPathKey(context, rel) : null;
+    const key = context ? canonicalPathKey(context, rel) : null;
     return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
   },
   parameters: {
@@ -248,8 +265,6 @@ register({
 });
 
 // ---- ⑤ shell ----
-// effect: non_idempotent —— 命令副作用无法可靠静态判断，最保守声明。
-// 静态命令过滤不是安全边界；真正边界由 macOS sandbox-exec 强制执行。
 register({
   name: "shell",
   description:
