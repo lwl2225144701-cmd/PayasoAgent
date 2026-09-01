@@ -10,6 +10,8 @@ import {
   previewAvailableModels,
 } from '../../api';
 import type { ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput } from '../../types';
+import type { ThemeMode } from '../../theme';
+import { AppearanceSettings } from '../AppearanceSettings';
 import {
   CloseIcon,
   PlusIcon,
@@ -23,11 +25,13 @@ import {
 import { Modal } from '../Modal';
 import styles from './SettingsModal.module.css';
 
-type Tab = 'models';
+type Tab = 'general' | 'models';
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
   onSaved?: () => void;
 }
 
@@ -75,7 +79,7 @@ const EMPTY_FORM: FormState = {
   newTag: '',
 };
 
-export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
+export function SettingsModal({ open, onClose, themeMode, onThemeModeChange, onSaved }: SettingsModalProps) {
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const [loading, setLoading] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('list');
@@ -86,6 +90,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
   const [customOpen, setCustomOpen] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [defaultId, setDefaultId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('general');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -114,6 +119,7 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
       setForm(EMPTY_FORM);
       setError(null);
       setDeletingId(null);
+      setActiveTab('general');
     }
   }, [open]);
 
@@ -520,6 +526,16 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
     );
   };
 
+  const renderGeneralTab = () => (
+    <div className={styles.generalTab}>
+      <div className={styles.generalHeader}>
+        <h3 className={styles.generalTitle}>通用设置</h3>
+        <p className={styles.generalDescription}>调整应用的显示方式和交互偏好。</p>
+      </div>
+      <AppearanceSettings mode={themeMode} onChange={onThemeModeChange} />
+    </div>
+  );
+
   return (
     <Modal onClose={onClose} ariaLabel="设置">
       <div className={styles.container}>
@@ -538,13 +554,32 @@ export function SettingsModal({ open, onClose, onSaved }: SettingsModalProps) {
           <nav className={styles.nav}>
             <button
               type="button"
-              className={`${styles.navItem} ${styles.navItemActive}`}
+              className={`${styles.navItem} ${activeTab === 'general' ? styles.navItemActive : ''}`}
+              onClick={() => setActiveTab('general')}
+            >
+              <SettingsIcon size={16} />
+              <span>通用设置</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.navItem} ${activeTab === 'models' ? styles.navItemActive : ''}`}
+              onClick={() => setActiveTab('models')}
             >
               <DatabaseIcon size={16} />
               <span>模型</span>
             </button>
+            <button type="button" className={`${styles.navItem} ${styles.navItemDisabled}`} disabled>
+              <SlidersIcon size={16} />
+              <span>插件</span>
+            </button>
+            <button type="button" className={`${styles.navItem} ${styles.navItemDisabled}`} disabled>
+              <UserIcon size={16} />
+              <span>Agent 预设</span>
+            </button>
           </nav>
-          <div className={styles.content}>{renderModelsTab()}</div>
+          <div className={styles.content}>
+            {activeTab === 'general' ? renderGeneralTab() : renderModelsTab()}
+          </div>
         </div>
       </div>
 

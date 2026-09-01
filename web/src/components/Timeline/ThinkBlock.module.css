@@ -8,13 +8,21 @@
   align-items: flex-start;
   gap: 9px;
   width: 100%;
-  padding: 4px 0;
-  border: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
   background: transparent;
   color: var(--text-tertiary);
   text-align: left;
   font: inherit;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.toggle:hover,
+.toggle[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--color-card-glass-hover) 56%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-default) 58%, transparent);
 }
 
 .iconSlot {
@@ -75,7 +83,11 @@
 
 .content {
   max-width: 920px;
-  margin: 4px 0 0 27px;
+  margin: 6px 0 0 32px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--color-brand-border);
+  border-radius: 0 9px 9px 0;
+  background: color-mix(in srgb, var(--color-card-glass) 48%, transparent);
   color: var(--text-secondary);
   font-size: 15px;
   line-height: 1.75;

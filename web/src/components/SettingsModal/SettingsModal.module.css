@@ -9,8 +9,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 18px 22px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  background: color-mix(in srgb, var(--color-header-glass) 72%, transparent);
 }
 
 .title {
@@ -26,9 +27,9 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  background: color-mix(in srgb, var(--color-card-glass) 62%, transparent);
   color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
@@ -37,6 +38,7 @@
 .closeButton:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+  border-color: var(--color-border-strong);
 }
 
 .body {
@@ -46,10 +48,11 @@
 }
 
 .nav {
-  width: 176px;
+  width: 196px;
   flex-shrink: 0;
-  padding: 12px 8px;
-  border-right: 1px solid var(--border-color);
+  padding: 16px 12px;
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  background: var(--color-modal-nav);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -61,32 +64,49 @@
   align-items: center;
   gap: 10px;
   text-align: left;
-  padding: 9px 12px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 11px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
 
 .navItem:hover {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--color-card-glass-hover) 78%, transparent);
   color: var(--text-primary);
+  transform: translateX(2px);
+}
+
+.navItem:disabled,
+.navItemDisabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.navItem:disabled:hover,
+.navItemDisabled:hover {
+  background: transparent;
+  color: var(--text-muted);
 }
 
 .navItemActive {
-  background: var(--bg-tertiary);
+  background: linear-gradient(110deg, var(--color-brand-soft), color-mix(in srgb, var(--color-card-glass) 72%, transparent));
+  border-color: var(--color-brand-border);
   color: var(--text-primary);
   font-weight: 600;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-brand) 10%, transparent);
 }
 
 .content {
   flex: 1;
   min-width: 0;
-  padding: 20px 24px;
+  padding: 28px 32px 32px;
   overflow-y: auto;
+  background: radial-gradient(circle at 90% 5%, var(--color-brand-soft), transparent 36%);
 }
 
 .placeholder {
@@ -98,7 +118,55 @@
 .generalTab {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 30px;
+}
+
+.generalHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.generalTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.generalDescription {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 10px 12px;
+    border-right: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  }
+
+  .navItem {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .navItem:hover {
+    transform: none;
+  }
+
+  .content {
+    padding: 22px 18px 26px;
+  }
 }
 
 .settingGroup {

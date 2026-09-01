@@ -5,6 +5,7 @@ import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
 import { SettingsModal } from './components/SettingsModal';
+import { useThemeMode } from './hooks/useThemeMode';
 import {
   createRun,
   deleteWorkspaceGroup,
@@ -31,6 +32,7 @@ function sessionTitle(task: string): string {
 }
 
 export default function App() {
+  const [themeMode, setThemeMode] = useThemeMode();
   const [runs, setRuns] = useState<HostRun[]>([]);
   const [sessions, setSessions] = useState<HostSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -490,6 +492,8 @@ export default function App() {
         <SettingsModal
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
+          themeMode={themeMode}
+          onThemeModeChange={setThemeMode}
           onSaved={() => {
             void refreshModels();
             void refreshDefaultModel();

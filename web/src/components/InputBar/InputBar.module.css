@@ -10,11 +10,15 @@
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  background: var(--color-composer);
-  border: 1px solid var(--color-border-default);
+  background:
+    linear-gradient(135deg, var(--color-glass-highlight), transparent 38%),
+    color-mix(in srgb, var(--color-composer) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
   border-radius: 24px;
   box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 255, 255, 0.015) inset;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
 }
 
 .conversationComposer:focus-within {
@@ -115,13 +119,17 @@
   min-height: 142px;
   display: flex;
   flex-direction: column;
-  background: var(--color-composer);
-  border: 1px solid var(--color-border-default);
+  background:
+    linear-gradient(135deg, var(--color-glass-highlight), transparent 38%),
+    color-mix(in srgb, var(--color-composer) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 84%, transparent);
   border-radius: 24px;
   box-shadow:
     var(--shadow-md),
     0 0 0 1px rgba(255, 255, 255, 0.015) inset;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
 }
 
 .heroInputWrapper:focus-within {

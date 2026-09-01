@@ -1,4 +1,4 @@
-/* Payaso dark theme — the single source of truth for product colors. */
+/* Payaso themes — the single source of truth for product colors. */
 :root {
   color-scheme: dark;
 
@@ -35,9 +35,14 @@
   --color-composer: #1b1f26;
   --color-composer-control: #252b34;
   --color-code: #181c23;
-  --color-overlay: rgba(4, 6, 10, 0.68);
+  --color-overlay: rgba(4, 6, 10, 0.44);
   --color-header-glass: rgba(15, 17, 21, 0.78);
   --color-canvas-glow: rgba(61, 82, 119, 0.13);
+  --color-modal-glass: rgba(18, 21, 28, 0.68);
+  --color-modal-nav: rgba(10, 13, 19, 0.28);
+  --color-card-glass: rgba(25, 29, 36, 0.45);
+  --color-card-glass-hover: rgba(38, 45, 56, 0.6);
+  --color-glass-highlight: rgba(255, 255, 255, 0.065);
 
   /* Status */
   --color-danger: #f47b7b;
@@ -71,6 +76,8 @@
   --text-muted: var(--color-text-muted);
   --border-color: var(--color-border-default);
   --border-light: var(--color-border-subtle);
+  --border-subtle: var(--color-border-subtle);
+  --bg-elevated: var(--color-surface-raised);
   --accent-blue: var(--color-brand);
   --accent-blue-hover: var(--color-brand-hover);
   --accent-blue-light: var(--color-brand-border);
@@ -80,4 +87,67 @@
   --accent-orange: #f29a58;
   --accent-orange-light: rgba(242, 154, 88, 0.13);
   --accent-yellow: var(--color-warning);
+}
+
+/* Light mode keeps the same semantic tokens so components do not need theme-specific CSS. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-canvas: #f5f7fb;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #eef2f7;
+  --color-surface-raised: #ffffff;
+  --color-surface-hover: #e8edf5;
+  --color-surface-selected: #dfe7fb;
+
+  --color-text-primary: #1c2535;
+  --color-text-secondary: #526174;
+  --color-text-tertiary: #7d899a;
+  --color-text-muted: #9aa5b4;
+  --color-text-on-brand: #ffffff;
+
+  --color-border-subtle: #e2e7ef;
+  --color-border-default: #d5dce7;
+  --color-border-strong: #b6c1d1;
+
+  --color-brand: #496fe8;
+  --color-brand-hover: #385ed2;
+  --color-brand-soft: rgba(73, 111, 232, 0.1);
+  --color-brand-border: rgba(73, 111, 232, 0.25);
+  --color-brand-ring: rgba(73, 111, 232, 0.18);
+
+  --color-message-user: #e8edff;
+  --color-message-user-border: #cbd7fa;
+  --color-composer: #ffffff;
+  --color-composer-control: #eef2f8;
+  --color-code: #eef1f6;
+  --color-overlay: rgba(35, 43, 57, 0.26);
+  --color-header-glass: rgba(245, 247, 251, 0.84);
+  --color-canvas-glow: rgba(96, 124, 204, 0.12);
+  --color-modal-glass: rgba(250, 252, 255, 0.72);
+  --color-modal-nav: rgba(235, 240, 248, 0.42);
+  --color-card-glass: rgba(246, 248, 252, 0.54);
+  --color-card-glass-hover: rgba(237, 242, 250, 0.7);
+  --color-glass-highlight: rgba(255, 255, 255, 0.8);
+
+  --color-danger: #d84d5c;
+  --color-danger-text: #b93646;
+  --color-danger-soft: rgba(216, 77, 92, 0.1);
+  --color-danger-border: rgba(216, 77, 92, 0.3);
+  --color-warning: #b7791f;
+  --color-warning-soft: rgba(183, 121, 31, 0.12);
+  --color-success: #168a68;
+  --color-success-soft: rgba(22, 138, 104, 0.1);
+  --color-success-border: rgba(22, 138, 104, 0.28);
+  --color-info: #3478c9;
+  --color-info-soft: rgba(52, 120, 201, 0.1);
+  --color-info-border: rgba(52, 120, 201, 0.24);
+
+  --shadow-sm: 0 1px 2px rgba(31, 41, 55, 0.08);
+  --shadow-md: 0 10px 28px rgba(31, 41, 55, 0.12);
+  --shadow-lg: 0 22px 64px rgba(31, 41, 55, 0.16);
+  --shadow-overlay: 0 20px 52px rgba(31, 41, 55, 0.2);
+
+  --accent-orange: #c46b2c;
+  --accent-orange-light: rgba(196, 107, 44, 0.12);
 }
