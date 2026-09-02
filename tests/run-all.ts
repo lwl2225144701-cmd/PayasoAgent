@@ -46,6 +46,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: "settings", file: "tests/settings.test.ts" },
   { name: "host-auth", file: "tests/host-auth.test.ts" },
   { name: "provider-url", file: "tests/provider-url.test.ts" },
+  { name: "encrypted-file-secret", file: "tests/encrypted-file-secret.test.ts" },
   { name: "keychain-command", file: "tests/keychain-command.test.ts" },
   { name: "shutdown", file: "tests/shutdown.test.ts" },
 ];

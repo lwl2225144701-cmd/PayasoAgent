@@ -971,6 +971,11 @@ async function postJSONWithOrigin(url: string, body: any, origin: string, expect
         models: ["slow-chat"],
       }, 201);
 
+      // 显式绑定默认模型：否则 resolveModelConfig 会选中历史测试留下的
+      // 第一个可用 provider（如 resume-test），导致 LLM 请求发往错误 baseUrl，
+      // mock 的 api.slow-echo.com 分支不命中 → 真实网络 fetch failed → Run failed。
+      await postJSON(`${base}/settings/default`, { providerId: prov.id, model: "slow-chat" }, 200);
+
       const run = await postJSON(`${base}/runs`, { task: "slow task" }, 202);
       const deadline = Date.now() + 3000;
       let status = "running";

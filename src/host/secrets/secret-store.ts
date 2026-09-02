@@ -7,10 +7,14 @@
 // - 同步 API：与 node:sqlite / SettingsStore 的同步风格一致。Keychain 调用频率低
 //   （保存/清除/每次 Run 启动读取一次），spawnSync 的几十毫秒延迟可接受。
 //
-// 平台：macOS 用 Keychain（security CLI）；其他平台返回 UnsupportedSecretStore
-// （明确报错，不静默回退明文）。测试用 MemorySecretStore。
+// 平台：macOS 用系统 Keychain（security CLI）；其他平台用 AES-256-GCM 加密文件兜底
+// （EncryptedFileSecretStore，密钥/密文分离、0600 权限、绝不落明文），保证
+// "添加自定义提供方"在 Windows/Linux 上同样可用，同时不弱化凭证安全边界。
+// UnsupportedSecretStore 保留为显式禁用实现（测试/特殊用途），不再作为默认路由。
+// 测试用 MemorySecretStore。
 
 import { MacOSKeychainSecretStore } from "./macos-keychain-secret-store.js";
+import { EncryptedFileSecretStore } from "./encrypted-file-secret-store.js";
 import { MemorySecretStore, UnsupportedSecretStore } from "./memory-secret-store.js";
 
 export interface SecretStore {
@@ -30,7 +34,8 @@ export function providerSecretKey(providerId: string): string {
 // 组合根（src/host/index.ts）调用一次并注入；测试替换为 MemorySecretStore
 export function createSecretStore(): SecretStore {
   if (process.platform === "darwin") return new MacOSKeychainSecretStore();
-  return new UnsupportedSecretStore();
+  // 非 macOS（Windows/Linux/其他）：加密文件兜底，不再直接禁用
+  return new EncryptedFileSecretStore();
 }
 
-export { MacOSKeychainSecretStore, MemorySecretStore, UnsupportedSecretStore };
+export { MacOSKeychainSecretStore, EncryptedFileSecretStore, MemorySecretStore, UnsupportedSecretStore };
