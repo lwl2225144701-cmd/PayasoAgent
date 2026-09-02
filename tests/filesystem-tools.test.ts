@@ -107,19 +107,45 @@ test("listDir symlink 指向 workspace 外 → BLOCKED", async () => {
   await assert.rejects(() => execute("listDir", { path: "work/evil-link" }, ctx));
 });
 
-// ---- 6. 超大文件 / 二进制 → invalid result ----
-test("readFile 超大文件（2MB > 1MB 限制）→ tool_result_invalid", async () => {
-  const res = await execute("readFile", { path: "output/big.txt" }, ctx);
-  assert.ok(res.includes("文件过大"), `结果: ${res}`);
-  const v = validateToolResult("readFile", res);
-  assert.equal(v.valid, false, "应判为 invalid");
+// ---- 6. 超大文本 / 二进制 / 图片 ----
+test("read 超大文本（2MB > 64KB 窗口）→ 截断 + continuation hint（valid）", async () => {
+  const res = await execute("read", { path: "output/big.txt" }, ctx);
+  assert.ok(res.includes("[READ TRUNCATED]"), `缺少截断标记: ${res.slice(0, 120)}`);
+  assert.ok(res.includes("offset="), `缺少续读提示: ${res.slice(0, 200)}`);
+  // 不再判 invalid：截断结果是有效的可读内容
+  const v = validateToolResult("read", res);
+  assert.equal(v.valid, true, "截断结果应视为有效");
 });
 
-test("readFile 二进制文件 → tool_result_invalid", async () => {
-  const res = await execute("readFile", { path: "work/bin.dat" }, ctx);
-  assert.ok(res.includes("二进制"), `结果: ${res}`);
-  const v = validateToolResult("readFile", res);
-  assert.equal(v.valid, false, "应判为 invalid");
+test("read 超大文本 + offset 续读剩余部分", async () => {
+  const first = await execute("read", { path: "output/big.txt" }, ctx);
+  const m = first.match(/offset=(\d+)/);
+  assert.ok(m, `缺少 offset 提示: ${first.slice(0, 200)}`);
+  const offset = Number(m![1]);
+  const second = await execute("read", { path: "output/big.txt", offset }, ctx);
+  assert.ok(second.length > 0, "续读返回为空");
+});
+
+test("read 二进制文件（非图片）→ 按文本截断返回（valid，不再 invalid）", async () => {
+  const res = await execute("read", { path: "work/bin.dat" }, ctx);
+  const v = validateToolResult("read", res);
+  assert.equal(v.valid, true, "二进制应按文本返回而非 invalid");
+});
+
+test("read 图片文件（PNG magic）→ 省略提示（valid）", async () => {
+  const png = path.join(root, "work", "pic.png");
+  fs.writeFileSync(png, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 0x00)]));
+  const res = await execute("read", { path: "work/pic.png" }, ctx);
+  assert.ok(res.includes("图片文件省略"), `结果: ${res}`);
+  assert.ok(res.includes("PNG"), `结果: ${res}`);
+  const v = validateToolResult("read", res);
+  assert.equal(v.valid, true, "图片省略提示应视为有效");
+});
+
+test("read 文件为空 → 空文件提示（valid）", async () => {
+  fs.writeFileSync(path.join(root, "work", "empty.txt"), "");
+  const res = await execute("read", { path: "work/empty.txt" }, ctx);
+  assert.ok(res.includes("文件为空"), `结果: ${res}`);
 });
 
 // ---- 7. Schema 无泄露 ----

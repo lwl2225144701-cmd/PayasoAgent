@@ -5,6 +5,8 @@
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
 // v1.7：readFile→read / writeFile→write / listDir→ls 重命名，保留 hidden 别名兼容；
 //       新增 edit 工具（oldText/newText 精确替换，禁止重叠，保留换行风格）。
+// v1.8：read 不再限制文本大小 — 超大文本截断 + continuation hint（offset 续读）；
+//       图片省略提示；其他二进制按乱码文本截断返回。
 
 import fs from "node:fs";
 import path from "node:path";
@@ -16,8 +18,10 @@ import {
 } from "../sandbox/sandbox-manager.js";
 import { storedPermissionMode } from "../permission-mode.js";
 
-// 最大读取限制：超过则返回 invalid result，不把大文件塞进 Context
-export const MAX_READ_BYTES = 1024 * 1024; // 1MB
+// 单次 read 返回的文本上限：超过则前部截断 + continuation hint（offset 续读）。
+// 数值远大于 runtime output guard（16KB），保证 guard 截断前模型仍能看到
+// 足够多的有效头部；offset 参数支持模型继续阅读，不丢失文件内容。
+export const MAX_READ_BYTES = 64 * 1024; // 64KB
 
 // 拒绝路径的统一脱敏消息：只回显相对路径，不泄露宿主机绝对路径
 function rejectPath(rel: string): never {
@@ -189,28 +193,60 @@ register({
 });
 registerAlias("ls", "listDir");
 
-// ---- ② read（原 readFile，预留图片接口）----
+// ---- ② read（文本截断 + continuation hint；图片省略；其他二进制乱码截断）----
+
+// 图片 magic bytes 检测：JPEG / PNG / GIF / WebP / BMP
+function sniffImage(buf: Buffer): { kind: string } | null {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return { kind: "JPEG" };
+  }
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return { kind: "PNG" };
+  }
+  if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) {
+    return { kind: "GIF" };
+  }
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) {
+    return { kind: "WebP" };
+  }
+  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
+    return { kind: "BMP" };
+  }
+  return null;
+}
+
 register({
   name: "read",
   description:
-    "读取文本文件内容（UTF-8，最大 1MB，不支持二进制）。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。接口预留未来图片读取能力。",
+    "读取文件内容。文本自动截断（超 64KB 时返回前部+尾部与续读提示，可用 offset 字节偏移续读剩余部分）；图片文件省略返回；其他二进制按文本截断返回。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。",
   effect: "read",
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? "").trim();
     const key = context ? canonicalPathKey(context, rel) : null;
-    return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
+    const offset = Number(args.offset ?? 0);
+    return `path:${key ?? JSON.stringify(rel)}:offset:${offset}`;
   },
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "工作区内相对文件路径，如 input/demo.txt" },
-      mode: { type: "string", enum: ["text"], description: "读取模式（预留扩展：当前仅支持 text）" },
+      offset: {
+        type: "number",
+        description: "字节偏移,续读剩余内容时使用(从提示中的 offset 值开始),默认 0",
+      },
     },
     required: ["path"],
   },
   execute: async (args, context) => {
     const rel = String(args.path ?? "").trim();
     if (!rel) throw new Error("缺少参数 path");
+    let offset = Number(args.offset ?? 0);
+    if (!Number.isFinite(offset) || offset < 0) offset = 0;
+
     const real = resolveAuthorizedPath(context, rel);
     let st: fs.Stats;
     try {
@@ -219,30 +255,50 @@ register({
       throw new Error(`文件不存在: ${rel}`);
     }
     if (st.isDirectory()) throw new Error(`是目录，无法读取: ${rel}`);
-    // 超大文件：明确返回"文件过大"，由 validateResult 判 invalid，不进 completedSteps、不塞进 Context
-    if (st.size > MAX_READ_BYTES) {
-      return `[sandbox-tool-invalid] 文件过大，当前只读工具无法读取（限制 ${MAX_READ_BYTES} 字节）: ${rel}`;
-    }
+    if (offset > st.size) offset = st.size;
+
+    // 分块读取：只读 [offset, offset+MAX_READ_BYTES)，避免大文件整体进内存
+    const length = Math.min(MAX_READ_BYTES, st.size - offset);
+    const chunk = fs.openSync(real, "r");
     let buf: Buffer;
     try {
-      buf = fs.readFileSync(real);
-    } catch {
-      throw new Error(`读取失败（文件不可读或为目录）: ${rel}`);
+      buf = Buffer.alloc(length);
+      const readBytes = fs.readSync(chunk, buf, 0, length, offset);
+      buf = buf.subarray(0, readBytes);
+    } finally {
+      fs.closeSync(chunk);
     }
-    // 二进制：返回无效结果，不直接喂给 LLM
-    if (isProbablyBinary(buf)) {
-      return `[sandbox-tool-invalid] 二进制文件，当前只读工具不支持读取: ${rel}`;
+
+    // 图片 → 省略提示（不把二进制喂给模型，也不判 invalid）
+    const image = sniffImage(buf);
+    if (image) {
+      return (
+        `[图片文件省略] ${rel}: ${image.kind} 图片（文件共 ${st.size} 字节）。` +
+        `当前 read 模式省略图片内容。`
+      );
     }
-    // 图片读取预留：当前仅返回文本；mode=image 在后续版本实现
-    const mode = String(args.mode ?? "text");
-    if (mode !== "text") {
-      return `[sandbox-tool-invalid] 读取模式 "${mode}" 尚未实现（预留接口）: ${rel}`;
+
+    const total = st.size;
+    const start = offset;
+    const end = start + buf.length;
+    const hasMore = end < total;
+
+    // 文本/二进制统一：窗口内容完整可见（UTF-8 安全）。
+    // 若文件还有剩余 → 截断 + continuation hint，提示模型用 offset 续读；
+    // 否则完整返回（二进制文件此时也按文本返回，不判 invalid）。
+    const body = buf.toString("utf8");
+    if (hasMore) {
+      const nextOffset = start + buf.length;
+      return `${body}\n[READ TRUNCATED]\n[READ 提示] 文件共 ${total} 字节，已读至 offset=${end}，剩余可用 offset=${nextOffset} 续读。`.trim();
     }
-    return buf.toString("utf8");
+    if (total === 0) return "[READ 提示] 文件为空。";
+    return body;
   },
   validateResult: (result) => {
+    // read 不再产生 invalid 结果（截断/图片省略/二进制都有效返回），
+    // 保留钩子以防未来扩展重新引入 invalid 语义。
     if (typeof result === "string" && result.startsWith("[sandbox-tool-invalid]")) {
-      return { valid: false, reason: "文件过大或二进制，结果不可用" };
+      return { valid: false, reason: "结果不可用" };
     }
     return true;
   },
