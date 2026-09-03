@@ -8,10 +8,11 @@ import type {
   ToolErrorEvent,
   ToolResultEvent,
   StreamingEvent,
+  ApprovalRequestedEvent,
 } from '../../types';
 import { formatBytes, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
-import { listFiles, openFileInDefaultBrowser } from '../../api';
+import { listFiles, openFileInDefaultBrowser, resolveApproval } from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { ThinkBlock } from './ThinkBlock';
@@ -197,6 +198,38 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
     return buildStructure(run, events, producedFiles ?? {});
   }, [run, events, producedFiles]);
 
+  // ---- v2.0.1 JIT Approval：收集未裁决的批准请求，用户点击后回传 Host ----
+  const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
+  const resolvedIdsRef = useRef<Set<string>>(new Set());
+  const pendingApprovals = useMemo(() => {
+    if (!events.length) return [];
+    // 已裁决的（approval_resolved）不显示
+    const resolved = new Set(
+      events
+        .filter((e): e is Extract<HostEvent, { type: 'approval_resolved' }> => e.type === 'approval_resolved')
+        .map((e) => e.requestId),
+    );
+    return events.filter(
+      (e): e is ApprovalRequestedEvent => e.type === 'approval_requested' && !resolved.has(e.requestId),
+    );
+  }, [events]);
+
+  const handleApproval = async (ev: ApprovalRequestedEvent, approved: boolean) => {
+    if (!run) return;
+    setResolvingIds(prev => new Set(prev).add(ev.requestId));
+    try {
+      await resolveApproval(run.runId, ev.requestId, approved);
+      resolvedIdsRef.current.add(ev.requestId);
+    } catch {
+      // 网络失败：保留卡片让用户重试
+      setResolvingIds(prev => {
+        const next = new Set(prev);
+        next.delete(ev.requestId);
+        return next;
+      });
+    }
+  };
+
   if (!run || !structure) {
     return (
       <div ref={scrollRef} onScroll={onScroll} className={styles.timelineWrap}>
@@ -232,6 +265,41 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
 
         {hasAnyWork ? (
           <section className={styles.agentBlock}>
+            {pendingApprovals.length > 0 && (
+              <div className={styles.approvalList}>
+                {pendingApprovals.map(ev => (
+                  <div key={ev.requestId} className={styles.approvalCard}>
+                    <div className={styles.approvalTitle}>
+                      网络访问批准请求
+                    </div>
+                    <div className={styles.approvalBody}>
+                      <code>{ev.toolName}</code> 请求网络访问
+                      <span className={styles.approvalArgs}>
+                        {JSON.stringify(ev.args ?? {}).slice(0, 120)}
+                      </span>
+                    </div>
+                    <div className={styles.approvalActions}>
+                      <button
+                        type="button"
+                        className={styles.approvalAllow}
+                        disabled={resolvingIds.has(ev.requestId)}
+                        onClick={() => void handleApproval(ev, true)}
+                      >
+                        {resolvingIds.has(ev.requestId) ? '提交中…' : '允许'}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.approvalDeny}
+                        disabled={resolvingIds.has(ev.requestId)}
+                        onClick={() => void handleApproval(ev, false)}
+                      >
+                        拒绝
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <ExecutionPanel groups={toolSteps} thinking={globalThinking} running={lastStepRunning} />
 
             {/* Final result — exactly once, no card, no success badge. */}

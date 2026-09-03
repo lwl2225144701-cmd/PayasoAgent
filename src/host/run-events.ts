@@ -13,6 +13,24 @@ export type LifecycleEvent =
   | { type: "run_stopped"; runId: string; timestamp: string }
   | { type: "run_interrupted"; runId: string; timestamp: string; error: string };
 
+// v2.0.1 JIT Approval：网络访问批准请求（推给前端让用户裁决）
+export type ApprovalRequestedEvent = {
+  type: "approval_requested";
+  runId: string;
+  requestId: string; // 批准请求唯一 id（回传时用）
+  toolName: string; // 请求网络的工具（如 shell）
+  args: Record<string, unknown>; // 工具参数（最小必要信息，无凭证/path 内部细节）
+  timestamp: string;
+};
+
+export type ApprovalResolvedEvent = {
+  type: "approval_resolved";
+  runId: string;
+  requestId: string;
+  approved: boolean; // true = 用户批准；false = 拒绝
+  timestamp: string;
+};
+
 export type StreamingEvent = {
   type: "assistant_delta" | "reasoning_delta";
   runId: string;
@@ -21,8 +39,8 @@ export type StreamingEvent = {
   delta: string;
 };
 
-// 浏览器收到的统一事件：Runtime Trace 事件 或 Host 生命周期事件
-export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent;
+// 浏览器收到的统一事件：Runtime Trace 事件 或 Host 生命周期事件 或批准事件
+export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent | ApprovalRequestedEvent | ApprovalResolvedEvent;
 
 // 是否为 Host 生命周期事件
 export function isLifecycle(ev: HostEvent): ev is LifecycleEvent {

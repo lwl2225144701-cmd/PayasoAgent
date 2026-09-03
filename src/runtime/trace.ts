@@ -19,6 +19,9 @@ export type TraceEvent =
       timestamp: string;
       tool: string; // 工具名称
       args: unknown; // 工具参数
+      // v2.0 审计：本次调用时的全局网络模式（on/off/ask）。网络工具与非网络工具都记录，
+      // 拒绝场景由 tool_error 的 network:"denied" 标识。
+      network?: "on" | "off" | "ask";
     }
   | {
       // v1.6：模型生成的 tool_call 未通过 invocation 校验（malformed JSON / 非对象 / 未知工具）。
@@ -37,6 +40,8 @@ export type TraceEvent =
       tool: string;
       result: string; // 执行结果
       durationMs: number; // 执行耗时
+      // v2.0 审计：执行时的全局网络模式
+      network?: "on" | "off" | "ask";
     }
   | {
       type: "tool_result_invalid";
@@ -61,6 +66,8 @@ export type TraceEvent =
       error: string; // 错误信息
       attempt: number; // 第几次尝试（从 1 开始）
       exhausted: boolean; // 是否已达到重试上限
+      // v2.0 审计：执行时的全局网络模式；网络拒绝 = "denied"（工具未执行）
+      network?: "on" | "off" | "ask" | "denied";
     }
   | {
       type: "context_trim";
@@ -167,6 +174,7 @@ export type TraceEventInput =
       type: "tool_call";
       tool: string;
       args: unknown;
+      network?: "on" | "off" | "ask";
     }
   | {
       type: "tool_call_invalid";
@@ -179,6 +187,7 @@ export type TraceEventInput =
       tool: string;
       result: string;
       durationMs: number;
+      network?: "on" | "off" | "ask";
     }
   | {
       type: "tool_result_invalid";
@@ -197,6 +206,7 @@ export type TraceEventInput =
       error: string;
       attempt: number;
       exhausted: boolean;
+      network?: "on" | "off" | "ask" | "denied";
     }
   | {
       type: "context_trim";

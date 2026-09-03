@@ -38,6 +38,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: "model-binding", file: "tests/model-binding.test.ts" },
   { name: "cancellation", file: "tests/cancellation.test.ts" },
   { name: "shell-network", file: "tests/shell-network.test.ts" },
+  { name: "network-control", file: "tests/network-control.test.ts" },
+  { name: "approval", file: "tests/approval.test.ts" },
   { name: "tool-args", file: "tests/tool-args.test.ts" },
   { name: "finalize", file: "tests/finalize.test.ts" },
   { name: "docs-contract", file: "tests/docs-contract.test.ts" },

@@ -1,12 +1,14 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
 import { chat, type ChatMessage, type ChatStreamDelta, type ModelConfig } from "../llm/llm.js";
-import { execute, formatToolCallError, getTool, getSchemas, parseToolArguments, toolNotFoundError, validateToolResult, type ToolCallError, type ToolSandboxEvent } from "../tools/tools.js";
+import { execute, formatToolCallError, getTool, getSchemas, parseToolArguments, toolNotFoundError, validateToolResult, NetworkDeniedError, toolRequiresNetwork, needsNetworkApproval, type ToolCallError, type ToolSandboxEvent } from "../tools/tools.js";
 import { createTrace, addEvent, type TraceEvent, type TraceEventInput } from "./trace.js";
 import { createState, updateState } from "./state.js";
 import { DefaultContextHarness, type AgentContextHarness } from "../harness/context-harness.js";
 import { guardToolOutput } from "./output-guard.js";
 import { storedPermissionMode } from "../permission-mode.js";
+import { getNetworkMode } from "../network-mode.js";
+import { resolveApprovalPort, type ApprovalPort } from "./approval-port.js";
 import type { AgentExecutionContext } from "./contracts.js";
 import type { CheckpointSnapshot, CheckpointWriter } from "./checkpoint-port.js";
 import { protectRuntimeObserver, type RuntimeObserver } from "./observer-port.js";
@@ -53,6 +55,9 @@ export async function runAgent(
     // Harness owns the model-visible projection. Host/tests may inject a
     // different implementation without changing Runtime execution semantics.
     contextHarness?: AgentContextHarness;
+    // v2.0.1 JIT Approval：网络访问即时授权端口。ask 模式下网络工具执行前
+    // 调用 request()；未注入 → fail-closed（denyAll，一律拒绝）。
+    approvalPort?: ApprovalPort;
   }
 ): Promise<string> {
   const { executionContext } = opts;
@@ -68,7 +73,13 @@ export async function runAgent(
   if (resume?.permissionMode && storedPermissionMode(resume.permissionMode) !== permissionMode) {
     throw new Error("Execution context permission does not match checkpoint");
   }
-  const toolContext = { runId, workspaceRoot, permissionMode };
+  const toolContext = {
+    runId,
+    workspaceRoot,
+    permissionMode,
+    networkMode: getNetworkMode(),
+    approvalPort: resolveApprovalPort(opts.approvalPort),
+  };
   const observer = protectRuntimeObserver(opts.observer);
   const emit = (input: TraceEventInput): TraceEvent => {
     const event = addEvent(trace, input);
@@ -287,6 +298,51 @@ export async function runAgent(
           continue;
         }
 
+        // v2.0.1 JIT Approval：ask 模式 + 网络工具 → 执行前即时授权。
+        // 批准通过才继续（不创建 side-effect）；拒绝/超时走 NetworkDenied 语义。
+        if (
+          needsNetworkApproval(toolDef, getNetworkMode())
+        ) {
+          const approved = await resolveApprovalPort(opts.approvalPort).request({
+            runId,
+            toolName,
+            args,
+            timestamp: new Date().toISOString(),
+          });
+          if (!approved) {
+            const deniedMsg =
+              `Tool "${toolName}" requires network access but approval was not granted (network.mode=ask). ` +
+              `Ask the user to approve this network call or switch network mode to "on".`;
+            observer.log(`[Approval Denied] ${toolName}: ${deniedMsg}`);
+            // 审计：拒绝事件（network:"denied"），非执行失败、不创建副作用
+            emit({
+              type: "tool_error",
+              tool: toolName,
+              error: deniedMsg,
+              attempt: 1,
+              exhausted: true,
+              network: "denied",
+            });
+            updateState(state, {
+              currentStep: "tool_error",
+              currentError: deniedMsg,
+              lastToolError: { tool: toolName, input: JSON.stringify(args), error: deniedMsg, retries: 1 },
+            });
+            observeState("summary");
+            save();
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: deniedMsg,
+            });
+            continue; // 不执行本工具，继续处理剩余 tool_calls / 下一轮 LLM
+          }
+          // 批准通过 → 继续执行。审计口径：
+          // - tool_call 事件带 network:"ask"（请求发起时的模式）
+          // - 拒绝路径已由上方 tool_error(network:"denied") 记录
+          // - 批准耗时由 tool_result 的 durationMs 统一覆盖（执行含批准等待）
+        }
+
         // 规范化输入：calculator 用表达式原文；其余工具用规范化 JSON（消除 LLM 序列化空白差异，
         // 否则同参数换空格写法可绕过 isBlocked 的防重调/防死循环判定）
         const input =
@@ -369,8 +425,9 @@ export async function runAgent(
         // Scratchpad: 记录计划执行的下一步（未完成，不进 completedSteps）
         setNextStep(scratchpad, { tool: toolName, input });
 
-        // Trace: 工具调用前
-        emit({ type: "tool_call", tool: toolName, args });
+        // Trace: 工具调用前（v2.0 审计：记录本次调用时的全局网络模式）
+        // 网络工具的调用一律记录 network 字段；非网络工具恒为 "on"（不受开关影响）。
+        emit({ type: "tool_call", tool: toolName, args, network: getNetworkMode() });
 
         // 工具执行 + 重试（最多 MAX_RETRY 次）；重试耗尽进入失败恢复
         // v1.3.1 修复：non_idempotent（高风险副作用）禁止自动 Retry ——
@@ -492,6 +549,7 @@ export async function runAgent(
               tool: toolName,
               result,
               durationMs,
+              network: getNetworkMode(),
             });
 
             // Scratchpad: 工具成功 → 当前步骤移入 completedSteps，清空 nextStep，并解禁该参数
@@ -517,6 +575,39 @@ export async function runAgent(
             save();
             break; // 成功，跳出重试
           } catch (err) {
+            // v2.0 Network Capability Check 拒绝：网络工具在网络关闭时被 policy 拦截。
+            // 语义 = 拒绝执行（非执行失败）：
+            // - 不进入 failedSteps / 不创建 side-effect uncertain（工具根本没有执行）
+            // - 不重试（网络开关是全局配置，重试无意义）
+            // - 审计：tool_error 事件带 network:"denied"，明确记录拒绝
+            // - 将明确错误返回 LLM，由其决定换方法或请用户开启网络
+            if (err instanceof NetworkDeniedError) {
+              const deniedMsg = err.message;
+              observer.log(`[Network Denied] ${toolName}: ${deniedMsg}`);
+              // 审计（拒绝也进 Trace；网络字段清晰标识被拦）
+              emit({
+                type: "tool_error",
+                tool: toolName,
+                error: deniedMsg,
+                attempt,
+                exhausted: true,
+                network: "denied",
+              });
+              updateState(state, {
+                currentStep: "tool_error",
+                currentError: deniedMsg,
+                lastToolError: { tool: toolName, input, error: deniedMsg, retries: attempt },
+              });
+              observeState("summary");
+              save();
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: deniedMsg,
+              });
+              break; // 政策性拒绝，不重试
+            }
+
             const msg = (err as Error).message;
             observer.log(`[Tool 错误] ${toolName}: ${msg}`);
 
@@ -537,13 +628,14 @@ export async function runAgent(
             // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）
             recordFailure(scratchpad, { tool: toolName, input, error: msg });
 
-            // Trace: 工具错误事件
+            // Trace: 工具错误事件（v2.0 审计：记录网络模式；网络拒绝为 "denied"）
             emit({
               type: "tool_error",
               tool: toolName,
               error: msg,
               attempt,
               exhausted: attempt > effectiveRetries,
+              network: getNetworkMode(),
             });
 
             // State: 错误状态（当前错误 + 失败历史 lastToolError，不推进步骤）

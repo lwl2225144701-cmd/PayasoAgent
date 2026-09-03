@@ -817,6 +817,23 @@ export async function handleRequest(
       requireAuth(req);
       return manager.stop(runId) ? sendJson(res, 202, { runId, status: "stopped" }) : notFound(res);
     }
+    case "approval": {
+      if (method !== "POST") return notFound(res);
+      checkOrigin(req, port);
+      requireAuth(req);
+      try {
+        const body = await readBody(req);
+        const requestId =
+          typeof body.requestId === "string" ? body.requestId.trim() : "";
+        if (!requestId) return bad(res, "缺少 requestId");
+        const approved = body.approved === true;
+        const ok = manager.resolveApproval(runId, requestId, approved);
+        if (!ok) return bad(res, "approval request not found or already resolved");
+        return sendJson(res, 200, { runId, requestId, approved, resolved: true });
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
     case "files": {
       checkOrigin(req, port);
       requireAuth(req);

@@ -6,6 +6,9 @@
 
 import type { ToolSchema } from "../llm/llm.js";
 import type { PermissionMode } from "../permission-mode.js";
+import type { NetworkMode } from "../network-mode.js";
+import { getNetworkMode } from "../network-mode.js";
+import type { ApprovalPort } from "../runtime/approval-port.js";
 
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
@@ -14,6 +17,13 @@ export interface ToolContext {
   // Host 在 Run 创建时固化的文件系统能力；缺省仅用于兼容旧 CLI/测试调用。
   // Agent Tool Schema 不包含此字段，LLM 无法自行升级。
   permissionMode?: PermissionMode;
+  // v2.0 Network Control：当前全局网络模式（Runtime 注入，LLM 不可控制）。
+  // 工具读取它做自身裁定（如 shell 选择 sandbox 网络策略）；Network Capability
+  // Check 本身集中在 tools.execute()，不依赖各 Tool 自行判断。
+  networkMode?: NetworkMode;
+  // v2.0.1 JIT Approval：网络访问即时授权端口（Host 注入；缺省 = 拒绝）。
+  // ask 模式下由 Agent pipeline 在执行前调用 request()；工具本身不感知批准。
+  approvalPort?: ApprovalPort;
   // True cancellation (v1.6)：Run 的 AbortSignal；长任务工具（shell 及未来 browser/computer）
   // 必须监听并尽快终止，读类/原子文件工具可忽略。与 runId 一样由 Runtime 注入，LLM 不可见。
   signal?: AbortSignal;
@@ -37,6 +47,12 @@ export interface Tool {
   parameters: object; // JSON Schema（严禁包含 runId 等 Runtime 内部字段）
   // v1.3 契约收紧：声明副作用类别（必填）
   effect: ToolEffect;
+  // v2.0 Network Control：Tool 注册时显式声明是否具备网络能力。
+  // 缺省（undefined）视为无网络能力 —— 不要求网络、也不受网络开关影响。
+  // 由 Tool 作者声明，Runtime 绝不猜测（不做 curl/wget/git 字符串识别）。
+  capabilities?: {
+    network?: boolean;
+  };
   // v1.3 契约收紧：显式定义"什么叫同一个操作"（canonical operation key）。
   // non_idempotent 必填（注册期强制校验），禁止回退到 JSON.stringify(args) 猜测；
   // read / idempotent 可省略，回退到 JSON.stringify(args)。
@@ -89,6 +105,34 @@ export function getTool(name: string): Tool | undefined {
   return registry.get(name);
 }
 
+// v2.0 Network Control：Tool 是否具备网络能力（注册时声明）判断辅助
+export function toolRequiresNetwork(tool: Tool): boolean {
+  return tool.capabilities?.network === true;
+}
+
+// v2.0.1 JIT Approval：ask 模式下网络工具是否需要即时授权。
+// 供 Agent pipeline 在执行前判定；批准逻辑集中在 Runtime，工具不感知。
+export function needsNetworkApproval(tool: Tool, networkMode: string | undefined): boolean {
+  return networkMode === "ask" && toolRequiresNetwork(tool);
+}
+
+// 结构化网络拒绝错误文案（模型可见、稳定、可测试）
+export const NETWORK_DENIED_MESSAGE =
+  "Network is disabled (network.mode=off) and this tool requires network access. " +
+  "Retry without network or ask the user to enable network.";
+
+// v2.0 Network Capability Check：执行前统一校验。
+// - network on → 正常执行
+// - network off + tool.capabilities.network === true → 拒绝（抛 NetworkDeniedError）
+// - 不需要网络的工具不受影响
+// 集中在此一处，Agent Loop 与直接 execute() 调用方都经过这里，配置不散落到各 Tool。
+export class NetworkDeniedError extends Error {
+  constructor(public readonly toolName: string) {
+    super(`Tool "${toolName}" requires network access: ${NETWORK_DENIED_MESSAGE}`);
+    this.name = "NetworkDeniedError";
+  }
+}
+
 // 执行工具；工具不存在或执行抛错时向上抛出（由调用方捕获重试）
 // context 由 Runtime 注入（含 runId），工具的路径类参数必须以相对路径表达
 export async function execute(
@@ -98,6 +142,17 @@ export async function execute(
 ): Promise<string> {
   const tool = registry.get(name);
   if (!tool) throw new Error(`tool "${name}" not found`);
+
+  // v2.0 Network Capability Check（集中式）：
+  // - mode === "off" + 网络工具 → 拒绝（NetworkDeniedError，shell 绝不执行）
+  // - mode === "ask"          → 放行（批准已在 Agent pipeline 前置完成；
+  //                             工具本身不感知批准，也无需二次判断）
+  // - mode === "on"           → 正常执行
+  // - 非网络工具               → 不受任何模式影响
+  if (getNetworkMode() === "off" && toolRequiresNetwork(tool)) {
+    throw new NetworkDeniedError(name);
+  }
+
   return tool.execute(args, context);
 }
 

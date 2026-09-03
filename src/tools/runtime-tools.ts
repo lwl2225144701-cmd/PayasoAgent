@@ -12,6 +12,7 @@ import { register, registerAlias, type ToolContext } from "./tools.js";
 import { MacOSSandbox, probeSandboxAvailability, type MacOSSandboxResult } from "../sandbox/macos-sandbox.js";
 import { canonicalPathKey, assertWritableZone, resolveAuthorizedPath, isProbablyBinary, MAX_READ_BYTES } from "./filesystem.js";
 import { storedPermissionMode } from "../permission-mode.js";
+import { getNetworkMode } from "../network-mode.js";
 
 // ---- ① grep（原 searchText，目录递归搜索）----
 register({
@@ -268,8 +269,11 @@ register({
 register({
   name: "shell",
   description:
-    "执行一条 shell 命令（macOS OS Sandbox，cwd=Workspace，非交互，timeout 10s，输出限64KB）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；所有模式及子进程均禁止网络。",
+    "执行一条 shell 命令（macOS OS Sandbox，cwd=Workspace，非交互，timeout 10s，输出限64KB）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。",
   effect: "non_idempotent",
+  // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
+  // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
+  capabilities: { network: true },
   getOperationKey: (args) => `cmd:${String(args.command ?? "").trim()}`,
   parameters: {
     type: "object",
@@ -297,6 +301,9 @@ register({
     const workspaceRoot = context.workspaceRoot;
     const permissionMode = storedPermissionMode(context.permissionMode);
     const workDir = workspaceRoot;
+    // v2.0 Network Control：shell 的网络能力跟随全局 network.mode ——
+    // on → sandbox 允许 network*；off → execute() 已在执行前拒绝，绝不会走到这里。
+    const networkAccess = getNetworkMode() === "on";
     // HOME/TMPDIR must stay under the same authorized root. Use an ephemeral
     // per-call directory so npm/tsx caches never become project artifacts.
     const runtimeDir = permissionMode === "read-only"
@@ -307,7 +314,7 @@ register({
 
     let result: MacOSSandboxResult;
     try {
-      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode);
+      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess);
       result = await sandbox.run(cmd, {
         cwd: workDir,
         home,

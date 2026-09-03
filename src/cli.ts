@@ -7,12 +7,15 @@
 import { runAgent } from "./runtime/agent.js";
 import { loadCheckpoint } from "./persistence/file-checkpoint-store.js";
 import { createAgentExecutionContext, createDefaultRuntimeServices } from "./bootstrap/runtime-bootstrap.js";
+import { setNetworkMode, type NetworkMode } from "./network-mode.js";
+import { createCliApprovalPort } from "./cli-approval.js";
 
 const args = process.argv.slice(2);
 
-// 解析 --resume / --run-id（各占一个后续参数值），其余为任务参数
+// 解析 --resume / --run-id / --network-mode（各占一个后续参数值），其余为任务参数
 let resumeId: string | undefined;
 let runIdOpt: string | undefined;
+let networkModeOpt: string | undefined;
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--resume") {
@@ -23,9 +26,23 @@ for (let i = 0; i < args.length; i++) {
     runIdOpt = args[++i];
     continue;
   }
+  if (args[i] === "--network-mode") {
+    networkModeOpt = args[++i];
+    continue;
+  }
   positional.push(args[i]);
 }
 const task = positional[0] || "帮我计算 15 * 37";
+
+// v2.0 Network Control：CLI 支持 --network-mode on|off|ask（默认 on）
+if (networkModeOpt) {
+  setNetworkMode(networkModeOpt as NetworkMode);
+}
+const approvalPort = createCliApprovalPort();
+const runAgentOptions = {
+  ...createDefaultRuntimeServices(),
+  approvalPort,
+};
 
 if (resumeId) {
   const cp = loadCheckpoint(resumeId);
@@ -41,7 +58,7 @@ if (resumeId) {
         workspaceRoot: cp.workspaceRoot,
         permissionMode: cp.permissionMode,
       }),
-      ...createDefaultRuntimeServices(),
+      ...runAgentOptions,
     });
     console.log(`\n最终答案: ${answer}`);
   } catch (err) {
@@ -54,7 +71,7 @@ if (resumeId) {
     const runId = runIdOpt ?? crypto.randomUUID();
     const answer = await runAgent(task, undefined, {
       executionContext: createAgentExecutionContext({ runId }),
-      ...createDefaultRuntimeServices(),
+      ...runAgentOptions,
     });
     console.log(`\n最终答案: ${answer}`);
   } catch (err) {

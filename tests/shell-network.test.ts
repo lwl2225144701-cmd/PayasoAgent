@@ -17,9 +17,10 @@ import {
   probeSandboxAvailability,
   type MacOSSandboxResult,
 } from "../src/sandbox/macos-sandbox.js";
-import { execute, type ToolContext } from "../src/tools/tools.js";
+import { execute, NetworkDeniedError, type ToolContext } from "../src/tools/tools.js";
 // 副作用 import：shell 工具由 runtime-tools 注册（与 agent.ts 一致）
 import "../src/tools/runtime-tools.js";
+import { setNetworkMode } from "../src/network-mode.js";
 import { createWorkspace, canonicalizeWorkspaceRoot } from "../src/sandbox/sandbox-manager.js";
 
 let passed = 0;
@@ -151,13 +152,26 @@ try {
       `exit=${outsideRead.exitCode}, out=${outsideRead.stdout.slice(0, 80)}`);
     fs.rmSync(outside, { force: true });
 
-    // ---- Tool 层：denied 命令走 Tool failure（Agent 可恢复，Run 不 crash）----
+    // ---- Tool 层：v2.0 Network Control —— network.mode=off 时网络工具被 Policy 拒绝 ----
+    // （v1.6 的"shell 永禁网"已由 Network Control 取代：默认 on=允许联网，
+    //   off 时由 tools.execute() 统一拒绝 NetworkDeniedError，不再靠 sandbox deny。）
     const toolCtx: ToolContext = { runId, workspaceRoot };
+    setNetworkMode("on");
+    let deniedByPolicy = false;
+    try {
+      await execute("shell", { command: `curl -s --max-time 3 http://127.0.0.1:${port}/` }, toolCtx);
+      // sandbox 可用时，curl 应真正连上 localhost（默认联网）
+    } catch (err) {
+      // 环境不支持 sandbox 时 shell 本身不可用 → 不代表 policy 拒绝
+      deniedByPolicy = err instanceof NetworkDeniedError;
+    }
+    setNetworkMode("off");
     await assert.rejects(
       () => execute("shell", { command: `curl -s --max-time 3 http://127.0.0.1:${port}/` }, toolCtx),
-      /denied/i,
+      NetworkDeniedError,
     );
-    check("tool-level: network-denied command surfaces as a recoverable tool failure", true);
+    setNetworkMode("on");
+    check("tool-level: network=off → NetworkDeniedError（Policy 统一拒绝）", true);
   }
 } finally {
   globalThis.fetch = originalFetch;

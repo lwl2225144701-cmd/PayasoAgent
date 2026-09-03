@@ -315,14 +315,20 @@ export class MacOSSandbox {
     this.policy = policy;
   }
 
-  static forWorkspace(workspaceRoot: string, permissionMode: PermissionMode = "workspace-write"): MacOSSandbox {
+  static forWorkspace(
+    workspaceRoot: string,
+    permissionMode: PermissionMode = "workspace-write",
+    networkAccess = false,
+  ): MacOSSandbox {
     const policy = createSandboxPolicy(workspaceRoot, {
       readableRoots: MACOS_SYSTEM_READ_ROOTS,
       writableRoots: permissionMode === "workspace-write" ? [workspaceRoot] : [],
       permissionMode,
-      // shell 的网络策略永远显式 false（fail-closed）——不依赖"默认刚好是 deny"，
-      // 也不给调用方留任何隐式放开网络的入口（CLI / Host / Web 同一策略）。
-      networkAccess: false,
+      // v2.0 Network Control：网络策略由调用方（Runtime tool pipeline）根据全局
+      // network.mode 显式传入；缺省（仅直接底层调用时）保持 fail-closed deny。
+      // 与 v1.6 的唯一差异是：shell tool 现在能拿到 network.mode=on → networkAccess=true，
+      // 真正允许联网（默认允许联网是 Network Control 第一版的目标）。
+      networkAccess,
     });
     return new MacOSSandbox(policy);
   }

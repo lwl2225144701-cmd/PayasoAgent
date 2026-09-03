@@ -289,7 +289,27 @@ export type LifecycleEvent =
   | RunStoppedEvent
   | RunInterruptedEvent;
 
-export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent;
+// v2.0.1 JIT Approval：网络访问批准请求推送
+export interface ApprovalRequestedEvent {
+  type: "approval_requested";
+  runId: string;
+  requestId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface ApprovalResolvedEvent {
+  type: "approval_resolved";
+  runId: string;
+  requestId: string;
+  approved: boolean;
+  timestamp: string;
+}
+
+export type ApprovalEvent = ApprovalRequestedEvent | ApprovalResolvedEvent;
+
+export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent | ApprovalEvent;
 
 // 用户消息（前端派生，不在 SSE 中）
 export interface UserMessageEvent {

@@ -110,6 +110,7 @@ export function connectSSE(
     'side_effect_skip', 'side_effect_uncertain', 'tool_output_truncated',
     'shell_sandbox_started', 'shell_sandbox_denied',
     'scratchpad_update', 'error',
+    'approval_requested', 'approval_resolved',
   ];
 
   const handler = (e: MessageEvent) => {
@@ -149,6 +150,20 @@ export function connectSSE(
     }
     es.close();
   };
+}
+
+// ===== v2.0.1 JIT Approval =====
+
+// 用户裁决网络访问批准请求（允许/拒绝回传 Host）
+export function resolveApproval(
+  runId: string,
+  requestId: string,
+  approved: boolean,
+): Promise<{ runId: string; requestId: string; approved: boolean; resolved: true }> {
+  return jsonFetch(`/runs/${runId}/approval`, {
+    method: 'POST',
+    body: JSON.stringify({ requestId, approved }),
+  });
 }
 
 // ===== Models CRUD =====
