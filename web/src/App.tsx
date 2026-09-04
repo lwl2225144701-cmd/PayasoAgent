@@ -315,17 +315,21 @@ export default function App() {
     setCurrentRunId(null);
     setCurrentSessionId(null);
     setViewingFile(null);
-    setPreferredWorkspaceName(null);
+    // 顶层「新建任务」沿用徽标所示工作区（若有），保证创建结果与显示一致
+    setPreferredWorkspaceName(workspace?.name ?? null);
     setTimeout(() => {
       const input = document.querySelector('textarea');
       input?.focus();
     }, 50);
-  }, []);
+  }, [workspace]);
 
   const handleNewTaskInWorkspace = useCallback((workspaceName: string) => {
     // 切到 landing 并记住目标工作区；用户提交任务时 createRun 会带上 workspaceName，
     // 后端新建会话并继承该工作区根目录（会话创建后清空偏好）。
     setPreferredWorkspaceName(workspaceName);
+    // 同步 workspace 显示态：徽标立即显示「pi」而非「选择 Workspace」，
+    // 乐观插入的 Run/Session 也带上工作区（否则侧栏先落「未选择工作区」组）
+    setWorkspace({ name: workspaceName });
     setCurrentRunId(null);
     setCurrentSessionId(null);
     setViewingFile(null);
