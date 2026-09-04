@@ -22,7 +22,8 @@
     "test:host": "tsx --env-file=.env tests/host.test.ts",
     "dev:web": "cd web && npm run dev",
     "build:web": "cd web && npm run build",
-    "dev": "concurrently -n host,web -c blue,green \"npm run host\" \"npm run dev:web\""
+    "dev": "concurrently -n host,web -c blue,green \"npm run host\" \"npm run dev:web\"",
+    "postinstall": "npm install --prefix web --no-audit --no-fund"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

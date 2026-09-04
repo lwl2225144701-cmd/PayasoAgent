@@ -53,9 +53,10 @@
 要求 **Node.js ≥ 22.5**（使用 `node:sqlite`；`nvm use` 可读取仓库 `.nvmrc`）。
 
 ```bash
-# 1. 安装依赖（根目录 + web/）
+# 1. 安装依赖（根目录 npm install 会自动连带安装 web/ 依赖）
 npm install
-cd web && npm install && cd ..
+# 若 postinstall 未生效（如 npm ci --ignore-scripts），手动补装：
+# cd web && npm install && cd ..
 
 # 2. 配置模型（二选一）
 cp .env.example .env      # 填 OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
@@ -66,6 +67,8 @@ npm run dev               # 开发模式：Host(4500) + Vite(5173)
 npm start                 # 生产模式：构建前端后单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"   # 命令行单次任务
 ```
+
+> 开发模式报 `failed to serve import mermaid ...` 时：`cd web && rm -rf node_modules/.vite` 再重启 `npm run dev`（Vite 依赖预构建缓存过期）。
 
 也可以不写 `.env`，直接在 Web UI 左下角「设置」中添加模型提供方（密钥写入 Keychain）。
 
