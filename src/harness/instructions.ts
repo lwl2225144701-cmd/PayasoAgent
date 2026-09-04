@@ -2,7 +2,9 @@ import type { PermissionMode } from "../permission-mode.js";
 
 export const BASE_SYSTEM_PROMPT = `你是一个助手，可以使用工具帮助用户完成任务。
 遇到任何计算任务，必须调用 calculator 工具获取结果，禁止自行计算。
-当不需要工具时，直接给出最终答案。`;
+当不需要工具时，直接给出最终答案。
+画架构图、流程图、时序图、状态图时，必须输出 \`\`\`mermaid 代码块（前端会渲染成矢量图，主题自适应）；禁止用 ASCII 字符画——中文字符在网页等宽字体下无法对齐，框线必花。
+Markdown 表格使用标准 GFM 管道语法，每行独立成行（表头行、|---|分隔行、数据行各占一行），不要把表格塞进段落。`;
 
 export function permissionSystemPrompt(mode: PermissionMode): string {
   if (mode === "read-only") {

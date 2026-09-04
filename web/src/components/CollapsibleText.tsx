@@ -1,6 +1,7 @@
-import { type CSSProperties, useState } from 'react';
+import { isValidElement, type CSSProperties, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MermaidBlock } from './MermaidBlock';
 import styles from './CollapsibleText.module.css';
 
 interface CollapsibleTextProps {
@@ -38,6 +39,23 @@ export function CollapsibleText({ text, maxChars = 0, maxLinesSoft }: Collapsibl
             a: ({ children, ...props }) => (
               <a {...props} target="_blank" rel="noreferrer">{children}</a>
             ),
+            // ```mermaid 代码块 → 聊天内渲染成矢量图（剥掉外层 <pre>）
+            pre: ({ node, children, ...props }) => {
+              const first = Array.isArray(children) ? children[0] : children;
+              const className = isValidElement<{ className?: string }>(first)
+                ? first.props.className
+                : undefined;
+              if (className && /language-mermaid\b/.test(className)) {
+                return <>{children}</>;
+              }
+              return <pre {...props}>{children}</pre>;
+            },
+            code: ({ node, className, children, ...props }) => {
+              if (className && /language-mermaid\b/.test(className)) {
+                return <MermaidBlock chart={String(children).replace(/\n$/, '')} />;
+              }
+              return <code className={className} {...props}>{children}</code>;
+            },
           }}
         >
           {display}
