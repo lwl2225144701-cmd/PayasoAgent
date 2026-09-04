@@ -1,0 +1,115 @@
+.slot {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.rail {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 12px;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+}
+
+.mark {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: none; /* rail 独占整列指针输入，mark 仅作键盘目的地 */
+}
+
+/* 静止 tick：12px × 2px 圆角细线 */
+.mark::before {
+  content: '';
+  display: block;
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: width 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* hover/focus 预览：加长 + 提亮 */
+.markPreview::before,
+.mark:focus-visible::before {
+  width: 18px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* 当前阅读回合：最长最亮 */
+.markActive::before {
+  width: 20px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
+}
+
+.mark:focus-visible {
+  outline: none;
+}
+
+.mark:focus-visible::before {
+  box-shadow: 0 0 0 2px var(--color-brand-border, rgba(255, 255, 255, 0.7));
+}
+
+/* 预览 tooltip：离条 10px，居中 */
+.preview {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 10px);
+  transform: translateY(-50%);
+  width: 300px;
+  max-height: 100px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-surface, #1a1a1a);
+  border: 1px solid var(--color-border-default, rgba(255, 255, 255, 0.1));
+  box-shadow: var(--shadow-overlay, 0 8px 24px rgba(0, 0, 0, 0.4));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.previewPrompt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #eee);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.previewSummary {
+  font-size: 11.5px;
+  color: var(--text-secondary, #999);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .slot {
+    display: none;
+  }
+}

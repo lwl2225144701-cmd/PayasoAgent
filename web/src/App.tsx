@@ -5,6 +5,7 @@ import { Timeline } from './components/Timeline';
 import { InputBar } from './components/InputBar';
 import { FileModal } from './components/FileModal';
 import { SettingsModal } from './components/SettingsModal';
+import { TurnNavigator } from './components/TurnNavigator';
 import { useThemeMode } from './hooks/useThemeMode';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import {
@@ -301,6 +302,15 @@ export default function App() {
     setViewingFile(null);
   }, [runs]);
 
+  // TurnNavigator：点击/键盘选择某个历史回合 → 切换查看该 run 并滚动到对应 Timeline
+  const handleNavigateRun = useCallback((runId: string) => {
+    setCurrentRunId(runId);
+    // 等当前 Run 渲染后滚动（setState 异步，延迟一帧）
+    requestAnimationFrame(() => {
+      document.getElementById(`run-${runId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
   const handleNewTask = useCallback(() => {
     setCurrentRunId(null);
     setCurrentSessionId(null);
@@ -448,6 +458,11 @@ export default function App() {
                 </div>
               )}
             </div>
+            <TurnNavigator
+              runs={currentSessionRuns}
+              activeRunId={currentRunId}
+              onNavigate={handleNavigateRun}
+            />
           </div>
         ) : (
           <div className={styles.emptyState}>

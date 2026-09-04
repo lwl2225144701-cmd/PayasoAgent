@@ -256,7 +256,12 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
     || !!globalThinking;
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className={`${styles.timelineWrap} ${embedded ? styles.embedded : ''}`}>
+    <div
+      id={run ? `run-${run.runId}` : undefined}
+      ref={scrollRef}
+      onScroll={onScroll}
+      className={`${styles.timelineWrap} ${embedded ? styles.embedded : ''}`}
+    >
       <div className={styles.timeline}>
         <article className={styles.userBlock}>
           <p className={styles.userText}>{run.task}</p>
