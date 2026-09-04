@@ -110,7 +110,7 @@ export function InputBar({
   }
 
   return (
-    <div className={styles.inputBar}>
+    <div className={`${styles.inputBar} ${styles.conversationBar}`}>
       <div className={styles.conversationComposer}>
         <ComposerTextarea
           ref={textareaRef}

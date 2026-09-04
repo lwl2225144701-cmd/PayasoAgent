@@ -17,14 +17,14 @@
 }
 
 .embedded .timeline {
-  padding-bottom: 20px;
+  padding-bottom: 24px;
 }
 
 .timeline {
-  width: min(880px, calc(100% - 48px));
+  width: min(820px, calc(100% - 56px));
   max-width: none;
   margin: 0 auto;
-  padding: 34px 12px 72px;
+  padding: 38px 6px 72px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -32,7 +32,7 @@
 
 .time {
   display: block;
-  font-size: 11.5px;
+  font-size: 10.5px;
   color: var(--text-muted);
   margin-top: 4px;
   line-height: 1;
@@ -51,27 +51,27 @@
 
 .userBlock {
   width: fit-content;
-  max-width: min(62%, 940px);
-  margin: 0 0 30px;
+  max-width: min(68%, 620px);
+  margin: 0 0 36px;
   align-self: flex-end;
   text-align: right;
 }
 
 .userText {
   margin: 0;
-  padding: 9px 14px;
+  padding: 10px 15px;
   background:
-    linear-gradient(135deg, var(--color-glass-highlight), transparent 48%),
-    color-mix(in srgb, var(--color-message-user) 88%, transparent);
+    linear-gradient(135deg, var(--color-glass-highlight), transparent 50%),
+    color-mix(in srgb, var(--color-message-user) 94%, transparent);
   border: 1px solid var(--color-message-user-border);
-  border-radius: 10px;
-  box-shadow: inset 0 1px 0 var(--color-glass-highlight), var(--shadow-sm);
+  border-radius: 15px 15px 5px 15px;
+  box-shadow: inset 0 1px 0 var(--color-glass-highlight), 0 8px 24px color-mix(in srgb, #000 18%, transparent);
   backdrop-filter: blur(10px) saturate(115%);
   -webkit-backdrop-filter: blur(10px) saturate(115%);
   color: var(--text-primary);
   font-size: var(--conversation-font-size, 14px);
   font-weight: 400;
-  line-height: 1.5;
+  line-height: 1.55;
   letter-spacing: -0.01em;
   word-break: break-word;
 }
@@ -93,57 +93,41 @@
 /* ===== Execution summary: process is secondary to the final answer ===== */
 
 .executionPanel {
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
-  margin: 0 0 20px;
-  overflow: hidden;
-  background:
-    linear-gradient(120deg, var(--color-glass-highlight), transparent 44%),
-    color-mix(in srgb, var(--color-card-glass) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
-  border-radius: 12px;
-  box-shadow: inset 0 1px 0 var(--color-glass-highlight), 0 8px 24px rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(14px) saturate(120%);
-  -webkit-backdrop-filter: blur(14px) saturate(120%);
-  transition: width 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  margin: 0 0 22px;
+  overflow: visible;
 }
 
 .executionPanel:hover {
-  background:
-    linear-gradient(120deg, var(--color-glass-highlight), transparent 44%),
-    color-mix(in srgb, var(--color-card-glass-hover) 82%, transparent);
-  border-color: var(--color-brand-border);
-  box-shadow: inset 0 1px 0 var(--color-glass-highlight), 0 12px 30px color-mix(in srgb, var(--color-brand) 9%, transparent);
-  transform: translateY(-1px);
+  background: transparent;
 }
 
 .executionPanelOpen {
   width: 100%;
-  background:
-    linear-gradient(120deg, var(--color-brand-soft), transparent 40%),
-    color-mix(in srgb, var(--color-card-glass) 90%, transparent);
-  border-color: var(--color-brand-border);
-  transform: none;
+  background: transparent;
 }
 
 .executionSummary {
   display: flex;
   align-items: center;
-  gap: 9px;
-  width: auto;
-  min-width: 250px;
-  min-height: 40px;
-  padding: 7px 10px 7px 12px;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px 4px 2px;
   color: inherit;
   background: transparent;
   border: 0;
+  border-radius: 10px;
   text-align: left;
   font: inherit;
   cursor: pointer;
 }
 
 .executionSummary:hover {
-  background: color-mix(in srgb, var(--color-brand-soft) 52%, transparent);
+  background: color-mix(in srgb, var(--color-card-glass-hover) 46%, transparent);
 }
 
 .executionStateIcon {
@@ -153,28 +137,37 @@
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
-  color: var(--accent-blue);
+  color: var(--color-brand-hover);
+  border: 1px solid color-mix(in srgb, var(--color-brand-border) 68%, transparent);
   border-radius: 8px;
-  background: var(--color-brand-soft);
-  border: 1px solid var(--color-brand-border);
+  background: color-mix(in srgb, var(--color-brand-soft) 68%, transparent);
 }
 
-.executionStateRunning .runDot {
-  width: 6px;
-  height: 6px;
+.executionStateRunning {
+  animation: thinkPulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--color-brand) 32%, transparent);
+}
+
+.executionStateFailed {
+  color: var(--accent-red);
 }
 
 .executionTitle {
   color: var(--text-primary);
-  font-size: 12.5px;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 640;
 }
 
 .executionMeta {
   min-width: 0;
   flex: 0 1 auto;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.executionDuration {
+  color: var(--text-muted);
 }
 
 .executionFailed {
@@ -202,12 +195,13 @@
 }
 
 .executionBody {
-  padding: 12px 16px 16px 48px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
+  margin: 5px 0 20px 13px;
+  padding: 6px 0 4px 25px;
+  border-left: 1px solid color-mix(in srgb, var(--color-brand-border) 72%, transparent);
 }
 
 .processStep + .processStep {
-  margin-top: 3px;
+  margin-top: 9px;
 }
 
 .processNote {
@@ -288,7 +282,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 /* ===== ToolActionRow — selected tool + argument preview ===== */
@@ -304,24 +298,50 @@
   gap: 9px;
   width: 100%;
   max-width: 100%;
-  min-height: 30px;
-  padding: 6px 8px;
+  min-height: 31px;
+  padding: 5px 7px;
   text-align: left;
   background: transparent;
   color: inherit;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
   cursor: pointer;
   font: inherit;
 }
 .toolRowClickable:hover {
-  background: color-mix(in srgb, var(--color-card-glass-hover) 62%, transparent);
-  transform: translateX(2px);
+  background: color-mix(in srgb, var(--color-card-glass-hover) 48%, transparent);
+  transform: translateX(1px);
 }
 .toolRowClickable:focus-visible {
   outline: 2px solid var(--color-brand-border);
   outline-offset: 1px;
+}
+
+.toolIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-surface-subtle) 60%, transparent);
+}
+
+.trRunning .toolIcon {
+  color: var(--color-brand-hover);
+  background: var(--color-brand-soft);
+  animation: thinkPulse 1.6s ease-in-out infinite;
+}
+
+.trFailed .toolIcon {
+  color: var(--accent-red);
+}
+
+.trDone .toolIcon {
+  color: var(--text-muted);
 }
 
 .toolCallSummary {
@@ -329,25 +349,25 @@
   flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .toolName {
   flex-shrink: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 550;
 }
 .toolArgs {
   min-width: 0;
   max-width: min(720px, 58vw);
   overflow: hidden;
-  padding: 2px 7px;
+  padding: 2px 6px;
   color: var(--text-tertiary);
   background: color-mix(in srgb, var(--color-code) 76%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
-  border-radius: 6px;
+  border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -359,7 +379,7 @@
   align-items: center;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   white-space: nowrap;
 }
 .toolStatusRunning,
@@ -408,11 +428,11 @@
 /* Detail disclosure pane. */
 .toolDetail {
   max-width: 860px;
-  margin: 6px 0 12px 8px;
-  padding: 12px 14px;
+  margin: 6px 0 13px 29px;
+  padding: 13px 14px;
   background: color-mix(in srgb, var(--color-card-glass) 62%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -469,7 +489,7 @@
 /* ===== Assistant reasoning text block ===== */
 
 .assistantTextBlock {
-  padding: 4px 2px;
+  padding: 5px 1px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -483,8 +503,8 @@
 /* ===== Final answer flows naturally after the tool messages. ===== */
 
 .finalBlock {
-  margin-top: 2px;
-  padding: 2px 2px 0;
+  margin-top: 5px;
+  padding: 2px 1px 0;
 }
 
 .finalTime {
@@ -511,7 +531,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .attachList li {
   padding: 0;
@@ -521,10 +541,12 @@
   align-items: center;
   gap: 10px;
   width: min(520px, 100%);
-  padding: 11px 12px;
-  background: var(--color-surface-subtle);
-  border: 1px solid var(--border-color);
-  border-radius: 9px;
+  padding: 12px;
+  background:
+    linear-gradient(135deg, var(--color-glass-highlight), transparent 48%),
+    color-mix(in srgb, var(--color-surface-subtle) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+  border-radius: 13px;
   text-align: left;
   color: var(--text-primary);
   transition: border-color 0.12s ease, background 0.12s ease;
@@ -544,8 +566,10 @@
 
 .artifactsTitle {
   color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .attachIcon {
@@ -616,8 +640,8 @@
 }
 
 .attachBrowserAction:hover {
-  background: rgba(91, 141, 239, 0.18);
-  border-color: rgba(91, 141, 239, 0.4);
+  background: var(--color-brand-soft);
+  border-color: var(--color-brand-border);
 }
 
 .fileActionError {
@@ -630,7 +654,7 @@
 @media (max-width: 780px) {
   .timeline {
     width: 100%;
-    padding: 28px 18px 48px;
+    padding: 28px 20px 48px;
   }
   .agentBlock {
     width: 100%;

@@ -15,7 +15,7 @@
   min-width: 248px;
   padding: 7px;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
-  border-radius: 18px;
+  border-radius: 16px;
   background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
   box-shadow: var(--shadow-lg), 0 18px 46px color-mix(in srgb, #000 28%, transparent);
   backdrop-filter: blur(20px) saturate(130%);
@@ -37,13 +37,13 @@
   justify-content: space-between;
   gap: 20px;
   width: 100%;
-  min-height: 48px;
-  padding: 10px 14px;
+  min-height: 44px;
+  padding: 9px 12px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 500;
   text-align: left;
   cursor: pointer;

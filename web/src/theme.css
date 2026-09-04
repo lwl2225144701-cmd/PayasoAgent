@@ -1,48 +1,48 @@
-/* Payaso themes — the single source of truth for product colors. */
+/* Payaso themes — Graphite. The single source of truth for product colors. */
 :root {
   color-scheme: dark;
 
   /* Surfaces */
-  --color-canvas: #0f1115;
-  --color-surface: #15181e;
-  --color-surface-subtle: #1a1e26;
-  --color-surface-raised: #20252e;
-  --color-surface-hover: #252b35;
-  --color-surface-selected: #202839;
+  --color-canvas: #101012;
+  --color-surface: rgba(20, 20, 22, 0.72);
+  --color-surface-subtle: rgba(25, 25, 28, 0.64);
+  --color-surface-raised: rgba(32, 32, 36, 0.78);
+  --color-surface-hover: rgba(38, 38, 43, 0.74);
+  --color-surface-selected: rgba(29, 36, 48, 0.7);
 
   /* Text */
-  --color-text-primary: #f1f4f8;
-  --color-text-secondary: #bcc3cf;
-  --color-text-tertiary: #8993a3;
-  --color-text-muted: #606b7a;
+  --color-text-primary: #f2f2f3;
+  --color-text-secondary: #b3b3ba;
+  --color-text-tertiary: #808089;
+  --color-text-muted: #5c5c64;
   --color-text-on-brand: #ffffff;
 
   /* Borders */
-  --color-border-subtle: #202630;
-  --color-border-default: #2a313c;
-  --color-border-strong: #3a4452;
+  --color-border-subtle: #1e1e22;
+  --color-border-default: #2a2a30;
+  --color-border-strong: #3b3b43;
 
   /* Brand */
-  --color-brand: #5b8def;
-  --color-brand-hover: #70a0f8;
-  --color-brand-soft: rgba(91, 141, 239, 0.12);
-  --color-brand-border: rgba(91, 141, 239, 0.24);
-  --color-brand-ring: rgba(91, 141, 239, 0.2);
+  --color-brand: #4f7ff0;
+  --color-brand-hover: #6b94f4;
+  --color-brand-soft: rgba(79, 127, 240, 0.11);
+  --color-brand-border: rgba(79, 127, 240, 0.24);
+  --color-brand-ring: rgba(79, 127, 240, 0.16);
 
   /* Component surfaces */
-  --color-message-user: #1b222c;
-  --color-message-user-border: #29323e;
-  --color-composer: #1b1f26;
-  --color-composer-control: #252b34;
-  --color-code: #181c23;
+  --color-message-user: #1c1f25;
+  --color-message-user-border: #30343c;
+  --color-composer: rgba(26, 26, 30, 0.68);
+  --color-composer-control: rgba(35, 35, 40, 0.66);
+  --color-code: #18181b;
   --color-overlay: rgba(4, 6, 10, 0.44);
-  --color-header-glass: rgba(15, 17, 21, 0.78);
-  --color-canvas-glow: rgba(61, 82, 119, 0.13);
-  --color-modal-glass: rgba(18, 21, 28, 0.68);
-  --color-modal-nav: rgba(10, 13, 19, 0.28);
-  --color-card-glass: rgba(25, 29, 36, 0.45);
-  --color-card-glass-hover: rgba(38, 45, 56, 0.6);
-  --color-glass-highlight: rgba(255, 255, 255, 0.065);
+  --color-header-glass: rgba(16, 16, 18, 0.76);
+  --color-canvas-glow: rgba(79, 127, 240, 0.07);
+  --color-modal-glass: rgba(28, 28, 32, 0.88);
+  --color-modal-nav: rgba(16, 16, 19, 0.72);
+  --color-card-glass: rgba(31, 31, 35, 0.62);
+  --color-card-glass-hover: rgba(39, 39, 44, 0.76);
+  --color-glass-highlight: rgba(255, 255, 255, 0.045);
 
   /* Status */
   --color-danger: #f47b7b;
@@ -59,10 +59,10 @@
   --color-info-border: rgba(96, 165, 250, 0.24);
 
   /* Effects */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.28);
-  --shadow-lg: 0 22px 64px rgba(0, 0, 0, 0.44);
-  --shadow-overlay: 0 20px 52px rgba(0, 0, 0, 0.52);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 14px 36px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 28px 72px rgba(0, 0, 0, 0.44);
+  --shadow-overlay: 0 32px 90px rgba(0, 0, 0, 0.58);
 
   /* Compatibility aliases used by existing components. */
   --bg-primary: var(--color-canvas);
@@ -93,12 +93,12 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --color-canvas: #f5f7fb;
-  --color-surface: #ffffff;
-  --color-surface-subtle: #eef2f7;
-  --color-surface-raised: #ffffff;
-  --color-surface-hover: #e8edf5;
-  --color-surface-selected: #dfe7fb;
+  --color-canvas: #f2f5fc;
+  --color-surface: rgba(253, 253, 255, 0.74);
+  --color-surface-subtle: rgba(234, 240, 251, 0.64);
+  --color-surface-raised: rgba(255, 255, 255, 0.78);
+  --color-surface-hover: rgba(227, 234, 248, 0.72);
+  --color-surface-selected: rgba(219, 230, 255, 0.7);
 
   --color-text-primary: #1c2535;
   --color-text-secondary: #526174;
@@ -110,24 +110,24 @@
   --color-border-default: #d5dce7;
   --color-border-strong: #b6c1d1;
 
-  --color-brand: #496fe8;
-  --color-brand-hover: #385ed2;
-  --color-brand-soft: rgba(73, 111, 232, 0.1);
-  --color-brand-border: rgba(73, 111, 232, 0.25);
-  --color-brand-ring: rgba(73, 111, 232, 0.18);
+  --color-brand: #426bd8;
+  --color-brand-hover: #3159c5;
+  --color-brand-soft: rgba(66, 107, 216, 0.09);
+  --color-brand-border: rgba(66, 107, 216, 0.23);
+  --color-brand-ring: rgba(66, 107, 216, 0.15);
 
-  --color-message-user: #e8edff;
-  --color-message-user-border: #cbd7fa;
-  --color-composer: #ffffff;
-  --color-composer-control: #eef2f8;
+  --color-message-user: #e1e9ff;
+  --color-message-user-border: #b9c9fa;
+  --color-composer: rgba(255, 255, 255, 0.74);
+  --color-composer-control: rgba(238, 242, 248, 0.68);
   --color-code: #eef1f6;
-  --color-overlay: rgba(35, 43, 57, 0.26);
-  --color-header-glass: rgba(245, 247, 251, 0.84);
-  --color-canvas-glow: rgba(96, 124, 204, 0.12);
-  --color-modal-glass: rgba(250, 252, 255, 0.72);
-  --color-modal-nav: rgba(235, 240, 248, 0.42);
-  --color-card-glass: rgba(246, 248, 252, 0.54);
-  --color-card-glass-hover: rgba(237, 242, 250, 0.7);
+  --color-overlay: rgba(32, 42, 60, 0.2);
+  --color-header-glass: rgba(245, 247, 251, 0.74);
+  --color-canvas-glow: rgba(66, 105, 232, 0.14);
+  --color-modal-glass: rgba(250, 252, 255, 0.88);
+  --color-modal-nav: rgba(237, 241, 248, 0.78);
+  --color-card-glass: rgba(245, 248, 252, 0.72);
+  --color-card-glass-hover: rgba(233, 239, 248, 0.82);
   --color-glass-highlight: rgba(255, 255, 255, 0.8);
 
   --color-danger: #d84d5c;

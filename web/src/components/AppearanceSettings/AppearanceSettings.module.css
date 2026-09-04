@@ -85,7 +85,7 @@
 }
 
 .optionSelected .icon {
-  color: var(--color-brand);
+  color: var(--color-brand-hover);
   background: var(--color-brand-soft);
   border-color: var(--color-brand-border);
 }

@@ -13,10 +13,10 @@
   --space-8: 32px;
 
   /* Border radius */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
 
   /* Typography */
@@ -31,8 +31,8 @@
   --font-size-xxl: 26px;
 
   /* Layout */
-  --sidebar-width: 260px;
-  --topbar-height: 64px;
+  --sidebar-width: 252px;
+  --topbar-height: 58px;
 }
 
 /* ===== Reset ===== */
@@ -55,6 +55,22 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-brand-border);
+  outline-offset: 2px;
 }
 
 button {
@@ -80,7 +96,7 @@ code, pre {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;

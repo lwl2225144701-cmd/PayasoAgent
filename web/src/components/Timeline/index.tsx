@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   FileEntry,
   HostEvent,
   HostRun,
+  HostRunStatus,
   LlmCallEvent,
   ToolCallEvent,
   ToolErrorEvent,
@@ -10,14 +11,14 @@ import type {
   StreamingEvent,
   ApprovalRequestedEvent,
 } from '../../types';
-import { formatBytes, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
+import { formatBytes, formatDurationMs, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
 import { openFileInDefaultBrowser, resolveApproval } from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { ThinkBlock } from './ThinkBlock';
 import { ToolActionRow } from './ToolActionRow';
-import { CheckIcon, ChevronRightIcon, ScissorsIcon } from '../icons';
+import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import styles from './Timeline.module.css';
 
 interface TimelineProps {
@@ -38,6 +39,16 @@ export interface ToolCallData {
   error?: unknown;
 }
 
+function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  let current = element;
+  while (current) {
+    const overflowY = window.getComputedStyle(current).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') return current;
+    current = current.parentElement;
+  }
+  return element;
+}
+
 interface ReasoningBlock {
   step: number;
   timestamp: string;
@@ -50,17 +61,27 @@ function ExecutionPanel({
   thinking,
   running,
   startedAt,
+  status,
+  finishedAt,
 }: {
   groups: ToolStepGroup[];
   thinking: string;
   running: boolean;
   startedAt: string | undefined;
+  status: HostRunStatus;
+  finishedAt: string;
 }) {
   const [open, setOpen] = useState(running);
   const wasRunning = useRef(running);
   const tools = groups.flatMap(group => group.tools);
   const failedCount = tools.filter(tool => tool.status === 'failed').length;
   const elapsed = running && startedAt ? elapsedSeconds(startedAt) : 0;
+  const startMs = startedAt ? new Date(startedAt).getTime() : NaN;
+  const endMs = running ? Date.now() : new Date(finishedAt).getTime();
+  const durationMs = Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? Math.max(0, endMs - startMs)
+    : 0;
+  const durationLabel = durationMs >= 1000 ? formatDurationMs(durationMs) : '<1秒';
   // 阶段化文案：随等待时间演进，避免静态文字的呆滞感
   const thinkingPhase = elapsed < 6 ? '正在思考' : elapsed < 20 ? '正在分析' : '正在处理复杂任务';
   const bodyEmpty =
@@ -72,6 +93,17 @@ function ExecutionPanel({
     || tools.length > 0
     || groups.some(group => group.reasoning?.visible)
     || groups.some(group => group.compactionNote);
+  const statusTitle = running
+    ? '正在执行'
+    : status === 'failed'
+      ? '执行失败'
+      : status === 'stopping'
+        ? '正在停止'
+        : status === 'stopped'
+          ? '已停止'
+          : status === 'interrupted'
+            ? '已中断'
+            : '任务完成';
 
   useEffect(() => {
     if (running) setOpen(true);
@@ -89,20 +121,23 @@ function ExecutionPanel({
         onClick={() => setOpen(value => !value)}
         aria-expanded={open}
       >
-        <span className={`${styles.executionStateIcon} ${running ? styles.executionStateRunning : ''}`}>
-          {running ? <span className={styles.runDot} /> : <CheckIcon size={14} />}
+        <span className={`${styles.executionStateIcon} ${running ? styles.executionStateRunning : ''} ${failedCount > 0 || status === 'failed' ? styles.executionStateFailed : ''}`}>
+          {running
+            ? <ThinkIcon size={16} />
+            : failedCount > 0 || status === 'failed'
+              ? <AlertIcon size={16} />
+              : <CheckIcon size={16} />}
         </span>
-        <span className={styles.executionTitle}>{running ? '正在执行' : '执行完成'}</span>
+        <span className={styles.executionTitle}>{statusTitle}</span>
         <span className={styles.executionMeta}>
-          {tools.length > 0 && <span>{`${tools.length} 个操作`}</span>}
+          {tools.length > 0 && <span>{`已执行 ${tools.length} 个操作`}</span>}
           {running && tools.length === 0 && (
             <span className={styles.thinkingText}>
               {thinkingPhase}
               <span className={styles.thinkDots} aria-hidden="true"><i /><i /><i /></span>
-              {elapsed >= 8 ? ` · ${elapsed}s` : ''}
             </span>
           )}
-          {!running && tools.length === 0 && <span>正在分析</span>}
+          <span className={styles.executionDuration}> · 用时 {durationLabel}</span>
           {failedCount > 0 && <span className={styles.executionFailed}> · {failedCount} 个失败</span>}
         </span>
         <ChevronRightIcon size={15} className={`${styles.executionChevron} ${open ? styles.executionChevronOpen : ''}`} />
@@ -161,6 +196,10 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const [, setForceTick] = useState(0);
+  const getScrollContainer = useCallback(
+    () => findScrollContainer(scrollRef.current),
+    [],
+  );
 
   // Light tick while running so status line / duration updates.
   useEffect(() => {
@@ -169,18 +208,35 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
     return () => clearInterval(id);
   }, [run?.runId, run?.status]);
 
-  const scrollEndRef = useRef<HTMLSpanElement | null>(null);
-  useEffect(() => {
-    if (!autoScrollRef.current) return;
-    scrollEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [events.length, run?.status]);
-
-  const onScroll = () => {
-    const el = scrollRef.current;
+  const onScroll = useCallback(() => {
+    const el = getScrollContainer();
     if (!el) return;
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
     autoScrollRef.current = atBottom;
-  };
+  }, [getScrollContainer]);
+
+  // Embedded Timelines scroll in App's .sessionTimeline parent, not in the
+  // visible Timeline wrapper itself. Listening to the real scroller prevents
+  // streaming updates from overriding a user's intentional scroll-up.
+  useEffect(() => {
+    const el = getScrollContainer();
+    if (!el) return;
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [getScrollContainer, onScroll, run?.runId]);
+
+  // Scroll once per rendered batch, immediately. Repeated smooth scrolling
+  // queues animations and makes a fast stream visibly lag behind the text.
+  useEffect(() => {
+    if (!autoScrollRef.current) return;
+    const el = getScrollContainer();
+    if (!el) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (autoScrollRef.current) el.scrollTop = el.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [events, run?.status, getScrollContainer]);
 
   const openInBrowser = async (file: FileEntry) => {
     if (!run) return;
@@ -232,7 +288,7 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
 
   if (!run || !structure) {
     return (
-      <div ref={scrollRef} onScroll={onScroll} className={styles.timelineWrap}>
+      <div ref={scrollRef} className={styles.timelineWrap}>
         <div className={styles.empty}>选择或创建一个任务开始。</div>
       </div>
     );
@@ -262,7 +318,6 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
     <div
       id={run ? `run-${run.runId}` : undefined}
       ref={scrollRef}
-      onScroll={onScroll}
       className={`${styles.timelineWrap} ${embedded ? styles.embedded : ''}`}
     >
       <div className={styles.timeline}>
@@ -313,12 +368,14 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
               thinking={globalThinking}
               running={lastStepRunning}
               startedAt={runStarted?.timestamp ?? run.createdAt}
+              status={run.status}
+              finishedAt={finalTimestamp}
             />
 
             {/* Final result — exactly once, no card, no success badge. */}
             {finalAnswer && (
               <div className={styles.finalBlock}>
-                <CollapsibleText text={finalAnswer} />
+                <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
                 {finalError && run.status !== 'running' && (
                   <div className={styles.finalError}>
                     {finalError}
@@ -365,7 +422,6 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
           <section className={styles.agentBlock} aria-hidden="true" />
         )}
 
-        <span ref={scrollEndRef} />
       </div>
 
       {openFile && run && (

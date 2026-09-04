@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, PointerEvent } from 'react';
 import type { HostRun } from '../../types';
 import styles from './TurnNavigator.module.css';
@@ -6,7 +6,7 @@ import styles from './TurnNavigator.module.css';
 // 回合导航条（对标 ui-chat TurnNavigator）：
 // 右缘悬浮竖条，每条 mark = 一个已加载 Turn（本项目 = 一个 Run），
 // 点击/悬停可导航与预览，当前阅读回合的 mark 加长加亮。
-// 槽（0 高 sticky）必须挂在滚动容器内部，rail 才能钉在可视带内。
+// 槽保持 0 高并挂在会话滚动容器内部；rail 自身固定在应用可视区域右缘。
 
 export interface TurnNavigatorProps {
   runs: HostRun[];
@@ -53,6 +53,76 @@ function runAtPointer(runs: HostRun[], rail: HTMLElement, clientY: number): Host
 
 function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProps) {
   const [previewIndex, setPreviewIndex] = useState<number>(-1);
+  const [visibleRunId, setVisibleRunId] = useState<string | null>(activeRunId);
+  const slotRef = useRef<HTMLDivElement>(null);
+
+  // activeRunId is the selected run (for example after clicking a mark), while
+  // visibleRunId follows the run currently under the reader's scroll anchor.
+  // Keeping these separate prevents ordinary scrolling from changing which run
+  // the composer controls belong to.
+  useEffect(() => {
+    setVisibleRunId(activeRunId);
+  }, [activeRunId]);
+
+  useEffect(() => {
+    if (runs.length <= 1) return;
+    const slot = slotRef.current;
+    if (!slot) return;
+
+    // The embedded timelines are scrolled by App's sessionTimeline parent.
+    // Find that element without depending on a CSS-module class name.
+    let root: HTMLElement | null = slot.parentElement;
+    while (root && root !== document.body) {
+      const style = window.getComputedStyle(root);
+      if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+        break;
+      }
+      root = root.parentElement;
+    }
+    if (!root) return;
+
+    const elements = runs
+      .map(run => ({ run, element: document.getElementById(`run-${run.runId}`) }))
+      .filter((item): item is { run: HostRun; element: HTMLElement } => item.element instanceof HTMLElement);
+    if (elements.length === 0) return;
+
+    let frame = 0;
+    const updateVisibleRun = () => {
+      frame = 0;
+      const rootRect = root.getBoundingClientRect();
+      // The anchor is below the header of a message, which makes the active
+      // mark change only after the reader has meaningfully entered a run.
+      const anchorY = rootRect.top + Math.min(140, rootRect.height * 0.3);
+      let next = elements[0].run.runId;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (const item of elements) {
+        const rect = item.element.getBoundingClientRect();
+        const containsAnchor = rect.top <= anchorY && rect.bottom >= anchorY;
+        const distance = containsAnchor ? 0 : Math.abs(rect.top - anchorY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          next = item.run.runId;
+        }
+      }
+
+      setVisibleRunId(previous => previous === next ? previous : next);
+    };
+
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(updateVisibleRun);
+    };
+
+    updateVisibleRun();
+    root.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [runs]);
 
   const navigateAtPointer = useCallback((event: MouseEvent<HTMLElement>) => {
     const run = runAtPointer(runs, event.currentTarget, event.clientY);
@@ -69,7 +139,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
   const preview = previewIndex >= 0 ? runs[previewIndex] : undefined;
 
   return (
-    <div className={styles.slot}>
+    <div ref={slotRef} className={styles.slot}>
       <nav
         className={styles.rail}
         style={railSize(runs.length)}
@@ -80,7 +150,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
       >
         <div className={styles.marks}>
           {runs.map((run, index) => {
-            const isActive = run.runId === activeRunId;
+            const isActive = run.runId === (visibleRunId ?? activeRunId);
             const isPreview = index === previewIndex;
             return (
               <div

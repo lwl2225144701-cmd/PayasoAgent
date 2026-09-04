@@ -2,14 +2,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 40px 10px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-color);
+  min-height: var(--topbar-height);
+  padding: 11px clamp(22px, 3.4vw, 48px);
+  background: var(--color-header-glass);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--color-brand) 5%, transparent);
+  backdrop-filter: blur(20px) saturate(125%);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
   flex-shrink: 0;
 }
 
 .landingBar {
-  height: 64px;
+  height: var(--topbar-height);
   padding: 0 32px;
   background: var(--color-header-glass);
   border-bottom-color: transparent;
@@ -29,8 +33,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 620;
   letter-spacing: -0.01em;
 }
 
@@ -45,7 +49,10 @@
   align-items: center;
   gap: 6px;
   margin-right: 6px;
-  padding: 3px 0 3px 2px;
+  padding: 5px 9px;
+  border: 1px solid var(--color-brand-border);
+  border-radius: 999px;
+  background: var(--color-brand-soft);
   color: var(--text-secondary);
   font-size: 12.5px;
 }
@@ -54,7 +61,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-blue);
+  background: var(--color-brand);
   box-shadow: 0 0 0 3px var(--color-brand-ring);
   animation: shellPulse 1.6s ease-in-out infinite;
 }
@@ -67,7 +74,7 @@
 .statusText {
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--accent-blue);
+  color: var(--color-brand-hover);
 }
 
 .resumeButton {

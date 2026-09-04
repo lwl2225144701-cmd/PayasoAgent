@@ -94,7 +94,7 @@
 }
 
 .navItemActive {
-  background: linear-gradient(110deg, var(--color-brand-soft), color-mix(in srgb, var(--color-card-glass) 72%, transparent));
+  background: linear-gradient(110deg, var(--color-brand-soft), color-mix(in srgb, var(--color-card-glass) 78%, transparent));
   border-color: var(--color-brand-border);
   color: var(--text-primary);
   font-weight: 600;
@@ -106,7 +106,8 @@
   min-width: 0;
   padding: 28px 32px 32px;
   overflow-y: auto;
-  background: radial-gradient(circle at 90% 5%, var(--color-brand-soft), transparent 36%);
+  background:
+    radial-gradient(circle at 88% 4%, var(--color-brand-soft), transparent 38%);
 }
 
 .placeholder {

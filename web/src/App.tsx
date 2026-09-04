@@ -177,6 +177,7 @@ export default function App() {
   }, [refreshDefaultModel, refreshModels]);
 
   const currentRun = runs.find(r => r.runId === currentRunId) ?? null;
+  const currentSession = sessions.find(s => s.sessionId === currentSessionId) ?? null;
 
   // 下拉的当前选择 = 默认模型对 + provider 目录派生；目录未加载或对不上时显示占位
   const currentModelSelection: ModelSelection | null = (() => {
@@ -439,8 +440,17 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <div className={styles.main}>
-        <ShellBar run={currentRun} onResume={handleResumeRun} resuming={resumingRun} />
+      <div className={`${styles.main} ${currentSessionId ? styles.sessionMain : ''}`}>
+        <div
+          className={`${styles.deerBackdrop} ${currentSessionId ? styles.sessionDeerBackdrop : ''}`}
+          aria-hidden="true"
+        />
+        <ShellBar
+          run={currentRun}
+          title={currentSession?.title}
+          onResume={handleResumeRun}
+          resuming={resumingRun}
+        />
 
         {currentSessionId ? (
           <div className={styles.workspace}>

@@ -1,10 +1,9 @@
 /* 回合导航 rail（对标 ui-chat TurnNavigator）：
-   0 高 sticky 槽钉在滚动容器顶部——rail 悬浮在右缘可视带内垂直居中，
-   不占 scrollHeight；sticky 只在滚动容器内部才生效，槽必须挂在 scroller 里。 */
+   rail 固定在应用可视区域右缘，滚动会话内容时不随文档流移动；
+   0 高槽只负责把导航挂入会话层，不增加 scrollHeight。 */
 
 .slot {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 6;
   height: 0;
   pointer-events: none;
@@ -17,8 +16,8 @@
   --turn-preview-height: 100px;
   --turn-natural-height: 16px;
 
-  position: absolute;
-  top: calc(var(--turn-rail-band) / 2);
+  position: fixed;
+  top: calc(var(--topbar-height) + (var(--turn-rail-band) / 2));
   right: 12px;
   width: 28px;
   /* 不超过所在可视带：矮窗口时压缩 rail，而不是溢出或顶到输入区 */

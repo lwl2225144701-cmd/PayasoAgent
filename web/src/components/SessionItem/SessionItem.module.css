@@ -3,34 +3,40 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin-bottom: 2px;
-  border-radius: 9px;
+  gap: 7px;
+  min-height: 39px;
+  padding: 7px 9px;
+  margin-bottom: 3px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
   color: var(--text-secondary);
 }
 
 .item:hover {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  border-color: color-mix(in srgb, var(--color-border-default) 48%, transparent);
   color: var(--text-primary);
 }
 
 .item.active {
-  background: var(--accent-blue-bg);
-  color: var(--accent-blue);
+  background:
+    linear-gradient(100deg, var(--color-brand-soft), color-mix(in srgb, var(--color-surface-subtle) 78%, transparent));
+  border-color: color-mix(in srgb, var(--color-brand-border) 64%, transparent);
+  color: var(--text-primary);
 }
 
 .item.active::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 7px;
-  bottom: 7px;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
   width: 2px;
   border-radius: 2px;
   background: var(--color-brand);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-brand) 36%, transparent);
 }
 
 .body {
@@ -51,7 +57,7 @@
 }
 
 .title {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--text-primary);
   font-weight: 500;
@@ -63,7 +69,7 @@
 }
 
 .time {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
   margin-left: 6px;
 }

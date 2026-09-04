@@ -22,6 +22,8 @@ export function normalizeFences(md: string): string {
 
 interface CollapsibleTextProps {
   text: string;
+  /** Render cheap plain text while an answer is still arriving over SSE. */
+  streaming?: boolean;
   /** Max visible characters before collapse threshold kicks in. */
   maxChars?: number;
   /** Max visible lines (CSS clamp fallback). */
@@ -32,7 +34,7 @@ interface CollapsibleTextProps {
  * Renders long text with a "显示更多" (show more) footer when it exceeds `maxChars`.
  * Preserves whitespace and line breaks.
  */
-export function CollapsibleText({ text, maxChars = 0, maxLinesSoft }: CollapsibleTextProps) {
+export function CollapsibleText({ text, streaming = false, maxChars = 0, maxLinesSoft }: CollapsibleTextProps) {
   const [open, setOpen] = useState(false);
   const clamped = maxChars > 0 && !open && text.length > maxChars;
   const display = clamped ? `${text.slice(0, maxChars)}…` : text;
@@ -49,33 +51,40 @@ export function CollapsibleText({ text, maxChars = 0, maxLinesSoft }: Collapsibl
   return (
     <div className={styles.root}>
       <div className={styles.text} style={lineClampStyle}>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            a: ({ children, ...props }) => (
-              <a {...props} target="_blank" rel="noreferrer">{children}</a>
-            ),
-            // ```mermaid 代码块 → 聊天内渲染成矢量图（剥掉外层 <pre>）
-            pre: ({ node, children, ...props }) => {
-              const first = Array.isArray(children) ? children[0] : children;
-              const className = isValidElement<{ className?: string }>(first)
-                ? first.props.className
-                : undefined;
-              if (className && /language-mermaid\b/.test(className)) {
-                return <>{children}</>;
-              }
-              return <pre {...props}>{children}</pre>;
-            },
-            code: ({ node, className, children, ...props }) => {
-              if (className && /language-mermaid\b/.test(className)) {
-                return <MermaidBlock chart={String(children).replace(/\n$/, '')} />;
-              }
-              return <code className={className} {...props}>{children}</code>;
-            },
-          }}
-        >
-          {normalizeFences(display)}
-        </ReactMarkdown>
+        {streaming ? (
+          // Parsing incomplete Markdown/fences on every delta is expensive and
+          // can cause layout jumps (especially when Mermaid is still partial).
+          // The settled answer is upgraded to full Markdown below.
+          <div className={styles.streamingText}>{display}</div>
+        ) : (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              a: ({ children, ...props }) => (
+                <a {...props} target="_blank" rel="noreferrer">{children}</a>
+              ),
+              // ```mermaid 代码块 → 聊天内渲染成矢量图（剥掉外层 <pre>）
+              pre: ({ node, children, ...props }) => {
+                const first = Array.isArray(children) ? children[0] : children;
+                const className = isValidElement<{ className?: string }>(first)
+                  ? first.props.className
+                  : undefined;
+                if (className && /language-mermaid\b/.test(className)) {
+                  return <>{children}</>;
+                }
+                return <pre {...props}>{children}</pre>;
+              },
+              code: ({ node, className, children, ...props }) => {
+                if (className && /language-mermaid\b/.test(className)) {
+                  return <MermaidBlock chart={String(children).replace(/\n$/, '')} />;
+                }
+                return <code className={className} {...props}>{children}</code>;
+              },
+            }}
+          >
+            {normalizeFences(display)}
+          </ReactMarkdown>
+        )}
       </div>
       {maxChars > 0 && text.length > maxChars && (
         <button

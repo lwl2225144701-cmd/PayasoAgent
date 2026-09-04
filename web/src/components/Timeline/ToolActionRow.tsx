@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ToolCallData } from './index';
 import { formatDurationMs, previewArgs, TOOL_STATUS_LABELS } from '../../format';
-import { ChevronRightIcon } from '../icons';
+import { ChartIcon, ChevronRightIcon, FileIcon, ListIcon, SearchIcon, TerminalIcon, WrenchIcon } from '../icons';
 import styles from './Timeline.module.css';
 
 interface ToolActionRowProps {
@@ -37,6 +37,9 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
         className={styles.toolRowClickable}
         aria-label={`${toolName}：${argsPreview}，${statusLabel}`}
       >
+        <span className={styles.toolIcon} aria-hidden="true">
+          <ToolIcon tool={data.tool} />
+        </span>
         <span className={styles.toolCallSummary}>
           <span className={styles.toolName}>{toolName}</span>
           {argsPreview && <code className={styles.toolArgs}>{argsPreview}</code>}
@@ -83,6 +86,16 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
       )}
     </li>
   );
+}
+
+function ToolIcon({ tool }: { tool: string }) {
+  const normalized = tool.toLowerCase();
+  if (/(exec|run|shell|command|bash)/.test(normalized)) return <TerminalIcon size={15} />;
+  if (/(read|write|edit|file|move|delete)/.test(normalized)) return <FileIcon size={15} />;
+  if (/(list|dir|glob)/.test(normalized)) return <ListIcon size={15} />;
+  if (/(search|query|grep)/.test(normalized)) return <SearchIcon size={15} />;
+  if (/(calculate|calc|compute)/.test(normalized)) return <ChartIcon size={15} />;
+  return <WrenchIcon size={15} />;
 }
 
 function displayToolName(tool: string): string {

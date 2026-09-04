@@ -1,15 +1,24 @@
 .root {
   width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .text {
+  min-width: 0;
   word-break: break-word;
-  line-height: 1.78;
+  overflow-wrap: anywhere;
+  line-height: 1.82;
   font-size: var(--conversation-font-size, 14px);
   color: var(--text-primary);
+}
+
+.streamingText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .text > :first-child {
@@ -21,7 +30,7 @@
 }
 
 .text p {
-  margin: 0 0 14px;
+  margin: 0 0 16px;
 }
 
 .text h1,
@@ -30,7 +39,7 @@
 .text h4 {
   margin: 28px 0 12px;
   color: var(--text-primary);
-  font-weight: 650;
+  font-weight: 630;
   line-height: 1.35;
   letter-spacing: -0.015em;
 }
@@ -73,7 +82,7 @@
   padding: 2px 5px;
   background: var(--color-code);
   border: 1px solid var(--border-color);
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.92em;
@@ -82,11 +91,11 @@
 .text pre {
   max-width: 100%;
   margin: 14px 0 18px;
-  padding: 14px 16px;
+  padding: 15px 17px;
   overflow: auto;
   background: var(--color-code);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 9px;
+  border-radius: 12px;
   color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82em;
