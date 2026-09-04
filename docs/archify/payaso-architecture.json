@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PayasoAgent 架构总览",
+    "output": "payaso-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "main-loop", "label": "主路径", "focus": ["web", "host", "runtime", "tools", "sandbox"], "note": "从浏览器到工具执行的 Agent 主链路。" },
+      { "id": "state", "label": "状态与安全", "focus": ["host", "sqlite", "secrets"], "note": "会话/设置持久化与凭证隔离。" },
+      { "id": "network", "label": "网络控制", "focus": ["tools", "sandbox", "approval"], "note": "Network Control 与 JIT Approval 的边界。" }
+    ]
+  },
+  "components": [
+    { "id": "web", "type": "frontend", "label": "Web UI", "sublabel": "React + Vite", "pos": [40, 280], "size": [130, 64], "tag": "TurnNavigator / SettingsModal" },
+    { "id": "host", "type": "backend", "label": "Host", "sublabel": "node:http :4500", "pos": [250, 280], "size": [140, 64], "tag": "routes → RunManager" },
+    { "id": "runtime", "type": "backend", "label": "Runtime Kernel", "sublabel": "Agent Loop", "pos": [460, 280], "size": [140, 64], "tag": "state / scratchpad / trace" },
+    { "id": "tools", "type": "backend", "label": "Tools", "sublabel": "注册表 + effect 契约", "pos": [670, 280], "size": [140, 64], "tag": "read/write/edit/grep/ls/shell" },
+    { "id": "sandbox", "type": "security", "label": "Sandbox", "sublabel": "macOS seatbelt", "pos": [880, 280], "size": [140, 64], "tag": "networkAccess 跟随模式" },
+    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "runs / events / settings", "pos": [320, 110], "size": [140, 60] },
+    { "id": "llm", "type": "external", "label": "LLM Provider", "sublabel": "OpenAI 兼容 API", "pos": [520, 110], "size": [140, 60] },
+    { "id": "secrets", "type": "security", "label": "SecretStore", "sublabel": "Keychain / AES-GCM", "pos": [40, 450], "size": [140, 60], "tag": "密文不落 SQLite" },
+    { "id": "approval", "type": "security", "label": "ApprovalPort", "sublabel": "JIT Approval", "pos": [880, 450], "size": [140, 60], "tag": "ask → 60s 超时拒绝" },
+    { "id": "policy", "type": "security", "label": "Network Control", "sublabel": "on / off / ask", "pos": [670, 450], "size": [140, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Host 进程", "wraps": ["host", "runtime", "tools", "sqlite", "secrets", "approval", "policy"] },
+    { "kind": "security-group", "label": "Sandbox 隔离边界", "wraps": ["sandbox"] }
+  ],
+  "connections": [
+    { "id": "web-to-host", "from": "web", "to": "host", "label": "fetch / SSE", "variant": "emphasis" },
+    { "id": "host-to-runtime", "from": "host", "to": "runtime", "label": "runAgent" },
+    { "id": "runtime-to-tools", "from": "runtime", "to": "tools", "label": "tool_call" },
+    { "id": "tools-to-sandbox", "from": "tools", "to": "sandbox", "label": "resolve + 执行", "variant": "security", "fromSide": "right", "toSide": "left", "labelAt": [845, 358] },
+    { "id": "host-to-sqlite", "from": "host", "to": "sqlite", "label": "持久化", "fromSide": "top", "toSide": "bottom" },
+    { "id": "host-to-secrets", "from": "host", "to": "secrets", "label": "apiKey 隔离", "variant": "dashed", "fromSide": "left", "toSide": "top" },
+    { "id": "runtime-to-llm", "from": "runtime", "to": "llm", "label": "chat/completions", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "tools-to-policy", "from": "tools", "to": "policy", "label": "capabilities.network", "fromSide": "bottom", "toSide": "top", "labelAt": [740, 358] },
+    { "id": "policy-to-approval", "from": "policy", "to": "approval", "label": "ask 模式触发", "variant": "security", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "主链路", "items": ["Web UI → Host API → Runtime Kernel 循环", "Tool 执行经 Sandbox 双重校验", "LLM 仅经 OpenAI 兼容 API 调用"] },
+    { "dot": "emerald", "title": "状态持久化", "items": ["SQLite：会话/Run/事件/设置", "SecretStore：密钥与元数据分离", "默认模型 + 多 Provider 配置"] },
+    { "dot": "rose", "title": "安全边界", "items": ["Network Control：on/off/ask", "JIT Approval 即时授权（60s 超时拒绝）", "macOS seatbelt 默认拒绝网络"] }
+  ]
+}

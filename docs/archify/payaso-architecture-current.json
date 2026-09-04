@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PayasoAgent 架构总览",
+    "output": "payaso-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/lwl2225144701-cmd/PayasoAgent",
+      "revision": "eef2f4eb7919031f36956e6de161e0b1ba177668"
+    },
+    "viewBox": [1180, 600],
+    "views": [
+      { "id": "main-loop", "label": "主链路", "focus": ["web", "host", "runtime", "tools", "sandbox"], "note": "从浏览器到工具执行的 Agent 主链路：每轮 LLM 决策、工具执行、结果回传。" },
+      { "id": "context", "label": "上下文与恢复", "focus": ["runtime", "harness", "checkpoint", "host"], "note": "Context Harness 增量摘要与视图裁剪，Checkpoint 原子写支持显式 resume。" },
+      { "id": "security", "label": "安全边界", "focus": ["secrets", "sandbox", "approval", "tools"], "note": "密钥不进数据库、seatbelt fail-closed、Network Control 与 JIT 审批。" }
+    ]
+  },
+  "components": [
+    { "id": "web", "type": "frontend", "label": "Web UI", "sublabel": "React 18 + Vite", "pos": [40, 310], "size": [130, 64], "tag": "SSE 实时 Timeline", "sources": [{ "path": "web/src/App.tsx" }, { "path": "web/src/api.ts" }, { "path": "web/src/hooks/useEventStream.ts" }] },
+    { "id": "host", "type": "backend", "label": "Host", "sublabel": "node:http · :4500", "pos": [250, 310], "size": [150, 64], "tag": "routes → RunManager", "sources": [{ "path": "src/host/routes.ts" }, { "path": "src/host/run-manager.ts" }, { "path": "src/host/server.ts" }] },
+    { "id": "runtime", "type": "backend", "label": "Runtime Kernel", "sublabel": "runAgent 主循环", "pos": [480, 310], "size": [150, 64], "tag": "迭代预算 / 防死循环", "sources": [{ "path": "src/runtime/agent.ts" }, { "path": "src/runtime/output-guard.ts" }, { "path": "src/runtime/side-effect.ts" }] },
+    { "id": "harness", "type": "backend", "label": "Context Harness", "sublabel": "上下文管理", "pos": [480, 115], "size": [140, 60], "tag": "增量摘要 · 剪裁", "sources": [{ "path": "src/harness/context-manager.ts" }, { "path": "src/harness/conversation-summarizer.ts" }] },
+    { "id": "llm", "type": "external", "label": "LLM Provider", "sublabel": "OpenAI 兼容 API", "pos": [660, 115], "size": [150, 60], "tag": "chat/completions", "sources": [{ "path": "src/llm/llm.ts" }] },
+    { "id": "tools", "type": "backend", "label": "Tools", "sublabel": "10 个工具注册表", "pos": [710, 310], "size": [150, 64], "tag": "filesystem · shell · demo", "sources": [{ "path": "src/tools/tools.ts" }, { "path": "src/tools/filesystem.ts" }, { "path": "src/tools/runtime-tools.ts" }] },
+    { "id": "sandbox", "type": "security", "label": "Sandbox", "sublabel": "macOS seatbelt", "pos": [940, 310], "size": [150, 64], "tag": "fail-closed · 10s", "sources": [{ "path": "src/sandbox/macos-sandbox.ts" }, { "path": "src/sandbox/sandbox-policy.ts" }] },
+    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": ".data/payaso.db", "pos": [250, 115], "size": [140, 60], "tag": "sessions · runs · events", "sources": [{ "path": "src/host/persistence/sqlite-store.ts" }] },
+    { "id": "secrets", "type": "security", "label": "SecretStore", "sublabel": "macOS Keychain", "pos": [40, 115], "size": [140, 60], "tag": "apiKey 永不落库", "sources": [{ "path": "src/host/secrets/macos-keychain-secret-store.ts" }, { "path": "src/host/secrets/secret-store.ts" }] },
+    { "id": "checkpoint", "type": "database", "label": "Checkpoints", "sublabel": ".checkpoints/*.json", "pos": [250, 505], "size": [150, 60], "tag": "原子写 · resume", "sources": [{ "path": "src/persistence/file-checkpoint-store.ts" }] },
+    { "id": "cli", "type": "backend", "label": "CLI", "sublabel": "tsx src/cli.ts", "pos": [560, 505], "size": [130, 60], "tag": "--resume <runId>", "sources": [{ "path": "src/cli.ts" }, { "path": "src/cli-approval.ts" }] },
+    { "id": "approval", "type": "security", "label": "ApprovalPort", "sublabel": "JIT 审批", "pos": [940, 505], "size": [150, 60], "tag": "60s 超时拒绝", "sources": [{ "path": "src/runtime/approval-port.ts" }, { "path": "src/network-mode.ts" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Web 前端 (web/)", "wraps": ["web"] },
+    { "kind": "region", "label": "Host 进程 (src/host/)", "wraps": ["host", "sqlite", "secrets"] },
+    { "kind": "region", "label": "Runtime 内核 (src/runtime + harness + tools)", "wraps": ["runtime", "harness", "tools"] },
+    { "kind": "region", "label": "CLI (src/cli.ts)", "wraps": ["cli"] },
+    { "kind": "security-group", "label": "macOS seatbelt 隔离", "wraps": ["sandbox"] }
+  ],
+  "connections": [
+    { "id": "web-to-host", "from": "web", "to": "host", "label": "fetch / EventSource", "variant": "emphasis", "labelDy": 56 },
+    { "id": "host-to-runtime", "from": "host", "to": "runtime", "label": "runAgent(task, resume?)", "variant": "emphasis", "labelDy": 56 },
+    { "id": "runtime-to-harness", "from": "runtime", "to": "harness", "label": "prepareTurn / 视图裁剪", "fromSide": "top", "toSide": "bottom", "labelAt": [548, 200] },
+    { "id": "runtime-to-llm", "from": "runtime", "to": "llm", "label": "chat/completions（SSE 流式）", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelAt": [700, 232] },
+    { "id": "runtime-to-tools", "from": "runtime", "to": "tools" },
+    { "id": "tools-to-sandbox", "from": "tools", "to": "sandbox", "label": "shell · sandbox-exec", "variant": "security", "labelDy": 56 },
+    { "id": "tools-to-approval", "from": "tools", "to": "approval", "label": "ask 模式 · JIT 授权", "variant": "security", "fromSide": "bottom", "toSide": "top" },
+    { "id": "host-to-sqlite", "from": "host", "to": "sqlite", "label": "sessions · runs · events", "fromSide": "top", "toSide": "bottom", "labelAt": [331, 210] },
+    { "id": "host-to-secrets", "from": "host", "to": "secrets", "label": "apiKey 注入 modelConfig", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "runtime-to-checkpoint", "from": "runtime", "to": "checkpoint", "label": "CheckpointWriter 原子写", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "host-to-checkpoint", "from": "host", "to": "checkpoint", "label": "resume 读取", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelAt": [318, 388] },
+    { "id": "cli-to-runtime", "from": "cli", "to": "runtime", "label": "runAgent 直连（Console Observer）", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelAt": [625, 468] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "主链路", "items": ["Web UI → Host → Runtime 循环：LLM 决策 → 工具执行 → 结果回传", "Tool 执行经 Sandbox 双重校验，LLM 只走 OpenAI 兼容 API", "SSE 实时推送 18 类 Trace 事件到 Timeline"] },
+    { "dot": "emerald", "title": "上下文与恢复", "items": ["Context Harness 按完整旧轮增量摘要，canonical transcript 不删", "Scratchpad 有界投影注入 system，硬 token 上限不被裁剪", "Checkpoint 原子写 + 显式 resume；终态 status+event 同 SQLite 事务"] },
+    { "dot": "rose", "title": "安全边界", "items": ["SecretStore：Keychain 存密钥，apiKey 永不落 SQLite", "seatbelt 默认拒绝 + Network Control on/off/ask", "JIT 审批即时授权（60s 超时拒绝），权限运行级快照"] }
+  ]
+}
