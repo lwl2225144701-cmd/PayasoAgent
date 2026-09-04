@@ -4,6 +4,22 @@ import remarkGfm from 'remark-gfm';
 import { MermaidBlock } from './MermaidBlock';
 import styles from './CollapsibleText.module.css';
 
+// 模型输出的 fenced code 常见三种畸形：
+//   1. fence 标记拼在上一行行尾（如「### 标题 ```mermaid」）→ 解析不出代码块，源码漏成正文
+//   2. fence 行尾带杂文（```mermaid 后面还跟了字）
+//   3. 开合数量不成对 → 后续内容整体被吞进代码块
+// 渲染前统一修复，让 GFM 解析器拿到规整输入。
+export function normalizeFences(md: string): string {
+  // 1. 行中出现的 ``` 标记推到独立行
+  let out = md.replace(/([^\n`])(```+)/g, (_m, prev: string, fence: string) => `${prev}\n${fence}`);
+  // 2. fence 行只保留语言标签（```lang 后面的杂文丢弃）
+  out = out.replace(/^(```+)([\w+-]*)[ \t]+.*$/gm, (_m, fence: string, lang: string) => `${fence}${lang}`);
+  // 3. 奇数个 fence → 补一个闭合，解除"吞内容"级联
+  const openings = (out.match(/^[ \t]*```/gm) ?? []).length;
+  if (openings % 2 === 1) out += "\n```";
+  return out;
+}
+
 interface CollapsibleTextProps {
   text: string;
   /** Max visible characters before collapse threshold kicks in. */
@@ -58,7 +74,7 @@ export function CollapsibleText({ text, maxChars = 0, maxLinesSoft }: Collapsibl
             },
           }}
         >
-          {display}
+          {normalizeFences(display)}
         </ReactMarkdown>
       </div>
       {maxChars > 0 && text.length > maxChars && (
