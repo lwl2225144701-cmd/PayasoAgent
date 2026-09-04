@@ -33,7 +33,8 @@ export interface WorkspaceView {
 
 export interface FileEntry {
   name: string;
-  size: number;
+  /** 事件派生的文件（write/edit 产物）没有 stat 大小；工作区列出的文件才有。 */
+  size?: number;
 }
 
 // 模型配置 — 对齐后端 ModelProviderView / StoredModelProvider

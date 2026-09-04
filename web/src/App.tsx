@@ -454,7 +454,6 @@ export default function App() {
                     run={run}
                     modelFallback={null}
                     embedded
-                    showFiles={index === currentSessionRuns.length - 1}
                     onRunTerminal={handleRunTerminal}
                   />
                 ))

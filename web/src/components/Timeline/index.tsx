@@ -12,7 +12,7 @@ import type {
 } from '../../types';
 import { formatBytes, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
-import { listFiles, openFileInDefaultBrowser, resolveApproval } from '../../api';
+import { openFileInDefaultBrowser, resolveApproval } from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { ThinkBlock } from './ThinkBlock';
@@ -24,7 +24,6 @@ interface TimelineProps {
   run: HostRun | null;
   modelFallback: string | null;
   embedded?: boolean;
-  showFiles?: boolean;
   onRunTerminal?: () => void;
 }
 
@@ -126,7 +125,7 @@ function ExecutionPanel({
   );
 }
 
-export function Timeline({ run, embedded = false, showFiles = true, onRunTerminal }: TimelineProps) {
+export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps) {
   // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
@@ -139,7 +138,6 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
   const [openedInBrowser, setOpenedInBrowser] = useState<string | null>(null);
   const [fileActionError, setFileActionError] = useState<string | null>(null);
-  const [producedFiles, setProducedFiles] = useState<Record<string, FileEntry[]> | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const [, setForceTick] = useState(0);
@@ -151,29 +149,11 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
     return () => clearInterval(id);
   }, [run?.runId, run?.status]);
 
-  useEffect(() => {
-    if (!run || !showFiles) {
-      setProducedFiles(undefined);
-      return;
-    }
-    let cancelled = false;
-    setProducedFiles(undefined);
-    listFiles(run.runId)
-      .then(resp => {
-        if (cancelled || !resp?.files) return;
-        setProducedFiles({ __global: resp.files });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [run?.runId, showFiles]);
-
   const scrollEndRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
     if (!autoScrollRef.current) return;
     scrollEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [events.length, run?.status, producedFiles]);
+  }, [events.length, run?.status]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -195,8 +175,8 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
 
   const structure = useMemo<BuildOut | null>(() => {
     if (!run) return null;
-    return buildStructure(run, events, producedFiles ?? {});
-  }, [run, events, producedFiles]);
+    return buildStructure(run, events);
+  }, [run, events]);
 
   // ---- v2.0.1 JIT Approval：收集未裁决的批准请求，用户点击后回传 Host ----
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
@@ -326,7 +306,9 @@ export function Timeline({ run, embedded = false, showFiles = true, onRunTermina
                             <span className={styles.attachIcon}><FileIcon /></span>
                             <span className={styles.attachInfo}>
                               <span className={styles.attachName}>{f.name}</span>
-                              <span className={styles.attachSize}>{formatBytes(f.size)}</span>
+                              {typeof f.size === 'number' && (
+                                <span className={styles.attachSize}>{formatBytes(f.size)}</span>
+                              )}
                             </span>
                             <span className={styles.attachActions}>
                               <button type="button" className={styles.attachAction} onClick={() => setOpenFile(f)}>
@@ -381,6 +363,7 @@ interface BuildOut {
   finalAnswer: string | null;
   finalTimestamp: string;
   finalError: string | null;
+  /** 本次 run 实际写入/编辑过的文件（来自成功的 write/edit 工具调用），不是整个工作区。 */
   producedFiles: FileEntry[];
   toolSteps: ToolStepGroup[];
   lastStepRunning: boolean;
@@ -399,7 +382,6 @@ interface ToolStepGroup {
 function buildStructure(
   run: HostRun,
   events: HostEvent[],
-  producedMap: Record<string, FileEntry[]>,
 ): BuildOut {
   const runStarted = events.find(e => e.type === 'run_started');
   const completedEv = events.find(e => e.type === 'run_completed');
@@ -540,7 +522,20 @@ function buildStructure(
   }
 
   const lastStepRunning = run.status === 'running';
-  const producedFiles = producedMap['__global'] ?? [];
+
+  // 「生成的文件」= 本次 run 通过 write/edit 实际落盘的文件（成功调用，去重）。
+  // 不再列整个工作区：读过的文件（如熟悉项目时）不代表产物。
+  const producedFiles: FileEntry[] = [];
+  const seenWritten = new Set<string>();
+  for (const card of flatCards) {
+    if ((card.tool === 'write' || card.tool === 'edit') && card.status === 'completed') {
+      const p = (card.args as { path?: unknown } | null)?.path;
+      if (typeof p === 'string' && p.trim() && !seenWritten.has(p.trim())) {
+        seenWritten.add(p.trim());
+        producedFiles.push({ name: p.trim() });
+      }
+    }
+  }
 
   return {
     runStarted,

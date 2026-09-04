@@ -265,7 +265,10 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   try { return JSON.parse(data) as Record<string, unknown>; } catch { return {}; }
 }
 
-// 递归列文件（相对路径 + 大小），限制深度与数量避免超大工作区
+// 递归列文件（相对路径 + 大小），限制深度与数量避免超大工作区；
+// 跳过 VCS 内部目录（.git）与依赖目录（node_modules）——它们不是 run 的产物
+const LIST_FILES_SKIP_DIRS = new Set([".git", "node_modules"]);
+
 function listFiles(root: string, rel = "", depth = 0, out: { name: string; size: number }[] = [], limit = 500): typeof out {
   if (out.length >= limit || depth > 6) return out;
   let entries: fs.Dirent[];
@@ -274,7 +277,9 @@ function listFiles(root: string, rel = "", depth = 0, out: { name: string; size:
   for (const e of entries) {
     if (out.length >= limit) break;
     const child = rel ? `${rel}/${e.name}` : e.name;
-    if (e.isDirectory()) listFiles(root, child, depth + 1, out, limit);
+    if (e.isDirectory()) {
+      if (!LIST_FILES_SKIP_DIRS.has(e.name)) listFiles(root, child, depth + 1, out, limit);
+    }
     else if (e.isFile()) {
       try { out.push({ name: child, size: fs.statSync(path.join(root, child)).size }); }
       catch { /* 忽略不可读 */ }
