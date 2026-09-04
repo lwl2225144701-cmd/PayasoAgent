@@ -103,8 +103,12 @@ code, pre {
 /* ===== Remove host/dev-injected floating mascots / debug widgets =====
    The React UI renders only inside #root.  Any extra direct children of
    <body> (pixel NULL dolls, floating debuggers, etc.) are hidden by default
-   so the page stays clean and product-like. */
-body > :not(#root):not(script):not(style):not(link):not(meta):not(title):not(base):not(noscript):not(template) {
+   so the page stays clean and product-like.
+   豁免说明（勿删，否则聊天内 Mermaid 图必挂）：
+   - 裸 <svg>：mermaid 文本测量会 select("body").append("svg") 临时测字宽，
+     display:none 会让 getBBox() 归零导致 "svg element not in render tree"。
+   - [id^="dmmd-"]：mermaid 渲染期往 body 下挂的临时容器（d + 渲染 id）。 */
+body > :not(#root):not(script):not(style):not(link):not(meta):not(title):not(base):not(noscript):not(template):not(svg):not([id^="dmmd-"]) {
   display: none !important;
 }
 

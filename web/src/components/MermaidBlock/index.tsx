@@ -14,7 +14,13 @@ let mermaidPromise: Promise<MermaidApi> | null = null;
 
 function loadMermaid(): Promise<MermaidApi> {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then((m) => m.default);
+    mermaidPromise = import('mermaid')
+      .then((m) => m.default)
+      .catch((err) => {
+        // 失败不缓存：刷新/热更后允许重试
+        mermaidPromise = null;
+        throw err;
+      });
   }
   return mermaidPromise;
 }
@@ -25,13 +31,24 @@ function currentDark(): boolean {
 
 const RENDER_TIMEOUT_MS = 15_000;
 
+// ---- 全局渲染互斥队列 ----
+// mermaid v11 的 render 会往 document.body 塞临时元素，并发调用会互相拆台
+// （典型症状 "svg element not in render tree"）。所有渲染串行化，永不同时跑。
+let renderChain: Promise<void> = Promise.resolve();
+
+function enqueueRender(task: () => Promise<void>): Promise<void> {
+  const run = renderChain.then(task, task);
+  renderChain = run.catch(() => undefined);
+  return run;
+}
+
 export function MermaidBlock({ chart }: { chart: string }) {
   const rawId = useId();
   const [svg, setSvg] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [themeTick, setThemeTick] = useState(0);
 
-  // 主题切换（data-theme 属性变化）→ 用新主题重渲
+  // 主题切换（data-theme 属性变化）→ 入队重渲（串行，不打断在跑的渲染）
   useEffect(() => {
     const root = document.documentElement;
     const observer = new MutationObserver(() => setThemeTick((t) => t + 1));
@@ -41,11 +58,10 @@ export function MermaidBlock({ chart }: { chart: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    // 渲染 promise 可能永不落定（旧页面请求已换代的懒加载 chunk、渲染内部卡死），
-    // 超时兜底把一切悬挂转成可见错误。
     let settled = false;
     setSvg(null);
     setFailure(null);
+    // 队列等待 + 渲染加起来超过 15s 视为超时（promise 永不落定也兜得住）
     const timer = setTimeout(() => {
       if (cancelled || settled) return;
       settled = true;
@@ -53,8 +69,11 @@ export function MermaidBlock({ chart }: { chart: string }) {
       setFailure('渲染超时——页面版本可能已过期，请刷新页面后重试');
     }, RENDER_TIMEOUT_MS);
     const dark = currentDark();
-    loadMermaid()
-      .then(async (mermaid) => {
+    enqueueRender(async () => {
+      if (cancelled || settled) return;
+      try {
+        const mermaid = await loadMermaid();
+        if (cancelled || settled) return;
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
@@ -68,8 +87,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
         settled = true;
         clearTimeout(timer);
         setSvg(svg);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (cancelled || settled) return;
         settled = true;
         clearTimeout(timer);
@@ -81,7 +99,8 @@ export function MermaidBlock({ chart }: { chart: string }) {
         } else {
           setFailure(`mermaid 语法有误：${message.slice(0, 200)}`);
         }
-      });
+      }
+    });
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -89,7 +108,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
   }, [chart, rawId, themeTick]);
 
   if (failure) {
-    // 语法错误回退：源码照常可读，不吞内容
+    // 错误回退：源码照常可读，不吞内容
     return (
       <div className={styles.wrap}>
         <pre className={styles.error}>{chart}</pre>
