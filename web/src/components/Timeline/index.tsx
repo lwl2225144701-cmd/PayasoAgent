@@ -49,10 +49,12 @@ function ExecutionPanel({
   groups,
   thinking,
   running,
+  startedAt,
 }: {
   groups: ToolStepGroup[];
   thinking: string;
   running: boolean;
+  startedAt: string | undefined;
 }) {
   const [open, setOpen] = useState(running);
   const wasRunning = useRef(running);
@@ -85,7 +87,9 @@ function ExecutionPanel({
         </span>
         <span className={styles.executionTitle}>{running ? '正在执行' : '执行完成'}</span>
         <span className={styles.executionMeta}>
-          {tools.length > 0 ? `${tools.length} 个操作` : '正在分析'}
+          {tools.length > 0
+            ? `${tools.length} 个操作`
+            : `正在分析${running && startedAt ? ` · ${elapsedSeconds(startedAt)}s` : ''}`}
           {failedCount > 0 && <span className={styles.executionFailed}> · {failedCount} 个失败</span>}
         </span>
         <ChevronRightIcon size={15} className={`${styles.executionChevron} ${open ? styles.executionChevronOpen : ''}`} />
@@ -230,10 +234,13 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
   } = structure;
 
   // Has any work actually been performed? (tools + visible reasoning + final answer).
+  // running 时强制渲染：首条事件（reasoning/tool）到达前的空窗期也要立刻给出
+  // 「正在执行 · 正在分析」反馈，否则发消息后有几秒完全无响应的观感。
   const hasAnyWork =
     toolSteps.some(g => g.tools.length > 0 || (g.reasoning && (g.reasoning.visible || g.reasoning.thinkingDetail)))
     || !!finalAnswer
-    || !!globalThinking;
+    || !!globalThinking
+    || run.status === 'running';
 
   return (
     <div
@@ -285,7 +292,12 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
                 ))}
               </div>
             )}
-            <ExecutionPanel groups={toolSteps} thinking={globalThinking} running={lastStepRunning} />
+            <ExecutionPanel
+              groups={toolSteps}
+              thinking={globalThinking}
+              running={lastStepRunning}
+              startedAt={runStarted?.timestamp ?? run.createdAt}
+            />
 
             {/* Final result — exactly once, no card, no success badge. */}
             {finalAnswer && (
@@ -601,4 +613,10 @@ function computeDurationMs(startedAt: string, endedAt: string): number {
   const s = new Date(startedAt).getTime();
   const e = new Date(endedAt).getTime();
   return Math.max(0, e - s);
+}
+
+function elapsedSeconds(startedAt: string): number {
+  const start = new Date(startedAt).getTime();
+  if (!Number.isFinite(start)) return 0;
+  return Math.max(0, Math.floor((Date.now() - start) / 1000));
 }
