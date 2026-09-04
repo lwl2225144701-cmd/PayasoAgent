@@ -20,3 +20,5 @@ web/dist/
 
 # JetBrains IDE 产物目录
 .idea/
+docs/archify/*.png
+docs/archify/*.visual-check.*
