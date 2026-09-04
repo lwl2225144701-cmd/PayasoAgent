@@ -1,7 +1,8 @@
 import type { ChatMessage, ModelConfig, ToolSchema } from "../llm/llm.js";
 import type { PermissionMode } from "../permission-mode.js";
 import { ContextManager, type ContextUsage } from "./context-manager.js";
-import { BASE_SYSTEM_PROMPT, permissionSystemPrompt } from "./instructions.js";
+import { BASE_SYSTEM_PROMPT, networkSystemPrompt, permissionSystemPrompt } from "./instructions.js";
+import { getNetworkMode } from "../network-mode.js";
 import {
   estimateTextTokens,
   resolveModelContextConfig,
@@ -81,7 +82,7 @@ export class DefaultContextHarness implements AgentContextHarness {
       .filter((message) => message.role === "user" || message.role === "assistant")
       .map((message) => ({ role: message.role, content: message.content } as ChatMessage));
     return [
-      { role: "system", content: this.systemInstructions },
+      { role: "system", content: this.systemPromptText() },
       ...conversation,
       { role: "user", content: task },
     ];
@@ -89,6 +90,11 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   restoreState(state: ContextHarnessState | undefined): void {
     this.state = normalizeContextHarnessState(state);
+  }
+
+  // 网络段按当前全局模式动态拼装：运行中切全局开关后，下一轮 system 消息即准确
+  private systemPromptText(): string {
+    return `${this.systemInstructions}\n${networkSystemPrompt(getNetworkMode())}`;
   }
 
   snapshotState(): ContextHarnessState {
@@ -116,7 +122,7 @@ export class DefaultContextHarness implements AgentContextHarness {
       : "";
     const systemMessage: ChatMessage = {
       role: "system",
-      content: `${this.systemInstructions}\n\n${scratchpadText}${summaryText}`,
+      content: `${this.systemPromptText()}\n\n${scratchpadText}${summaryText}`,
     };
     if (systemIndex >= 0) {
       const maxSummarizable = Math.max(0, modelView.map((message) => message.role).lastIndexOf("user") - systemIndex - 1);
