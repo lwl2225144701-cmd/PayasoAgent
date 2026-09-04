@@ -60,6 +60,13 @@ function ExecutionPanel({
   const wasRunning = useRef(running);
   const tools = groups.flatMap(group => group.tools);
   const failedCount = tools.filter(tool => tool.status === 'failed').length;
+  const elapsed = running && startedAt ? elapsedSeconds(startedAt) : 0;
+  // 阶段化文案：随等待时间演进，避免静态文字的呆滞感
+  const thinkingPhase = elapsed < 6 ? '正在思考' : elapsed < 20 ? '正在分析' : '正在处理复杂任务';
+  const bodyEmpty =
+    !thinking
+    && tools.length === 0
+    && !groups.some(g => g.reasoning?.visible || g.compactionNote);
   const hasDetails =
     Boolean(thinking)
     || tools.length > 0
@@ -87,9 +94,15 @@ function ExecutionPanel({
         </span>
         <span className={styles.executionTitle}>{running ? '正在执行' : '执行完成'}</span>
         <span className={styles.executionMeta}>
-          {tools.length > 0
-            ? `${tools.length} 个操作`
-            : `正在分析${running && startedAt ? ` · ${elapsedSeconds(startedAt)}s` : ''}`}
+          {tools.length > 0 && <span>{`${tools.length} 个操作`}</span>}
+          {running && tools.length === 0 && (
+            <span className={styles.thinkingText}>
+              {thinkingPhase}
+              <span className={styles.thinkDots} aria-hidden="true"><i /><i /><i /></span>
+              {elapsed >= 8 ? ` · ${elapsed}s` : ''}
+            </span>
+          )}
+          {!running && tools.length === 0 && <span>正在分析</span>}
           {failedCount > 0 && <span className={styles.executionFailed}> · {failedCount} 个失败</span>}
         </span>
         <ChevronRightIcon size={15} className={`${styles.executionChevron} ${open ? styles.executionChevronOpen : ''}`} />
@@ -97,6 +110,9 @@ function ExecutionPanel({
 
       {open && (
         <div className={styles.executionBody}>
+          {bodyEmpty && running && (
+            <div className={styles.skeletonLines} aria-hidden="true"><i /><i /><i /></div>
+          )}
           {thinking && <ThinkBlock text={thinking} />}
           {groups.map((group, index) => (
             <div key={`process-${group.step}-${index}`} className={styles.processStep}>

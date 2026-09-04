@@ -721,3 +721,91 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ===== Thinking shimmer：运行中等待首条事件时的呼吸感 ===== */
+
+/* 文字微光扫过：AI 思考中的标准视觉语言（ChatGPT/Claude 同款） */
+.thinkingText {
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 35%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 65%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinkingShimmer 2.4s linear infinite;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+@keyframes thinkingShimmer {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+
+/* 三个错相位跳动点 */
+.thinkDots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 11px;
+}
+
+.thinkDots i {
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  animation: thinkBounce 1.2s ease-in-out infinite;
+}
+
+.thinkDots i:nth-child(2) { animation-delay: 0.15s; }
+.thinkDots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes thinkBounce {
+  0%, 55%, 100% { transform: translateY(0); opacity: 0.45; }
+  25% { transform: translateY(-3.5px); opacity: 1; }
+}
+
+/* 展开区等待内容时的骨架线（同 shimmer 缓慢扫过） */
+.skeletonLines {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 2px 0 4px;
+}
+
+.skeletonLines i {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--color-border-subtle) 0%,
+    var(--color-border-default) 50%,
+    var(--color-border-subtle) 100%
+  );
+  background-size: 200% 100%;
+  animation: thinkingShimmer 1.8s linear infinite;
+}
+
+.skeletonLines i:nth-child(2) { width: 86%; animation-delay: 0.12s; }
+.skeletonLines i:nth-child(3) { width: 55%; animation-delay: 0.24s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .thinkingText,
+  .thinkDots i,
+  .skeletonLines i,
+  .runDot {
+    animation: none;
+  }
+  .thinkingText {
+    color: var(--text-tertiary);
+  }
+}
