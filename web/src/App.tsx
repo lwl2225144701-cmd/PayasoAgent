@@ -441,6 +441,12 @@ export default function App() {
         {currentSessionId ? (
           <div className={styles.workspace}>
             <div className={styles.sessionTimeline}>
+              {/* 0 高 sticky 槽必须挂在滚动容器内部，rail 才能钉在可视带右缘 */}
+              <TurnNavigator
+                runs={currentSessionRuns}
+                activeRunId={currentRunId}
+                onNavigate={handleNavigateRun}
+              />
               {currentSessionRuns.length > 0 ? (
                 currentSessionRuns.map((run, index) => (
                   <Timeline
@@ -458,11 +464,6 @@ export default function App() {
                 </div>
               )}
             </div>
-            <TurnNavigator
-              runs={currentSessionRuns}
-              activeRunId={currentRunId}
-              onNavigate={handleNavigateRun}
-            />
           </div>
         ) : (
           <div className={styles.emptyState}>
