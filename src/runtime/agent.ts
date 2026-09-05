@@ -1,7 +1,21 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
 import { chat, type ChatMessage, type ChatStreamDelta, type ModelConfig } from "../llm/llm.js";
-import { execute, formatToolCallError, getTool, getSchemas, parseToolArguments, toolNotFoundError, validateToolResult, NetworkDeniedError, toolRequiresNetwork, needsNetworkApproval, type ToolCallError, type ToolSandboxEvent } from "../tools/tools.js";
+import {
+  execute,
+  formatToolCallError,
+  getTool,
+  getSchemas,
+  parseToolArguments,
+  toolNotFoundError,
+  validateToolResult,
+  NetworkDeniedError,
+  RequiredRuntimeToolUnavailableError,
+  toolRequiresNetwork,
+  needsNetworkApproval,
+  type ToolCallError,
+  type ToolSandboxEvent,
+} from "../tools/tools.js";
 import { createTrace, addEvent, type TraceEvent, type TraceEventInput } from "./trace.js";
 import { createState, updateState } from "./state.js";
 import { DefaultContextHarness, type AgentContextHarness } from "../harness/context-harness.js";
@@ -10,6 +24,10 @@ import { storedPermissionMode } from "../permission-mode.js";
 import { getNetworkMode } from "../network-mode.js";
 import { resolveApprovalPort, type ApprovalPort } from "./approval-port.js";
 import type { AgentExecutionContext } from "./contracts.js";
+import {
+  getToolchainPreparationPlan,
+  type ToolchainPreparationPort,
+} from "../sandbox/toolchain-preparation.js";
 import type { CheckpointSnapshot, CheckpointWriter } from "./checkpoint-port.js";
 import { protectRuntimeObserver, type RuntimeObserver } from "./observer-port.js";
 import {
@@ -58,6 +76,9 @@ export async function runAgent(
     // v2.0.1 JIT Approval：网络访问即时授权端口。ask 模式下网络工具执行前
     // 调用 request()；未注入 → fail-closed（denyAll，一律拒绝）。
     approvalPort?: ApprovalPort;
+    // macOS toolchain preparation：缺失的 allowlisted tool 只能在用户明确
+    // 批准后由 Host 执行固定安装计划；不注入则保持普通可恢复失败。
+    toolchainPreparationPort?: ToolchainPreparationPort;
   }
 ): Promise<string> {
   const { executionContext } = opts;
@@ -67,6 +88,7 @@ export async function runAgent(
   }
   const workspaceRoot = executionContext.workspaceRoot;
   const permissionMode = executionContext.permissionMode;
+  const toolchain = executionContext.toolchain;
   if (resume?.workspaceRoot && resume.workspaceRoot !== workspaceRoot) {
     throw new Error("Execution context Workspace does not match checkpoint");
   }
@@ -79,6 +101,7 @@ export async function runAgent(
     permissionMode,
     networkMode: getNetworkMode(),
     approvalPort: resolveApprovalPort(opts.approvalPort),
+    toolchain,
   };
   const observer = protectRuntimeObserver(opts.observer);
   const emit = (input: TraceEventInput): TraceEvent => {
@@ -104,6 +127,7 @@ export async function runAgent(
   const contextHarness = opts.contextHarness ?? new DefaultContextHarness({
     permissionMode,
     modelConfig: opts.modelConfig,
+    toolchain,
   });
   contextHarness.restoreState(resume?.harnessState);
   const modelContext = contextHarness.modelContext;
@@ -608,8 +632,42 @@ export async function runAgent(
               break; // 政策性拒绝，不重试
             }
 
-            const msg = (err as Error).message;
+            let msg = (err as Error).message;
             observer.log(`[Tool 错误] ${toolName}: ${msg}`);
+
+            // Missing executable is a preparation opportunity, not a reason to
+            // widen the Shell sandbox or to retry the same non-idempotent call.
+            // The Host may pause here for explicit approval and run a fixed,
+            // allowlisted macOS installer outside the Shell sandbox.
+            if (err instanceof RequiredRuntimeToolUnavailableError) {
+              const plan = getToolchainPreparationPlan(err.toolName);
+              if (plan !== undefined && opts.toolchainPreparationPort) {
+                try {
+                  const preparation = await opts.toolchainPreparationPort.request({
+                    runId,
+                    toolName: plan.toolName,
+                    packageName: plan.packageName,
+                    source: plan.source,
+                    timestamp: new Date().toISOString(),
+                  }, opts.signal);
+                  if (preparation.prepared) {
+                    // v1.6 工具链闭环：Host 随准备结果带回刷新后的能力快照 →
+                    // 刷新 Harness 模型视图，下一轮即感知新工具。原命令不自动重试
+                    // （Side-Effect Safety：uncertain 保守拦截），由用户显式重试。
+                    if (preparation.capabilities) {
+                      contextHarness.refreshToolchain?.(preparation.capabilities);
+                    }
+                    msg += " Dependency preparation completed and the Runtime toolchain view has been refreshed. The failed Shell operation was not retried automatically (side-effect safety); inform the user that they can retry the command.";
+                  } else if (preparation.message) {
+                    msg += ` ${preparation.message}`;
+                  }
+                } catch {
+                  // A broken preparation/approval adapter must remain a normal
+                  // tool failure and must never crash the Runtime loop.
+                  msg += " Dependency preparation could not be started.";
+                }
+              }
+            }
 
             // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
             // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。

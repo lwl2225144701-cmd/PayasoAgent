@@ -9,6 +9,7 @@ import type { PermissionMode } from "../permission-mode.js";
 import type { NetworkMode } from "../network-mode.js";
 import { getNetworkMode } from "../network-mode.js";
 import type { ApprovalPort } from "../runtime/approval-port.js";
+import type { RuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
 
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
@@ -29,6 +30,9 @@ export interface ToolContext {
   signal?: AbortSignal;
   // Runtime-only observation hook; never included in an LLM Tool Schema.
   onSandboxEvent?: (event: ToolSandboxEvent) => void;
+  // Startup-discovered, path-free capability snapshot. Runtime-only: the LLM
+  // cannot supply or upgrade it, and concrete tools cannot widen the policy.
+  toolchain?: RuntimeToolchainCapabilities;
 }
 
 export type ToolSandboxEvent =
@@ -120,6 +124,16 @@ export function needsNetworkApproval(tool: Tool, networkMode: string | undefined
 export const NETWORK_DENIED_MESSAGE =
   "Network is disabled (network.mode=off) and this tool requires network access. " +
   "Retry without network or ask the user to enable network.";
+
+// Shell command lookup failed before a known executable could run. This is a
+// structured Runtime error so Host can offer the separate, user-approved
+// dependency preparation flow without parsing arbitrary tool output.
+export class RequiredRuntimeToolUnavailableError extends Error {
+  constructor(public readonly toolName: string) {
+    super(`Required shell tool "${toolName}" is not available in the current controlled runtime.`);
+    this.name = "RequiredRuntimeToolUnavailableError";
+  }
+}
 
 // v2.0 Network Capability Check：执行前统一校验。
 // - network on → 正常执行

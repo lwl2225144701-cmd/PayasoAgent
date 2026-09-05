@@ -1,26 +1,26 @@
-/* Payaso themes — Graphite. The single source of truth for product colors. */
+/* Payaso — ink, blue and clear glass. Shared semantic palette for every page. */
 :root {
   color-scheme: dark;
 
   /* Surfaces */
-  --color-canvas: #101012;
-  --color-surface: rgba(20, 20, 22, 0.72);
-  --color-surface-subtle: rgba(25, 25, 28, 0.64);
-  --color-surface-raised: rgba(32, 32, 36, 0.78);
-  --color-surface-hover: rgba(38, 38, 43, 0.74);
-  --color-surface-selected: rgba(29, 36, 48, 0.7);
+  --color-canvas: #10141b;
+  --color-surface: rgba(22, 28, 38, 0.74);
+  --color-surface-subtle: rgba(34, 43, 57, 0.42);
+  --color-surface-raised: rgba(28, 35, 47, 0.97);
+  --color-surface-hover: rgba(57, 71, 92, 0.46);
+  --color-surface-selected: rgba(79, 127, 240, 0.12);
 
   /* Text */
-  --color-text-primary: #f2f2f3;
-  --color-text-secondary: #b3b3ba;
-  --color-text-tertiary: #808089;
-  --color-text-muted: #5c5c64;
+  --color-text-primary: #e9edf5;
+  --color-text-secondary: #b0bacb;
+  --color-text-tertiary: #8e9bb0;
+  --color-text-muted: #78869b;
   --color-text-on-brand: #ffffff;
 
   /* Borders */
-  --color-border-subtle: #1e1e22;
-  --color-border-default: #2a2a30;
-  --color-border-strong: #3b3b43;
+  --color-border-subtle: rgba(164, 185, 216, 0.09);
+  --color-border-default: rgba(164, 185, 216, 0.16);
+  --color-border-strong: rgba(164, 185, 216, 0.3);
 
   /* Brand */
   --color-brand: #4f7ff0;
@@ -30,18 +30,20 @@
   --color-brand-ring: rgba(79, 127, 240, 0.16);
 
   /* Component surfaces */
-  --color-message-user: #1c1f25;
-  --color-message-user-border: #30343c;
-  --color-composer: rgba(26, 26, 30, 0.68);
+  --color-message-user: rgba(49, 65, 89, 0.48);
+  --color-message-user-border: rgba(151, 176, 211, 0.14);
+  --color-composer: rgba(24, 32, 44, 0.36);
+  --glass-composer-blur: 3px;
+  --shadow-composer: 0 12px 36px rgba(0, 0, 0, 0.16);
   --color-composer-control: rgba(35, 35, 40, 0.66);
-  --color-code: #18181b;
+  --color-code: rgba(27, 35, 48, 0.84);
   --color-overlay: rgba(4, 6, 10, 0.44);
-  --color-header-glass: rgba(16, 16, 18, 0.76);
+  --color-header-glass: rgba(16, 20, 27, 0.64);
   --color-canvas-glow: rgba(79, 127, 240, 0.07);
-  --color-modal-glass: rgba(28, 28, 32, 0.88);
-  --color-modal-nav: rgba(16, 16, 19, 0.72);
-  --color-card-glass: rgba(31, 31, 35, 0.62);
-  --color-card-glass-hover: rgba(39, 39, 44, 0.76);
+  --color-modal-glass: rgba(23, 30, 41, 0.96);
+  --color-modal-nav: rgba(16, 22, 32, 0.6);
+  --color-card-glass: rgba(36, 46, 62, 0.46);
+  --color-card-glass-hover: rgba(45, 58, 77, 0.64);
   --color-glass-highlight: rgba(255, 255, 255, 0.045);
 
   /* Status */
@@ -93,17 +95,17 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --color-canvas: #f2f5fc;
+  --color-canvas: #f4f6fa;
   --color-surface: rgba(253, 253, 255, 0.74);
   --color-surface-subtle: rgba(234, 240, 251, 0.64);
-  --color-surface-raised: rgba(255, 255, 255, 0.78);
+  --color-surface-raised: rgba(255, 255, 255, 0.97);
   --color-surface-hover: rgba(227, 234, 248, 0.72);
   --color-surface-selected: rgba(219, 230, 255, 0.7);
 
   --color-text-primary: #1c2535;
   --color-text-secondary: #526174;
-  --color-text-tertiary: #7d899a;
-  --color-text-muted: #9aa5b4;
+  --color-text-tertiary: #64748b;
+  --color-text-muted: #718096;
   --color-text-on-brand: #ffffff;
 
   --color-border-subtle: #e2e7ef;
@@ -116,15 +118,16 @@
   --color-brand-border: rgba(66, 107, 216, 0.23);
   --color-brand-ring: rgba(66, 107, 216, 0.15);
 
-  --color-message-user: #e1e9ff;
-  --color-message-user-border: #b9c9fa;
-  --color-composer: rgba(255, 255, 255, 0.74);
+  --color-message-user: rgba(219, 229, 246, 0.62);
+  --color-message-user-border: rgba(99, 127, 173, 0.18);
+  --color-composer: rgba(255, 255, 255, 0.42);
+  --shadow-composer: 0 12px 36px rgba(49, 66, 97, 0.08);
   --color-composer-control: rgba(238, 242, 248, 0.68);
   --color-code: #eef1f6;
   --color-overlay: rgba(32, 42, 60, 0.2);
   --color-header-glass: rgba(245, 247, 251, 0.74);
-  --color-canvas-glow: rgba(66, 105, 232, 0.14);
-  --color-modal-glass: rgba(250, 252, 255, 0.88);
+  --color-canvas-glow: rgba(66, 105, 232, 0.06);
+  --color-modal-glass: rgba(250, 252, 255, 0.96);
   --color-modal-nav: rgba(237, 241, 248, 0.78);
   --color-card-glass: rgba(245, 248, 252, 0.72);
   --color-card-glass-hover: rgba(233, 239, 248, 0.82);

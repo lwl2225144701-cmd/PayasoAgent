@@ -110,6 +110,20 @@ test("writeFile / readFile / listDir / searchText hidden 别名仍可执行", as
   assert.match(await execute("searchText", { path: "work/compat.txt", pattern: "x" }, ctx), /找到 1 处/);
 });
 
+test("缺失 shell 工具返回受控运行时错误，不泄露宿主细节", async () => {
+  if (process.platform !== "darwin") return;
+  try {
+    await execute("shell", { command: "payaso-toolchain-command-is-missing" }, ctx);
+    assert.fail("缺失 shell 工具应失败");
+  } catch (err) {
+    assert.match(
+      (err as Error).message,
+      /Required shell tool "payaso-toolchain-command-is-missing" is not available in the current controlled runtime\./,
+    );
+    assert.ok(!(err as Error).message.includes(TEST_ROOT));
+  }
+});
+
 // ---- 汇总 ----
 async function main() {
   let passed = 0;

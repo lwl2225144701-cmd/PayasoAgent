@@ -8,6 +8,10 @@ import { DEFAULT_PERMISSION_MODE, type PermissionMode } from "../permission-mode
 export type SandboxPolicy = {
   workspaceRoot: string;
   readableRoots: string[];
+  /** Verified symlink/request paths needed by dynamic loaders (target is canonical). */
+  readablePathAliases: Array<{ path: string; canonicalPath: string }>;
+  /** Roots from which descendants may execute files; read roots alone do not imply exec. */
+  executableRoots: string[];
   writableRoots: string[];
   permissionMode: PermissionMode;
   // v1.6 Network Capability Separation：网络是与文件系统严格分离的独立能力。
@@ -29,6 +33,18 @@ function unique(paths: string[]): string[] {
   return [...new Set(paths)];
 }
 
+function canonicalAliases(paths: string[]): Array<{ path: string; canonicalPath: string }> {
+  const aliases: Array<{ path: string; canonicalPath: string }> = [];
+  const seen = new Set<string>();
+  for (const input of paths) {
+    const absolute = path.resolve(input);
+    if (seen.has(absolute)) continue;
+    seen.add(absolute);
+    aliases.push({ path: absolute, canonicalPath: canonicalizeExisting(absolute) });
+  }
+  return aliases;
+}
+
 function isInside(root: string, target: string): boolean {
   return target === root || target.startsWith(root + path.sep);
 }
@@ -42,6 +58,8 @@ export function createSandboxPolicy(
   workspaceRoot: string,
   options: {
     readableRoots?: string[];
+    readablePathAliases?: string[];
+    executableRoots?: string[];
     writableRoots?: string[];
     permissionMode?: PermissionMode;
     networkAccess?: boolean;
@@ -53,6 +71,13 @@ export function createSandboxPolicy(
     root,
     ...(options.readableRoots ?? []).map(canonicalizeExisting),
   ]);
+  const executableRoots = unique([
+    ...(options.executableRoots ?? []).map(canonicalizeExisting),
+  ]);
+  for (const executableRoot of executableRoots) {
+    if (!readableRoots.includes(executableRoot)) readableRoots.push(executableRoot);
+  }
+  const readablePathAliases = canonicalAliases(options.readablePathAliases ?? []);
   const writableRoots = unique([
     ...(options.writableRoots ?? (permissionMode === "workspace-write" ? [root] : [])).map(canonicalizeExisting),
   ]);
@@ -66,6 +91,8 @@ export function createSandboxPolicy(
   return {
     workspaceRoot: root,
     readableRoots,
+    readablePathAliases,
+    executableRoots,
     writableRoots,
     permissionMode,
     networkAccess: options.networkAccess ?? false,

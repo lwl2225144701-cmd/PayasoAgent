@@ -16,6 +16,7 @@ import { fileCheckpointWriter } from "../persistence/file-checkpoint-store.js";
 import type { CheckpointWriter } from "../runtime/checkpoint-port.js";
 import { consoleRuntimeObserver } from "../observability/console-runtime-observer.js";
 import type { RuntimeObserver } from "../runtime/observer-port.js";
+import { getRuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
 
 export interface AgentExecutionContextInput {
   runId: string;
@@ -50,5 +51,6 @@ export function createAgentExecutionContext(input: AgentExecutionContextInput): 
     runId: input.runId,
     workspaceRoot,
     permissionMode: input.permissionMode ?? DEFAULT_PERMISSION_MODE,
+    toolchain: getRuntimeToolchainCapabilities(),
   };
 }

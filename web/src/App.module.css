@@ -23,7 +23,7 @@
   top: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;
-  opacity: 0.3;
+  opacity: 0.24;
   background:
     radial-gradient(circle at 24% 28%, rgba(126, 165, 255, 0.92) 0 1.4px, transparent 1.8px) 0 0 / 10px 10px,
     radial-gradient(circle at 72% 62%, rgba(76, 117, 225, 0.72) 0 1.15px, transparent 1.7px) 4px 4px / 10px 10px,
@@ -53,7 +53,7 @@
   width: min(740px, 72vw);
   height: min(650px, 78vh);
   top: 49%;
-  opacity: 0.2;
+  opacity: 0.13;
 }
 
 .main {
@@ -114,7 +114,7 @@
   justify-content: center;
   text-align: left;
   padding: 32px 28px 11vh;
-  gap: 34px;
+  gap: 30px;
 }
 
 .emptyState > * {
@@ -158,12 +158,13 @@
 }
 
 .emptyTitle {
-  font-size: clamp(24px, 2.35vw, 31px);
-  font-weight: 620;
+  font-size: clamp(23px, 2.1vw, 29px);
+  font-weight: 550;
   color: var(--text-primary);
   margin: 0;
-  line-height: 1.25;
-  letter-spacing: -0.03em;
+  line-height: 1.5;
+  letter-spacing: 0.015em;
+  text-wrap: balance;
 }
 
 .toast {

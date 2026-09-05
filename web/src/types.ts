@@ -308,7 +308,56 @@ export interface ApprovalResolvedEvent {
   timestamp: string;
 }
 
-export type ApprovalEvent = ApprovalRequestedEvent | ApprovalResolvedEvent;
+export type ToolchainPreparationPhase = 'checking' | 'installing' | 'verifying';
+export type ToolchainPreparationStatus = 'prepared' | 'denied' | 'unavailable' | 'failed' | 'aborted' | 'timed_out';
+
+export interface ToolchainPreparationRequestedEvent {
+  type: 'toolchain_preparation_requested';
+  runId: string;
+  requestId: string;
+  toolName: string;
+  packageName: string;
+  source: 'homebrew';
+  timestamp: string;
+}
+
+export interface ToolchainPreparationResolvedEvent {
+  type: 'toolchain_preparation_resolved';
+  runId: string;
+  requestId: string;
+  approved: boolean;
+  prepared: boolean;
+  status: ToolchainPreparationStatus;
+  message?: string;
+  timestamp: string;
+}
+
+export interface ToolchainPreparationStartedEvent {
+  type: 'toolchain_preparation_started';
+  runId: string;
+  requestId: string;
+  toolName: string;
+  packageName: string;
+  source: 'homebrew';
+  phase: 'checking';
+  timestamp: string;
+}
+
+export interface ToolchainPreparationProgressEvent {
+  type: 'toolchain_preparation_progress';
+  runId: string;
+  requestId: string;
+  phase: Exclude<ToolchainPreparationPhase, 'checking'>;
+  timestamp: string;
+}
+
+export type ApprovalEvent =
+  | ApprovalRequestedEvent
+  | ApprovalResolvedEvent
+  | ToolchainPreparationRequestedEvent
+  | ToolchainPreparationResolvedEvent
+  | ToolchainPreparationStartedEvent
+  | ToolchainPreparationProgressEvent;
 
 export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent | ApprovalEvent;
 

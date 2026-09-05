@@ -111,6 +111,8 @@ export function connectSSE(
     'shell_sandbox_started', 'shell_sandbox_denied',
     'scratchpad_update', 'error',
     'approval_requested', 'approval_resolved',
+    'toolchain_preparation_requested', 'toolchain_preparation_started',
+    'toolchain_preparation_progress', 'toolchain_preparation_resolved',
   ];
 
   const handler = (e: MessageEvent) => {
@@ -163,6 +165,29 @@ export function resolveApproval(
   return jsonFetch(`/runs/${runId}/approval`, {
     method: 'POST',
     body: JSON.stringify({ requestId, approved }),
+  });
+}
+
+// 用户批准/拒绝受控 macOS 工具链准备（固定 Homebrew 计划，不接受安装命令）。
+export function resolveToolchainPreparation(
+  runId: string,
+  requestId: string,
+  approved: boolean,
+): Promise<{ runId: string; requestId: string; approved: boolean; resolved: true }> {
+  return jsonFetch(`/runs/${runId}/toolchain-preparation`, {
+    method: 'POST',
+    body: JSON.stringify({ requestId, approved }),
+  });
+}
+
+// 取消已经批准、但仍在 Host 上执行的受控工具链准备。
+export function cancelToolchainPreparation(
+  runId: string,
+  requestId: string,
+): Promise<{ runId: string; requestId: string; cancelled: true }> {
+  return jsonFetch(`/runs/${runId}/toolchain-preparation`, {
+    method: 'POST',
+    body: JSON.stringify({ requestId, cancel: true }),
   });
 }
 

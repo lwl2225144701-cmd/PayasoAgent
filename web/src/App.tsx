@@ -469,6 +469,7 @@ export default function App() {
                     modelFallback={null}
                     embedded
                     onRunTerminal={handleRunTerminal}
+                    onRetryCommand={handleCreateRun}
                   />
                 ))
               ) : (

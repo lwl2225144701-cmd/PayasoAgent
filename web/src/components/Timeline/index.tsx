@@ -10,14 +10,25 @@ import type {
   ToolResultEvent,
   StreamingEvent,
   ApprovalRequestedEvent,
+  ToolchainPreparationRequestedEvent,
+  ToolchainPreparationPhase,
 } from '../../types';
 import { formatBytes, formatDurationMs, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
-import { openFileInDefaultBrowser, resolveApproval } from '../../api';
+import {
+  cancelToolchainPreparation,
+  openFileInDefaultBrowser,
+  resolveApproval,
+  resolveToolchainPreparation,
+} from '../../api';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { ThinkBlock } from './ThinkBlock';
 import { ToolActionRow } from './ToolActionRow';
+import {
+  composeToolchainRetryMessage,
+  findLastFailedShellCommand,
+} from './preparation-retry';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import styles from './Timeline.module.css';
 
@@ -26,6 +37,20 @@ interface TimelineProps {
   modelFallback: string | null;
   embedded?: boolean;
   onRunTerminal?: () => void;
+  // v1.6 工具链闭环②：准备成功后用户显式重试 —— 以新会话轮次发起
+  // （新轮次拥有全新 side-effect 身份空间；Runtime 不自动重放）
+  onRetryCommand?: (message: string) => void;
+}
+
+function preparationPhaseLabel(phase: ToolchainPreparationPhase): string {
+  switch (phase) {
+    case 'checking':
+      return '正在检查受控运行时…';
+    case 'installing':
+      return '正在安装依赖…';
+    case 'verifying':
+      return '正在验证工具链…';
+  }
 }
 
 export interface ToolCallData {
@@ -180,7 +205,7 @@ function ExecutionPanel({
   );
 }
 
-export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps) {
+export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand }: TimelineProps) {
   // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
@@ -286,6 +311,66 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
     }
   };
 
+  const [resolvingPreparationIds, setResolvingPreparationIds] = useState<Set<string>>(new Set());
+  const pendingPreparations = useMemo(() => {
+    if (!events.length) return [];
+    const resolved = new Set(
+      events
+        .filter((e): e is Extract<HostEvent, { type: 'toolchain_preparation_resolved' }> => e.type === 'toolchain_preparation_resolved')
+        .map((e) => e.requestId),
+    );
+    return events.filter(
+      (e): e is ToolchainPreparationRequestedEvent => e.type === 'toolchain_preparation_requested' && !resolved.has(e.requestId),
+    );
+  }, [events]);
+
+  const preparationPhases = useMemo(() => {
+    const phases = new Map<string, ToolchainPreparationPhase>();
+    for (const event of events) {
+      if (event.type === 'toolchain_preparation_started') {
+        phases.set(event.requestId, event.phase);
+      } else if (event.type === 'toolchain_preparation_progress') {
+        phases.set(event.requestId, event.phase);
+      }
+    }
+    return phases;
+  }, [events]);
+
+  // v1.6 工具链闭环②：prepared 的准备请求 → 展示"重新执行刚才的命令"入口。
+  // 点击以新会话轮次发起（全新 side-effect 身份空间），由用户显式触发。
+  const preparedResolutions = useMemo(() => {
+    if (!events.length) return [];
+    return events.filter(
+      (e): e is Extract<HostEvent, { type: 'toolchain_preparation_resolved' }> =>
+        e.type === 'toolchain_preparation_resolved' && e.approved === true && e.prepared === true,
+    );
+  }, [events]);
+  const retryCommand = useMemo(() => findLastFailedShellCommand(events), [events]);
+  const runActive = run?.status === 'running' || run?.status === 'stopping';
+
+  const handleToolchainPreparation = async (
+    ev: ToolchainPreparationRequestedEvent,
+    action: 'approve' | 'deny' | 'cancel',
+  ) => {
+    if (!run) return;
+    setResolvingPreparationIds(prev => new Set(prev).add(ev.requestId));
+    try {
+      if (action === 'cancel') {
+        await cancelToolchainPreparation(run.runId, ev.requestId);
+      } else {
+        await resolveToolchainPreparation(run.runId, ev.requestId, action === 'approve');
+      }
+    } catch {
+      // Keep the card visible so the user can retry when the Host is reachable.
+    } finally {
+      setResolvingPreparationIds(prev => {
+        const next = new Set(prev);
+        next.delete(ev.requestId);
+        return next;
+      });
+    }
+  };
+
   if (!run || !structure) {
     return (
       <div ref={scrollRef} className={styles.timelineWrap}>
@@ -357,6 +442,90 @@ export function Timeline({ run, embedded = false, onRunTerminal }: TimelineProps
                         onClick={() => void handleApproval(ev, false)}
                       >
                         拒绝
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {pendingPreparations.length > 0 && (
+              <div className={styles.approvalList}>
+                {pendingPreparations.map(ev => (
+                  <div key={ev.requestId} className={styles.approvalCard}>
+                    <div className={styles.approvalTitle}>
+                      需要准备运行时依赖
+                    </div>
+                    <div className={styles.approvalBody}>
+                      当前受控运行时缺少 <code>{ev.toolName}</code>。
+                      <span className={styles.approvalArgs}>
+                        允许后将使用受控的 {ev.source} 计划安装 {ev.packageName}，不会执行模型提供的安装命令。
+                      </span>
+                      {preparationPhases.has(ev.requestId) && (
+                        <span className={styles.approvalProgress}>
+                          {preparationPhaseLabel(preparationPhases.get(ev.requestId)!)}
+                        </span>
+                      )}
+                    </div>
+                    <div className={styles.approvalActions}>
+                      {preparationPhases.has(ev.requestId) ? (
+                        <button
+                          type="button"
+                          className={styles.approvalDeny}
+                          disabled={resolvingPreparationIds.has(ev.requestId)}
+                          onClick={() => void handleToolchainPreparation(ev, 'cancel')}
+                        >
+                          {resolvingPreparationIds.has(ev.requestId) ? '取消中…' : '取消准备'}
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.approvalAllow}
+                            disabled={resolvingPreparationIds.has(ev.requestId)}
+                            onClick={() => void handleToolchainPreparation(ev, 'approve')}
+                          >
+                            {resolvingPreparationIds.has(ev.requestId) ? '提交中…' : '允许准备'}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.approvalDeny}
+                            disabled={resolvingPreparationIds.has(ev.requestId)}
+                            onClick={() => void handleToolchainPreparation(ev, 'deny')}
+                          >
+                            拒绝
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {preparedResolutions.length > 0 && (
+              <div className={styles.approvalList}>
+                {preparedResolutions.map(ev => (
+                  <div key={`prepared-${ev.requestId}`} className={styles.approvalCard}>
+                    <div className={styles.approvalTitle}>依赖准备完成</div>
+                    <div className={styles.approvalBody}>
+                      受控依赖已安装并通过验证，当前会话的工具链视图已刷新。
+                      原命令不会自动重试（副作用安全）；确认后可重新执行。
+                      {!retryCommand && (
+                        <span className={styles.approvalArgs}>未在本次执行中找到失败的 shell 命令。</span>
+                      )}
+                    </div>
+                    <div className={styles.approvalActions}>
+                      <button
+                        type="button"
+                        className={styles.approvalAllow}
+                        disabled={runActive || !retryCommand || !onRetryCommand}
+                        title={runActive ? '等待当前执行退出后可重试' : !retryCommand ? '未找到失败的 shell 命令' : undefined}
+                        onClick={() => {
+                          if (retryCommand && onRetryCommand) {
+                            onRetryCommand(composeToolchainRetryMessage(retryCommand));
+                          }
+                        }}
+                      >
+                        重新执行刚才的命令
                       </button>
                     </div>
                   </div>

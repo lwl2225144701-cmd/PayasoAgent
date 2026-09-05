@@ -3,6 +3,10 @@
 // 生命周期事件由 RunManager 在 Run 状态转换时产生（Host Run Status，与 Runtime Task Outcome 独立）。
 
 import type { TraceEvent } from "../runtime/trace.js";
+import type {
+  ToolchainPreparationPhase,
+  ToolchainPreparationStatus,
+} from "../sandbox/toolchain-preparation.js";
 
 // Host 生命周期事件
 export type LifecycleEvent =
@@ -31,6 +35,48 @@ export type ApprovalResolvedEvent = {
   timestamp: string;
 };
 
+// macOS toolchain preparation: user approval is separate from the Shell OS
+// sandbox and never contains installer paths or arbitrary commands.
+export type ToolchainPreparationRequestedEvent = {
+  type: "toolchain_preparation_requested";
+  runId: string;
+  requestId: string;
+  toolName: string;
+  packageName: string;
+  source: "homebrew";
+  timestamp: string;
+};
+
+export type ToolchainPreparationResolvedEvent = {
+  type: "toolchain_preparation_resolved";
+  runId: string;
+  requestId: string;
+  approved: boolean;
+  prepared: boolean;
+  status: ToolchainPreparationStatus;
+  message?: string;
+  timestamp: string;
+};
+
+export type ToolchainPreparationStartedEvent = {
+  type: "toolchain_preparation_started";
+  runId: string;
+  requestId: string;
+  toolName: string;
+  packageName: string;
+  source: "homebrew";
+  phase: "checking";
+  timestamp: string;
+};
+
+export type ToolchainPreparationProgressEvent = {
+  type: "toolchain_preparation_progress";
+  runId: string;
+  requestId: string;
+  phase: Exclude<ToolchainPreparationPhase, "checking">;
+  timestamp: string;
+};
+
 export type StreamingEvent = {
   type: "assistant_delta" | "reasoning_delta";
   runId: string;
@@ -40,7 +86,16 @@ export type StreamingEvent = {
 };
 
 // 浏览器收到的统一事件：Runtime Trace 事件 或 Host 生命周期事件 或批准事件
-export type HostEvent = TraceEvent | LifecycleEvent | StreamingEvent | ApprovalRequestedEvent | ApprovalResolvedEvent;
+export type HostEvent =
+  | TraceEvent
+  | LifecycleEvent
+  | StreamingEvent
+  | ApprovalRequestedEvent
+  | ApprovalResolvedEvent
+  | ToolchainPreparationRequestedEvent
+  | ToolchainPreparationResolvedEvent
+  | ToolchainPreparationStartedEvent
+  | ToolchainPreparationProgressEvent;
 
 // 是否为 Host 生命周期事件
 export function isLifecycle(ev: HostEvent): ev is LifecycleEvent {

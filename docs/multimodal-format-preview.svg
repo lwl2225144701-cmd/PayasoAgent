@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="840" viewBox="0 0 1200 840" font-family="'PingFang SC','Helvetica Neue',Arial,sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="cardImg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="cardVid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="cardTxt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="840" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="60" y="62" font-size="34" font-weight="700" fill="#f8fafc">MiniMax / StepFun 多模态消息格式</text>
+  <text x="60" y="96" font-size="16" fill="#94a3b8">OpenAI 兼容 · POST /v1/chat/completions · content 由字符串改为「内容块数组」</text>
+
+  <!-- Left: JSON structure -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="128" width="620" height="660" rx="16" fill="#0b1220" stroke="#334155" stroke-width="1"/>
+    <rect x="60" y="128" width="620" height="52" rx="16" fill="#1e293b"/>
+    <rect x="60" y="164" width="620" height="16" fill="#1e293b"/>
+    <circle cx="92" cy="154" r="7" fill="#f87171"/>
+    <circle cx="114" cy="154" r="7" fill="#fbbf24"/>
+    <circle cx="136" cy="154" r="7" fill="#34d399"/>
+    <text x="166" y="160" font-size="15" fill="#cbd5e1" font-family="Menlo,Consolas,monospace">request.json</text>
+
+    <text x="88" y="212" font-size="15" fill="#e2e8f0" font-family="Menlo,Consolas,monospace">{
+      <tspan x="108" dy="24" fill="#7dd3fc">"model"</tspan><tspan fill="#94a3b8">:</tspan><tspan fill="#a5b4fc"> "MiniMax-M3"</tspan><tspan fill="#94a3b8">,</tspan>
+      <tspan x="108" dy="24" fill="#7dd3fc">"messages"</tspan><tspan fill="#94a3b8">: [</tspan>
+      <tspan x="128" dy="24" fill="#94a3b8">{</tspan>
+      <tspan x="148" dy="24" fill="#7dd3fc">"role"</tspan><tspan fill="#94a3b8">:</tspan><tspan fill="#a5b4fc"> "user"</tspan><tspan fill="#94a3b8">,</tspan>
+      <tspan x="148" dy="24" fill="#7dd3fc">"content"</tspan><tspan fill="#94a3b8">: [</tspan>
+    </text>
+  </g>
+
+  <!-- Content parts -->
+  <g>
+    <!-- text -->
+    <g filter="url(#shadow)">
+      <rect x="178" y="300" width="470" height="52" rx="10" fill="#0d2b1e" stroke="#10b981" stroke-width="1.2"/>
+      <rect x="178" y="300" width="5" height="52" rx="2.5" fill="url(#cardTxt)"/>
+      <text x="196" y="324" font-size="14" fill="#34d399" font-family="Menlo,Consolas,monospace">"type": "text"</text>
+      <text x="196" y="344" font-size="13" fill="#cbd5e1" font-family="Menlo,Consolas,monospace">"text": "这张图片的内容是什么？"</text>
+    </g>
+    <!-- image -->
+    <g filter="url(#shadow)">
+      <rect x="178" y="368" width="470" height="92" rx="10" fill="#0c1a35" stroke="#3b82f6" stroke-width="1.2"/>
+      <rect x="178" y="368" width="5" height="92" rx="2.5" fill="url(#cardImg)"/>
+      <text x="196" y="392" font-size="14" fill="#60a5fa" font-family="Menlo,Consolas,monospace">"type": "image_url"</text>
+      <text x="196" y="414" font-size="13" fill="#cbd5e1" font-family="Menlo,Consolas,monospace">"image_url": {</text>
+      <text x="216" y="434" font-size="13" fill="#e2e8f0" font-family="Menlo,Consolas,monospace">"url": "https://…/a.jpeg 或 data:image/…;base64,",</text>
+      <text x="216" y="452" font-size="13" fill="#94a3b8" font-family="Menlo,Consolas,monospace">"detail": "low | default | high" }</text>
+    </g>
+    <!-- video -->
+    <g filter="url(#shadow)">
+      <rect x="178" y="476" width="470" height="110" rx="10" fill="#1f1238" stroke="#8b5cf6" stroke-width="1.2"/>
+      <rect x="178" y="476" width="5" height="110" rx="2.5" fill="url(#cardVid)"/>
+      <text x="196" y="500" font-size="14" fill="#a78bfa" font-family="Menlo,Consolas,monospace">"type": "video_url"</text>
+      <text x="196" y="522" font-size="13" fill="#cbd5e1" font-family="Menlo,Consolas,monospace">"video_url": {</text>
+      <text x="216" y="542" font-size="13" fill="#e2e8f0" font-family="Menlo,Consolas,monospace">"url": "https://…/b.mp4 或 mm_file:// / stepfile://",</text>
+      <text x="216" y="562" font-size="13" fill="#94a3b8" font-family="Menlo,Consolas,monospace">"fps": 1, "detail": "default" }  // fps 仅 MiniMax</text>
+    </g>
+    <!-- close -->
+    <text x="148" y="620" font-size="15" fill="#94a3b8" font-family="Menlo,Consolas,monospace">      ],</text>
+    <text x="128" y="646" font-size="15" fill="#94a3b8" font-family="Menlo,Consolas,monospace">      }</text>
+    <text x="108" y="672" font-size="15" fill="#94a3b8" font-family="Menlo,Consolas,monospace">  ]</text>
+    <text x="88" y="698" font-size="15" fill="#e2e8f0" font-family="Menlo,Consolas,monospace">}</text>
+  </g>
+
+  <!-- Right: provider comparison -->
+  <g filter="url(#shadow)">
+    <rect x="716" y="128" width="424" height="316" rx="16" fill="#0b1220" stroke="#334155" stroke-width="1"/>
+    <rect x="716" y="128" width="424" height="48" rx="16" fill="#1e293b"/>
+    <rect x="716" y="160" width="424" height="16" fill="#1e293b"/>
+    <text x="742" y="158" font-size="15" font-weight="600" fill="#e2e8f0">两家对比</text>
+
+    <!-- MiniMax -->
+    <text x="742" y="206" font-size="15" font-weight="700" fill="#38bdf8">MiniMax  api.minimaxi.com</text>
+    <text x="742" y="228" font-size="13" fill="#94a3b8">模型：MiniMax-M3（推荐）· 图片 ≤10MB · 视频 ≤50MB（Files 512MB）</text>
+    <text x="742" y="248" font-size="13" fill="#94a3b8">格式：JPG / PNG / GIF / WEBP · MP4 / AVI / MOV / MKV</text>
+    <text x="742" y="268" font-size="13" fill="#94a3b8">视频：支持 fps 抽帧 [0.2,5] · 生成长度用 max_completion_tokens</text>
+
+    <!-- StepFun -->
+    <text x="742" y="306" font-size="15" font-weight="700" fill="#a78bfa">StepFun  api.stepfun.com</text>
+    <text x="742" y="328" font-size="13" fill="#94a3b8">模型：step-3.7-flash / step-1o-turbo-vision</text>
+    <text x="742" y="348" font-size="13" fill="#94a3b8">图片 ≤60 张 / 20MB · 视频 &lt;128MB · 推荐 URL 直传</text>
+    <text x="742" y="368" font-size="13" fill="#94a3b8">视频：stepfile:// 引用 · 建议视频放在指令前</text>
+    <text x="742" y="396" font-size="13" fill="#64748b">相同点：content[] = { text, image_url, video_url }</text>
+    <text x="742" y="416" font-size="13" fill="#64748b">差异点：mm_file:// vs stepfile:// · fps 仅 MiniMax</text>
+  </g>
+
+  <!-- Right bottom: flow -->
+  <g filter="url(#shadow)">
+    <rect x="716" y="472" width="424" height="316" rx="16" fill="#0b1220" stroke="#334155" stroke-width="1"/>
+    <rect x="716" y="472" width="424" height="48" rx="16" fill="#1e293b"/>
+    <rect x="716" y="504" width="424" height="16" fill="#1e293b"/>
+    <text x="742" y="502" font-size="15" font-weight="600" fill="#e2e8f0">对接要点（src/llm/llm.ts）</text>
+
+    <circle cx="760" cy="566" r="9" fill="#2563eb"/><text x="760" y="571" font-size="12" fill="#fff" text-anchor="middle" font-family="Menlo,monospace">1</text>
+    <text x="782" y="571" font-size="13.5" fill="#e2e8f0">content 类型放宽：</text>
+    <text x="782" y="590" font-size="12.5" fill="#94a3b8">string | ContentPart[]（text / image_url / video_url）</text>
+
+    <circle cx="760" cy="626" r="9" fill="#2563eb"/><text x="760" y="631" font-size="12" fill="#fff" text-anchor="middle" font-family="Menlo,monospace">2</text>
+    <text x="782" y="631" font-size="13.5" fill="#e2e8f0">序列化透传，不改请求结构</text>
+
+    <circle cx="760" cy="686" r="9" fill="#2563eb"/><text x="760" y="691" font-size="12" fill="#fff" text-anchor="middle" font-family="Menlo,monospace">3</text>
+    <text x="782" y="691" font-size="13.5" fill="#e2e8f0">流式 / stripThink 兼容数组形态</text>
+
+    <circle cx="760" cy="746" r="9" fill="#2563eb"/><text x="760" y="751" font-size="12" fill="#fff" text-anchor="middle" font-family="Menlo,monospace">4</text>
+    <text x="782" y="751" font-size="13.5" fill="#e2e8f0">MiniMax-M3 改用 max_completion_tokens</text>
+  </g>
+</svg>

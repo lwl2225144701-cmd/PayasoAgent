@@ -21,6 +21,10 @@ import {
 } from "./workspace.js";
 import { DEFAULT_PERMISSION_MODE, isPermissionMode, type PermissionMode } from "../permission-mode.js";
 import { openFileInDefaultBrowser } from "./default-browser.js";
+import {
+  getRuntimeToolchainCapabilities,
+  refreshRuntimeToolchainCapabilities,
+} from "../sandbox/toolchain-manager.js";
 
 const MAX_FILE_BYTES = 1024 * 1024; // 读文件大小上限
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
@@ -335,6 +339,17 @@ export async function handleRequest(
   const s = segs(req);
   const method = req.method ?? "GET";
   const port = hostPort ?? Number(req.socket.localPort) ?? 4500;
+
+  // Read-only, path-free runtime capability projection. The private sandbox
+  // manifest never leaves the process; this endpoint is for diagnostics/UI.
+  if (s.length === 2 && s[0] === "runtime" && s[1] === "capabilities" && method === "GET") {
+    return sendJson(res, 200, { capabilities: getRuntimeToolchainCapabilities() });
+  }
+  if (s.length === 3 && s[0] === "runtime" && s[1] === "capabilities" && s[2] === "refresh" && method === "POST") {
+    checkOrigin(req, port);
+    requireAuth(req);
+    return sendJson(res, 200, { capabilities: refreshRuntimeToolchainCapabilities(), refreshed: true });
+  }
 
   if (s[0] === "settings") {
     try {
@@ -834,6 +849,28 @@ export async function handleRequest(
         const approved = body.approved === true;
         const ok = manager.resolveApproval(runId, requestId, approved);
         if (!ok) return bad(res, "approval request not found or already resolved");
+        return sendJson(res, 200, { runId, requestId, approved, resolved: true });
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    case "toolchain-preparation": {
+      if (method !== "POST") return notFound(res);
+      checkOrigin(req, port);
+      requireAuth(req);
+      try {
+        const body = await readBody(req);
+        const requestId =
+          typeof body.requestId === "string" ? body.requestId.trim() : "";
+        if (!requestId) return bad(res, "缺少 requestId");
+        if (body.cancel === true) {
+          const cancelled = manager.cancelToolchainPreparation(runId, requestId);
+          if (!cancelled) return bad(res, "toolchain preparation request not found or already finished");
+          return sendJson(res, 200, { runId, requestId, cancelled: true });
+        }
+        const approved = body.approved === true;
+        const ok = manager.resolveToolchainPreparation(runId, requestId, approved);
+        if (!ok) return bad(res, "toolchain preparation request not found or already resolved");
         return sendJson(res, 200, { runId, requestId, approved, resolved: true });
       } catch (err) {
         return bad(res, (err as Error).message);

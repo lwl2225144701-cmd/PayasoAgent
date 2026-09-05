@@ -8,7 +8,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { register, registerAlias, type ToolContext } from "./tools.js";
+import {
+  register,
+  registerAlias,
+  RequiredRuntimeToolUnavailableError,
+  type ToolContext,
+} from "./tools.js";
 import { MacOSSandbox, probeSandboxAvailability, type MacOSSandboxResult } from "../sandbox/macos-sandbox.js";
 import { canonicalPathKey, assertWritableZone, resolveAuthorizedPath, isProbablyBinary, MAX_READ_BYTES } from "./filesystem.js";
 import { storedPermissionMode } from "../permission-mode.js";
@@ -120,6 +125,16 @@ register({
   },
 });
 registerAlias("grep", "searchText");
+
+function missingShellToolName(stderr: string): string | undefined {
+  // Only normalize the shell's own command lookup failure. Do not inspect or
+  // rewrite the model command, and do not mistake an arbitrary program's
+  // "package not found"/similar diagnostic for a missing executable.
+  const match = stderr.match(
+    /(?:^|\n)\/bin\/sh:\s+(?:\d+:\s+)?([A-Za-z0-9][A-Za-z0-9._+-]*):\s+(?:command not found|not found)\s*$/m,
+  );
+  return match?.[1];
+}
 
 // ---- ② createDir（移出核心工具集，write 已支持自动创建父目录）----
 // 保留 hidden 别名，不破坏已有测试和调用方的兼容性
@@ -339,6 +354,13 @@ register({
     if (result.denied) {
       // Do not expose stderr or host paths to the LLM/context.
       throw new Error("Shell operation denied by workspace sandbox.");
+    }
+
+    const missingTool = result.exitCode !== 0 ? missingShellToolName(result.stderr) : undefined;
+    if (missingTool !== undefined) {
+      // Discovery happens once at process start; a missing optional host tool
+      // is a normal recoverable tool error, not a Runtime crash.
+      throw new RequiredRuntimeToolUnavailableError(missingTool);
     }
 
     const head = result.timedOut

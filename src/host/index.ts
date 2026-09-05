@@ -45,6 +45,9 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`  POST /runs/:id/files/*/open  用默认浏览器打开 HTML`);
   console.log(`  GET  /workspace            当前 Workspace`);
   console.log(`  POST /workspace/open       打开本地文件夹`);
+console.log(`  GET  /runtime/capabilities 受控运行时能力（不含宿主路径）`);
+console.log(`  POST /runtime/capabilities/refresh 重新检测已准备的宿主工具`);
+console.log(`  POST /runs/:id/toolchain-preparation 用户批准受控工具链准备`);
 });
 
 // 优雅退出：异步幂等关闭

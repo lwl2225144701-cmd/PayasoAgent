@@ -11,7 +11,7 @@ const STORAGE_KEYS = {
 
 const DEFAULT_PERMISSION_MODE: PermissionMode = 'workspace-write';
 const DEFAULT_LANGUAGE: LanguageMode = 'zh-CN';
-const DEFAULT_FONT_SIZE: ConversationFontSize = 14;
+const DEFAULT_FONT_SIZE: ConversationFontSize = 15;
 const MIN_CONVERSATION_FONT_SIZE = 12;
 const MAX_CONVERSATION_FONT_SIZE = 24;
 

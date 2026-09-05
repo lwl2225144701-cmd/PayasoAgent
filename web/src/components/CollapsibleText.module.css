@@ -10,8 +10,8 @@
   min-width: 0;
   word-break: break-word;
   overflow-wrap: anywhere;
-  line-height: 1.82;
-  font-size: var(--conversation-font-size, 14px);
+  line-height: 1.8;
+  font-size: var(--conversation-font-size, 15px);
   color: var(--text-primary);
 }
 
@@ -39,14 +39,14 @@
 .text h4 {
   margin: 28px 0 12px;
   color: var(--text-primary);
-  font-weight: 630;
+  font-weight: 600;
   line-height: 1.35;
   letter-spacing: -0.015em;
 }
 
 .text h1 { font-size: 1.45em; }
 .text h2 { font-size: 1.22em; }
-.text h3 { font-size: 1.04em; }
+.text h3 { font-size: 1.1em; }
 .text h4 { font-size: 1em; }
 
 .text ul,
@@ -81,7 +81,7 @@
 .text code:not(pre code) {
   padding: 2px 5px;
   background: var(--color-code);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-light);
   border-radius: 6px;
   color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -98,7 +98,7 @@
   border-radius: 12px;
   color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.82em;
+  font-size: 0.87em;
   line-height: 1.65;
 }
 
@@ -123,19 +123,23 @@
   width: 100%;
   margin: 14px 0 18px;
   border-collapse: collapse;
-  font-size: 0.88em;
+  font-size: 0.93em;
 }
 
 .text th,
 .text td {
   padding: 9px 12px;
-  border: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
   text-align: left;
 }
 
 .text th {
   background: var(--color-surface-subtle);
   font-weight: 600;
+}
+
+.text tbody tr:hover {
+  background: var(--color-brand-soft);
 }
 
 .toggle {

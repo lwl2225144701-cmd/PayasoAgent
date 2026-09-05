@@ -57,7 +57,7 @@
 }
 
 .title {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   color: var(--text-primary);
   font-weight: 500;
@@ -69,7 +69,7 @@
 }
 
 .time {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
   margin-left: 6px;
 }

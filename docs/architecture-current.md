@@ -32,6 +32,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | v1.5   | **融合身份机制**：`getOperationKey` 可选接收 ToolContext，路径归一化（`canonicalPathKey`）               | `tools/*`                                      |
 | v1.5+  | 写工具全家桶：`writeFile` / `createDir` / `moveFile` / `deleteFile` / `searchText` / `shell` | `tools/filesystem.ts`、`tools/runtime-tools.ts` |
 | v1.5+  | macOS OS Sandbox（`sandbox-exec` policy）执行 shell                                       | `sandbox/macos-sandbox.ts`、`sandbox-policy.ts` |
+| v2.1   | 启动时工具链发现 + 缺失依赖的用户批准准备（macOS/Homebrew 白名单）             | `sandbox/toolchain-manager.ts`、`toolchain-preparation.ts`、`macos-toolchain-preparer.ts` |
 | Host   | HTTP API + SSE + Session/Run 持久化 + 静态文件服务 + 原生工作区选择器                                  | `host/*`                                       |
 | Web    | React 18 + Vite 前端（Session Sidebar / 连续 Timeline / 流式答案）                              | `web/`                                         |
 
@@ -66,6 +67,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 │ Sandbox (src/sandbox/)                                       │
 │  sandbox-manager.ts: 路径解析/双重校验/工作区生命周期         │
 │  macos-sandbox.ts + sandbox-policy.ts: macOS seatbelt 沙箱   │
+│  toolchain-manager.ts: 启动快照/依赖闭包；preparer: 用户批准安装 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -107,6 +109,9 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
 | `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（timeout 10s、输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）                                                                               |
 | `src/sandbox/sandbox-policy.ts`                   | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false）                                                                                                            |
+| `src/sandbox/toolchain-manager.ts`                | macOS 工具链启动发现、Mach-O 依赖闭包、Git helper/runtime 路径封装；对模型只投影无路径能力快照                                                                                                     |
+| `src/sandbox/toolchain-preparation.ts`            | 缺失 Git/Node/npm 的固定准备计划与用户批准端口；不接受模型安装命令或路径                                                                                                                        |
+| `src/sandbox/macos-toolchain-preparer.ts`         | 用户批准后的 macOS Homebrew 固定 argv 安装器；安装过程只回传检查/安装/验证阶段，成功后刷新未来 Sandbox 快照，失败/取消均为可恢复结果                                                                                               |
 | `src/host/server.ts`                              | node:http 服务器 + 统一错误兜底                                                                                                                                                         |
 | `src/host/routes.ts`                              | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback                                                                                                                            |
 | `src/host/run-manager.ts`                         | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running/stopping→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力；终态统一走 finalizeRun 原子管线（status+event 同一事务，幂等，失败不广播） |
@@ -210,6 +215,8 @@ for (i = startIter .. MAX_ITERATIONS=10):
 
 * **Shell Network Isolation（v1.6）**：文件系统能力 ≠ 网络能力。profile 在 deny default 之外按 `SandboxPolicy.networkAccess` 显式 `(deny network*)`/`(allow network*)`；shell 固定 deny（curl/perl 等任意运行时的 socket 连接均被 OS 层拒绝，含 localhost），workspace 内文件操作不受影响（`tests/shell-network.test.ts`）。LLM Tool Schema 不暴露任何网络开关——网络权限只来自 Host/Policy，不由模型参数决定。
 
+* **Toolchain Readiness / Preparation（v2.1）**：Git/Node/npm 在 Host 启动时完成一次性发现与 Mach-O 依赖闭包解析；能力快照不含宿主路径。缺失工具只对固定白名单生成准备请求，用户明确批准后才可调用 macOS Homebrew 的固定 argv 安装器；不接受模型传入安装命令/路径，SSE 仅回传检查/安装/验证阶段，不回传安装器原始输出；Shell 原调用不自动重放，安装成功后只刷新后续 Sandbox 快照。准备失败、拒绝、超时或取消均回到普通 Tool Recovery。**安装前前置检查**：实时快照已可用 → 短路返回 prepared（不重复安装）；磁盘空间不足 → 明确 unavailable；同 packageName 的并发请求合并到同一次安装（共享结果，绝不并发 brew install）。**安装成功后经准备结果通道刷新当前 Run 的 Harness 工具链视图**（下一轮模型即感知新工具）；重试由用户显式发起（新会话轮次，全新 side-effect 身份空间），Runtime 不自动重放。
+
 * **Provider 凭证隔离（v1.6 SecretStore）**：API Key 唯一存放在 SecretStore（macOS Keychain，service=PayasoAgent，account=`model-provider:<providerId>:api-key`）；SQLite settings blob 只存 metadata（baseUrl/models/hasApiKey）。Settings 读 API（`GET /settings*`）绝不返回 key；Provider 编辑为明确三态（undefined=保持 / 非空=替换 / null=清除）。legacy 明文在启动时自动迁移：**先写 SecretStore 成功后才剥 SQLite**，失败 fail-closed（凭证不丢，Host 明确报错），迁移幂等；删除 Provider 同步 best-effort 清理 Secret。Run 启动时 metadata + SecretStore 合成原子 ModelConfig（`tests/settings.test.ts` Case 1-12 锁定）。
 
 * **Atomic Run Finalization（v1.6）**：terminal Run persistence 是原子的 —— 终态状态与其对应终态事件在同一个 SQLite 事务内提交（`RunStore.finalizeRun`），COMMIT 前崩溃两者都不存在、COMMIT 后崩溃两者都已落库。不变量：`completed ⇔ run_completed`、`failed ⇔ run_failed`、`stopped ⇔ run_stopped`，且每 Run 至多一个终态/终态事件（重复 finish 幂等 no-op）。顺序固定：Runtime 终局 → 原子持久化 → 内存发布 → SSE（durability 优先于 delivery；持久化失败不广播终态、不降级为单独 update/append，Run 保持原非终态）。stopping 为非终态中间态，独立持久化，不与 run\_stopped 混写（`tests/finalize.test.ts` 锁定）。
@@ -254,8 +261,11 @@ for (i = startIter .. MAX_ITERATIONS=10):
 | GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id`      | 模型提供方 CRUD；**读 API 只回 hasApiKey/mask，key 绝不出 Host**（写入路径：key → SecretStore）         |
 | GET/POST | `/settings`，`/settings/default`                             | 默认模型查询 / 设置（providerId + modelId 成对校验）                                              |
 | POST     | `/settings/available-models`                                | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端）                                       |
+| GET      | `/runtime/capabilities`                                     | 返回不含宿主路径的启动工具链能力快照                                                               |
+| POST     | `/runtime/capabilities/refresh`                             | 鉴权后显式重新发现宿主工具；不安装、不改变网络或既有 Sandbox 策略                                  |
+| POST     | `/runs/:id/toolchain-preparation`                           | 鉴权后批准/拒绝/取消当前 Run 的固定 macOS 工具链准备请求                                                |
 
-SSE 事件 = Runtime Trace 18 类 + Host 生命周期 6 类（含 v1.6 `run_stopping`）+ `assistant_delta / reasoning_delta`。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
+SSE 事件 = Runtime Trace + Host 生命周期 + `assistant_delta / reasoning_delta` + 网络批准事件 + 工具链准备事件。delta 在 Host 约 16ms 合并后持久化；前端使用 SQLite `seq`/SSE id 去重。
 
 ***
 
@@ -301,7 +311,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 31 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、docs contract） | `npm run test:all`               | 31 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 40 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、docs contract） | `npm run test:all` | 40 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

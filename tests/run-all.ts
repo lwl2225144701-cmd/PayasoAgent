@@ -1,9 +1,9 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
 // 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: 35 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
+// 覆盖: 40 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
 //   Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、
 //   Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、
-//   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、docs contract、
+//   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、工具链能力刷新与显式重试、docs contract、
 //   Host Auth、Provider URL 校验、Keychain 契约、幂等关闭（v1.6 Release Closure 基线）
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
@@ -21,6 +21,9 @@ const SUITES: { name: string; file: string }[] = [
   { name: "tool-contract", file: "tests/tool-contract.test.ts" },
   { name: "filesystem-tools", file: "tests/filesystem-tools.test.ts" },
   { name: "sandbox-manager", file: "tests/sandbox-manager.test.ts" },
+  { name: "toolchain-manager", file: "tests/toolchain-manager.test.ts" },
+  { name: "toolchain-preparation", file: "tests/toolchain-preparation.test.ts" },
+  { name: "runtime-capabilities", file: "tests/runtime-capabilities.test.ts" },
   { name: "operation-identity", file: "tests/operation-identity.test.ts" },
   { name: "operation-replay", file: "tests/operation-replay.test.ts" },
   { name: "output-guard", file: "tests/output-guard.test.ts" },
@@ -52,6 +55,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: "encrypted-file-secret", file: "tests/encrypted-file-secret.test.ts" },
   { name: "keychain-command", file: "tests/keychain-command.test.ts" },
   { name: "shutdown", file: "tests/shutdown.test.ts" },
+  { name: "toolchain-refresh", file: "tests/toolchain-refresh.test.ts" },
+  { name: "frontend-toolchain-retry", file: "tests/frontend-toolchain-retry.test.ts" },
 ];
 
 console.log("=".repeat(70));

@@ -1,7 +1,12 @@
 import type { ChatMessage, ModelConfig, ToolSchema } from "../llm/llm.js";
 import type { PermissionMode } from "../permission-mode.js";
 import { ContextManager, type ContextUsage } from "./context-manager.js";
-import { BASE_SYSTEM_PROMPT, networkSystemPrompt, permissionSystemPrompt } from "./instructions.js";
+import {
+  BASE_SYSTEM_PROMPT,
+  networkSystemPrompt,
+  permissionSystemPrompt,
+  toolchainSystemPrompt,
+} from "./instructions.js";
 import { getNetworkMode } from "../network-mode.js";
 import {
   estimateTextTokens,
@@ -18,6 +23,7 @@ import {
   LlmConversationSummarizer,
   type ConversationSummarizer,
 } from "./conversation-summarizer.js";
+import type { RuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
 
 export interface ContextCompactionResult {
   summarizedMessages: number;
@@ -46,6 +52,9 @@ export interface AgentContextHarness {
   snapshotState(): ContextHarnessState;
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage;
   sanitizeFinalAnswer(text: string): string;
+  // v1.6 工具链闭环：受控安装完成后由 Host 经准备结果通道刷新当前 Run 的
+  // 工具链能力快照，下一轮模型视图即反映新的可用工具（不自动重放原命令）。
+  refreshToolchain?(capabilities: RuntimeToolchainCapabilities): void;
 }
 
 function stripThink(text: string): string {
@@ -58,6 +67,7 @@ export class DefaultContextHarness implements AgentContextHarness {
   readonly modelContext: ModelContextConfig;
   private readonly contextManager: ContextManager;
   private readonly systemInstructions: string;
+  private toolchain: RuntimeToolchainCapabilities | undefined;
   private readonly summarizer: ConversationSummarizer;
   private state = createContextHarnessState();
 
@@ -68,13 +78,21 @@ export class DefaultContextHarness implements AgentContextHarness {
     summarizer?: ConversationSummarizer;
     state?: ContextHarnessState;
     modelContext?: ModelContextConfig;
+    toolchain?: RuntimeToolchainCapabilities;
   }) {
     this.modelContext = options.modelContext
       ?? resolveModelContextConfig({ model: options.modelConfig?.model ?? options.model });
     this.contextManager = new ContextManager(this.modelContext.maxInputTokens);
     this.systemInstructions = `${BASE_SYSTEM_PROMPT}\n${permissionSystemPrompt(options.permissionMode)}`;
+    this.toolchain = options.toolchain;
     this.summarizer = options.summarizer ?? new LlmConversationSummarizer(options.modelConfig);
     this.restoreState(options.state);
+  }
+
+  // 工具链段每轮动态拼装（与 network 段同模式）：受控安装完成后 Host 经
+  // refreshToolchain 更新快照，下一轮模型视图即反映新的可用工具。
+  refreshToolchain(capabilities: RuntimeToolchainCapabilities): void {
+    this.toolchain = capabilities;
   }
 
   createTranscript(task: string, history: ChatMessage[] = []): ChatMessage[] {
@@ -92,9 +110,10 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.state = normalizeContextHarnessState(state);
   }
 
-  // 网络段按当前全局模式动态拼装：运行中切全局开关后，下一轮 system 消息即准确
+  // 网络段与工具链段均按当前状态动态拼装：运行中全局开关切换 / 受控安装
+  // 完成（refreshToolchain）后，下一轮 system 消息即准确。
   private systemPromptText(): string {
-    return `${this.systemInstructions}\n${networkSystemPrompt(getNetworkMode())}`;
+    return `${this.systemInstructions}\n${toolchainSystemPrompt(this.toolchain)}\n${networkSystemPrompt(getNetworkMode())}`;
   }
 
   snapshotState(): ContextHarnessState {

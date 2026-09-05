@@ -16,10 +16,35 @@ import { isAbortError } from "../util/abort.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_PERMISSION_MODE, storedPermissionMode, type PermissionMode } from "../permission-mode.js";
+import { getNetworkMode } from "../network-mode.js";
 import type { ApprovalPort, NetworkApprovalRequest } from "../runtime/approval-port.js";
+import type {
+  ToolchainPreparationObserver,
+  ToolchainPreparationPort,
+  ToolchainPreparationRequest,
+  ToolchainPreparationResult,
+  ToolchainPreparationRunner,
+} from "../sandbox/toolchain-preparation.js";
+import { getToolchainPreparationPlan } from "../sandbox/toolchain-preparation.js";
+import { getRuntimeToolchainCapabilities, type RuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
+import {
+  prepareMacOSToolchain,
+} from "../sandbox/macos-toolchain-preparer.js";
 
 // v2.0.1 JIT Approval：批准请求等待超时（用户 60s 未裁决 → 拒绝，不无限挂起 Run）
 const APPROVAL_TIMEOUT_MS = 60_000;
+
+type ToolchainPreparationDecision = "approved" | "denied" | "aborted" | "timed_out";
+type ToolchainPreparationState = "waiting" | "preparing" | "finishing";
+
+interface PendingToolchainPreparation {
+  runId: string;
+  decide: (decision: ToolchainPreparationDecision) => void;
+  timer: ReturnType<typeof setTimeout>;
+  controller: AbortController;
+  state: ToolchainPreparationState;
+  cancelRequested: boolean;
+}
 
 export type HostRunStatus = StoredRunStatus;
 
@@ -92,8 +117,23 @@ export class RunManager {
     string,
     { resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout>; runId: string }
   >();
+  // macOS toolchain preparation requests are separate from network approval.
+  // They are user-facing, bounded, and resolve to a fixed installer plan.
+  private pendingToolchainPreparations = new Map<
+    string,
+    PendingToolchainPreparation
+  >();
 
-  constructor(private readonly store: RunStore = createDefaultRunStore()) {
+  // v1.6 闭环③：同 packageName 的在途安装合并表 —— 至多一个 brew install，
+  // 后来者等待同一 Promise 共享结果，绝不并发安装。
+  private activeToolchainInstalls = new Map<string, Promise<ToolchainPreparationResult>>();
+
+  constructor(
+    private readonly store: RunStore = createDefaultRunStore(),
+    private readonly toolchainPreparer: ToolchainPreparationRunner = prepareMacOSToolchain,
+    // v1.6 闭环④a：能力快照提供方可注入（测试确定性；生产用真实启动发现）
+    private readonly toolchainCapabilitiesProvider: () => RuntimeToolchainCapabilities = getRuntimeToolchainCapabilities,
+  ) {
     // A process restart cannot leave persisted rows pretending to execute.
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
     const now = new Date().toISOString();
@@ -145,7 +185,16 @@ export class RunManager {
         // 等待执行链真正结束（带 cap），确保 Store 关闭前 agent 不再写库
         waitPromises.push(this.waitAgentSettled(run, 2_000));
       }
+      for (const pending of this.pendingToolchainPreparations.values()) {
+        clearTimeout(pending.timer);
+        if (pending.state === "preparing") {
+          pending.controller.abort();
+        } else {
+          pending.decide("aborted");
+        }
+      }
       await Promise.all(waitPromises);
+      this.pendingToolchainPreparations.clear();
 
       // 关闭所有 SSE 连接
       for (const sinks of this.subscribers.values()) {
@@ -224,6 +273,277 @@ export class RunManager {
           timestamp: req.timestamp,
         });
       }
+    });
+  }
+
+  // ---- macOS Toolchain Preparation：固定白名单 + 用户明确批准 ----
+  toolchainPreparationPort(): ToolchainPreparationPort {
+    return {
+      request: (req, signal) => this.requestToolchainPreparation(req, signal),
+    };
+  }
+
+  resolveToolchainPreparation(runId: string, requestId: string, approved: boolean): boolean {
+    const pending = this.pendingToolchainPreparations.get(requestId);
+    if (!pending || pending.runId !== runId || pending.state !== "waiting") return false;
+    clearTimeout(pending.timer);
+    pending.state = approved ? "preparing" : "finishing";
+    pending.decide(approved ? "approved" : "denied");
+    return true;
+  }
+
+  cancelToolchainPreparation(runId: string, requestId: string): boolean {
+    const pending = this.pendingToolchainPreparations.get(requestId);
+    if (
+      !pending
+      || pending.runId !== runId
+      || pending.cancelRequested
+      || (pending.state !== "waiting" && pending.state !== "preparing")
+    ) return false;
+    pending.cancelRequested = true;
+    clearTimeout(pending.timer);
+    if (pending.state === "waiting") {
+      pending.state = "finishing";
+      pending.decide("aborted");
+    } else if (pending.state === "preparing") {
+      pending.controller.abort();
+    }
+    return true;
+  }
+
+  private async requestToolchainPreparation(
+    req: ToolchainPreparationRequest,
+    signal?: AbortSignal,
+  ): Promise<ToolchainPreparationResult> {
+    const plan = getToolchainPreparationPlan(req.toolName);
+    if (process.platform !== "darwin") {
+      return Promise.resolve({
+        approved: false,
+        prepared: false,
+        status: "unavailable",
+        message: "Controlled dependency preparation is currently available only on macOS.",
+      });
+    }
+    if (
+      plan === undefined
+      || req.packageName !== plan.packageName
+      || req.source !== plan.source
+    ) {
+      return Promise.resolve({
+        approved: false,
+        prepared: false,
+        status: "unavailable",
+        message: "This dependency is not available through the controlled preparation flow.",
+      });
+    }
+    // Host-level package preparation may need to download artifacts. Keep it
+    // behind the independent network capability: explicit install approval is
+    // not a way to bypass network.mode=off/ask.
+    if (getNetworkMode() !== "on") {
+      return Promise.resolve({
+        approved: false,
+        prepared: false,
+        status: "unavailable",
+        message: "Network access is not enabled for dependency preparation. Enable it separately and try again.",
+      });
+    }
+
+    // v1.6 闭环④a：实时快照显示该工具已可用 → 无需任何准备直接返回 prepared
+    //（避免陈旧的 per-Run 快照发起注定重复的安装；例如用户在准备期间自行安装）。
+    const live = this.toolchainCapabilitiesProvider();
+    if (live.tools[plan.toolName]?.status === "available") {
+      return Promise.resolve({
+        approved: true,
+        prepared: true,
+        status: "prepared" as const,
+        capabilities: live,
+      });
+    }
+
+    // v1.6 闭环③（合并）：同 packageName 已有在途准备（含批准等待）→ 等待同一
+    // Promise 并共享结果（拒绝/超时同样共享），绝不并发执行多个 Homebrew 安装。
+    // 合并等待者不创建独立批准卡片/超时器；其自身 signal 取消只让该等待者以
+    // aborted 退出，不影响共享安装与其他等待者。
+    const sharedInstall = this.activeToolchainInstalls.get(plan.packageName);
+    if (sharedInstall) {
+      const result = await this.awaitSharedInstall(sharedInstall, signal);
+      const mergedRequestId = crypto.randomUUID();
+      this.recordToolchainResolved(req.runId, mergedRequestId, result);
+      if (result.prepared) {
+        result.capabilities = this.toolchainCapabilitiesProvider();
+      }
+      return result;
+    }
+
+    // 以下整段（批准等待 + 安装 + resolved 事件）= 该 package 的共享安装 Promise：
+    // 合并等待者挂在同一个 Promise 上，保证至多一个在途 Homebrew 安装。
+    const install = (async (): Promise<ToolchainPreparationResult> => {
+    const requestId = crypto.randomUUID();
+    const controller = new AbortController();
+    let detachSignal = (): void => {};
+    const decision = new Promise<ToolchainPreparationDecision>((resolve) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const decide = (value: ToolchainPreparationDecision) => {
+        const pending = this.pendingToolchainPreparations.get(requestId);
+        if (!pending || pending.decide !== decide) return;
+        if (pending.state === "waiting") {
+          pending.state = value === "approved" ? "preparing" : "finishing";
+          if (value !== "approved") this.pendingToolchainPreparations.delete(requestId);
+        }
+        clearTimeout(timer);
+        if (value !== "approved") signal?.removeEventListener("abort", onAbort);
+        resolve(value);
+      };
+      const onAbort = () => {
+        const pending = this.pendingToolchainPreparations.get(requestId);
+        if (pending?.state === "preparing") controller.abort();
+        else decide("aborted");
+      };
+      timer = setTimeout(() => decide("timed_out"), APPROVAL_TIMEOUT_MS);
+      timer.unref?.();
+      this.pendingToolchainPreparations.set(requestId, {
+        runId: req.runId,
+        decide,
+        timer,
+        controller,
+        state: "waiting",
+        cancelRequested: false,
+      });
+      const run = this.runs.get(req.runId);
+      if (run) {
+        this.record(run, {
+          type: "toolchain_preparation_requested",
+          runId: req.runId,
+          requestId,
+          toolName: plan.toolName,
+          packageName: plan.packageName,
+          source: plan.source,
+          timestamp: req.timestamp,
+        });
+      }
+      if (signal) {
+        detachSignal = () => signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+
+    return decision.then(async (value) => {
+      let result: ToolchainPreparationResult;
+      if (value === "denied") {
+        result = {
+          approved: false,
+          prepared: false,
+          status: "denied",
+          message: "Dependency preparation was not authorized.",
+        };
+      } else if (value === "aborted") {
+        result = {
+          approved: false,
+          prepared: false,
+          status: "aborted",
+          message: "Dependency preparation was cancelled.",
+        };
+      } else if (value === "timed_out") {
+        result = {
+          approved: false,
+          prepared: false,
+          status: "timed_out",
+          message: "Dependency preparation approval timed out.",
+        };
+      } else {
+        const run = this.runs.get(req.runId);
+        if (run) {
+          this.record(run, {
+            type: "toolchain_preparation_started",
+            runId: req.runId,
+            requestId,
+            toolName: plan.toolName,
+            packageName: plan.packageName,
+            source: plan.source,
+            phase: "checking",
+            timestamp: new Date().toISOString(),
+          });
+        }
+        const onPhase: ToolchainPreparationObserver = (phase) => {
+          const currentRun = this.runs.get(req.runId);
+          if (!currentRun) return;
+          this.record(currentRun, {
+            type: "toolchain_preparation_progress",
+            runId: req.runId,
+            requestId,
+            phase: phase === "checking" ? "installing" : phase,
+            timestamp: new Date().toISOString(),
+          });
+        };
+        try {
+          result = await this.toolchainPreparer(plan, controller.signal, onPhase);
+        } catch {
+          result = {
+            approved: true,
+            prepared: false,
+            status: "failed",
+            message: "Dependency preparation failed. Review the host package manager and try again.",
+          };
+        }
+      }
+      this.pendingToolchainPreparations.delete(requestId);
+      detachSignal();
+      this.recordToolchainResolved(req.runId, requestId, result);
+      if (result.prepared) {
+        result.capabilities = this.toolchainCapabilitiesProvider();
+      }
+      return result;
+    });
+    })();
+
+    this.activeToolchainInstalls.set(plan.packageName, install);
+    // 表项生命周期管理：install 本身从不 reject（内部已兜底），此处的派生
+    // Promise 仅用于在结束后清理合并表，不存在 unhandled rejection。
+    void install.then(
+      () => this.activeToolchainInstalls.delete(plan.packageName),
+      () => this.activeToolchainInstalls.delete(plan.packageName),
+    );
+    return install;
+  }
+
+  // 合并等待者：自身 signal 取消只让当前等待者以 aborted 退出，
+  // 不影响共享安装与其他等待者。
+  private async awaitSharedInstall(
+    shared: Promise<ToolchainPreparationResult>,
+    signal?: AbortSignal,
+  ): Promise<ToolchainPreparationResult> {
+    if (signal === undefined) return shared;
+    if (signal.aborted) return this.abortedToolchainPreparation();
+    return Promise.race([
+      shared,
+      new Promise<ToolchainPreparationResult>((resolve) => {
+        signal.addEventListener("abort", () => resolve(this.abortedToolchainPreparation()), { once: true });
+      }),
+    ]);
+  }
+
+  private abortedToolchainPreparation(): ToolchainPreparationResult {
+    return {
+      approved: true,
+      prepared: false,
+      status: "aborted",
+      message: "Dependency preparation was cancelled.",
+    };
+  }
+
+  private recordToolchainResolved(runId: string, requestId: string, result: ToolchainPreparationResult): void {
+    const run = this.runs.get(runId);
+    if (!run) return;
+    this.record(run, {
+      type: "toolchain_preparation_resolved",
+      runId,
+      requestId,
+      approved: result.approved,
+      prepared: result.prepared,
+      status: result.status,
+      ...(result.message === undefined ? {} : { message: result.message }),
+      timestamp: new Date().toISOString(),
     });
   }
 
@@ -773,14 +1093,16 @@ export class RunManager {
         return;
       }
       try {
+        const executionContext = createAgentExecutionContext({
+          runId: run.runId,
+          workspaceRoot: run.workspaceRoot,
+          permissionMode: run.permissionMode,
+        });
         const result = await runAgent(task, resume, {
-          executionContext: createAgentExecutionContext({
-            runId: run.runId,
-            workspaceRoot: run.workspaceRoot,
-            permissionMode: run.permissionMode,
-          }),
+          executionContext,
           ...createDefaultRuntimeServices(),
           approvalPort: this.approvalPort(),
+          toolchainPreparationPort: this.toolchainPreparationPort(),
           conversationHistory,
           modelConfig,
           contextHarness: new DefaultContextHarness({
@@ -788,6 +1110,7 @@ export class RunManager {
             // No configured provider is a supported CLI/test compatibility
             // path; both Harness and LLM then resolve the same env fallback.
             modelConfig,
+            toolchain: executionContext.toolchain,
           }),
           signal: abortController.signal,
           onStreamDelta: queueDelta,

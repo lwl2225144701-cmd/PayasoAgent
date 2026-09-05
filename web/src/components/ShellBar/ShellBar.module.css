@@ -33,8 +33,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 620;
+  font-size: 14px;
+  font-weight: 550;
   letter-spacing: -0.01em;
 }
 

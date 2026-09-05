@@ -5,7 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import {
   createSandboxPolicy,
   canonicalizeSandboxPath,
@@ -13,6 +13,7 @@ import {
   type SandboxPolicy,
 } from "./sandbox-policy.js";
 import type { PermissionMode } from "../permission-mode.js";
+import { getMacOSToolchain } from "./toolchain-manager.js";
 
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 const SHELL = "/bin/sh";
@@ -54,104 +55,6 @@ export async function probeSandboxAvailability(): Promise<boolean> {
   sandboxAvailability = ok;
   return ok;
 }
-
-// Keep the existing shell command environment small and deterministic.
-const NODE_INSTALL_ROOT = fs.realpathSync.native(path.resolve(path.dirname(process.execPath), ".."));
-const NODE_BIN_ROOT = fs.realpathSync.native(path.dirname(process.execPath));
-const npmEntry = path.join(NODE_BIN_ROOT, "npm");
-const NPM_INSTALL_ROOT = fs.existsSync(npmEntry)
-  ? path.dirname(path.dirname(fs.realpathSync.native(npmEntry)))
-  : null;
-const SAFE_PATH = `${NODE_BIN_ROOT}:/usr/bin:/bin:/usr/sbin:/sbin`;
-
-// Homebrew's Node binary links against formula-owned dylibs outside the Node
-// Cellar. Discover the exact Mach-O dependency closure and grant read access to
-// those files only; do not widen the policy to all of /opt/homebrew.
-function discoverNodeRuntimeLibraries(): {
-  canonical: string[];
-  requested: string[];
-  canonicalRoots: string[];
-  requestedRoots: string[];
-} {
-  if (process.platform !== "darwin" || !fs.existsSync("/usr/bin/otool")) {
-    return { canonical: [], requested: [], canonicalRoots: [], requestedRoots: [] };
-  }
-  const pending = [process.execPath];
-  const inspected = new Set<string>();
-  const canonical = new Set<string>();
-  const requested = new Set<string>();
-  const canonicalRoots = new Set<string>();
-  const requestedRoots = new Set<string>();
-  while (pending.length > 0 && inspected.size < 256) {
-    const binary = pending.pop()!;
-    let resolved: string;
-    try {
-      resolved = fs.realpathSync.native(binary);
-    } catch {
-      continue;
-    }
-    if (inspected.has(resolved)) continue;
-    inspected.add(resolved);
-    const result = spawnSync("/usr/bin/otool", ["-L", resolved], {
-      encoding: "utf8",
-      timeout: 5_000,
-      maxBuffer: 512 * 1024,
-    });
-    if (result.status !== 0 || typeof result.stdout !== "string") continue;
-    for (const line of result.stdout.split("\n").slice(1)) {
-      const dependency = line.trim().split(/\s+\(/, 1)[0];
-      if (!dependency?.startsWith("/") || !fs.existsSync(dependency)) continue;
-      const target = fs.realpathSync.native(dependency);
-      // System libraries already have narrowly declared roots below. The Node
-      // installation itself is also covered as a root.
-      if (
-        target.startsWith("/usr/lib/") ||
-        target.startsWith("/System/Library/") ||
-        target === NODE_INSTALL_ROOT ||
-        target.startsWith(NODE_INSTALL_ROOT + path.sep)
-      ) continue;
-      requested.add(dependency);
-      canonical.add(target);
-      const requestedRoot = path.dirname(path.dirname(dependency));
-      requestedRoots.add(requestedRoot);
-      canonicalRoots.add(fs.realpathSync.native(requestedRoot));
-      pending.push(target);
-    }
-  }
-  return {
-    canonical: [...canonical],
-    requested: [...requested],
-    canonicalRoots: [...canonicalRoots],
-    requestedRoots: [...requestedRoots],
-  };
-}
-
-const NODE_RUNTIME_LIBRARIES = discoverNodeRuntimeLibraries();
-const NODE_RUNTIME_CONFIG_PATHS = ["/opt/homebrew/etc/openssl@3/openssl.cnf"]
-  .filter((candidate) => fs.existsSync(candidate))
-  .map((candidate) => fs.realpathSync.native(candidate));
-
-// These are the system paths needed to load and run standard macOS command
-// line tools. No /private/etc, user home, /tmp, or other host data roots are
-// opened by default. Network is explicitly out of scope for this phase.
-const MACOS_SYSTEM_READ_ROOTS = [
-  "/bin",
-  "/sbin",
-  "/usr/bin",
-  "/usr/sbin",
-  "/usr/lib",
-  "/System/Library",
-  "/dev/null",
-  "/dev/urandom",
-  "/dev/random",
-  // The Host's own Node distribution is read/exec-only. This allows project
-  // commands such as npm test while keeping user data outside Workspace denied.
-  NODE_INSTALL_ROOT,
-  ...(NPM_INSTALL_ROOT ? [NPM_INSTALL_ROOT] : []),
-  ...NODE_RUNTIME_LIBRARIES.canonical,
-  ...NODE_RUNTIME_LIBRARIES.canonicalRoots,
-  ...NODE_RUNTIME_CONFIG_PATHS,
-];
 
 export type MacOSSandboxEvent = "started" | "denied";
 
@@ -203,17 +106,8 @@ function profilePathRule(root: string): string {
     : `(literal ${schemeString(root)})`;
 }
 
-function isExecutableRoot(root: string, workspaceRoot: string): boolean {
-  return (
-    root === workspaceRoot ||
-    root === "/bin" ||
-    root === "/sbin" ||
-    root === "/usr/bin" ||
-    root === "/usr/sbin" ||
-    root === NODE_INSTALL_ROOT ||
-    root === NODE_BIN_ROOT ||
-    root === NPM_INSTALL_ROOT
-  );
+function isExecutableRoot(root: string, policy: SandboxPolicy): boolean {
+  return root === policy.workspaceRoot || policy.executableRoots.includes(root);
 }
 
 function pathAncestors(target: string): string[] {
@@ -254,7 +148,11 @@ function profileFor(policy: SandboxPolicy): string {
   // lstat access to its ancestor directories. Metadata-only literals permit
   // canonicalization without granting directory listing or file-content reads.
   const metadataAncestors = new Set(
-    [...policy.readableRoots, ...NODE_RUNTIME_LIBRARIES.requestedRoots]
+    [
+      ...policy.readableRoots,
+      ...policy.executableRoots,
+      ...policy.readablePathAliases.map((alias) => alias.path),
+    ]
       .flatMap((root) => pathAncestors(root))
   );
   for (const ancestor of metadataAncestors) {
@@ -268,21 +166,14 @@ function profileFor(policy: SandboxPolicy): string {
     lines.push("(allow file-read*)");
     lines.push("(allow file-write*)");
   } else {
-    // dyld requests Homebrew libraries through /opt/homebrew/opt/... symlink
-    // paths, while the canonical targets live in Cellar. Permit both exact
-    // file identities. dyld needs to traverse symlinks within each dependency
-    // formula, so permit only the discovered formula roots—not all Homebrew.
-    for (const formulaRoot of NODE_RUNTIME_LIBRARIES.requestedRoots) {
-      lines.push(`(allow file-read* (subpath ${schemeString(formulaRoot)}))`);
-    }
-    for (const library of NODE_RUNTIME_LIBRARIES.requested) {
-      lines.push(`(allow file-read* (literal ${schemeString(library)}))`);
-    }
     for (const root of policy.readableRoots) {
-      const operation = isExecutableRoot(root, policy.workspaceRoot)
+      const operation = isExecutableRoot(root, policy)
         ? "file-read* process-exec"
         : "file-read*";
       lines.push(`(allow ${operation} ${profilePathRule(root)})`);
+    }
+    for (const alias of policy.readablePathAliases) {
+      lines.push(`(allow file-read* ${profilePathRule(alias.path)})`);
     }
     for (const root of policy.writableRoots) {
       lines.push(`(allow file-write* ${profilePathRule(root)})`);
@@ -304,8 +195,9 @@ function outputLimit(value: string): string {
 
 export class MacOSSandbox {
   readonly policy: SandboxPolicy;
+  private readonly safePath: string;
 
-  constructor(policy: SandboxPolicy) {
+  constructor(policy: SandboxPolicy, safePath = getMacOSToolchain().safePath) {
     if (process.platform !== "darwin") {
       throw new Error("macOS OS sandbox is only available on darwin");
     }
@@ -313,6 +205,7 @@ export class MacOSSandbox {
       throw new Error("macOS OS sandbox launcher is unavailable: sandbox-exec");
     }
     this.policy = policy;
+    this.safePath = safePath;
   }
 
   static forWorkspace(
@@ -320,8 +213,11 @@ export class MacOSSandbox {
     permissionMode: PermissionMode = "workspace-write",
     networkAccess = false,
   ): MacOSSandbox {
+    const toolchain = getMacOSToolchain();
     const policy = createSandboxPolicy(workspaceRoot, {
-      readableRoots: MACOS_SYSTEM_READ_ROOTS,
+      readableRoots: toolchain.readableRoots,
+      readablePathAliases: toolchain.readablePathAliases,
+      executableRoots: toolchain.executableRoots,
       writableRoots: permissionMode === "workspace-write" ? [workspaceRoot] : [],
       permissionMode,
       // v2.0 Network Control：网络策略由调用方（Runtime tool pipeline）根据全局
@@ -330,7 +226,7 @@ export class MacOSSandbox {
       // 真正允许联网（默认允许联网是 Network Control 第一版的目标）。
       networkAccess,
     });
-    return new MacOSSandbox(policy);
+    return new MacOSSandbox(policy, toolchain.safePath);
   }
 
   async run(command: string, options: MacOSSandboxRunOptions): Promise<MacOSSandboxResult> {
@@ -349,10 +245,15 @@ export class MacOSSandbox {
 
     options.onEvent?.("started");
     const env = {
-      PATH: SAFE_PATH,
+      PATH: this.safePath,
       HOME: home,
       TMPDIR: tmpdir,
       LC_ALL: "C",
+      // Keep Git from probing host-level configuration. Repository-local
+      // .git/config remains inside the authorized Workspace and is unaffected.
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_TERMINAL_PROMPT: "0",
     };
     const timeout = options.timeoutMs ?? SHELL_TIMEOUT_MS;
     const profile = profileFor(this.policy);
