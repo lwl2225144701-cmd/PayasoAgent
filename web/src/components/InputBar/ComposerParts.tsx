@@ -1,11 +1,15 @@
-import { forwardRef, useState, useRef, useEffect, type ChangeEventHandler, type KeyboardEventHandler } from 'react';
-import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import {
-  ArrowUpIcon,
-  StopIcon,
-} from '../icons';
+  type ChangeEventHandler,
+  forwardRef,
+  type KeyboardEventHandler,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import { DropdownTrigger } from '../DropdownTrigger';
 import { IconButton } from '../IconButton';
+import { ArrowUpIcon, StopIcon } from '../icons';
 import { PermissionDropdown } from '../PermissionDropdown';
 import styles from './InputBar.module.css';
 
@@ -34,6 +38,7 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
         placeholder={placeholder}
         rows={2}
         disabled={disabled}
+        // biome-ignore lint/a11y/noAutofocus: 会话输入框自动聚焦为有意 UX（桌面单机应用）
         autoFocus={autoFocus}
       />
     );
@@ -55,19 +60,35 @@ interface ComposerFooterProps {
   onSelectPermission: (mode: PermissionMode) => void;
 }
 
-function PermissionButton({ mode, onSelect }: { mode: PermissionMode; onSelect: (mode: PermissionMode) => void }) {
+function PermissionButton({
+  mode,
+  onSelect,
+}: {
+  mode: PermissionMode;
+  onSelect: (mode: PermissionMode) => void;
+}) {
   return <PermissionDropdown mode={mode} onChange={onSelect} />;
 }
 
 // 下拉按 Provider 分组：组标题 = Provider 名，组内是其模型目录。
 // 只展示已配置密钥且有模型的 provider——未配置的选项选中后也会被后端回退，展示即误导。
-function buildModelGroups(models: ModelProviderView[]): Array<{ providerId: string; providerName: string; models: string[] }> {
+function buildModelGroups(
+  models: ModelProviderView[],
+): Array<{ providerId: string; providerName: string; models: string[] }> {
   return models
-    .filter(p => p.hasApiKey && p.models.length > 0)
-    .map(p => ({ providerId: p.id, providerName: p.name, models: p.models }));
+    .filter((p) => p.hasApiKey && p.models.length > 0)
+    .map((p) => ({ providerId: p.id, providerName: p.name, models: p.models }));
 }
 
-function ModelButton({ currentModel, models = [], onSelectModel }: { currentModel?: ModelSelection; models?: ModelProviderView[]; onSelectModel?: (providerId: string, model: string) => void }) {
+function ModelButton({
+  currentModel,
+  models = [],
+  onSelectModel,
+}: {
+  currentModel?: ModelSelection;
+  models?: ModelProviderView[];
+  onSelectModel?: (providerId: string, model: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -87,27 +108,35 @@ function ModelButton({ currentModel, models = [], onSelectModel }: { currentMode
   const isSelected = (providerId: string, model: string) =>
     currentModel?.providerId === providerId && currentModel?.model === model;
   const label = currentModel
-    ? (currentModel.model.length > 18 ? `${currentModel.model.slice(0, 16)}…` : currentModel.model)
+    ? currentModel.model.length > 18
+      ? `${currentModel.model.slice(0, 16)}…`
+      : currentModel.model
     : '选择模型';
 
   return (
     <div className={styles.modelDropdown} ref={containerRef}>
       <DropdownTrigger
         label={label}
-        title={currentModel ? `当前模型：${currentModel.providerName} · ${currentModel.model}` : '选择模型'}
-        ariaLabel={currentModel ? `${currentModel.providerName} ${currentModel.model} 模型` : '选择模型'}
+        title={
+          currentModel
+            ? `当前模型：${currentModel.providerName} · ${currentModel.model}`
+            : '选择模型'
+        }
+        ariaLabel={
+          currentModel ? `${currentModel.providerName} ${currentModel.model} 模型` : '选择模型'
+        }
         open={open}
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen((v) => !v)}
       />
       {open && (
         <div className={styles.modelDropdownMenu} role="listbox">
           {groups.length === 0 ? (
             <div className={styles.modelDropdownEmpty}>请先在设置中配置 API 密钥</div>
           ) : (
-            groups.map(group => (
+            groups.map((group) => (
               <div key={group.providerId} className={styles.modelGroup}>
                 <div className={styles.modelGroupTitle}>{group.providerName}</div>
-                {group.models.map(model => (
+                {group.models.map((model) => (
                   <button
                     key={model}
                     type="button"
@@ -131,7 +160,13 @@ function ModelButton({ currentModel, models = [], onSelectModel }: { currentMode
   );
 }
 
-function SubmitButton({ canSend, isRunning, isStopping, onSend, onStop }: Omit<ComposerFooterProps, 'variant'>) {
+function SubmitButton({
+  canSend,
+  isRunning,
+  isStopping,
+  onSend,
+  onStop,
+}: Omit<ComposerFooterProps, 'variant'>) {
   return isRunning ? (
     <IconButton
       buttonSize="lg"
@@ -165,7 +200,11 @@ export function ComposerFooter(props: ComposerFooterProps) {
       <div className={styles.heroFooter}>
         <div className={styles.heroTools}>
           <PermissionButton mode={props.permissionMode} onSelect={props.onSelectPermission} />
-          <ModelButton currentModel={props.currentModel} models={props.models} onSelectModel={props.onSelectModel} />
+          <ModelButton
+            currentModel={props.currentModel}
+            models={props.models}
+            onSelectModel={props.onSelectModel}
+          />
         </div>
         <div className={styles.heroActions}>{action}</div>
       </div>
@@ -176,7 +215,11 @@ export function ComposerFooter(props: ComposerFooterProps) {
     <div className={styles.conversationFooter}>
       <PermissionButton mode={props.permissionMode} onSelect={props.onSelectPermission} />
       <div className={styles.conversationActions}>
-        <ModelButton currentModel={props.currentModel} models={props.models} onSelectModel={props.onSelectModel} />
+        <ModelButton
+          currentModel={props.currentModel}
+          models={props.models}
+          onSelectModel={props.onSelectModel}
+        />
         {action}
       </div>
     </div>

@@ -17,19 +17,46 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const SUBJECTS = [
-  'the harbor', 'a quiet library', 'the night train', 'an old lighthouse',
-  'the market square', 'a forgotten archive', 'the river delta', 'an empty stadium',
-  'the mountain pass', 'a small observatory', 'the ferry terminal', 'an abandoned mill',
+  'the harbor',
+  'a quiet library',
+  'the night train',
+  'an old lighthouse',
+  'the market square',
+  'a forgotten archive',
+  'the river delta',
+  'an empty stadium',
+  'the mountain pass',
+  'a small observatory',
+  'the ferry terminal',
+  'an abandoned mill',
 ];
 const VERBS = [
-  'reveals', 'hides', 'echoes', 'collects', 'guards', 'reflects',
-  'remembers', 'measures', 'outlines', 'preserves', 'traces', 'records',
+  'reveals',
+  'hides',
+  'echoes',
+  'collects',
+  'guards',
+  'reflects',
+  'remembers',
+  'measures',
+  'outlines',
+  'preserves',
+  'traces',
+  'records',
 ];
 const OBJECTS = [
-  'a pattern of tides', 'the weight of silence', 'a ledger of departures',
-  'the geometry of shadows', 'a catalog of storms', 'the rhythm of signals',
-  'a map of shortcuts', 'the temperature of rumors', 'a sequence of lanterns',
-  'the grammar of footprints', 'an index of delays', 'the color of distance',
+  'a pattern of tides',
+  'the weight of silence',
+  'a ledger of departures',
+  'the geometry of shadows',
+  'a catalog of storms',
+  'the rhythm of signals',
+  'a map of shortcuts',
+  'the temperature of rumors',
+  'a sequence of lanterns',
+  'the grammar of footprints',
+  'an index of delays',
+  'the color of distance',
 ];
 const CLAUSES = [
   'while the wind keeps its own schedule',
@@ -46,7 +73,8 @@ const CLAUSES = [
 function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -62,7 +90,7 @@ function makeSentence(rand, lineNo) {
 }
 
 function generateFile(fileIndex, targetKB) {
-  const rand = mulberry32(0xC0FFEE + fileIndex * 7919);
+  const rand = mulberry32(0xc0ffee + fileIndex * 7919);
   const targetBytes = targetKB * 1024;
   const lines = [];
   let bytes = 0;
@@ -83,7 +111,9 @@ function estimateTokens(text) {
 
 const [, , targetDir, countArg, kbArg] = process.argv;
 if (!targetDir) {
-  console.error('用法: node scripts/gen-compaction-fixtures.mjs <目标目录> [文件数=6] [每文件KB=25]');
+  console.error(
+    '用法: node scripts/gen-compaction-fixtures.mjs <目标目录> [文件数=6] [每文件KB=25]',
+  );
   process.exit(1);
 }
 const count = Number(countArg ?? 6);
@@ -106,7 +136,9 @@ for (let i = 1; i <= count; i++) {
   const lines = content.split('\n').length - 1;
   totalBytes += bytes;
   totalTokens += estimateTokens(content);
-  console.log(`  ${path.basename(file)}  ${(bytes / 1024).toFixed(1)} KB  ${lines} 行  ~${estimateTokens(content)} tokens(原始)`);
+  console.log(
+    `  ${path.basename(file)}  ${(bytes / 1024).toFixed(1)} KB  ${lines} 行  ~${estimateTokens(content)} tokens(原始)`,
+  );
 }
 
 console.log('');

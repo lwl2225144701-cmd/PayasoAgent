@@ -13,9 +13,9 @@
 // UnsupportedSecretStore 保留为显式禁用实现（测试/特殊用途），不再作为默认路由。
 // 测试用 MemorySecretStore。
 
-import { MacOSKeychainSecretStore } from "./macos-keychain-secret-store.js";
-import { EncryptedFileSecretStore } from "./encrypted-file-secret-store.js";
-import { MemorySecretStore, UnsupportedSecretStore } from "./memory-secret-store.js";
+import { EncryptedFileSecretStore } from './encrypted-file-secret-store.js';
+import { MacOSKeychainSecretStore } from './macos-keychain-secret-store.js';
+import { MemorySecretStore, UnsupportedSecretStore } from './memory-secret-store.js';
 
 export interface SecretStore {
   /** 读取 secret；不存在返回 null。Keychain 不可访问时抛出脱敏错误。 */
@@ -33,9 +33,14 @@ export function providerSecretKey(providerId: string): string {
 
 // 组合根（src/host/index.ts）调用一次并注入；测试替换为 MemorySecretStore
 export function createSecretStore(): SecretStore {
-  if (process.platform === "darwin") return new MacOSKeychainSecretStore();
+  if (process.platform === 'darwin') return new MacOSKeychainSecretStore();
   // 非 macOS（Windows/Linux/其他）：加密文件兜底，不再直接禁用
   return new EncryptedFileSecretStore();
 }
 
-export { MacOSKeychainSecretStore, EncryptedFileSecretStore, MemorySecretStore, UnsupportedSecretStore };
+export {
+  EncryptedFileSecretStore,
+  MacOSKeychainSecretStore,
+  MemorySecretStore,
+  UnsupportedSecretStore,
+};

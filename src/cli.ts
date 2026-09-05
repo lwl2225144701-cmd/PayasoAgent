@@ -4,11 +4,14 @@
 //   npm start -- --resume <runId>      从 checkpoint 恢复执行
 //   npm start -- --run-id <runId> "任务"  固定 runId 执行（测试/沙箱预置用，默认随机）
 
-import { runAgent } from "./runtime/agent.js";
-import { loadCheckpoint } from "./persistence/file-checkpoint-store.js";
-import { createAgentExecutionContext, createDefaultRuntimeServices } from "./bootstrap/runtime-bootstrap.js";
-import { setNetworkMode, type NetworkMode } from "./network-mode.js";
-import { createCliApprovalPort } from "./cli-approval.js";
+import {
+  createAgentExecutionContext,
+  createDefaultRuntimeServices,
+} from './bootstrap/runtime-bootstrap.js';
+import { createCliApprovalPort } from './cli-approval.js';
+import { type NetworkMode, setNetworkMode } from './network-mode.js';
+import { loadCheckpoint } from './persistence/file-checkpoint-store.js';
+import { runAgent } from './runtime/agent.js';
 
 const args = process.argv.slice(2);
 
@@ -18,21 +21,21 @@ let runIdOpt: string | undefined;
 let networkModeOpt: string | undefined;
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--resume") {
+  if (args[i] === '--resume') {
     resumeId = args[++i];
     continue;
   }
-  if (args[i] === "--run-id") {
+  if (args[i] === '--run-id') {
     runIdOpt = args[++i];
     continue;
   }
-  if (args[i] === "--network-mode") {
+  if (args[i] === '--network-mode') {
     networkModeOpt = args[++i];
     continue;
   }
   positional.push(args[i]);
 }
-const task = positional[0] || "帮我计算 15 * 37";
+const task = positional[0] || '帮我计算 15 * 37';
 
 // v2.0 Network Control：CLI 支持 --network-mode on|off|ask（默认 on）
 if (networkModeOpt) {

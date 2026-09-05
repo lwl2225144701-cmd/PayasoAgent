@@ -6,28 +6,28 @@
 // approval. The command is argv-based and selected from a fixed plan; no model
 // command or path is passed to the installer.
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { refreshMacOSToolchain } from './toolchain-manager.js';
 import type {
-  ToolchainPreparationPlan,
   ToolchainPreparationObserver,
+  ToolchainPreparationPlan,
   ToolchainPreparationResult,
-} from "./toolchain-preparation.js";
-import { refreshMacOSToolchain } from "./toolchain-manager.js";
+} from './toolchain-preparation.js';
 
-const HOMEBREW_CANDIDATES = [
-  "/opt/homebrew/bin/brew",
-  "/usr/local/bin/brew",
-] as const;
+const HOMEBREW_CANDIDATES = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'] as const;
 const PREPARATION_TIMEOUT_MS = 180_000;
 // 安装前磁盘门槛：低于此值明确失败，而不是装到一半磁盘写满留下残留
 export const MIN_INSTALL_FREE_BYTES = 512 * 1024 * 1024;
 
 // 安装前检查：目标目录所在卷剩余空间是否充足。
 // statfs 不可用/失败时返回 true（不阻塞安装；后续安装失败本身会给出结果）。
-export function hasSufficientDiskSpace(directory: string, minFreeBytes: number = MIN_INSTALL_FREE_BYTES): boolean {
+export function hasSufficientDiskSpace(
+  directory: string,
+  minFreeBytes: number = MIN_INSTALL_FREE_BYTES,
+): boolean {
   try {
     const stats = fs.statfsSync(directory);
     return stats.bavail * stats.bsize >= minFreeBytes;
@@ -54,18 +54,18 @@ function homebrewExecutable(): string | undefined {
   return undefined;
 }
 
-function preparationMessage(status: ToolchainPreparationResult["status"]): string {
+function preparationMessage(status: ToolchainPreparationResult['status']): string {
   switch (status) {
-    case "unavailable":
-      return "No supported macOS package manager is available for this dependency.";
-    case "aborted":
-      return "Dependency preparation was cancelled.";
-    case "timed_out":
-      return "Dependency preparation timed out. Review the host package manager and try again.";
-    case "failed":
-      return "Dependency preparation failed. Review the host package manager and try again.";
+    case 'unavailable':
+      return 'No supported macOS package manager is available for this dependency.';
+    case 'aborted':
+      return 'Dependency preparation was cancelled.';
+    case 'timed_out':
+      return 'Dependency preparation timed out. Review the host package manager and try again.';
+    case 'failed':
+      return 'Dependency preparation failed. Review the host package manager and try again.';
     default:
-      return "Dependency preparation was not completed.";
+      return 'Dependency preparation was not completed.';
   }
 }
 
@@ -78,12 +78,12 @@ export async function prepareMacOSToolchain(
   signal?: AbortSignal,
   onPhase?: ToolchainPreparationObserver,
 ): Promise<ToolchainPreparationResult> {
-  if (process.platform !== "darwin") {
+  if (process.platform !== 'darwin') {
     return {
       approved: true,
       prepared: false,
-      status: "unavailable",
-      message: preparationMessage("unavailable"),
+      status: 'unavailable',
+      message: preparationMessage('unavailable'),
     };
   }
 
@@ -92,12 +92,17 @@ export async function prepareMacOSToolchain(
     return {
       approved: true,
       prepared: false,
-      status: "unavailable",
-      message: preparationMessage("unavailable"),
+      status: 'unavailable',
+      message: preparationMessage('unavailable'),
     };
   }
   if (signal?.aborted) {
-    return { approved: true, prepared: false, status: "aborted", message: preparationMessage("aborted") };
+    return {
+      approved: true,
+      prepared: false,
+      status: 'aborted',
+      message: preparationMessage('aborted'),
+    };
   }
 
   const brewDirectory = path.dirname(brew);
@@ -107,7 +112,7 @@ export async function prepareMacOSToolchain(
     return {
       approved: true,
       prepared: false,
-      status: "unavailable",
+      status: 'unavailable',
       message: `Insufficient disk space on the Homebrew volume (need at least ${Math.round(MIN_INSTALL_FREE_BYTES / (1024 * 1024))} MB free).`,
     };
   }
@@ -116,17 +121,17 @@ export async function prepareMacOSToolchain(
   const env: NodeJS.ProcessEnv = {
     // Keep the installer environment small and deterministic. In particular,
     // do not forward API keys or arbitrary model-provided environment values.
-    PATH: [brewDirectory, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter),
+    PATH: [brewDirectory, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(path.delimiter),
     ...(home ? { HOME: home } : {}),
     TMPDIR: os.tmpdir(),
-    LANG: "en_US.UTF-8",
-    LC_ALL: "C",
-    HOMEBREW_NO_AUTO_UPDATE: "1",
-    HOMEBREW_NO_INSTALL_CLEANUP: "1",
-    CI: "1",
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'C',
+    HOMEBREW_NO_AUTO_UPDATE: '1',
+    HOMEBREW_NO_INSTALL_CLEANUP: '1',
+    CI: '1',
   };
 
-  onPhase?.("installing");
+  onPhase?.('installing');
   const result = await new Promise<{
     status: number | null;
     aborted: boolean;
@@ -139,14 +144,22 @@ export async function prepareMacOSToolchain(
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
+      signal?.removeEventListener('abort', onAbort);
       resolve({ ...value, timedOut: false });
     };
     const kill = () => {
       if (child?.pid === undefined) return;
-      try { process.kill(-child.pid, "SIGTERM"); } catch { /* already exited */ }
+      try {
+        process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        /* already exited */
+      }
       setTimeout(() => {
-        try { process.kill(-child.pid!, "SIGKILL"); } catch { /* already exited */ }
+        try {
+          process.kill(-child.pid!, 'SIGKILL');
+        } catch {
+          /* already exited */
+        }
       }, 500).unref?.();
     };
     const onAbort = () => {
@@ -157,44 +170,59 @@ export async function prepareMacOSToolchain(
       kill();
       if (settled) return;
       settled = true;
-      signal?.removeEventListener("abort", onAbort);
+      signal?.removeEventListener('abort', onAbort);
       resolve({ status: null, aborted: false, timedOut: true });
     }, PREPARATION_TIMEOUT_MS);
     timer.unref?.();
     try {
-      child = spawn(brew, ["install", plan.packageName], {
+      child = spawn(brew, ['install', plan.packageName], {
         cwd: os.tmpdir(),
         env,
         detached: true,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ['ignore', 'ignore', 'ignore'],
       });
-      child.once("error", () => settle({ status: null, aborted: false }));
-      child.once("exit", (status) => settle({ status, aborted: false }));
+      child.once('error', () => settle({ status: null, aborted: false }));
+      child.once('exit', (status) => settle({ status, aborted: false }));
     } catch {
       settle({ status: null, aborted: false });
     }
     if (signal) {
       if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
+      else signal.addEventListener('abort', onAbort, { once: true });
     }
   });
 
   if (result.aborted) {
-    return { approved: true, prepared: false, status: "aborted", message: preparationMessage("aborted") };
+    return {
+      approved: true,
+      prepared: false,
+      status: 'aborted',
+      message: preparationMessage('aborted'),
+    };
   }
   if (result.timedOut) {
-    return { approved: true, prepared: false, status: "timed_out", message: preparationMessage("timed_out") };
+    return {
+      approved: true,
+      prepared: false,
+      status: 'timed_out',
+      message: preparationMessage('timed_out'),
+    };
   }
   if (result.status !== 0) {
-    return { approved: true, prepared: false, status: "failed", message: preparationMessage("failed") };
+    return {
+      approved: true,
+      prepared: false,
+      status: 'failed',
+      message: preparationMessage('failed'),
+    };
   }
 
   // Refresh only after the fixed installer succeeds. Existing Sandbox objects
   // keep their original policy; future Shell calls/new Runs see the snapshot.
-  onPhase?.("verifying");
+  onPhase?.('verifying');
   const refreshed = refreshMacOSToolchain();
-  const available = refreshed.tools[plan.toolName]?.source !== "missing";
+  const available = refreshed.tools[plan.toolName]?.source !== 'missing';
   return available
-    ? { approved: true, prepared: true, status: "prepared" }
-    : { approved: true, prepared: false, status: "failed", message: preparationMessage("failed") };
+    ? { approved: true, prepared: true, status: 'prepared' }
+    : { approved: true, prepared: false, status: 'failed', message: preparationMessage('failed') };
 }

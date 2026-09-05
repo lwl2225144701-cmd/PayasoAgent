@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import { ChevronDownIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
-import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import styles from './InputBar.module.css';
 
 interface InputBarProps {
@@ -43,6 +43,7 @@ export function InputBar({
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 高度依赖 text（经 textarea.scrollHeight 间接使用），[text] 为必要语义
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -78,7 +79,7 @@ export function InputBar({
             title={workspaceName ? '更换 Workspace' : '选择 Workspace'}
           >
             <FolderIcon size={17} />
-            <span>{openingWorkspace ? '正在打开…' : workspaceName ?? '选择 Workspace'}</span>
+            <span>{openingWorkspace ? '正在打开…' : (workspaceName ?? '选择 Workspace')}</span>
             <ChevronDownIcon size={13} />
           </button>
         </div>
@@ -88,7 +89,7 @@ export function InputBar({
             ref={textareaRef}
             variant="hero"
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={disabled}
@@ -116,7 +117,7 @@ export function InputBar({
           ref={textareaRef}
           variant="conversation"
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}

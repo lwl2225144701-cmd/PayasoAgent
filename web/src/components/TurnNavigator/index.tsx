@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, PointerEvent } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { HostRun } from '../../types';
 import styles from './TurnNavigator.module.css';
 
@@ -82,8 +82,11 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
     if (!root) return;
 
     const elements = runs
-      .map(run => ({ run, element: document.getElementById(`run-${run.runId}`) }))
-      .filter((item): item is { run: HostRun; element: HTMLElement } => item.element instanceof HTMLElement);
+      .map((run) => ({ run, element: document.getElementById(`run-${run.runId}`) }))
+      .filter(
+        (item): item is { run: HostRun; element: HTMLElement } =>
+          item.element instanceof HTMLElement,
+      );
     if (elements.length === 0) return;
 
     let frame = 0;
@@ -106,7 +109,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
         }
       }
 
-      setVisibleRunId(previous => previous === next ? previous : next);
+      setVisibleRunId((previous) => (previous === next ? previous : next));
     };
 
     const onScroll = () => {
@@ -124,15 +127,21 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
     };
   }, [runs]);
 
-  const navigateAtPointer = useCallback((event: MouseEvent<HTMLElement>) => {
-    const run = runAtPointer(runs, event.currentTarget, event.clientY);
-    if (run) onNavigate(run.runId);
-  }, [runs, onNavigate]);
+  const navigateAtPointer = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const run = runAtPointer(runs, event.currentTarget, event.clientY);
+      if (run) onNavigate(run.runId);
+    },
+    [runs, onNavigate],
+  );
 
-  const previewAtPointer = useCallback((event: PointerEvent<HTMLElement>) => {
-    const run = runAtPointer(runs, event.currentTarget, event.clientY);
-    setPreviewIndex(run ? runs.indexOf(run) : -1);
-  }, [runs]);
+  const previewAtPointer = useCallback(
+    (event: PointerEvent<HTMLElement>) => {
+      const run = runAtPointer(runs, event.currentTarget, event.clientY);
+      setPreviewIndex(run ? runs.indexOf(run) : -1);
+    },
+    [runs],
+  );
 
   if (runs.length <= 1) return null;
 
@@ -140,6 +149,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
 
   return (
     <div ref={slotRef} className={styles.slot}>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 轨道点击是鼠标快捷方式，键盘导航由内部按钮（Tab + Enter）提供 */}
       <nav
         className={styles.rail}
         style={railSize(runs.length)}
@@ -160,7 +170,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
               >
                 <button
                   type="button"
-                  aria-selected={isActive}
+                  aria-current={isActive ? 'true' : undefined}
                   aria-label={`回合 ${index + 1}：${run.task.slice(0, 30)}`}
                   className={`${styles.mark} ${isActive ? styles.markActive : ''} ${isPreview ? styles.markPreview : ''}`}
                   onFocus={() => setPreviewIndex(index)}
@@ -175,10 +185,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
           })}
         </div>
         {preview && (
-          <div
-            className={styles.preview}
-            style={markPosition(previewIndex, runs.length)}
-          >
+          <div className={styles.preview} style={markPosition(previewIndex, runs.length)}>
             <span className={styles.previewPrompt}>{preview.task}</span>
             {preview.result && (
               <span className={styles.previewSummary}>{preview.result.slice(0, 160)}</span>

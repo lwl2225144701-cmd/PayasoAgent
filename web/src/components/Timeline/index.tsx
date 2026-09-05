@@ -1,36 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  FileEntry,
-  HostEvent,
-  HostRun,
-  HostRunStatus,
-  LlmCallEvent,
-  ToolCallEvent,
-  ToolErrorEvent,
-  ToolResultEvent,
-  StreamingEvent,
-  ApprovalRequestedEvent,
-  ToolchainPreparationRequestedEvent,
-  ToolchainPreparationPhase,
-} from '../../types';
-import { formatBytes, formatDurationMs, formatTime, isDuplicateOfFinal, stripThinkTags } from '../../format';
-import { useEventStream } from '../../hooks/useEventStream';
 import {
   cancelToolchainPreparation,
   openFileInDefaultBrowser,
   resolveApproval,
   resolveToolchainPreparation,
 } from '../../api';
+import {
+  formatBytes,
+  formatDurationMs,
+  formatTime,
+  isDuplicateOfFinal,
+  stripThinkTags,
+} from '../../format';
+import { useEventStream } from '../../hooks/useEventStream';
+import type {
+  ApprovalRequestedEvent,
+  FileEntry,
+  HostEvent,
+  HostRun,
+  HostRunStatus,
+  LlmCallEvent,
+  StreamingEvent,
+  ToolCallEvent,
+  ToolchainPreparationPhase,
+  ToolchainPreparationRequestedEvent,
+  ToolErrorEvent,
+  ToolResultEvent,
+} from '../../types';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
-import { ThinkBlock } from './ThinkBlock';
-import { ToolActionRow } from './ToolActionRow';
-import {
-  composeToolchainRetryMessage,
-  findLastFailedShellCommand,
-} from './preparation-retry';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
+import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
+import { ThinkBlock } from './ThinkBlock';
 import styles from './Timeline.module.css';
+import { ToolActionRow } from './ToolActionRow';
 
 interface TimelineProps {
   run: HostRun | null;
@@ -98,26 +101,25 @@ function ExecutionPanel({
 }) {
   const [open, setOpen] = useState(running);
   const wasRunning = useRef(running);
-  const tools = groups.flatMap(group => group.tools);
-  const failedCount = tools.filter(tool => tool.status === 'failed').length;
+  const tools = groups.flatMap((group) => group.tools);
+  const failedCount = tools.filter((tool) => tool.status === 'failed').length;
   const elapsed = running && startedAt ? elapsedSeconds(startedAt) : 0;
   const startMs = startedAt ? new Date(startedAt).getTime() : NaN;
   const endMs = running ? Date.now() : new Date(finishedAt).getTime();
-  const durationMs = Number.isFinite(startMs) && Number.isFinite(endMs)
-    ? Math.max(0, endMs - startMs)
-    : 0;
+  const durationMs =
+    Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, endMs - startMs) : 0;
   const durationLabel = durationMs >= 1000 ? formatDurationMs(durationMs) : '<1秒';
   // 阶段化文案：随等待时间演进，避免静态文字的呆滞感
   const thinkingPhase = elapsed < 6 ? '正在思考' : elapsed < 20 ? '正在分析' : '正在处理复杂任务';
   const bodyEmpty =
-    !thinking
-    && tools.length === 0
-    && !groups.some(g => g.reasoning?.visible || g.compactionNote);
+    !thinking &&
+    tools.length === 0 &&
+    !groups.some((g) => g.reasoning?.visible || g.compactionNote);
   const hasDetails =
-    Boolean(thinking)
-    || tools.length > 0
-    || groups.some(group => group.reasoning?.visible)
-    || groups.some(group => group.compactionNote);
+    Boolean(thinking) ||
+    tools.length > 0 ||
+    groups.some((group) => group.reasoning?.visible) ||
+    groups.some((group) => group.compactionNote);
   const statusTitle = running
     ? '正在执行'
     : status === 'failed'
@@ -143,15 +145,19 @@ function ExecutionPanel({
       <button
         type="button"
         className={styles.executionSummary}
-        onClick={() => setOpen(value => !value)}
+        onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
-        <span className={`${styles.executionStateIcon} ${running ? styles.executionStateRunning : ''} ${failedCount > 0 || status === 'failed' ? styles.executionStateFailed : ''}`}>
-          {running
-            ? <ThinkIcon size={16} />
-            : failedCount > 0 || status === 'failed'
-              ? <AlertIcon size={16} />
-              : <CheckIcon size={16} />}
+        <span
+          className={`${styles.executionStateIcon} ${running ? styles.executionStateRunning : ''} ${failedCount > 0 || status === 'failed' ? styles.executionStateFailed : ''}`}
+        >
+          {running ? (
+            <ThinkIcon size={16} />
+          ) : failedCount > 0 || status === 'failed' ? (
+            <AlertIcon size={16} />
+          ) : (
+            <CheckIcon size={16} />
+          )}
         </span>
         <span className={styles.executionTitle}>{statusTitle}</span>
         <span className={styles.executionMeta}>
@@ -159,23 +165,36 @@ function ExecutionPanel({
           {running && tools.length === 0 && (
             <span className={styles.thinkingText}>
               {thinkingPhase}
-              <span className={styles.thinkDots} aria-hidden="true"><i /><i /><i /></span>
+              <span className={styles.thinkDots} aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
             </span>
           )}
           <span className={styles.executionDuration}> · 用时 {durationLabel}</span>
-          {failedCount > 0 && <span className={styles.executionFailed}> · {failedCount} 个失败</span>}
+          {failedCount > 0 && (
+            <span className={styles.executionFailed}> · {failedCount} 个失败</span>
+          )}
         </span>
-        <ChevronRightIcon size={15} className={`${styles.executionChevron} ${open ? styles.executionChevronOpen : ''}`} />
+        <ChevronRightIcon
+          size={15}
+          className={`${styles.executionChevron} ${open ? styles.executionChevronOpen : ''}`}
+        />
       </button>
 
       {open && (
         <div className={styles.executionBody}>
           {bodyEmpty && running && (
-            <div className={styles.skeletonLines} aria-hidden="true"><i /><i /><i /></div>
+            <div className={styles.skeletonLines} aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </div>
           )}
           {thinking && <ThinkBlock text={thinking} />}
-          {groups.map((group, index) => (
-            <div key={`process-${group.step}-${index}`} className={styles.processStep}>
+          {groups.map((group) => (
+            <div key={`process-${group.step}`} className={styles.processStep}>
               {group.compactionNote && (
                 <div className={styles.compactionNote}>
                   <ScissorsIcon size={12} />
@@ -184,7 +203,7 @@ function ExecutionPanel({
               )}
               {group.tools.length > 0 && (
                 <ul className={styles.toolList} aria-label="工具">
-                  {group.tools.map(tool => (
+                  {group.tools.map((tool) => (
                     <ToolActionRow
                       key={tool.operationKey ?? `${tool.tool}-${tool.startedAt}`}
                       data={tool}
@@ -221,17 +240,14 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const [, setForceTick] = useState(0);
-  const getScrollContainer = useCallback(
-    () => findScrollContainer(scrollRef.current),
-    [],
-  );
+  const getScrollContainer = useCallback(() => findScrollContainer(scrollRef.current), []);
 
   // Light tick while running so status line / duration updates.
   useEffect(() => {
     if (!run || run.status !== 'running') return;
-    const id = setInterval(() => setForceTick(t => t + 1), 1200);
+    const id = setInterval(() => setForceTick((t) => t + 1), 1200);
     return () => clearInterval(id);
-  }, [run?.runId, run?.status]);
+  }, [run]);
 
   const onScroll = useCallback(() => {
     const el = getScrollContainer();
@@ -249,7 +265,7 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
     onScroll();
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [getScrollContainer, onScroll, run?.runId]);
+  }, [getScrollContainer, onScroll]);
 
   // Scroll once per rendered batch, immediately. Repeated smooth scrolling
   // queues animations and makes a fast stream visibly lag behind the text.
@@ -261,7 +277,7 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
       if (autoScrollRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [events, run?.status, getScrollContainer]);
+  }, [getScrollContainer]);
 
   const openInBrowser = async (file: FileEntry) => {
     if (!run) return;
@@ -287,23 +303,27 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
     // 已裁决的（approval_resolved）不显示
     const resolved = new Set(
       events
-        .filter((e): e is Extract<HostEvent, { type: 'approval_resolved' }> => e.type === 'approval_resolved')
+        .filter(
+          (e): e is Extract<HostEvent, { type: 'approval_resolved' }> =>
+            e.type === 'approval_resolved',
+        )
         .map((e) => e.requestId),
     );
     return events.filter(
-      (e): e is ApprovalRequestedEvent => e.type === 'approval_requested' && !resolved.has(e.requestId),
+      (e): e is ApprovalRequestedEvent =>
+        e.type === 'approval_requested' && !resolved.has(e.requestId),
     );
   }, [events]);
 
   const handleApproval = async (ev: ApprovalRequestedEvent, approved: boolean) => {
     if (!run) return;
-    setResolvingIds(prev => new Set(prev).add(ev.requestId));
+    setResolvingIds((prev) => new Set(prev).add(ev.requestId));
     try {
       await resolveApproval(run.runId, ev.requestId, approved);
       resolvedIdsRef.current.add(ev.requestId);
     } catch {
       // 网络失败：保留卡片让用户重试
-      setResolvingIds(prev => {
+      setResolvingIds((prev) => {
         const next = new Set(prev);
         next.delete(ev.requestId);
         return next;
@@ -316,11 +336,15 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
     if (!events.length) return [];
     const resolved = new Set(
       events
-        .filter((e): e is Extract<HostEvent, { type: 'toolchain_preparation_resolved' }> => e.type === 'toolchain_preparation_resolved')
+        .filter(
+          (e): e is Extract<HostEvent, { type: 'toolchain_preparation_resolved' }> =>
+            e.type === 'toolchain_preparation_resolved',
+        )
         .map((e) => e.requestId),
     );
     return events.filter(
-      (e): e is ToolchainPreparationRequestedEvent => e.type === 'toolchain_preparation_requested' && !resolved.has(e.requestId),
+      (e): e is ToolchainPreparationRequestedEvent =>
+        e.type === 'toolchain_preparation_requested' && !resolved.has(e.requestId),
     );
   }, [events]);
 
@@ -353,7 +377,7 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
     action: 'approve' | 'deny' | 'cancel',
   ) => {
     if (!run) return;
-    setResolvingPreparationIds(prev => new Set(prev).add(ev.requestId));
+    setResolvingPreparationIds((prev) => new Set(prev).add(ev.requestId));
     try {
       if (action === 'cancel') {
         await cancelToolchainPreparation(run.runId, ev.requestId);
@@ -363,7 +387,7 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
     } catch {
       // Keep the card visible so the user can retry when the Host is reachable.
     } finally {
-      setResolvingPreparationIds(prev => {
+      setResolvingPreparationIds((prev) => {
         const next = new Set(prev);
         next.delete(ev.requestId);
         return next;
@@ -394,10 +418,13 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
   // running 时强制渲染：首条事件（reasoning/tool）到达前的空窗期也要立刻给出
   // 「正在执行 · 正在分析」反馈，否则发消息后有几秒完全无响应的观感。
   const hasAnyWork =
-    toolSteps.some(g => g.tools.length > 0 || (g.reasoning && (g.reasoning.visible || g.reasoning.thinkingDetail)))
-    || !!finalAnswer
-    || !!globalThinking
-    || run.status === 'running';
+    toolSteps.some(
+      (g) =>
+        g.tools.length > 0 || (g.reasoning && (g.reasoning.visible || g.reasoning.thinkingDetail)),
+    ) ||
+    !!finalAnswer ||
+    !!globalThinking ||
+    run.status === 'running';
 
   return (
     <div
@@ -415,11 +442,9 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
           <section className={styles.agentBlock}>
             {pendingApprovals.length > 0 && (
               <div className={styles.approvalList}>
-                {pendingApprovals.map(ev => (
+                {pendingApprovals.map((ev) => (
                   <div key={ev.requestId} className={styles.approvalCard}>
-                    <div className={styles.approvalTitle}>
-                      网络访问批准请求
-                    </div>
+                    <div className={styles.approvalTitle}>网络访问批准请求</div>
                     <div className={styles.approvalBody}>
                       <code>{ev.toolName}</code> 请求网络访问
                       <span className={styles.approvalArgs}>
@@ -450,15 +475,14 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
             )}
             {pendingPreparations.length > 0 && (
               <div className={styles.approvalList}>
-                {pendingPreparations.map(ev => (
+                {pendingPreparations.map((ev) => (
                   <div key={ev.requestId} className={styles.approvalCard}>
-                    <div className={styles.approvalTitle}>
-                      需要准备运行时依赖
-                    </div>
+                    <div className={styles.approvalTitle}>需要准备运行时依赖</div>
                     <div className={styles.approvalBody}>
                       当前受控运行时缺少 <code>{ev.toolName}</code>。
                       <span className={styles.approvalArgs}>
-                        允许后将使用受控的 {ev.source} 计划安装 {ev.packageName}，不会执行模型提供的安装命令。
+                        允许后将使用受控的 {ev.source} 计划安装 {ev.packageName}
+                        ，不会执行模型提供的安装命令。
                       </span>
                       {preparationPhases.has(ev.requestId) && (
                         <span className={styles.approvalProgress}>
@@ -503,14 +527,16 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
             )}
             {preparedResolutions.length > 0 && (
               <div className={styles.approvalList}>
-                {preparedResolutions.map(ev => (
+                {preparedResolutions.map((ev) => (
                   <div key={`prepared-${ev.requestId}`} className={styles.approvalCard}>
                     <div className={styles.approvalTitle}>依赖准备完成</div>
                     <div className={styles.approvalBody}>
                       受控依赖已安装并通过验证，当前会话的工具链视图已刷新。
                       原命令不会自动重试（副作用安全）；确认后可重新执行。
                       {!retryCommand && (
-                        <span className={styles.approvalArgs}>未在本次执行中找到失败的 shell 命令。</span>
+                        <span className={styles.approvalArgs}>
+                          未在本次执行中找到失败的 shell 命令。
+                        </span>
                       )}
                     </div>
                     <div className={styles.approvalActions}>
@@ -518,7 +544,13 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
                         type="button"
                         className={styles.approvalAllow}
                         disabled={runActive || !retryCommand || !onRetryCommand}
-                        title={runActive ? '等待当前执行退出后可重试' : !retryCommand ? '未找到失败的 shell 命令' : undefined}
+                        title={
+                          runActive
+                            ? '等待当前执行退出后可重试'
+                            : !retryCommand
+                              ? '未找到失败的 shell 命令'
+                              : undefined
+                        }
                         onClick={() => {
                           if (retryCommand && onRetryCommand) {
                             onRetryCommand(composeToolchainRetryMessage(retryCommand));
@@ -546,18 +578,18 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
               <div className={styles.finalBlock}>
                 <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
                 {finalError && run.status !== 'running' && (
-                  <div className={styles.finalError}>
-                    {finalError}
-                  </div>
+                  <div className={styles.finalError}>{finalError}</div>
                 )}
                 {files.length > 0 && (
                   <div className={styles.artifacts}>
                     <div className={styles.artifactsTitle}>生成的文件</div>
                     <ul className={styles.attachList}>
-                      {files.map(f => (
+                      {files.map((f) => (
                         <li key={f.name}>
                           <div className={styles.attachCard}>
-                            <span className={styles.attachIcon}><FileIcon /></span>
+                            <span className={styles.attachIcon}>
+                              <FileIcon />
+                            </span>
                             <span className={styles.attachInfo}>
                               <span className={styles.attachName}>{f.name}</span>
                               {typeof f.size === 'number' && (
@@ -565,10 +597,18 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
                               )}
                             </span>
                             <span className={styles.attachActions}>
-                              <button type="button" className={styles.attachAction} onClick={() => setOpenFile(f)}>
+                              <button
+                                type="button"
+                                className={styles.attachAction}
+                                onClick={() => setOpenFile(f)}
+                              >
                                 查看
                               </button>
-                              <button type="button" className={styles.attachBrowserAction} onClick={() => void openInBrowser(f)}>
+                              <button
+                                type="button"
+                                className={styles.attachBrowserAction}
+                                onClick={() => void openInBrowser(f)}
+                              >
                                 {openedInBrowser === f.name ? '已打开' : '打开'}
                               </button>
                             </span>
@@ -576,7 +616,9 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
                         </li>
                       ))}
                     </ul>
-                    {fileActionError && <div className={styles.fileActionError}>{fileActionError}</div>}
+                    {fileActionError && (
+                      <div className={styles.fileActionError}>{fileActionError}</div>
+                    )}
                   </div>
                 )}
                 <time className={styles.finalTime}>{formatTime(finalTimestamp)}</time>
@@ -590,7 +632,6 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
           // Empty agent section: reserved vertical rhythm so input isn't jumpy.
           <section className={styles.agentBlock} aria-hidden="true" />
         )}
-
       </div>
 
       {openFile && run && (
@@ -602,7 +643,17 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
 
 function FileIcon() {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <polyline points="14 2 14 8 20 8" />
     </svg>
@@ -632,14 +683,11 @@ interface ToolStepGroup {
   compactionNote?: string | null;
 }
 
-function buildStructure(
-  run: HostRun,
-  events: HostEvent[],
-): BuildOut {
-  const runStarted = events.find(e => e.type === 'run_started');
-  const completedEv = events.find(e => e.type === 'run_completed');
-  const failedEv = events.find(e => e.type === 'run_failed');
-  const finalEv = events.find(e => e.type === 'final_answer');
+function buildStructure(run: HostRun, events: HostEvent[]): BuildOut {
+  const runStarted = events.find((e) => e.type === 'run_started');
+  const completedEv = events.find((e) => e.type === 'run_completed');
+  const failedEv = events.find((e) => e.type === 'run_failed');
+  const finalEv = events.find((e) => e.type === 'final_answer');
 
   let finalAnswer: string | null = null;
   if (finalEv && 'content' in finalEv) finalAnswer = finalEv.content?.trim() || null;
@@ -715,8 +763,10 @@ function buildStructure(
       if (llm) {
         const parsedResponse = stripThinkTags(llm.response ?? '');
         const parsedReasoning = stripThinkTags(llm.reasoning ?? '');
-        const thinkingParts = [parsedResponse.thinking, parsedReasoning.thinking ?? parsedReasoning.visible]
-          .filter((part): part is string => Boolean(part?.trim()));
+        const thinkingParts = [
+          parsedResponse.thinking,
+          parsedReasoning.thinking ?? parsedReasoning.visible,
+        ].filter((part): part is string => Boolean(part?.trim()));
         const thinking = thinkingParts.join('\n\n') || null;
         const visible = isDuplicateOfFinal(parsedResponse.visible, finalAnswer)
           ? ''
@@ -735,7 +785,7 @@ function buildStructure(
     const tools = cardsByStep.get(step) ?? [];
 
     // 上下文压缩是内务事件：每个 step 至多一个，渲染为工具步骤间的弱化注释行。
-    const compactionEv = stepEvents.find(e => e.type === 'context_compaction');
+    const compactionEv = stepEvents.find((e) => e.type === 'context_compaction');
     const compactionNote =
       compactionEv && compactionEv.type === 'context_compaction'
         ? `上下文已压缩 · ${compactionEv.totalSummarizedMessages} 条早期对话已摘要保留要点`
@@ -751,12 +801,13 @@ function buildStructure(
     if (tools.length === 0 && !reasoning && !compactionNote) continue;
     // Don't emit a step group where reasoning contains only a pure duplicate of final answer with no tools.
     if (
-      tools.length === 0
-      && !compactionNote
-      && reasoning
-      && (!reasoning.visible || isDuplicateOfFinal(reasoning.visible, finalAnswer))
-      && !reasoning.thinkingDetail
-    ) continue;
+      tools.length === 0 &&
+      !compactionNote &&
+      reasoning &&
+      (!reasoning.visible || isDuplicateOfFinal(reasoning.visible, finalAnswer)) &&
+      !reasoning.thinkingDetail
+    )
+      continue;
 
     toolSteps.push({ step, reasoning, tools, compactionNote });
   }
@@ -794,9 +845,9 @@ function buildStructure(
     runStarted,
     finalAnswer,
     finalTimestamp:
-      (finalEv && 'timestamp' in finalEv ? finalEv.timestamp : undefined)
-      ?? (completedEv && 'timestamp' in completedEv ? completedEv.timestamp : undefined)
-      ?? run.updatedAt,
+      (finalEv && 'timestamp' in finalEv ? finalEv.timestamp : undefined) ??
+      (completedEv && 'timestamp' in completedEv ? completedEv.timestamp : undefined) ??
+      run.updatedAt,
     finalError,
     producedFiles,
     toolSteps,
@@ -824,8 +875,9 @@ function buildFlatToolCards(events: HostEvent[]): Array<ToolCallData & { __step:
     }
     if (ev.type === 'tool_result') {
       const res = ev as ToolResultEvent;
-      const target = [...cards].reverse().find(c => c.status === 'running' && c.tool === res.tool)
-        ?? [...cards].reverse().find(c => c.status === 'running');
+      const target =
+        [...cards].reverse().find((c) => c.status === 'running' && c.tool === res.tool) ??
+        [...cards].reverse().find((c) => c.status === 'running');
       if (target) {
         target.status = 'completed';
         target.result = res.result;
@@ -838,8 +890,9 @@ function buildFlatToolCards(events: HostEvent[]): Array<ToolCallData & { __step:
     }
     if (ev.type === 'tool_error') {
       const err = ev as ToolErrorEvent;
-      const target = [...cards].reverse().find(c => c.status === 'running' && c.tool === err.tool)
-        ?? [...cards].reverse().find(c => c.status === 'running');
+      const target =
+        [...cards].reverse().find((c) => c.status === 'running' && c.tool === err.tool) ??
+        [...cards].reverse().find((c) => c.status === 'running');
       if (target) {
         target.status = 'failed';
         target.error = err.error;

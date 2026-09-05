@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import type { HostSession } from '../../types';
 import { formatRelativeTime } from '../../format';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
-import { MoreIcon, PencilIcon, ArchiveIcon } from '../icons';
+import type { HostSession } from '../../types';
 import { IconButton } from '../IconButton';
+import { ArchiveIcon, MoreIcon, PencilIcon } from '../icons';
 import styles from './SessionItem.module.css';
 
 interface SessionItemProps {
@@ -20,7 +20,13 @@ interface MenuState {
   y: number;
 }
 
-export function SessionItem({ session, active = false, onClick, onRename, onArchive }: SessionItemProps) {
+export function SessionItem({
+  session,
+  active = false,
+  onClick,
+  onRename,
+  onArchive,
+}: SessionItemProps) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -78,6 +84,7 @@ export function SessionItem({ session, active = false, onClick, onRename, onArch
               setRenaming(false);
             }
           }}
+          // biome-ignore lint/a11y/noAutofocus: 重命名输入框自动聚焦为有意 UX
           autoFocus
           disabled={busy}
         />
@@ -107,8 +114,19 @@ export function SessionItem({ session, active = false, onClick, onRename, onArch
       </button>
 
       {menu && (
-        <div ref={menuRef} className={styles.menu} style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 188)), top: menu.y }}>
-          <button type="button" className={styles.menuItem} onClick={() => { setMenu(null); setRenaming(true); }}>
+        <div
+          ref={menuRef}
+          className={styles.menu}
+          style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 188)), top: menu.y }}
+        >
+          <button
+            type="button"
+            className={styles.menuItem}
+            onClick={() => {
+              setMenu(null);
+              setRenaming(true);
+            }}
+          >
             <PencilIcon size={14} />
             <span>重命名</span>
           </button>

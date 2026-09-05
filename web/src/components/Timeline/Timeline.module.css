@@ -184,7 +184,10 @@
   border-radius: 8px;
   flex: 0 0 auto;
   color: var(--text-muted);
-  transition: transform 0.18s ease, color 0.18s ease, background 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease;
 }
 
 .executionSummary:hover .executionChevron {
@@ -256,8 +259,13 @@
   animation: thinkPulse 1.6s ease-in-out infinite;
 }
 @keyframes thinkPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .runText {
@@ -307,7 +315,10 @@
   color: inherit;
   border: 0;
   border-radius: 8px;
-  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
   cursor: pointer;
   font: inherit;
 }
@@ -408,7 +419,10 @@
   justify-content: center;
   flex-shrink: 0;
   color: var(--text-muted);
-  transition: transform 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    color 0.18s ease,
+    opacity 0.18s ease;
   opacity: 0.7;
 }
 .toolRowClickable:hover .trChevron {
@@ -459,7 +473,8 @@
   line-height: 1.55;
   color: var(--text-secondary);
 }
-.pre, .preErr {
+.pre,
+.preErr {
   margin: 0;
   padding: 8px 10px;
   background: var(--color-code);
@@ -551,7 +566,9 @@
   border-radius: 13px;
   text-align: left;
   color: var(--text-primary);
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 .attachCard:hover {
   border-color: var(--color-brand-border);
@@ -689,26 +706,26 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
   border-radius: 10px;
-  background: var(--surface-raised, rgba(255,255,255,0.04));
+  background: var(--surface-raised, rgba(255, 255, 255, 0.04));
 }
 .approvalTitle {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary, rgba(255,255,255,0.65));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .approvalBody {
   font-size: 13px;
-  color: var(--text-primary, rgba(255,255,255,0.92));
+  color: var(--text-primary, rgba(255, 255, 255, 0.92));
   word-break: break-all;
 }
 .approvalBody code {
   padding: 1px 6px;
   border-radius: 5px;
-  background: var(--surface-raised, rgba(255,255,255,0.08));
+  background: var(--surface-raised, rgba(255, 255, 255, 0.08));
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
@@ -716,7 +733,7 @@
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: var(--text-secondary, rgba(255,255,255,0.55));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.55));
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .approvalProgress {
@@ -778,8 +795,12 @@
 }
 
 @keyframes thinkingShimmer {
-  from { background-position: 130% 0; }
-  to { background-position: -30% 0; }
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -30% 0;
+  }
 }
 
 /* 三个错相位跳动点 */
@@ -798,12 +819,24 @@
   animation: thinkBounce 1.2s ease-in-out infinite;
 }
 
-.thinkDots i:nth-child(2) { animation-delay: 0.15s; }
-.thinkDots i:nth-child(3) { animation-delay: 0.3s; }
+.thinkDots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinkDots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
 
 @keyframes thinkBounce {
-  0%, 55%, 100% { transform: translateY(0); opacity: 0.45; }
-  25% { transform: translateY(-3.5px); opacity: 1; }
+  0%,
+  55%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  25% {
+    transform: translateY(-3.5px);
+    opacity: 1;
+  }
 }
 
 /* 展开区等待内容时的骨架线（同 shimmer 缓慢扫过） */
@@ -828,8 +861,14 @@
   animation: thinkingShimmer 1.8s linear infinite;
 }
 
-.skeletonLines i:nth-child(2) { width: 86%; animation-delay: 0.12s; }
-.skeletonLines i:nth-child(3) { width: 55%; animation-delay: 0.24s; }
+.skeletonLines i:nth-child(2) {
+  width: 86%;
+  animation-delay: 0.12s;
+}
+.skeletonLines i:nth-child(3) {
+  width: 55%;
+  animation-delay: 0.24s;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .thinkingText,

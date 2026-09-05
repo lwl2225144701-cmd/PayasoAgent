@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ThinkIcon, ChevronDownIcon } from '../icons';
+import { ChevronDownIcon, ThinkIcon } from '../icons';
 import styles from './ThinkBlock.module.css';
 
 interface ThinkBlockProps {
@@ -16,7 +16,7 @@ export function ThinkBlock({ text }: ThinkBlockProps) {
       <button
         type="button"
         className={styles.toggle}
-        onClick={() => setOpen(value => !value)}
+        onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
         <span className={styles.iconSlot} aria-hidden="true">

@@ -31,6 +31,9 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Lint & format check (Biome)
+        run: npx biome check .
+
       - name: Deterministic test suites (no LLM)
         run: npm run test:all
 

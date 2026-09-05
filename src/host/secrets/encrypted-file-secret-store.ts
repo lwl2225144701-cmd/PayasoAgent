@@ -14,26 +14,26 @@
 // 位置：默认 ~/.payaso-agent/（可被 PAYASO_SECRET_DIR 覆盖，测试用临时目录）。
 // 权限：目录 0700，密钥/密文文件 0600。
 
-import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import type { SecretStore } from "./secret-store.js";
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { SecretStore } from './secret-store.js';
 
 const KEY_BYTES = 32; // AES-256
 const IV_BYTES = 12; // GCM 推荐 96-bit
 const TAG_BYTES = 16; // GCM auth tag
-const KEY_FILE = "key.bin";
-const SECRETS_DIR = "secrets";
+const KEY_FILE = 'key.bin';
+const SECRETS_DIR = 'secrets';
 
 export function defaultEncryptedSecretDir(): string {
   const env = process.env.PAYASO_SECRET_DIR;
   if (env) return path.resolve(env);
-  return path.join(os.homedir(), ".payaso-agent");
+  return path.join(os.homedir(), '.payaso-agent');
 }
 
 function sha256Hex(input: string): string {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+  return crypto.createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
 function atomicWrite(target: string, data: Buffer, mode: number): void {
@@ -70,12 +70,12 @@ export class EncryptedFileSecretStore implements SecretStore {
       const key = fs.readFileSync(keyPath);
       if (key.length !== KEY_BYTES) {
         throw new Error(
-          `[SecretStore] encryption key corrupted (length=${key.length}, expected=${KEY_BYTES})`
+          `[SecretStore] encryption key corrupted (length=${key.length}, expected=${KEY_BYTES})`,
         );
       }
       return key;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       const key = crypto.randomBytes(KEY_BYTES);
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       atomicWrite(keyPath, key, 0o600);
@@ -88,28 +88,28 @@ export class EncryptedFileSecretStore implements SecretStore {
     if (!fs.existsSync(file)) return null;
     const blob = fs.readFileSync(file);
     if (blob.length < IV_BYTES + TAG_BYTES) {
-      throw new Error("Unable to read provider credential (corrupted entry).");
+      throw new Error('Unable to read provider credential (corrupted entry).');
     }
     const iv = blob.subarray(0, IV_BYTES);
     const tag = blob.subarray(IV_BYTES, IV_BYTES + TAG_BYTES);
     const ciphertext = blob.subarray(IV_BYTES + TAG_BYTES);
     const cryptoKey = this.readOrCreateKey();
     try {
-      const decipher = crypto.createDecipheriv("aes-256-gcm", cryptoKey, iv);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', cryptoKey, iv);
       decipher.setAuthTag(tag);
       const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-      return plain.toString("utf8");
+      return plain.toString('utf8');
     } catch {
       // 密钥文件被替换 / 密文被篡改 / IV 或 tag 损坏 → 认证失败（GCM 保证）
-      throw new Error("Unable to read provider credential (corrupted or wrong encryption key).");
+      throw new Error('Unable to read provider credential (corrupted or wrong encryption key).');
     }
   }
 
   set(key: string, value: string): void {
     const cryptoKey = this.readOrCreateKey();
     const iv = crypto.randomBytes(IV_BYTES);
-    const cipher = crypto.createCipheriv("aes-256-gcm", cryptoKey, iv);
-    const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+    const cipher = crypto.createCipheriv('aes-256-gcm', cryptoKey, iv);
+    const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     const blob = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
     const file = this.secretPath(key);
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });

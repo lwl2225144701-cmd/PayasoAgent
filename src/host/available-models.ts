@@ -1,7 +1,7 @@
 // 模块: 可用模型目录 — 拉取 OpenAI 兼容端点的 GET {baseUrl}/models
 // 仅 Host 内部使用：apiKey 只进请求头，绝不进入日志或 API 响应。
 
-import { fetchAvailableModelsSafe } from "./provider-url.js";
+import { fetchAvailableModelsSafe } from './provider-url.js';
 
 const MAX_MODELS = 200;
 

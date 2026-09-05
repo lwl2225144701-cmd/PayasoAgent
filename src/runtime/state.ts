@@ -1,6 +1,6 @@
 // State 模块 — 记录当前 Agent 执行状态（纯内存态，无持久化 / 无恢复）
 
-export type AgentStatus = "running" | "completed" | "failed";
+export type AgentStatus = 'running' | 'completed' | 'failed';
 
 // 当前待执行的动作（LLM 已决定、尚未成功）
 export interface PendingAction {
@@ -37,9 +37,9 @@ export function createState(task: string, runId: string): AgentState {
   return {
     runId,
     task,
-    status: "running",
+    status: 'running',
     iteration: 0,
-    currentStep: "start",
+    currentStep: 'start',
     toolCalls: 0,
     successfulToolCalls: 0,
     failedToolCalls: 0,
@@ -52,7 +52,7 @@ export function createState(task: string, runId: string): AgentState {
 // ---- 局部更新（runId / startTime 不可变）----
 export function updateState(
   state: AgentState,
-  patch: Partial<Omit<AgentState, "runId" | "startTime">>
+  patch: Partial<Omit<AgentState, 'runId' | 'startTime'>>,
 ): AgentState {
   Object.assign(state, patch);
   return state;

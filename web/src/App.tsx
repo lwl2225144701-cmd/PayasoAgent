@@ -1,32 +1,40 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { ShellBar } from './components/ShellBar';
-import { Timeline } from './components/Timeline';
-import { InputBar } from './components/InputBar';
-import { FileModal } from './components/FileModal';
-import { SettingsModal } from './components/SettingsModal';
-import { TurnNavigator } from './components/TurnNavigator';
-import { useThemeMode } from './hooks/useThemeMode';
-import { useGeneralSettings } from './hooks/useGeneralSettings';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import styles from './App.module.css';
 import {
+  archiveSession as apiArchiveSession,
+  renameSession as apiRenameSession,
+  renameWorkspace as apiRenameWorkspace,
   createRun,
   deleteWorkspaceGroup,
   getDefaultModel,
   getWorkspace,
-  listRuns,
-  listSessions,
   listFiles,
   listModels,
+  listRuns,
+  listSessions,
   openWorkspace,
-  renameWorkspace as apiRenameWorkspace,
-  renameSession as apiRenameSession,
-  archiveSession as apiArchiveSession,
   resumeRun,
   setDefaultModel,
   stopRun,
 } from './api';
-import type { DefaultModelView, FileEntry, HostRun, HostSession, ModelProviderView, ModelSelection, WorkspaceView } from './types';
-import styles from './App.module.css';
+import { FileModal } from './components/FileModal';
+import { InputBar } from './components/InputBar';
+import { SettingsModal } from './components/SettingsModal';
+import { ShellBar } from './components/ShellBar';
+import { Sidebar } from './components/Sidebar';
+import { Timeline } from './components/Timeline';
+import { TurnNavigator } from './components/TurnNavigator';
+import { useGeneralSettings } from './hooks/useGeneralSettings';
+import { useThemeMode } from './hooks/useThemeMode';
+import type {
+  DefaultModelView,
+  FileEntry,
+  HostRun,
+  HostSession,
+  ModelProviderView,
+  ModelSelection,
+  WorkspaceView,
+} from './types';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
 function sessionTitle(task: string): string {
@@ -35,14 +43,8 @@ function sessionTitle(task: string): string {
 
 export default function App() {
   const [themeMode, setThemeMode] = useThemeMode();
-  const {
-    permissionMode,
-    setPermissionMode,
-    language,
-    setLanguage,
-    fontSize,
-    setFontSize,
-  } = useGeneralSettings();
+  const { permissionMode, setPermissionMode, language, setLanguage, fontSize, setFontSize } =
+    useGeneralSettings();
   const [runs, setRuns] = useState<HostRun[]>([]);
   const [sessions, setSessions] = useState<HostSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -69,28 +71,34 @@ export default function App() {
     setTimeout(() => setToast(null), 2000);
   }, []);
 
-  const handleSelectModel = useCallback((providerId: string, model: string) => {
-    const previous = previousDefaultModelRef.current ?? { defaultProviderId: "", defaultModelId: "" };
-    const next = { defaultProviderId: providerId, defaultModelId: model };
-    setDefaultModelState(next);
-    previousDefaultModelRef.current = next;
+  const handleSelectModel = useCallback(
+    (providerId: string, model: string) => {
+      const previous = previousDefaultModelRef.current ?? {
+        defaultProviderId: '',
+        defaultModelId: '',
+      };
+      const next = { defaultProviderId: providerId, defaultModelId: model };
+      setDefaultModelState(next);
+      previousDefaultModelRef.current = next;
 
-    const version = ++modelSaveVersionRef.current;
-    setDefaultModel(providerId, model)
-      .then(() => {
-        if (version === modelSaveVersionRef.current) {
-          // 最新请求成功：确认 UI
-        }
-      })
-      .catch((err: unknown) => {
-        if (version === modelSaveVersionRef.current) {
-          const msg = err instanceof Error ? err.message : String(err);
-          showToast(`默认模型保存失败：${msg}`);
-          setDefaultModelState(previous);
-          previousDefaultModelRef.current = previous;
-        }
-      });
-  }, [showToast]);
+      const version = ++modelSaveVersionRef.current;
+      setDefaultModel(providerId, model)
+        .then(() => {
+          if (version === modelSaveVersionRef.current) {
+            // 最新请求成功：确认 UI
+          }
+        })
+        .catch((err: unknown) => {
+          if (version === modelSaveVersionRef.current) {
+            const msg = err instanceof Error ? err.message : String(err);
+            showToast(`默认模型保存失败：${msg}`);
+            setDefaultModelState(previous);
+            previousDefaultModelRef.current = previous;
+          }
+        });
+    },
+    [showToast],
+  );
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -125,31 +133,36 @@ export default function App() {
     }
   }, []);
 
-  const refreshSessions = useCallback(async (mode: 'merge' | 'replace' = 'merge'): Promise<HostSession[]> => {
-    try {
-      const sessionResp = await listSessions();
-      // merge：与乐观插入的 sessions 合并，服务端同 sessionId 项优先（title/workspace 以服务端为准）；
-      // replace：以服务端为准整体替换（删除工作区后必须换，否则被删会话残留前端）。
-      if (mode === 'replace') {
-        setSessions(sessionResp.sessions);
-      } else {
-        setSessions(prev => {
-          const byId = new Map(prev.map(s => [s.sessionId, s]));
-          for (const s of sessionResp.sessions) byId.set(s.sessionId, s);
-          return Array.from(byId.values());
-        });
+  const refreshSessions = useCallback(
+    async (mode: 'merge' | 'replace' = 'merge'): Promise<HostSession[]> => {
+      try {
+        const sessionResp = await listSessions();
+        // merge：与乐观插入的 sessions 合并，服务端同 sessionId 项优先（title/workspace 以服务端为准）；
+        // replace：以服务端为准整体替换（删除工作区后必须换，否则被删会话残留前端）。
+        if (mode === 'replace') {
+          setSessions(sessionResp.sessions);
+        } else {
+          setSessions((prev) => {
+            const byId = new Map(prev.map((s) => [s.sessionId, s]));
+            for (const s of sessionResp.sessions) byId.set(s.sessionId, s);
+            return Array.from(byId.values());
+          });
+        }
+        return sessionResp.sessions;
+      } catch (err) {
+        console.error('Failed to refresh sessions:', err);
+        throw err;
       }
-      return sessionResp.sessions;
-    } catch (err) {
-      console.error('Failed to refresh sessions:', err);
-      throw err;
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     void refreshRuns();
     void refreshSessions();
-    getWorkspace().then(resp => setWorkspace(resp.workspace)).catch(() => {});
+    getWorkspace()
+      .then((resp) => setWorkspace(resp.workspace))
+      .catch(() => {});
     void refreshModels();
     void refreshDefaultModel();
   }, [refreshRuns, refreshSessions, refreshModels, refreshDefaultModel]);
@@ -176,22 +189,23 @@ export default function App() {
     return () => window.removeEventListener('settings:defaultChanged', handler);
   }, [refreshDefaultModel, refreshModels]);
 
-  const currentRun = runs.find(r => r.runId === currentRunId) ?? null;
-  const currentSession = sessions.find(s => s.sessionId === currentSessionId) ?? null;
+  const currentRun = runs.find((r) => r.runId === currentRunId) ?? null;
+  const currentSession = sessions.find((s) => s.sessionId === currentSessionId) ?? null;
 
   // 下拉的当前选择 = 默认模型对 + provider 目录派生；目录未加载或对不上时显示占位
   const currentModelSelection: ModelSelection | null = (() => {
     if (!defaultModel?.defaultProviderId) return null;
-    const provider = models.find(m => m.id === defaultModel.defaultProviderId);
+    const provider = models.find((m) => m.id === defaultModel.defaultProviderId);
     if (!provider) return null;
-    const model = defaultModel.defaultModelId && provider.models.includes(defaultModel.defaultModelId)
-      ? defaultModel.defaultModelId
-      : provider.models[0];
+    const model =
+      defaultModel.defaultModelId && provider.models.includes(defaultModel.defaultModelId)
+        ? defaultModel.defaultModelId
+        : provider.models[0];
     if (!model) return null;
     return { providerId: provider.id, providerName: provider.name, model };
   })();
   const currentSessionRuns = runs
-    .filter(run => run.sessionId === currentSessionId)
+    .filter((run) => run.sessionId === currentSessionId)
     .sort((a, b) => a.turnIndex - b.turnIndex);
 
   // Poll run files (kept for future "附件" row; not displayed inline).
@@ -202,7 +216,7 @@ export default function App() {
     }
     let cancelled = false;
     listFiles(currentRunId)
-      .then(resp => {
+      .then((resp) => {
         if (!cancelled) setFiles(resp.files);
       })
       .catch(() => {
@@ -211,60 +225,70 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentRunId, currentRun?.status]);
+  }, [currentRunId]);
 
-  const handleCreateRun = useCallback(async (task: string) => {
-    const trimmed = task.trim();
-    if (!trimmed) return;
-    try {
-      const resp = await createRun(
-        trimmed,
-        currentSessionId ?? undefined,
-        preferredWorkspaceName ?? undefined,
-        permissionMode,
-      );
-      const isNewSession = !currentSessionId;
-      // 立刻把刚创建的 Run 合并进 runs 数组（乐观更新），避免等 refreshRuns 回来之前 landing 分支还在显示
-      const optimisticRun: HostRun = {
-        runId: resp.runId,
-        sessionId: resp.sessionId,
-        turnIndex: currentSessionRuns.length,
-        task: trimmed,
-        status: (resp.status as HostRun['status']) ?? 'running',
-        workspace: workspace ?? undefined,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        permissionMode: resp.permissionMode,
-      };
-      setCurrentSessionId(resp.sessionId);
-      setCurrentRunId(resp.runId);
-      setRuns(prev => {
-        if (prev.some(r => r.runId === optimisticRun.runId)) return prev;
-        return [...prev, optimisticRun];
-      });
-      // 新建会话时，左侧栏立刻显示（不等下一次轮询）
-      if (isNewSession) {
-        const optimisticSession: HostSession = {
+  const handleCreateRun = useCallback(
+    async (task: string) => {
+      const trimmed = task.trim();
+      if (!trimmed) return;
+      try {
+        const resp = await createRun(
+          trimmed,
+          currentSessionId ?? undefined,
+          preferredWorkspaceName ?? undefined,
+          permissionMode,
+        );
+        const isNewSession = !currentSessionId;
+        // 立刻把刚创建的 Run 合并进 runs 数组（乐观更新），避免等 refreshRuns 回来之前 landing 分支还在显示
+        const optimisticRun: HostRun = {
+          runId: resp.runId,
           sessionId: resp.sessionId,
-          title: sessionTitle(trimmed),
+          turnIndex: currentSessionRuns.length,
+          task: trimmed,
+          status: (resp.status as HostRun['status']) ?? 'running',
+          workspace: workspace ?? undefined,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          workspace: workspace ?? undefined,
+          permissionMode: resp.permissionMode,
         };
-        setSessions(prev => {
-          if (prev.some(s => s.sessionId === optimisticSession.sessionId)) return prev;
-          return [optimisticSession, ...prev];
+        setCurrentSessionId(resp.sessionId);
+        setCurrentRunId(resp.runId);
+        setRuns((prev) => {
+          if (prev.some((r) => r.runId === optimisticRun.runId)) return prev;
+          return [...prev, optimisticRun];
         });
+        // 新建会话时，左侧栏立刻显示（不等下一次轮询）
+        if (isNewSession) {
+          const optimisticSession: HostSession = {
+            sessionId: resp.sessionId,
+            title: sessionTitle(trimmed),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            workspace: workspace ?? undefined,
+          };
+          setSessions((prev) => {
+            if (prev.some((s) => s.sessionId === optimisticSession.sessionId)) return prev;
+            return [optimisticSession, ...prev];
+          });
+        }
+        // Session 列表与 Run 状态解耦；仅新建会话后做一次服务端同步。
+        if (isNewSession) void refreshSessions();
+        setPreferredWorkspaceName(null);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('Failed to create run:', err);
+        alert(`任务创建失败：${msg}`);
       }
-      // Session 列表与 Run 状态解耦；仅新建会话后做一次服务端同步。
-      if (isNewSession) void refreshSessions();
-      setPreferredWorkspaceName(null);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('Failed to create run:', err);
-      alert(`任务创建失败：${msg}`);
-    }
-  }, [currentSessionId, currentSessionRuns.length, permissionMode, preferredWorkspaceName, refreshSessions, workspace]);
+    },
+    [
+      currentSessionId,
+      currentSessionRuns.length,
+      permissionMode,
+      preferredWorkspaceName,
+      refreshSessions,
+      workspace,
+    ],
+  );
 
   const handleRunTerminal = useCallback(() => {
     // SSE 已携带终态；这里只做一次持久化状态对账，不启动后台轮询。
@@ -294,21 +318,26 @@ export default function App() {
     }
   }, [currentRunId, refreshRuns, resumingRun]);
 
-  const handleSelectSession = useCallback((sessionId: string) => {
-    const sessionRuns = runs
-      .filter(run => run.sessionId === sessionId)
-      .sort((a, b) => b.turnIndex - a.turnIndex);
-    setCurrentSessionId(sessionId);
-    setCurrentRunId(sessionRuns[0]?.runId ?? null);
-    setViewingFile(null);
-  }, [runs]);
+  const handleSelectSession = useCallback(
+    (sessionId: string) => {
+      const sessionRuns = runs
+        .filter((run) => run.sessionId === sessionId)
+        .sort((a, b) => b.turnIndex - a.turnIndex);
+      setCurrentSessionId(sessionId);
+      setCurrentRunId(sessionRuns[0]?.runId ?? null);
+      setViewingFile(null);
+    },
+    [runs],
+  );
 
   // TurnNavigator：点击/键盘选择某个历史回合 → 切换查看该 run 并滚动到对应 Timeline
   const handleNavigateRun = useCallback((runId: string) => {
     setCurrentRunId(runId);
     // 等当前 Run 渲染后滚动（setState 异步，延迟一帧）
     requestAnimationFrame(() => {
-      document.getElementById(`run-${runId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document
+        .getElementById(`run-${runId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, []);
 
@@ -340,66 +369,82 @@ export default function App() {
     }, 50);
   }, []);
 
-  const handleRenameWorkspace = useCallback(async (fromName: string, toName: string) => {
-    try {
-      await apiRenameWorkspace(fromName, toName);
-      setWorkspace(w => (w && w.name === fromName ? { name: toName } : w));
-      await refreshSessions('replace');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      alert(`重命名失败：${msg}`);
-    }
-  }, [refreshSessions]);
-
-  const handleDeleteWorkspace = useCallback(async (name: string) => {
-    try {
-      await deleteWorkspaceGroup(name);
-      setWorkspace(w => (w && w.name === name ? null : w));
-      const remaining = await refreshSessions('replace');
-      setSessions(remaining);
-      // 当前会话所属工作区被删除 → 回到 landing
-      if (currentSessionId && !remaining.some(s => s.sessionId === currentSessionId)) {
-        setCurrentSessionId(null);
-        setCurrentRunId(null);
-        setViewingFile(null);
+  const handleRenameWorkspace = useCallback(
+    async (fromName: string, toName: string) => {
+      try {
+        await apiRenameWorkspace(fromName, toName);
+        setWorkspace((w) => (w && w.name === fromName ? { name: toName } : w));
+        await refreshSessions('replace');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        alert(`重命名失败：${msg}`);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      alert(`删除工作区失败：${msg}`);
-    }
-  }, [currentSessionId, refreshSessions]);
+    },
+    [refreshSessions],
+  );
 
-  const handleRenameSession = useCallback(async (sessionId: string, title: string) => {
-    try {
-      await apiRenameSession(sessionId, title);
-      setSessions(prev => prev.map(s => s.sessionId === sessionId ? { ...s, title, updatedAt: new Date().toISOString() } : s));
-      showToast('重命名成功');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`重命名失败：${msg}`);
-    }
-  }, [showToast]);
-
-  const handleArchiveSession = useCallback(async (sessionId: string) => {
-    try {
-      await apiArchiveSession(sessionId);
-      // 乐观更新：立即从列表移除，避免用户看到“什么都没发生”
-      setSessions(prev => prev.filter(s => s.sessionId !== sessionId));
-      if (currentSessionId === sessionId) {
-        setCurrentSessionId(null);
-        setCurrentRunId(null);
-        setViewingFile(null);
+  const handleDeleteWorkspace = useCallback(
+    async (name: string) => {
+      try {
+        await deleteWorkspaceGroup(name);
+        setWorkspace((w) => (w && w.name === name ? null : w));
+        const remaining = await refreshSessions('replace');
+        setSessions(remaining);
+        // 当前会话所属工作区被删除 → 回到 landing
+        if (currentSessionId && !remaining.some((s) => s.sessionId === currentSessionId)) {
+          setCurrentSessionId(null);
+          setCurrentRunId(null);
+          setViewingFile(null);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        alert(`删除工作区失败：${msg}`);
       }
-      showToast('已归档');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`归档失败：${msg}`);
-    }
-    // 后台与服务端对齐；失败只记日志，不打扰用户
-    void refreshSessions('replace').catch((err) => {
-      console.error('Failed to refresh sessions:', err);
-    });
-  }, [currentSessionId, refreshSessions, showToast]);
+    },
+    [currentSessionId, refreshSessions],
+  );
+
+  const handleRenameSession = useCallback(
+    async (sessionId: string, title: string) => {
+      try {
+        await apiRenameSession(sessionId, title);
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.sessionId === sessionId ? { ...s, title, updatedAt: new Date().toISOString() } : s,
+          ),
+        );
+        showToast('重命名成功');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        showToast(`重命名失败：${msg}`);
+      }
+    },
+    [showToast],
+  );
+
+  const handleArchiveSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await apiArchiveSession(sessionId);
+        // 乐观更新：立即从列表移除，避免用户看到“什么都没发生”
+        setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
+        if (currentSessionId === sessionId) {
+          setCurrentSessionId(null);
+          setCurrentRunId(null);
+          setViewingFile(null);
+        }
+        showToast('已归档');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        showToast(`归档失败：${msg}`);
+      }
+      // 后台与服务端对齐；失败只记日志，不打扰用户
+      void refreshSessions('replace').catch((err) => {
+        console.error('Failed to refresh sessions:', err);
+      });
+    },
+    [currentSessionId, refreshSessions, showToast],
+  );
 
   const handleOpenWorkspace = useCallback(async () => {
     if (openingWorkspace) return;
@@ -432,7 +477,7 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => {
           sidebarUserOverrideRef.current = true;
-          setSidebarCollapsed(value => !value);
+          setSidebarCollapsed((value) => !value);
         }}
         workspace={workspace}
         openingWorkspace={openingWorkspace}
@@ -519,11 +564,7 @@ export default function App() {
       </div>
 
       {viewingFile && currentRunId && (
-        <FileModal
-          runId={currentRunId}
-          file={viewingFile}
-          onClose={() => setViewingFile(null)}
-        />
+        <FileModal runId={currentRunId} file={viewingFile} onClose={() => setViewingFile(null)} />
       )}
 
       {settingsOpen && (

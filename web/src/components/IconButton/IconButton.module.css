@@ -5,7 +5,11 @@
   border: none;
   flex-shrink: 0;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .iconButton:disabled {
@@ -62,7 +66,9 @@
 .brand {
   color: var(--color-text-on-brand);
   background: var(--color-brand);
-  box-shadow: 0 7px 18px color-mix(in srgb, var(--color-brand) 22%, transparent), inset 0 1px 0 rgba(255,255,255,0.12);
+  box-shadow:
+    0 7px 18px color-mix(in srgb, var(--color-brand) 22%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .brand:hover:not(:disabled) {

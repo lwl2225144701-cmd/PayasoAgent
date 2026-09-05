@@ -23,9 +23,13 @@
     "dev:web": "cd web && npm run dev",
     "build:web": "cd web && npm run build",
     "dev": "concurrently -n host,web -c blue,green \"npm run host\" \"npm run dev:web\"",
-    "postinstall": "npm install --prefix web --no-audit --no-fund"
+    "postinstall": "npm install --prefix web --no-audit --no-fund",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
     "@types/node": "^26.2.0",
     "concurrently": "^9.2.4",
     "tsx": "^4.19.0",

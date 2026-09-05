@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { MonitorIcon, MoonIcon, SunIcon } from '../icons';
 import type { ThemeMode } from '../../theme';
+import { MonitorIcon, MoonIcon, SunIcon } from '../icons';
 import styles from './AppearanceSettings.module.css';
 
 interface AppearanceSettingsProps {
@@ -24,10 +24,12 @@ export function AppearanceSettings({ mode, onChange }: AppearanceSettingsProps) 
   return (
     <section className={styles.section} aria-labelledby="appearance-settings-title">
       <div className={styles.header}>
-        <h3 id="appearance-settings-title" className={styles.title}>外观</h3>
+        <h3 id="appearance-settings-title" className={styles.title}>
+          外观
+        </h3>
       </div>
       <div className={styles.options} role="radiogroup" aria-label="主题模式">
-        {THEME_OPTIONS.map(option => {
+        {THEME_OPTIONS.map((option) => {
           const selected = option.mode === mode;
           return (
             <button
@@ -35,6 +37,7 @@ export function AppearanceSettings({ mode, onChange }: AppearanceSettingsProps) 
               type="button"
               className={`${styles.option} ${selected ? styles.optionSelected : ''}`}
               aria-checked={selected}
+              // biome-ignore lint/a11y/useSemanticElements: 自绘主题单选组（radiogroup），button+role=radio 为 WAI-ARIA 合法实现
               role="radio"
               onClick={() => onChange(option.mode)}
             >

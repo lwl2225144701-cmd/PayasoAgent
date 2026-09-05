@@ -1,14 +1,14 @@
 import type { KeyboardEvent, ReactNode, WheelEvent } from 'react';
-import type { PermissionMode } from '../../types';
 import {
-  MAX_CONVERSATION_FONT_SIZE,
-  MIN_CONVERSATION_FONT_SIZE,
   type ConversationFontSize,
   type LanguageMode,
+  MAX_CONVERSATION_FONT_SIZE,
+  MIN_CONVERSATION_FONT_SIZE,
 } from '../../preferences';
 import type { ThemeMode } from '../../theme';
-import { ChevronDownIcon } from '../icons';
+import type { PermissionMode } from '../../types';
 import { AppearanceSettings } from '../AppearanceSettings';
+import { ChevronDownIcon } from '../icons';
 import { PermissionDropdown } from '../PermissionDropdown';
 import styles from './GeneralSettings.module.css';
 
@@ -49,11 +49,13 @@ export function GeneralSettings({
           <select
             className={styles.select}
             value={language}
-            onChange={event => onLanguageChange(event.target.value as LanguageMode)}
+            onChange={(event) => onLanguageChange(event.target.value as LanguageMode)}
             aria-label="界面语言"
           >
             <option value="zh-CN">中文</option>
-            <option value="en-US" disabled>English（即将支持）</option>
+            <option value="en-US" disabled>
+              English（即将支持）
+            </option>
           </select>
           <ChevronDownIcon size={14} className={styles.selectChevron} />
         </div>
@@ -62,10 +64,10 @@ export function GeneralSettings({
       <AppearanceSettings mode={themeMode} onChange={onThemeModeChange} />
 
       <SettingRow title="字号大小" description="仅影响会话内容的字号">
-        <div className={styles.fontSizeControl} aria-label="会话字号">
+        <fieldset className={styles.fontSizeControl} aria-label="会话字号">
           <FontSizeStepper value={fontSize} onChange={onFontSizeChange} />
           <span className={styles.fontSizeUnit}>px</span>
-        </div>
+        </fieldset>
       </SettingRow>
     </div>
   );
@@ -79,7 +81,10 @@ function FontSizeStepper({
   onChange: (size: ConversationFontSize) => void;
 }) {
   const updateBy = (delta: number) => {
-    const next = Math.min(MAX_CONVERSATION_FONT_SIZE, Math.max(MIN_CONVERSATION_FONT_SIZE, value + delta));
+    const next = Math.min(
+      MAX_CONVERSATION_FONT_SIZE,
+      Math.max(MIN_CONVERSATION_FONT_SIZE, value + delta),
+    );
     if (next !== value) onChange(next);
   };
 

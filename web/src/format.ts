@@ -3,7 +3,11 @@ import type { HostEvent } from './types';
 export function formatTime(iso: string | undefined | null): string {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return new Date(iso).toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
   } catch {
     return '';
   }
@@ -64,8 +68,9 @@ export function stripThinkTags(text: string): { visible: string; thinking: strin
 
 export function previewArgs(args: unknown): string {
   if (args && typeof args === 'object') {
-    const vals = Object.values(args as Record<string, unknown>)
-      .filter((v): v is string | number => typeof v === 'string' || typeof v === 'number');
+    const vals = Object.values(args as Record<string, unknown>).filter(
+      (v): v is string | number => typeof v === 'string' || typeof v === 'number',
+    );
     if (vals.length > 0) {
       const first = String(vals[0]).replace(/\s+/g, ' ').trim();
       return first.length > 80 ? `${first.slice(0, 80)}...` : first;
@@ -90,7 +95,11 @@ export const TOOL_STATUS_LABELS: Record<'running' | 'completed' | 'failed', stri
  */
 export function isDuplicateOfFinal(visible: string, finalContent: string | null): boolean {
   if (!finalContent) return false;
-  const norm = (s: string) => s.replace(/\s+/g, '').replace(/[，。,.!?！？、]/g, '').slice(0, 80);
+  const norm = (s: string) =>
+    s
+      .replace(/\s+/g, '')
+      .replace(/[，。,.!?！？、]/g, '')
+      .slice(0, 80);
   const a = norm(visible);
   const b = norm(finalContent);
   if (!a || !b) return false;

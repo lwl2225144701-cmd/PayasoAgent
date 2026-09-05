@@ -1,31 +1,31 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  listModels,
   createModel,
-  updateModel,
   deleteModel,
-  setDefaultModel,
-  getDefaultModel,
   fetchAvailableModels,
+  getDefaultModel,
+  listModels,
   previewAvailableModels,
+  setDefaultModel,
+  updateModel,
 } from '../../api';
+import type { ConversationFontSize, LanguageMode } from '../../preferences';
+import type { ThemeMode } from '../../theme';
 import type {
   CreateModelProviderInput,
   ModelProviderView,
   PermissionMode,
   UpdateModelProviderInput,
 } from '../../types';
-import type { ThemeMode } from '../../theme';
-import type { ConversationFontSize, LanguageMode } from '../../preferences';
 import { GeneralSettings } from '../GeneralSettings';
 import {
   CloseIcon,
-  PlusIcon,
-  PencilIcon,
-  TrashIcon,
-  SettingsIcon,
   DatabaseIcon,
+  PencilIcon,
+  PlusIcon,
+  SettingsIcon,
   SlidersIcon,
+  TrashIcon,
   UserIcon,
 } from '../icons';
 import { Modal } from '../Modal';
@@ -233,7 +233,7 @@ export function SettingsModal({
     try {
       await updateModel(form.id, { apiKey: null });
       await refresh();
-      setForm(prev => ({ ...prev, apiKey: '', hadApiKey: false }));
+      setForm((prev) => ({ ...prev, apiKey: '', hadApiKey: false }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`清除密钥失败：${msg}`);
@@ -246,7 +246,7 @@ export function SettingsModal({
     if (!deletingId) return;
     try {
       await deleteModel(deletingId);
-      setModels(prev => prev.filter(m => m.id !== deletingId));
+      setModels((prev) => prev.filter((m) => m.id !== deletingId));
       setDeletingId(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -258,7 +258,7 @@ export function SettingsModal({
   const addTag = () => {
     const value = form.newTag.trim();
     if (!value) return;
-    setForm(prev => ({
+    setForm((prev) => ({
       ...prev,
       tags: [...prev.tags, { id: crypto.randomUUID(), value }],
       newTag: '',
@@ -267,13 +267,13 @@ export function SettingsModal({
   };
 
   const removeTag = (id: string) => {
-    setForm(prev => ({
+    setForm((prev) => ({
       ...prev,
-      tags: prev.tags.filter(t => t.id !== id),
+      tags: prev.tags.filter((t) => t.id !== id),
     }));
   };
 
-  const modelsFromTags = () => form.tags.map(t => t.value);
+  const modelsFromTags = () => form.tags.map((t) => t.value);
 
   // 拉取 OpenAI 兼容端点的可用模型并合并进目录（点保存才落库）。
   // 编辑已有 Provider 时通过 providerId 读取服务端配置；
@@ -284,16 +284,16 @@ export function SettingsModal({
       setFetchingModels(true);
       try {
         const resp = await fetchAvailableModels({ providerId: form.id });
-        const known = new Set(form.tags.map(t => t.value));
+        const known = new Set(form.tags.map((t) => t.value));
         const added = resp.models
-          .filter(m => !known.has(m))
-          .map(value => ({ id: crypto.randomUUID(), value }));
+          .filter((m) => !known.has(m))
+          .map((value) => ({ id: crypto.randomUUID(), value }));
         let tags = [...form.tags, ...added];
         if (tags.length > 50) {
           tags = tags.slice(0, 50);
           setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
         }
-        setForm(prev => ({ ...prev, tags }));
+        setForm((prev) => ({ ...prev, tags }));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(`获取可用模型失败：${msg}`);
@@ -308,16 +308,16 @@ export function SettingsModal({
       setFetchingModels(true);
       try {
         const resp = await previewAvailableModels({ baseUrl: form.baseUrl, apiKey: form.apiKey });
-        const known = new Set(form.tags.map(t => t.value));
+        const known = new Set(form.tags.map((t) => t.value));
         const added = resp.models
-          .filter(m => !known.has(m))
-          .map(value => ({ id: crypto.randomUUID(), value }));
+          .filter((m) => !known.has(m))
+          .map((value) => ({ id: crypto.randomUUID(), value }));
         let tags = [...form.tags, ...added];
         if (tags.length > 50) {
           tags = tags.slice(0, 50);
           setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
         }
-        setForm(prev => ({ ...prev, tags }));
+        setForm((prev) => ({ ...prev, tags }));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(`获取可用模型失败：${msg}`);
@@ -340,21 +340,27 @@ export function SettingsModal({
           </div>
           {error && <div className={styles.error}>{error}</div>}
           <div className={styles.field}>
-            <label className={styles.label}>名称</label>
+            <label className={styles.label} htmlFor="provider-name">
+              名称
+            </label>
             <input
+              id="provider-name"
               className={styles.input}
               value={form.name}
-              onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
               placeholder="例如 DeepSeek"
             />
           </div>
           <div className={styles.field}>
-            <label className={styles.label}>API 密钥</label>
+            <label className={styles.label} htmlFor="provider-api-key">
+              API 密钥
+            </label>
             <input
+              id="provider-api-key"
               className={styles.input}
               type="password"
               value={form.apiKey}
-              onChange={e => setForm(prev => ({ ...prev, apiKey: e.target.value }))}
+              onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder={
                 hasApiKey
                   ? '已配置——输入新值可替换'
@@ -378,36 +384,44 @@ export function SettingsModal({
             <button
               type="button"
               className={styles.collapseButton}
-              onClick={() => setCustomOpen(v => !v)}
+              onClick={() => setCustomOpen((v) => !v)}
             >
               <span>{customOpen ? '▾' : '▸'} 自定义设置</span>
             </button>
             {customOpen && (
               <div className={styles.collapseBody}>
                 <div className={styles.field}>
-                  <label className={styles.label}>API 地址</label>
+                  <label className={styles.label} htmlFor="provider-base-url">
+                    API 地址
+                  </label>
                   <input
+                    id="provider-base-url"
                     className={styles.input}
                     value={form.baseUrl}
-                    onChange={e => setForm(prev => ({ ...prev, baseUrl: e.target.value }))}
+                    onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
                     placeholder="https://api.deepseek.com"
                   />
                 </div>
                 <div className={styles.field}>
                   <div className={styles.tagHeader}>
-                    <label className={styles.label}>模型目录</label>
+                    <label className={styles.label} htmlFor="provider-new-tag">
+                      模型目录
+                    </label>
                     <button
                       type="button"
                       className={styles.linkButton}
                       onClick={handleFetchModels}
-                      disabled={fetchingModels || (formMode === 'edit' ? !form.id : !form.baseUrl || !form.apiKey)}
+                      disabled={
+                        fetchingModels ||
+                        (formMode === 'edit' ? !form.id : !form.baseUrl || !form.apiKey)
+                      }
                     >
                       {fetchingModels ? '获取中…' : '获取可用模型'}
                     </button>
                   </div>
                   <div className={styles.tagHint}>正在使用适配器默认模型</div>
                   <div className={styles.tagList}>
-                    {form.tags.map(tag => (
+                    {form.tags.map((tag) => (
                       <span key={tag.id} className={styles.tag}>
                         <span className={styles.tagValue}>{tag.value}</span>
                         <button
@@ -422,10 +436,11 @@ export function SettingsModal({
                   </div>
                   <div className={styles.tagAddRow}>
                     <input
+                      id="provider-new-tag"
                       className={styles.tagInput}
                       value={form.newTag}
-                      onChange={e => setForm(prev => ({ ...prev, newTag: e.target.value }))}
-                      onKeyDown={e => {
+                      onChange={(e) => setForm((prev) => ({ ...prev, newTag: e.target.value }))}
+                      onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
                           addTag();
@@ -433,11 +448,7 @@ export function SettingsModal({
                       }}
                       placeholder="输入模型标识"
                     />
-                    <button
-                      type="button"
-                      className={styles.tagAddButton}
-                      onClick={addTag}
-                    >
+                    <button type="button" className={styles.tagAddButton} onClick={addTag}>
                       + 添加模型
                     </button>
                   </div>
@@ -470,11 +481,7 @@ export function SettingsModal({
     return (
       <div className={styles.modelsTab}>
         <div className={styles.toolbar}>
-          <button
-            type="button"
-            className={styles.primaryButton}
-            onClick={() => startAdd()}
-          >
+          <button type="button" className={styles.primaryButton} onClick={() => startAdd()}>
             <PlusIcon size={14} />
             <span>添加自定义提供方</span>
           </button>
@@ -486,44 +493,55 @@ export function SettingsModal({
           <div className={styles.placeholder}>暂无模型提供方，点击上方按钮添加。</div>
         ) : (
           <div className={styles.list}>
-            {models.map(m => (
+            {models.map((m) => (
               <div key={m.id} className={styles.card}>
                 <div className={styles.cardMain}>
                   <div className={styles.cardTitleRow}>
                     <span className={styles.cardTitle}>{m.name}</span>
-                    {m.id === defaultId && (
-                      <span className={styles.defaultBadge}>默认</span>
-                    )}
-                    <span className={styles.statusDot} data-status={m.status} title={statusLabel(m.status)} />
+                    {m.id === defaultId && <span className={styles.defaultBadge}>默认</span>}
+                    <span
+                      className={styles.statusDot}
+                      data-status={m.status}
+                      title={statusLabel(m.status)}
+                    />
                   </div>
                   <div className={styles.cardMeta}>{m.baseUrl}</div>
                   <div className={styles.cardMeta}>
                     API Key：{m.hasApiKey ? '已配置' : '未设置'}
                   </div>
                   <div className={styles.cardMeta}>
-                    状态：<span className={styles.statusText} data-status={m.status}>{statusLabel(m.status)}</span>
+                    状态：
+                    <span className={styles.statusText} data-status={m.status}>
+                      {statusLabel(m.status)}
+                    </span>
                   </div>
                 </div>
                 <div className={styles.cardActions}>
-                  <button
-                    type="button"
-                    className={styles.textButton}
-                    onClick={() => startEdit(m)}
-                  >
+                  <button type="button" className={styles.textButton} onClick={() => startEdit(m)}>
                     编辑
                   </button>
                   <button
                     type="button"
                     className={styles.textButton}
                     disabled={!m.hasApiKey || m.id === defaultId}
-                    title={!m.hasApiKey ? '请先配置 API 密钥' : m.id === defaultId ? '当前默认提供方' : undefined}
+                    title={
+                      !m.hasApiKey
+                        ? '请先配置 API 密钥'
+                        : m.id === defaultId
+                          ? '当前默认提供方'
+                          : undefined
+                    }
                     onClick={async () => {
                       setError(null);
                       try {
                         await setDefaultModel(m.id, m.models[0] ?? '');
                         // 立即在卡片上显示"当前默认"，并通知 App 刷新底部下拉
                         setDefaultId(m.id);
-                        window.dispatchEvent(new CustomEvent('settings:defaultChanged', { detail: { providerId: m.id } }));
+                        window.dispatchEvent(
+                          new CustomEvent('settings:defaultChanged', {
+                            detail: { providerId: m.id },
+                          }),
+                        );
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err);
                         setError(`设为默认失败：${msg}`);
@@ -570,12 +588,7 @@ export function SettingsModal({
       <div className={styles.container}>
         <div className={styles.header}>
           <h2 className={styles.title}>设置</h2>
-          <button
-            type="button"
-            className={styles.closeButton}
-            onClick={onClose}
-            aria-label="关闭"
-          >
+          <button type="button" className={styles.closeButton} onClick={onClose} aria-label="关闭">
             <CloseIcon size={16} />
           </button>
         </div>
@@ -597,11 +610,19 @@ export function SettingsModal({
               <DatabaseIcon size={16} />
               <span>模型</span>
             </button>
-            <button type="button" className={`${styles.navItem} ${styles.navItemDisabled}`} disabled>
+            <button
+              type="button"
+              className={`${styles.navItem} ${styles.navItemDisabled}`}
+              disabled
+            >
               <SlidersIcon size={16} />
               <span>插件</span>
             </button>
-            <button type="button" className={`${styles.navItem} ${styles.navItemDisabled}`} disabled>
+            <button
+              type="button"
+              className={`${styles.navItem} ${styles.navItemDisabled}`}
+              disabled
+            >
               <UserIcon size={16} />
               <span>Agent 预设</span>
             </button>
@@ -613,8 +634,20 @@ export function SettingsModal({
       </div>
 
       {deletingId && (
-        <div className={styles.confirmBackdrop} onClick={() => setDeletingId(null)}>
-          <div className={styles.confirm} onClick={e => e.stopPropagation()}>
+        <button
+          type="button"
+          className={styles.confirmBackdrop}
+          aria-label="取消删除"
+          onClick={() => setDeletingId(null)}
+        >
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: 确认容器仅用于阻止遮罩冒泡，键盘操作由内部"取消"按钮提供 */}
+          <div
+            className={styles.confirm}
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="删除提供方确认"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className={styles.confirmTitle}>删除提供方</h3>
             <p className={styles.confirmText}>确定要删除这个模型提供方吗？此操作不可恢复。</p>
             <div className={styles.confirmActions}>
@@ -634,7 +667,7 @@ export function SettingsModal({
               </button>
             </div>
           </div>
-        </div>
+        </button>
       )}
     </Modal>
   );

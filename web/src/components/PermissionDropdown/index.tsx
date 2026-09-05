@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PermissionMode } from '../../types';
-import { CheckIcon } from '../icons';
 import { DropdownTrigger } from '../DropdownTrigger';
+import { CheckIcon } from '../icons';
 import styles from './PermissionDropdown.module.css';
 
 const PERMISSION_OPTIONS: Array<{ mode: PermissionMode; label: string }> = [
@@ -25,7 +25,8 @@ export function PermissionDropdown({
 }: PermissionDropdownProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const current = PERMISSION_OPTIONS.find(option => option.mode === mode) ?? PERMISSION_OPTIONS[1];
+  const current =
+    PERMISSION_OPTIONS.find((option) => option.mode === mode) ?? PERMISSION_OPTIONS[1];
 
   useEffect(() => {
     if (!open) return;
@@ -57,12 +58,16 @@ export function PermissionDropdown({
         title={`当前文件系统权限：${current.label}`}
         danger={mode === 'full-access'}
         open={open}
-        onClick={() => setOpen(value => !value)}
+        onClick={() => setOpen((value) => !value)}
       />
 
       {open && (
-        <div className={`${styles.menu} ${placement === 'down' ? styles.menuDown : ''}`} role="listbox" aria-label={ariaLabel}>
-          {PERMISSION_OPTIONS.map(option => {
+        <div
+          className={`${styles.menu} ${placement === 'down' ? styles.menuDown : ''}`}
+          role="listbox"
+          aria-label={ariaLabel}
+        >
+          {PERMISSION_OPTIONS.map((option) => {
             const selected = mode === option.mode;
             return (
               <button

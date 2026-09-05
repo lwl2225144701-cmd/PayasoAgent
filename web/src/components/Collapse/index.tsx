@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { ChevronRightIcon } from '../icons';
 import styles from './Collapse.module.css';
 
@@ -41,6 +41,8 @@ export function Collapse({
 
   return (
     <div className={`${styles.collapse} ${className}`}>
+      {/* 自绘折叠头：已实现键盘（Enter/空格）+ aria-expanded，div 承载复杂布局 */}
+      {/* biome-ignore lint/a11y/useSemanticElements: 折叠头为自绘交互控件，button 会引入默认样式覆盖成本 */}
       <div
         role="button"
         tabIndex={0}
@@ -63,9 +65,7 @@ export function Collapse({
           {typeof header === 'function' ? header(isExpanded) : header}
         </span>
       </div>
-      {isExpanded && (
-        <div className={`${styles.content} ${contentClassName}`}>{children}</div>
-      )}
+      {isExpanded && <div className={`${styles.content} ${contentClassName}`}>{children}</div>}
     </div>
   );
 }

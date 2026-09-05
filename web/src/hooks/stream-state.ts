@@ -17,11 +17,11 @@ export function mergeStreamingEvents(existing: HostEvent[], incoming: HostEvent[
   for (const event of incoming) {
     const previous = next[next.length - 1];
     if (
-      previous
-      && isStreamingEvent(previous)
-      && isStreamingEvent(event)
-      && previous.type === event.type
-      && previous.messageId === event.messageId
+      previous &&
+      isStreamingEvent(previous) &&
+      isStreamingEvent(event) &&
+      previous.type === event.type &&
+      previous.messageId === event.messageId
     ) {
       next[next.length - 1] = {
         ...previous,

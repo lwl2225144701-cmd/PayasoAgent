@@ -26,9 +26,11 @@ function isLanguageMode(value: string | null): value is LanguageMode {
 function isConversationFontSize(value: string | null): boolean {
   if (value === null || value.trim() === '') return false;
   const size = Number(value);
-  return Number.isInteger(size)
-    && size >= MIN_CONVERSATION_FONT_SIZE
-    && size <= MAX_CONVERSATION_FONT_SIZE;
+  return (
+    Number.isInteger(size) &&
+    size >= MIN_CONVERSATION_FONT_SIZE &&
+    size <= MAX_CONVERSATION_FONT_SIZE
+  );
 }
 
 function read(key: string): string | null {
@@ -79,8 +81,4 @@ export function applyConversationFontSize(size: ConversationFontSize): void {
   document.documentElement.style.setProperty('--conversation-font-size', `${size}px`);
 }
 
-export {
-  DEFAULT_FONT_SIZE,
-  MAX_CONVERSATION_FONT_SIZE,
-  MIN_CONVERSATION_FONT_SIZE,
-};
+export { DEFAULT_FONT_SIZE, MAX_CONVERSATION_FONT_SIZE, MIN_CONVERSATION_FONT_SIZE };

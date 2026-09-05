@@ -1,7 +1,15 @@
 import { useState } from 'react';
-import type { ToolCallData } from './index';
 import { formatDurationMs, previewArgs, TOOL_STATUS_LABELS } from '../../format';
-import { ChartIcon, ChevronRightIcon, FileIcon, ListIcon, SearchIcon, TerminalIcon, WrenchIcon } from '../icons';
+import {
+  ChartIcon,
+  ChevronRightIcon,
+  FileIcon,
+  ListIcon,
+  SearchIcon,
+  TerminalIcon,
+  WrenchIcon,
+} from '../icons';
+import type { ToolCallData } from './index';
 import styles from './Timeline.module.css';
 
 interface ToolActionRowProps {
@@ -25,14 +33,17 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
   const argsPreview = previewArgs(data.args);
   const statusLabel = TOOL_STATUS_LABELS[data.status];
   const statusClass =
-    data.status === 'running' ? styles.trRunning :
-    data.status === 'failed' ? styles.trFailed : styles.trDone;
+    data.status === 'running'
+      ? styles.trRunning
+      : data.status === 'failed'
+        ? styles.trFailed
+        : styles.trDone;
 
   return (
     <li className={`${styles.toolRow} ${statusClass}`}>
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         className={styles.toolRowClickable}
         aria-label={`${toolName}：${argsPreview}，${statusLabel}`}
@@ -47,7 +58,10 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
 
         {data.status !== 'completed' && (
           <span className={styles.toolStatus}>
-            <span className={styles[`toolStatus${data.status[0].toUpperCase()}${data.status.slice(1)}`]} aria-hidden="true" />
+            <span
+              className={styles[`toolStatus${data.status[0].toUpperCase()}${data.status.slice(1)}`]}
+              aria-hidden="true"
+            />
             <span>{statusLabel}</span>
           </span>
         )}
@@ -80,7 +94,9 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
           )}
           <div className={styles.detailMeta}>
             <span>{TOOL_STATUS_LABELS[data.status]}</span>
-            {typeof data.durationMs === 'number' && <span>{formatDurationMs(data.durationMs)}</span>}
+            {typeof data.durationMs === 'number' && (
+              <span>{formatDurationMs(data.durationMs)}</span>
+            )}
           </div>
         </div>
       )}

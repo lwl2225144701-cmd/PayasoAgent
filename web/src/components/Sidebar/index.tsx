@@ -1,10 +1,6 @@
 import type { HostSession, WorkspaceView } from '../../types';
-import {
-  PanelLeftIcon,
-  PlusIcon,
-  SettingsIcon,
-} from '../icons';
 import { IconButton } from '../IconButton';
+import { PanelLeftIcon, PlusIcon, SettingsIcon } from '../icons';
 import { WorkspaceSection } from '../WorkspaceSection';
 import styles from './Sidebar.module.css';
 
@@ -54,12 +50,22 @@ export function Sidebar({
             aria-label="展开侧栏"
             onClick={onToggleCollapsed}
           >
-            <img className={styles.logoImage} src="/payaso-mark-light.png" alt="" draggable={false} />
+            <img
+              className={styles.logoImage}
+              src="/payaso-mark-light.png"
+              alt=""
+              draggable={false}
+            />
           </button>
         ) : (
           <>
             <div className={styles.brand}>
-              <img className={styles.logoImage} src="/payaso-mark-light.png" alt="Payaso" draggable={false} />
+              <img
+                className={styles.logoImage}
+                src="/payaso-mark-light.png"
+                alt="Payaso"
+                draggable={false}
+              />
               <span className={styles.logoText}>Payaso</span>
             </div>
             <IconButton
@@ -78,7 +84,7 @@ export function Sidebar({
       </div>
 
       <div className={styles.newTaskWrap}>
-        <button className={styles.newTaskBtn} onClick={onNewTask}>
+        <button type="button" className={styles.newTaskBtn} onClick={onNewTask}>
           <PlusIcon size={15} />
           <span>新建任务</span>
         </button>

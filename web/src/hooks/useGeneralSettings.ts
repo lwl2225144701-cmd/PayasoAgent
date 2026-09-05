@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PermissionMode } from '../types';
 import {
   applyConversationFontSize,
+  type ConversationFontSize,
+  type LanguageMode,
   readConversationFontSize,
   readLanguageMode,
   readPermissionMode,
   saveConversationFontSize,
   saveLanguageMode,
   savePermissionMode,
-  type ConversationFontSize,
-  type LanguageMode,
 } from '../preferences';
+import type { PermissionMode } from '../types';
 
 export function useGeneralSettings() {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => readPermissionMode());

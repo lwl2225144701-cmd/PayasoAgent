@@ -10,7 +10,9 @@
   border: 1px solid transparent;
   border-radius: 10px;
   text-align: left;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
   color: var(--text-secondary);
 }
 
@@ -21,14 +23,17 @@
 }
 
 .item.active {
-  background:
-    linear-gradient(100deg, var(--color-brand-soft), color-mix(in srgb, var(--color-surface-subtle) 78%, transparent));
+  background: linear-gradient(
+    100deg,
+    var(--color-brand-soft),
+    color-mix(in srgb, var(--color-surface-subtle) 78%, transparent)
+  );
   border-color: color-mix(in srgb, var(--color-brand-border) 64%, transparent);
   color: var(--text-primary);
 }
 
 .item.active::before {
-  content: '';
+  content: "";
   position: absolute;
   left: -1px;
   top: 8px;
@@ -97,7 +102,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.1s, color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s;
 }
 
 .moreBtn:hover {
@@ -113,7 +120,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   padding: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 .menuItem {

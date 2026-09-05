@@ -16,11 +16,14 @@
   text-align: left;
   font: inherit;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .toggle:hover,
-.toggle[aria-expanded='true'] {
+.toggle[aria-expanded="true"] {
   background: color-mix(in srgb, var(--color-card-glass-hover) 42%, transparent);
   border-color: color-mix(in srgb, var(--color-border-default) 46%, transparent);
 }
@@ -48,12 +51,12 @@
 }
 
 .toggle:hover .atomIcon,
-.toggle[aria-expanded='true'] .atomIcon {
+.toggle[aria-expanded="true"] .atomIcon {
   opacity: 0;
 }
 
 .toggle:hover .hoverIcon,
-.toggle[aria-expanded='true'] .hoverIcon {
+.toggle[aria-expanded="true"] .hoverIcon {
   opacity: 1;
 }
 

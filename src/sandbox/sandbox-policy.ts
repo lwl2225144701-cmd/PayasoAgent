@@ -1,9 +1,9 @@
 // 统一 Sandbox Policy：把“允许访问哪些真实路径”从具体执行器中抽出来。
 // Policy 只接受 Runtime 生成的路径；LLM 提供的路径必须先经过 SandboxManager。
 
-import fs from "node:fs";
-import path from "node:path";
-import { DEFAULT_PERMISSION_MODE, type PermissionMode } from "../permission-mode.js";
+import fs from 'node:fs';
+import path from 'node:path';
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '../permission-mode.js';
 
 export type SandboxPolicy = {
   workspaceRoot: string;
@@ -63,28 +63,25 @@ export function createSandboxPolicy(
     writableRoots?: string[];
     permissionMode?: PermissionMode;
     networkAccess?: boolean;
-  } = {}
+  } = {},
 ): SandboxPolicy {
   const root = canonicalizeExisting(workspaceRoot);
   const permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
-  const readableRoots = unique([
-    root,
-    ...(options.readableRoots ?? []).map(canonicalizeExisting),
-  ]);
-  const executableRoots = unique([
-    ...(options.executableRoots ?? []).map(canonicalizeExisting),
-  ]);
+  const readableRoots = unique([root, ...(options.readableRoots ?? []).map(canonicalizeExisting)]);
+  const executableRoots = unique([...(options.executableRoots ?? []).map(canonicalizeExisting)]);
   for (const executableRoot of executableRoots) {
     if (!readableRoots.includes(executableRoot)) readableRoots.push(executableRoot);
   }
   const readablePathAliases = canonicalAliases(options.readablePathAliases ?? []);
   const writableRoots = unique([
-    ...(options.writableRoots ?? (permissionMode === "workspace-write" ? [root] : [])).map(canonicalizeExisting),
+    ...(options.writableRoots ?? (permissionMode === 'workspace-write' ? [root] : [])).map(
+      canonicalizeExisting,
+    ),
   ]);
 
   for (const writable of writableRoots) {
     if (!isInside(root, writable)) {
-      throw new Error("sandbox policy writable roots must be inside workspace root");
+      throw new Error('sandbox policy writable roots must be inside workspace root');
     }
   }
 

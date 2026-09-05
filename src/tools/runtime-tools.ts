@@ -6,80 +6,106 @@
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
 // v1.7：searchText → grep（目录递归搜索）；createDir 移出核心（hidden），write 已覆盖其核心场景。
 
-import fs from "node:fs";
-import path from "node:path";
+import fs from 'node:fs';
+import path from 'node:path';
+import { getNetworkMode } from '../network-mode.js';
+import { storedPermissionMode } from '../permission-mode.js';
 import {
+  MacOSSandbox,
+  type MacOSSandboxResult,
+  probeSandboxAvailability,
+} from '../sandbox/macos-sandbox.js';
+import {
+  assertWritableZone,
+  canonicalPathKey,
+  isProbablyBinary,
+  MAX_READ_BYTES,
+  resolveAuthorizedPath,
+} from './filesystem.js';
+import {
+  RequiredRuntimeToolUnavailableError,
   register,
   registerAlias,
-  RequiredRuntimeToolUnavailableError,
   type ToolContext,
-} from "./tools.js";
-import { MacOSSandbox, probeSandboxAvailability, type MacOSSandboxResult } from "../sandbox/macos-sandbox.js";
-import { canonicalPathKey, assertWritableZone, resolveAuthorizedPath, isProbablyBinary, MAX_READ_BYTES } from "./filesystem.js";
-import { storedPermissionMode } from "../permission-mode.js";
-import { getNetworkMode } from "../network-mode.js";
+} from './tools.js';
 
 // ---- ① grep（原 searchText，目录递归搜索）----
 register({
-  name: "grep",
+  name: 'grep',
   description:
-    "在工作区内递归搜索文本子串（非正则）。支持指定文件或目录路径，结果数量可限，所有访问严格限制在 Workspace 内，自动跳过二进制文件与超大文件，禁止跟随 symlink 避免逃逸。",
-  effect: "read",
+    '在工作区内递归搜索文本子串（非正则）。支持指定文件或目录路径，结果数量可限，所有访问严格限制在 Workspace 内，自动跳过二进制文件与超大文件，禁止跟随 symlink 避免逃逸。',
+  effect: 'read',
   getOperationKey: (args, context) => {
-    const rel = String(args.path ?? ".").trim();
+    const rel = String(args.path ?? '.').trim();
     const key = context ? canonicalPathKey(context, rel) : null;
     return `path:${key ?? JSON.stringify(rel)}:pattern:${args.pattern}:max:${args.maxResults ?? 100}`;
   },
   parameters: {
-    type: "object",
+    type: 'object',
     properties: {
-      pattern: { type: "string", description: "要查找的文本子串（非正则）" },
-      path: { type: "string", description: "工作区内相对路径，文件或目录（默认当前目录 .）" },
-      maxResults: { type: "number", description: "最多返回的匹配行数（默认 100，上限 500）" },
+      pattern: { type: 'string', description: '要查找的文本子串（非正则）' },
+      path: { type: 'string', description: '工作区内相对路径，文件或目录（默认当前目录 .）' },
+      maxResults: { type: 'number', description: '最多返回的匹配行数（默认 100，上限 500）' },
     },
-    required: ["pattern"],
+    required: ['pattern'],
   },
   execute: async (args, context) => {
-    const pattern = String(args.pattern ?? "");
-    if (!pattern) throw new Error("缺少参数 pattern");
+    const pattern = String(args.pattern ?? '');
+    if (!pattern) throw new Error('缺少参数 pattern');
 
-    const rel = String(args.path ?? ".").trim();
+    const rel = String(args.path ?? '.').trim();
     const maxResults = Math.min(Number(args.maxResults ?? 100) || 100, 500);
 
     const real = resolveAuthorizedPath(context, rel);
     let st: fs.Stats;
-    try { st = fs.lstatSync(real); } catch { throw new Error(`路径不存在: ${rel}`); }
+    try {
+      st = fs.lstatSync(real);
+    } catch {
+      throw new Error(`路径不存在: ${rel}`);
+    }
 
     const matches: Array<{ file: string; line: number; content: string }> = [];
     let filesVisited = 0;
-    let tooBig = false;
-    let binary = false;
+    const tooBig = false;
+    const binary = false;
     const MAX_DEPTH = 32;
     const MAX_FILES = 5000;
 
-    function searchInFile(filePath: string): "ok" | "too_big" | "binary" | "error" {
-      if (filesVisited >= MAX_FILES) return "error";
+    function searchInFile(filePath: string): 'ok' | 'too_big' | 'binary' | 'error' {
+      if (filesVisited >= MAX_FILES) return 'error';
       filesVisited++;
       let fst: fs.Stats;
-      try { fst = fs.lstatSync(filePath); } catch { return "error"; }
-      if (fst.size > MAX_READ_BYTES) return "too_big";
+      try {
+        fst = fs.lstatSync(filePath);
+      } catch {
+        return 'error';
+      }
+      if (fst.size > MAX_READ_BYTES) return 'too_big';
       let buf: Buffer;
-      try { buf = fs.readFileSync(filePath); } catch { return "error"; }
-      if (isProbablyBinary(buf)) return "binary";
-      const text = buf.toString("utf8");
-      const lines = text.split("\n");
+      try {
+        buf = fs.readFileSync(filePath);
+      } catch {
+        return 'error';
+      }
+      if (isProbablyBinary(buf)) return 'binary';
+      const text = buf.toString('utf8');
+      const lines = text.split('\n');
       for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
         if (lines[i].includes(pattern)) {
           matches.push({ file: filePath, line: i + 1, content: lines[i] });
         }
       }
-      return "ok";
+      return 'ok';
     }
 
     function walk(dir: string, depth: number): void {
       if (depth > MAX_DEPTH || filesVisited >= MAX_FILES) return;
       let entries: fs.Dirent[];
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
       for (const entry of entries) {
         if (filesVisited >= MAX_FILES) break;
         const full = path.join(dir, entry.name);
@@ -94,10 +120,10 @@ register({
 
     if (st.isFile()) {
       const status = searchInFile(real);
-      if (status === "too_big") {
+      if (status === 'too_big') {
         return `[sandbox-tool-invalid] 文件过大，无法搜索（限制 ${MAX_READ_BYTES} 字节）: ${rel}`;
       }
-      if (status === "binary") {
+      if (status === 'binary') {
         return `[sandbox-tool-invalid] 二进制文件，不支持文本搜索: ${rel}`;
       }
     } else if (st.isDirectory()) {
@@ -115,16 +141,16 @@ register({
     }
     const fileCount = new Set(matches.map((m) => m.file)).size;
     const summary = `找到 ${matches.length} 处匹配（共扫描 ${filesVisited} 个文件）`;
-    return [...lines, summary].join("\n");
+    return [...lines, summary].join('\n');
   },
   validateResult: (result) => {
-    if (typeof result === "string" && result.startsWith("[sandbox-tool-invalid]")) {
-      return { valid: false, reason: "文件过大或二进制，无法搜索" };
+    if (typeof result === 'string' && result.startsWith('[sandbox-tool-invalid]')) {
+      return { valid: false, reason: '文件过大或二进制，无法搜索' };
     }
     return true;
   },
 });
-registerAlias("grep", "searchText");
+registerAlias('grep', 'searchText');
 
 function missingShellToolName(stderr: string): string | undefined {
   // Only normalize the shell's own command lookup failure. Do not inspect or
@@ -139,35 +165,36 @@ function missingShellToolName(stderr: string): string | undefined {
 // ---- ② createDir（移出核心工具集，write 已支持自动创建父目录）----
 // 保留 hidden 别名，不破坏已有测试和调用方的兼容性
 register({
-  name: "createDir",
-  description: "创建单个目录。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录必须已存在。（已移出核心工具集，write 支持自动创建父目录）",
-  effect: "idempotent",
+  name: 'createDir',
+  description:
+    '创建单个目录。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录必须已存在。（已移出核心工具集，write 支持自动创建父目录）',
+  effect: 'idempotent',
   hidden: true,
   getOperationKey: (args, context) => {
-    const rel = String(args.path ?? "").trim();
+    const rel = String(args.path ?? '').trim();
     const key = context ? canonicalPathKey(context, rel) : null;
     return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
   },
   parameters: {
-    type: "object",
+    type: 'object',
     properties: {
-      path: { type: "string", description: "当前 Workspace 内相对目录路径，如 src/generated" },
+      path: { type: 'string', description: '当前 Workspace 内相对目录路径，如 src/generated' },
     },
-    required: ["path"],
+    required: ['path'],
   },
   execute: async (args, context) => {
-    const rel = String(args.path ?? "").trim();
-    if (!rel) throw new Error("缺少参数 path");
+    const rel = String(args.path ?? '').trim();
+    if (!rel) throw new Error('缺少参数 path');
     assertWritableZone(rel, context);
     const real = resolveAuthorizedPath(context, rel);
 
     // 父目录必须已存在
     const parent = path.dirname(real);
     try {
-      if (!fs.lstatSync(parent).isDirectory()) throw new Error("父路径不是目录");
+      if (!fs.lstatSync(parent).isDirectory()) throw new Error('父路径不是目录');
     } catch (err) {
       if (real === parent) throw err;
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         throw new Error(`父目录不存在，不自动创建: ${rel}`);
       }
       throw err;
@@ -178,7 +205,10 @@ register({
       if (st.isDirectory()) return `目录已存在(幂等): ${rel}`;
       throw new Error(`目标已存在但不是目录，无法创建: ${rel}`);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT" && !(err as Error).message.includes("目标已存在")) {
+      if (
+        (err as NodeJS.ErrnoException).code !== 'ENOENT' &&
+        !(err as Error).message.includes('目标已存在')
+      ) {
         throw err;
       }
     }
@@ -189,39 +219,39 @@ register({
 
 // ---- ③ moveFile ----
 register({
-  name: "moveFile",
+  name: 'moveFile',
   description:
-    "移动文件。Read Only 禁止；Workspace Write 的 source/target 仅限 Workspace；Full access 可用绝对路径。会破坏源位置。",
-  effect: "non_idempotent",
+    '移动文件。Read Only 禁止；Workspace Write 的 source/target 仅限 Workspace；Full access 可用绝对路径。会破坏源位置。',
+  effect: 'non_idempotent',
   getOperationKey: (args, context) => {
-    const src = String(args.source ?? "").trim();
-    const dst = String(args.target ?? "").trim();
+    const src = String(args.source ?? '').trim();
+    const dst = String(args.target ?? '').trim();
     const sk = context ? canonicalPathKey(context, src) : null;
     const dk = context ? canonicalPathKey(context, dst) : null;
     return `src:${sk ?? JSON.stringify(src)}:dst:${dk ?? JSON.stringify(dst)}`;
   },
   parameters: {
-    type: "object",
+    type: 'object',
     properties: {
-      source: { type: "string", description: "源相对路径，如 work/a.txt" },
-      target: { type: "string", description: "目标相对路径，如 work/sub/b.txt" },
+      source: { type: 'string', description: '源相对路径，如 work/a.txt' },
+      target: { type: 'string', description: '目标相对路径，如 work/sub/b.txt' },
     },
-    required: ["source", "target"],
+    required: ['source', 'target'],
   },
   execute: async (args, context) => {
-    const src = String(args.source ?? "").trim();
-    const dst = String(args.target ?? "").trim();
-    if (!src) throw new Error("缺少参数 source");
-    if (!dst) throw new Error("缺少参数 target");
+    const src = String(args.source ?? '').trim();
+    const dst = String(args.target ?? '').trim();
+    if (!src) throw new Error('缺少参数 source');
+    if (!dst) throw new Error('缺少参数 target');
     assertWritableZone(src, context);
     assertWritableZone(dst, context);
     const realSrc = resolveAuthorizedPath(context, src);
     const realDst = resolveAuthorizedPath(context, dst);
 
     try {
-      if (!fs.lstatSync(realSrc).isFile()) throw new Error("源不是普通文件");
+      if (!fs.lstatSync(realSrc).isFile()) throw new Error('源不是普通文件');
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         throw new Error(`源文件不存在: ${src}`);
       }
       throw err;
@@ -231,8 +261,8 @@ register({
       fs.lstatSync(realDst);
       throw new Error(`目标已存在，拒绝覆盖（如需覆盖请先删除目标）: ${dst}`);
     } catch (err) {
-      if (!(err as Error).message.includes("目标已存在")) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      if (!(err as Error).message.includes('目标已存在')) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       } else {
         throw err;
       }
@@ -244,25 +274,25 @@ register({
 
 // ---- ④ deleteFile ----
 register({
-  name: "deleteFile",
+  name: 'deleteFile',
   description:
-    "删除文件（不递归删除目录）。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。",
-  effect: "idempotent",
+    '删除文件（不递归删除目录）。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。',
+  effect: 'idempotent',
   getOperationKey: (args, context) => {
-    const rel = String(args.path ?? "").trim();
+    const rel = String(args.path ?? '').trim();
     const key = context ? canonicalPathKey(context, rel) : null;
     return key !== null ? `path:${key}` : `path:${JSON.stringify(rel)}`;
   },
   parameters: {
-    type: "object",
+    type: 'object',
     properties: {
-      path: { type: "string", description: "工作区内相对文件路径，如 work/a.txt" },
+      path: { type: 'string', description: '工作区内相对文件路径，如 work/a.txt' },
     },
-    required: ["path"],
+    required: ['path'],
   },
   execute: async (args, context) => {
-    const rel = String(args.path ?? "").trim();
-    if (!rel) throw new Error("缺少参数 path");
+    const rel = String(args.path ?? '').trim();
+    if (!rel) throw new Error('缺少参数 path');
     assertWritableZone(rel, context);
     const real = resolveAuthorizedPath(context, rel);
 
@@ -270,7 +300,7 @@ register({
       const st = fs.lstatSync(real);
       if (st.isDirectory()) throw new Error(`是目录，请勿用 deleteFile 删除目录: ${rel}`);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return `文件不存在(幂等): ${rel}`;
       }
       throw err;
@@ -282,24 +312,24 @@ register({
 
 // ---- ⑤ shell ----
 register({
-  name: "shell",
+  name: 'shell',
   description:
-    "执行一条 shell 命令（macOS OS Sandbox，cwd=Workspace，非交互，timeout 10s，输出限64KB）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。",
-  effect: "non_idempotent",
+    '执行一条 shell 命令（macOS OS Sandbox，cwd=Workspace，非交互，timeout 10s，输出限64KB）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。',
+  effect: 'non_idempotent',
   // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
   // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
   capabilities: { network: true },
-  getOperationKey: (args) => `cmd:${String(args.command ?? "").trim()}`,
+  getOperationKey: (args) => `cmd:${String(args.command ?? '').trim()}`,
   parameters: {
-    type: "object",
+    type: 'object',
     properties: {
-      command: { type: "string", description: "要在当前 Workspace 根目录执行的 shell 命令" },
+      command: { type: 'string', description: '要在当前 Workspace 根目录执行的 shell 命令' },
     },
-    required: ["command"],
+    required: ['command'],
   },
   execute: async (args, context) => {
-    const cmd = String(args.command ?? "").trim();
-    if (!cmd) throw new Error("缺少参数 command");
+    const cmd = String(args.command ?? '').trim();
+    if (!cmd) throw new Error('缺少参数 command');
 
     // Fail-closed gate: never run an unsandboxed shell. sandbox-exec is
     // deprecated; on some macOS releases (e.g. macOS 26) it cannot apply any
@@ -307,9 +337,9 @@ register({
     // the shell tool refuses, so containment is never silently dropped.
     if (!(await probeSandboxAvailability())) {
       throw new Error(
-        "Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system " +
-        "(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve " +
-        "filesystem containment."
+        'Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
+          '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve ' +
+          'filesystem containment.',
       );
     }
 
@@ -318,12 +348,13 @@ register({
     const workDir = workspaceRoot;
     // v2.0 Network Control：shell 的网络能力跟随全局 network.mode ——
     // on → sandbox 允许 network*；off → execute() 已在执行前拒绝，绝不会走到这里。
-    const networkAccess = getNetworkMode() === "on";
+    const networkAccess = getNetworkMode() === 'on';
     // HOME/TMPDIR must stay under the same authorized root. Use an ephemeral
     // per-call directory so npm/tsx caches never become project artifacts.
-    const runtimeDir = permissionMode === "read-only"
-      ? null
-      : fs.mkdtempSync(path.join(workspaceRoot, ".payaso-shell-"));
+    const runtimeDir =
+      permissionMode === 'read-only'
+        ? null
+        : fs.mkdtempSync(path.join(workspaceRoot, '.payaso-shell-'));
     const home = runtimeDir ?? workspaceRoot;
     const tmpdir = runtimeDir ?? workspaceRoot;
 
@@ -336,13 +367,13 @@ register({
         tmpdir,
         signal: context.signal,
         onEvent: (event) => {
-          if (event === "started") {
-            context.onSandboxEvent?.({ type: "shell_sandbox_started", platform: "macos" });
+          if (event === 'started') {
+            context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
           } else {
             context.onSandboxEvent?.({
-              type: "shell_sandbox_denied",
-              platform: "macos",
-              reason: "workspace_policy",
+              type: 'shell_sandbox_denied',
+              platform: 'macos',
+              reason: 'workspace_policy',
             });
           }
         },
@@ -353,7 +384,7 @@ register({
 
     if (result.denied) {
       // Do not expose stderr or host paths to the LLM/context.
-      throw new Error("Shell operation denied by workspace sandbox.");
+      throw new Error('Shell operation denied by workspace sandbox.');
     }
 
     const missingTool = result.exitCode !== 0 ? missingShellToolName(result.stderr) : undefined;
@@ -364,7 +395,7 @@ register({
     }
 
     const head = result.timedOut
-      ? "[shell-timeout] 命令超时(10000ms)或强制终止\n"
+      ? '[shell-timeout] 命令超时(10000ms)或强制终止\n'
       : `[shell-exit-${result.exitCode ?? -1}]\n`;
     return (head + result.stdout + result.stderr).trim();
   },

@@ -44,10 +44,18 @@
   letter-spacing: -0.015em;
 }
 
-.text h1 { font-size: 1.45em; }
-.text h2 { font-size: 1.22em; }
-.text h3 { font-size: 1.1em; }
-.text h4 { font-size: 1em; }
+.text h1 {
+  font-size: 1.45em;
+}
+.text h2 {
+  font-size: 1.22em;
+}
+.text h3 {
+  font-size: 1.1em;
+}
+.text h4 {
+  font-size: 1em;
+}
 
 .text ul,
 .text ol {
@@ -152,7 +160,9 @@
   border: 1px solid transparent;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 .toggle:hover {
   background: var(--color-brand-soft);

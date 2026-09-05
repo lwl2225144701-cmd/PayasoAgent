@@ -32,7 +32,9 @@
   background: color-mix(in srgb, var(--color-card-glass) 62%, transparent);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .closeButton:hover {
@@ -71,7 +73,11 @@
   color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
 }
 
 .navItem:hover {
@@ -94,7 +100,11 @@
 }
 
 .navItemActive {
-  background: linear-gradient(110deg, var(--color-brand-soft), color-mix(in srgb, var(--color-card-glass) 78%, transparent));
+  background: linear-gradient(
+    110deg,
+    var(--color-brand-soft),
+    color-mix(in srgb, var(--color-card-glass) 78%, transparent)
+  );
   border-color: var(--color-brand-border);
   color: var(--text-primary);
   font-weight: 600;
@@ -221,7 +231,10 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .buttonGroupItem:hover {
@@ -283,7 +296,9 @@
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .primaryButton:hover:not(:disabled) {
@@ -308,7 +323,9 @@
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .secondaryButton:hover:not(:disabled) {
@@ -669,6 +686,9 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
+  border: 0;
+  font: inherit;
+  color: inherit;
   background: var(--color-overlay);
   z-index: 110;
 }

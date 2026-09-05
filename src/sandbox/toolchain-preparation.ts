@@ -4,10 +4,10 @@
 // brew 命令、参数、路径或安装源。真正的安装动作由 Host 在用户明确批准后
 // 交给 macOS 专用 preparer 执行。
 
-export type ToolchainPreparationSource = "homebrew";
+export type ToolchainPreparationSource = 'homebrew';
 
 export interface ToolchainPreparationPlan {
-  toolName: "git" | "node" | "npm";
+  toolName: 'git' | 'node' | 'npm';
   packageName: string;
   source: ToolchainPreparationSource;
   displayName: string;
@@ -15,22 +15,22 @@ export interface ToolchainPreparationPlan {
 
 export interface ToolchainPreparationRequest {
   runId: string;
-  toolName: ToolchainPreparationPlan["toolName"];
+  toolName: ToolchainPreparationPlan['toolName'];
   packageName: string;
   source: ToolchainPreparationSource;
   timestamp: string;
 }
 
-export type ToolchainPreparationPhase = "checking" | "installing" | "verifying";
+export type ToolchainPreparationPhase = 'checking' | 'installing' | 'verifying';
 export type ToolchainPreparationObserver = (phase: ToolchainPreparationPhase) => void;
 
 export type ToolchainPreparationStatus =
-  | "prepared"
-  | "denied"
-  | "unavailable"
-  | "failed"
-  | "aborted"
-  | "timed_out";
+  | 'prepared'
+  | 'denied'
+  | 'unavailable'
+  | 'failed'
+  | 'aborted'
+  | 'timed_out';
 
 export interface ToolchainPreparationResult {
   approved: boolean;
@@ -40,7 +40,7 @@ export interface ToolchainPreparationResult {
   message?: string;
   // v1.6 工具链闭环 ①：prepared 时由 Host 填充刷新后的全局能力快照
   // （经准备结果通道流回 agent，刷新当前 Run 的 Harness 模型视图）。
-  capabilities?: import("./toolchain-manager.js").RuntimeToolchainCapabilities;
+  capabilities?: import('./toolchain-manager.js').RuntimeToolchainCapabilities;
 }
 
 export interface ToolchainPreparationPort {
@@ -60,27 +60,29 @@ export type ToolchainPreparationRunner = (
 
 const PLANS: Record<string, ToolchainPreparationPlan> = {
   git: {
-    toolName: "git",
-    packageName: "git",
-    source: "homebrew",
-    displayName: "Git",
+    toolName: 'git',
+    packageName: 'git',
+    source: 'homebrew',
+    displayName: 'Git',
   },
   node: {
-    toolName: "node",
-    packageName: "node",
-    source: "homebrew",
-    displayName: "Node.js",
+    toolName: 'node',
+    packageName: 'node',
+    source: 'homebrew',
+    displayName: 'Node.js',
   },
   npm: {
-    toolName: "npm",
-    packageName: "node",
-    source: "homebrew",
-    displayName: "npm（随 Node.js 提供）",
+    toolName: 'npm',
+    packageName: 'node',
+    source: 'homebrew',
+    displayName: 'npm（随 Node.js 提供）',
   },
 };
 
 /** Return a copy of the fixed plan, or undefined for an unsupported command. */
-export function getToolchainPreparationPlan(toolName: string): ToolchainPreparationPlan | undefined {
+export function getToolchainPreparationPlan(
+  toolName: string,
+): ToolchainPreparationPlan | undefined {
   const plan = PLANS[toolName];
   return plan === undefined ? undefined : { ...plan };
 }
@@ -90,8 +92,8 @@ export const denyAllToolchainPreparationPort: ToolchainPreparationPort = {
     return {
       approved: false,
       prepared: false,
-      status: "denied",
-      message: "Dependency preparation was not authorized.",
+      status: 'denied',
+      message: 'Dependency preparation was not authorized.',
     };
   },
 };

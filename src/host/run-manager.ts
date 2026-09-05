@@ -2,40 +2,58 @@
 // 职责：活跃执行状态留在内存；Run 历史、状态和事件由 RunStore 持久化。
 // 边界：只通过公开边界 runAgent 调用 Runtime；不持久化 Runtime checkpoint 内容。
 
-import { runAgent } from "../runtime/agent.js";
-import { DefaultContextHarness } from "../harness/context-harness.js";
-import { createAgentExecutionContext, createDefaultRuntimeServices } from "../bootstrap/runtime-bootstrap.js";
-import type { ChatMessage, ChatStreamDelta, ModelConfig } from "../llm/llm.js";
-import { loadCheckpoint, checkpointPath } from "../persistence/file-checkpoint-store.js";
-import { getRunWorkspaceRoot } from "../sandbox/sandbox-manager.js";
-import { sseEncode, type HostEvent, type StreamingEvent } from "./run-events.js";
-import { createDefaultRunStore } from "./persistence/sqlite-store.js";
-import { isTerminalRunStatus, type RunStore, type StoredRun, type StoredRunStatus, type StoredSession, type ModelProviderView, type CreateModelProviderInput, type UpdateModelProviderInput, type TerminalRunStatus } from "./persistence/store.js";
-import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from "./workspace.js";
-import { isAbortError } from "../util/abort.js";
-import fs from "node:fs";
-import path from "node:path";
-import { DEFAULT_PERMISSION_MODE, storedPermissionMode, type PermissionMode } from "../permission-mode.js";
-import { getNetworkMode } from "../network-mode.js";
-import type { ApprovalPort, NetworkApprovalRequest } from "../runtime/approval-port.js";
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  createAgentExecutionContext,
+  createDefaultRuntimeServices,
+} from '../bootstrap/runtime-bootstrap.js';
+import { DefaultContextHarness } from '../harness/context-harness.js';
+import type { ChatMessage, ChatStreamDelta, ModelConfig } from '../llm/llm.js';
+import { getNetworkMode } from '../network-mode.js';
+import {
+  DEFAULT_PERMISSION_MODE,
+  type PermissionMode,
+  storedPermissionMode,
+} from '../permission-mode.js';
+import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
+import { runAgent } from '../runtime/agent.js';
+import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
+import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
+import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
+import {
+  getRuntimeToolchainCapabilities,
+  type RuntimeToolchainCapabilities,
+} from '../sandbox/toolchain-manager.js';
 import type {
   ToolchainPreparationObserver,
   ToolchainPreparationPort,
   ToolchainPreparationRequest,
   ToolchainPreparationResult,
   ToolchainPreparationRunner,
-} from "../sandbox/toolchain-preparation.js";
-import { getToolchainPreparationPlan } from "../sandbox/toolchain-preparation.js";
-import { getRuntimeToolchainCapabilities, type RuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
+} from '../sandbox/toolchain-preparation.js';
+import { getToolchainPreparationPlan } from '../sandbox/toolchain-preparation.js';
+import { isAbortError } from '../util/abort.js';
+import { createDefaultRunStore } from './persistence/sqlite-store.js';
 import {
-  prepareMacOSToolchain,
-} from "../sandbox/macos-toolchain-preparer.js";
+  type CreateModelProviderInput,
+  isTerminalRunStatus,
+  type ModelProviderView,
+  type RunStore,
+  type StoredRun,
+  type StoredRunStatus,
+  type StoredSession,
+  type TerminalRunStatus,
+  type UpdateModelProviderInput,
+} from './persistence/store.js';
+import { type HostEvent, type StreamingEvent, sseEncode } from './run-events.js';
+import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from './workspace.js';
 
 // v2.0.1 JIT Approval：批准请求等待超时（用户 60s 未裁决 → 拒绝，不无限挂起 Run）
 const APPROVAL_TIMEOUT_MS = 60_000;
 
-type ToolchainPreparationDecision = "approved" | "denied" | "aborted" | "timed_out";
-type ToolchainPreparationState = "waiting" | "preparing" | "finishing";
+type ToolchainPreparationDecision = 'approved' | 'denied' | 'aborted' | 'timed_out';
+type ToolchainPreparationState = 'waiting' | 'preparing' | 'finishing';
 
 interface PendingToolchainPreparation {
   runId: string;
@@ -76,7 +94,7 @@ export interface HostSession {
 // purge 文件清理失败的结构化描述；不包含文件系统路径，可安全返回前端
 export interface CleanupError {
   runId: string;
-  target: "checkpoint" | "sandbox";
+  target: 'checkpoint' | 'sandbox';
 }
 
 interface InternalRun extends HostRun {
@@ -99,18 +117,18 @@ export interface SseSink {
   closed: () => boolean;
 }
 
-const INTERRUPTED_ERROR = "Host restarted before the Run completed";
+const INTERRUPTED_ERROR = 'Host restarted before the Run completed';
 
 // 可取消状态：running（执行中）/ stopping（已请求停止、abort 已发出、执行未退出）
 function isCancellable(status: HostRunStatus): boolean {
-  return status === "running" || status === "stopping";
+  return status === 'running' || status === 'stopping';
 }
 
 export class RunManager {
   private acceptingNewRuns = true;
   private runs = new Map<string, InternalRun>();
   private subscribers = new Map<string, Set<SseSink>>();
-  private lifecycle: "open" | "closing" | "closed" = "open";
+  private lifecycle: 'open' | 'closing' | 'closed' = 'open';
   private closePromise?: Promise<void>;
   // v2.0.1 JIT Approval：in-flight 批准请求（requestId → 裁决入口 + 超时定时器）
   private pendingApprovals = new Map<
@@ -119,10 +137,7 @@ export class RunManager {
   >();
   // macOS toolchain preparation requests are separate from network approval.
   // They are user-facing, bounded, and resolve to a fixed installer plan.
-  private pendingToolchainPreparations = new Map<
-    string,
-    PendingToolchainPreparation
-  >();
+  private pendingToolchainPreparations = new Map<string, PendingToolchainPreparation>();
 
   // v1.6 闭环③：同 packageName 的在途安装合并表 —— 至多一个 brew install，
   // 后来者等待同一 Promise 共享结果，绝不并发安装。
@@ -138,16 +153,16 @@ export class RunManager {
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
     const now = new Date().toISOString();
     for (const run of this.store.listRuns()) {
-      if (run.status !== "running" && run.status !== "stopping") continue;
+      if (run.status !== 'running' && run.status !== 'stopping') continue;
       const interrupted: StoredRun = {
         ...run,
-        status: "interrupted",
+        status: 'interrupted',
         updatedAt: now,
         error: INTERRUPTED_ERROR,
       };
       this.store.updateRun(interrupted);
       this.store.appendEvent(run.runId, {
-        type: "run_interrupted",
+        type: 'run_interrupted',
         runId: run.runId,
         timestamp: now,
         error: INTERRUPTED_ERROR,
@@ -161,16 +176,16 @@ export class RunManager {
   }
 
   private ensureOpen(): void {
-    if (this.lifecycle !== "open") {
-      throw new Error("RunManager is not accepting new runs");
+    if (this.lifecycle !== 'open') {
+      throw new Error('RunManager is not accepting new runs');
     }
   }
 
   close(): Promise<void> {
-    if (this.lifecycle === "closed") return Promise.resolve();
-    if (this.lifecycle === "closing" && this.closePromise) return this.closePromise;
+    if (this.lifecycle === 'closed') return Promise.resolve();
+    if (this.lifecycle === 'closing' && this.closePromise) return this.closePromise;
 
-    this.lifecycle = "closing";
+    this.lifecycle = 'closing';
     this.acceptingNewRuns = false;
     this.closePromise = (async () => {
       const activeRuns = [...this.runs.values()];
@@ -187,10 +202,10 @@ export class RunManager {
       }
       for (const pending of this.pendingToolchainPreparations.values()) {
         clearTimeout(pending.timer);
-        if (pending.state === "preparing") {
+        if (pending.state === 'preparing') {
           pending.controller.abort();
         } else {
-          pending.decide("aborted");
+          pending.decide('aborted');
         }
       }
       await Promise.all(waitPromises);
@@ -199,7 +214,11 @@ export class RunManager {
       // 关闭所有 SSE 连接
       for (const sinks of this.subscribers.values()) {
         for (const sink of sinks) {
-          try { sink.end(); } catch { /* ignore shutdown write failures */ }
+          try {
+            sink.end();
+          } catch {
+            /* ignore shutdown write failures */
+          }
         }
       }
       this.subscribers.clear();
@@ -211,7 +230,7 @@ export class RunManager {
         // ignore store close errors
       }
 
-      this.lifecycle = "closed";
+      this.lifecycle = 'closed';
     })();
 
     return this.closePromise;
@@ -239,7 +258,7 @@ export class RunManager {
     const run = this.runs.get(runId);
     if (run) {
       this.record(run, {
-        type: "approval_resolved",
+        type: 'approval_resolved',
         runId,
         requestId,
         approved,
@@ -265,7 +284,7 @@ export class RunManager {
       const run = this.runs.get(runId);
       if (run) {
         this.record(run, {
-          type: "approval_requested",
+          type: 'approval_requested',
           runId,
           requestId,
           toolName: req.toolName,
@@ -285,27 +304,28 @@ export class RunManager {
 
   resolveToolchainPreparation(runId: string, requestId: string, approved: boolean): boolean {
     const pending = this.pendingToolchainPreparations.get(requestId);
-    if (!pending || pending.runId !== runId || pending.state !== "waiting") return false;
+    if (!pending || pending.runId !== runId || pending.state !== 'waiting') return false;
     clearTimeout(pending.timer);
-    pending.state = approved ? "preparing" : "finishing";
-    pending.decide(approved ? "approved" : "denied");
+    pending.state = approved ? 'preparing' : 'finishing';
+    pending.decide(approved ? 'approved' : 'denied');
     return true;
   }
 
   cancelToolchainPreparation(runId: string, requestId: string): boolean {
     const pending = this.pendingToolchainPreparations.get(requestId);
     if (
-      !pending
-      || pending.runId !== runId
-      || pending.cancelRequested
-      || (pending.state !== "waiting" && pending.state !== "preparing")
-    ) return false;
+      !pending ||
+      pending.runId !== runId ||
+      pending.cancelRequested ||
+      (pending.state !== 'waiting' && pending.state !== 'preparing')
+    )
+      return false;
     pending.cancelRequested = true;
     clearTimeout(pending.timer);
-    if (pending.state === "waiting") {
-      pending.state = "finishing";
-      pending.decide("aborted");
-    } else if (pending.state === "preparing") {
+    if (pending.state === 'waiting') {
+      pending.state = 'finishing';
+      pending.decide('aborted');
+    } else if (pending.state === 'preparing') {
       pending.controller.abort();
     }
     return true;
@@ -316,46 +336,43 @@ export class RunManager {
     signal?: AbortSignal,
   ): Promise<ToolchainPreparationResult> {
     const plan = getToolchainPreparationPlan(req.toolName);
-    if (process.platform !== "darwin") {
+    if (process.platform !== 'darwin') {
       return Promise.resolve({
         approved: false,
         prepared: false,
-        status: "unavailable",
-        message: "Controlled dependency preparation is currently available only on macOS.",
+        status: 'unavailable',
+        message: 'Controlled dependency preparation is currently available only on macOS.',
       });
     }
-    if (
-      plan === undefined
-      || req.packageName !== plan.packageName
-      || req.source !== plan.source
-    ) {
+    if (plan === undefined || req.packageName !== plan.packageName || req.source !== plan.source) {
       return Promise.resolve({
         approved: false,
         prepared: false,
-        status: "unavailable",
-        message: "This dependency is not available through the controlled preparation flow.",
+        status: 'unavailable',
+        message: 'This dependency is not available through the controlled preparation flow.',
       });
     }
     // Host-level package preparation may need to download artifacts. Keep it
     // behind the independent network capability: explicit install approval is
     // not a way to bypass network.mode=off/ask.
-    if (getNetworkMode() !== "on") {
+    if (getNetworkMode() !== 'on') {
       return Promise.resolve({
         approved: false,
         prepared: false,
-        status: "unavailable",
-        message: "Network access is not enabled for dependency preparation. Enable it separately and try again.",
+        status: 'unavailable',
+        message:
+          'Network access is not enabled for dependency preparation. Enable it separately and try again.',
       });
     }
 
     // v1.6 闭环④a：实时快照显示该工具已可用 → 无需任何准备直接返回 prepared
     //（避免陈旧的 per-Run 快照发起注定重复的安装；例如用户在准备期间自行安装）。
     const live = this.toolchainCapabilitiesProvider();
-    if (live.tools[plan.toolName]?.status === "available") {
+    if (live.tools[plan.toolName]?.status === 'available') {
       return Promise.resolve({
         approved: true,
         prepared: true,
-        status: "prepared" as const,
+        status: 'prepared' as const,
         capabilities: live,
       });
     }
@@ -378,123 +395,124 @@ export class RunManager {
     // 以下整段（批准等待 + 安装 + resolved 事件）= 该 package 的共享安装 Promise：
     // 合并等待者挂在同一个 Promise 上，保证至多一个在途 Homebrew 安装。
     const install = (async (): Promise<ToolchainPreparationResult> => {
-    const requestId = crypto.randomUUID();
-    const controller = new AbortController();
-    let detachSignal = (): void => {};
-    const decision = new Promise<ToolchainPreparationDecision>((resolve) => {
-      let timer: ReturnType<typeof setTimeout>;
-      const decide = (value: ToolchainPreparationDecision) => {
-        const pending = this.pendingToolchainPreparations.get(requestId);
-        if (!pending || pending.decide !== decide) return;
-        if (pending.state === "waiting") {
-          pending.state = value === "approved" ? "preparing" : "finishing";
-          if (value !== "approved") this.pendingToolchainPreparations.delete(requestId);
-        }
-        clearTimeout(timer);
-        if (value !== "approved") signal?.removeEventListener("abort", onAbort);
-        resolve(value);
-      };
-      const onAbort = () => {
-        const pending = this.pendingToolchainPreparations.get(requestId);
-        if (pending?.state === "preparing") controller.abort();
-        else decide("aborted");
-      };
-      timer = setTimeout(() => decide("timed_out"), APPROVAL_TIMEOUT_MS);
-      timer.unref?.();
-      this.pendingToolchainPreparations.set(requestId, {
-        runId: req.runId,
-        decide,
-        timer,
-        controller,
-        state: "waiting",
-        cancelRequested: false,
-      });
-      const run = this.runs.get(req.runId);
-      if (run) {
-        this.record(run, {
-          type: "toolchain_preparation_requested",
+      const requestId = crypto.randomUUID();
+      const controller = new AbortController();
+      let detachSignal = (): void => {};
+      const decision = new Promise<ToolchainPreparationDecision>((resolve) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const decide = (value: ToolchainPreparationDecision) => {
+          const pending = this.pendingToolchainPreparations.get(requestId);
+          if (!pending || pending.decide !== decide) return;
+          if (pending.state === 'waiting') {
+            pending.state = value === 'approved' ? 'preparing' : 'finishing';
+            if (value !== 'approved') this.pendingToolchainPreparations.delete(requestId);
+          }
+          clearTimeout(timer);
+          if (value !== 'approved') signal?.removeEventListener('abort', onAbort);
+          resolve(value);
+        };
+        const onAbort = () => {
+          const pending = this.pendingToolchainPreparations.get(requestId);
+          if (pending?.state === 'preparing') controller.abort();
+          else decide('aborted');
+        };
+        timer = setTimeout(() => decide('timed_out'), APPROVAL_TIMEOUT_MS);
+        timer.unref?.();
+        this.pendingToolchainPreparations.set(requestId, {
           runId: req.runId,
-          requestId,
-          toolName: plan.toolName,
-          packageName: plan.packageName,
-          source: plan.source,
-          timestamp: req.timestamp,
+          decide,
+          timer,
+          controller,
+          state: 'waiting',
+          cancelRequested: false,
         });
-      }
-      if (signal) {
-        detachSignal = () => signal.removeEventListener("abort", onAbort);
-        if (signal.aborted) onAbort();
-        else signal.addEventListener("abort", onAbort, { once: true });
-      }
-    });
-
-    return decision.then(async (value) => {
-      let result: ToolchainPreparationResult;
-      if (value === "denied") {
-        result = {
-          approved: false,
-          prepared: false,
-          status: "denied",
-          message: "Dependency preparation was not authorized.",
-        };
-      } else if (value === "aborted") {
-        result = {
-          approved: false,
-          prepared: false,
-          status: "aborted",
-          message: "Dependency preparation was cancelled.",
-        };
-      } else if (value === "timed_out") {
-        result = {
-          approved: false,
-          prepared: false,
-          status: "timed_out",
-          message: "Dependency preparation approval timed out.",
-        };
-      } else {
         const run = this.runs.get(req.runId);
         if (run) {
           this.record(run, {
-            type: "toolchain_preparation_started",
+            type: 'toolchain_preparation_requested',
             runId: req.runId,
             requestId,
             toolName: plan.toolName,
             packageName: plan.packageName,
             source: plan.source,
-            phase: "checking",
-            timestamp: new Date().toISOString(),
+            timestamp: req.timestamp,
           });
         }
-        const onPhase: ToolchainPreparationObserver = (phase) => {
-          const currentRun = this.runs.get(req.runId);
-          if (!currentRun) return;
-          this.record(currentRun, {
-            type: "toolchain_preparation_progress",
-            runId: req.runId,
-            requestId,
-            phase: phase === "checking" ? "installing" : phase,
-            timestamp: new Date().toISOString(),
-          });
-        };
-        try {
-          result = await this.toolchainPreparer(plan, controller.signal, onPhase);
-        } catch {
+        if (signal) {
+          detachSignal = () => signal.removeEventListener('abort', onAbort);
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        }
+      });
+
+      return decision.then(async (value) => {
+        let result: ToolchainPreparationResult;
+        if (value === 'denied') {
           result = {
-            approved: true,
+            approved: false,
             prepared: false,
-            status: "failed",
-            message: "Dependency preparation failed. Review the host package manager and try again.",
+            status: 'denied',
+            message: 'Dependency preparation was not authorized.',
           };
+        } else if (value === 'aborted') {
+          result = {
+            approved: false,
+            prepared: false,
+            status: 'aborted',
+            message: 'Dependency preparation was cancelled.',
+          };
+        } else if (value === 'timed_out') {
+          result = {
+            approved: false,
+            prepared: false,
+            status: 'timed_out',
+            message: 'Dependency preparation approval timed out.',
+          };
+        } else {
+          const run = this.runs.get(req.runId);
+          if (run) {
+            this.record(run, {
+              type: 'toolchain_preparation_started',
+              runId: req.runId,
+              requestId,
+              toolName: plan.toolName,
+              packageName: plan.packageName,
+              source: plan.source,
+              phase: 'checking',
+              timestamp: new Date().toISOString(),
+            });
+          }
+          const onPhase: ToolchainPreparationObserver = (phase) => {
+            const currentRun = this.runs.get(req.runId);
+            if (!currentRun) return;
+            this.record(currentRun, {
+              type: 'toolchain_preparation_progress',
+              runId: req.runId,
+              requestId,
+              phase: phase === 'checking' ? 'installing' : phase,
+              timestamp: new Date().toISOString(),
+            });
+          };
+          try {
+            result = await this.toolchainPreparer(plan, controller.signal, onPhase);
+          } catch {
+            result = {
+              approved: true,
+              prepared: false,
+              status: 'failed',
+              message:
+                'Dependency preparation failed. Review the host package manager and try again.',
+            };
+          }
         }
-      }
-      this.pendingToolchainPreparations.delete(requestId);
-      detachSignal();
-      this.recordToolchainResolved(req.runId, requestId, result);
-      if (result.prepared) {
-        result.capabilities = this.toolchainCapabilitiesProvider();
-      }
-      return result;
-    });
+        this.pendingToolchainPreparations.delete(requestId);
+        detachSignal();
+        this.recordToolchainResolved(req.runId, requestId, result);
+        if (result.prepared) {
+          result.capabilities = this.toolchainCapabilitiesProvider();
+        }
+        return result;
+      });
     })();
 
     this.activeToolchainInstalls.set(plan.packageName, install);
@@ -518,7 +536,9 @@ export class RunManager {
     return Promise.race([
       shared,
       new Promise<ToolchainPreparationResult>((resolve) => {
-        signal.addEventListener("abort", () => resolve(this.abortedToolchainPreparation()), { once: true });
+        signal.addEventListener('abort', () => resolve(this.abortedToolchainPreparation()), {
+          once: true,
+        });
       }),
     ]);
   }
@@ -527,16 +547,20 @@ export class RunManager {
     return {
       approved: true,
       prepared: false,
-      status: "aborted",
-      message: "Dependency preparation was cancelled.",
+      status: 'aborted',
+      message: 'Dependency preparation was cancelled.',
     };
   }
 
-  private recordToolchainResolved(runId: string, requestId: string, result: ToolchainPreparationResult): void {
+  private recordToolchainResolved(
+    runId: string,
+    requestId: string,
+    result: ToolchainPreparationResult,
+  ): void {
     const run = this.runs.get(runId);
     if (!run) return;
     this.record(run, {
-      type: "toolchain_preparation_resolved",
+      type: 'toolchain_preparation_resolved',
       runId,
       requestId,
       approved: result.approved,
@@ -563,9 +587,11 @@ export class RunManager {
     let session: StoredSession;
     if (requestedSessionId) {
       const persisted = this.store.getSession(requestedSessionId);
-      if (!persisted) throw new Error("Session not found");
-      if (this.store.listRunsBySession(requestedSessionId).some((item) => isCancellable(item.status))) {
-        throw new Error("Session already has a running Run");
+      if (!persisted) throw new Error('Session not found');
+      if (
+        this.store.listRunsBySession(requestedSessionId).some((item) => isCancellable(item.status))
+      ) {
+        throw new Error('Session already has a running Run');
       }
       session = { ...persisted, updatedAt: now };
       this.store.updateSession(session);
@@ -579,7 +605,7 @@ export class RunManager {
         sessionId: crypto.randomUUID(),
         title: this.sessionTitle(task),
         workspaceRoot: workspace?.rootPath ?? getRunWorkspaceRoot(runId),
-        workspaceName: workspace?.name ?? "",
+        workspaceName: workspace?.name ?? '',
         createdAt: now,
         updatedAt: now,
       };
@@ -594,7 +620,7 @@ export class RunManager {
       sessionId: session.sessionId,
       turnIndex: previousRuns.length + 1,
       task,
-      status: "running",
+      status: 'running',
       createdAt: now,
       updatedAt: now,
       events: [],
@@ -610,7 +636,7 @@ export class RunManager {
     // Persist before execution starts, so every Runtime event has a parent Run.
     this.store.createRun(this.toStoredRun(run));
     this.runs.set(runId, run);
-    this.record(run, { type: "run_started", runId, timestamp: now });
+    this.record(run, { type: 'run_started', runId, timestamp: now });
     if (opts?.startAgent !== false) {
       this.startAgent(run, task, undefined, conversationHistory);
     }
@@ -628,23 +654,29 @@ export class RunManager {
     // Historical binding is immutable. Never fall back to currentWorkspace.
     // Resolve symlinks (macOS /var -> /private/var) before comparing.
     const normalizeRoot = (root: string): string => {
-      try { return fs.realpathSync(root); } catch { return path.resolve(root); }
+      try {
+        return fs.realpathSync(root);
+      } catch {
+        return path.resolve(root);
+      }
     };
-    const persistedRoot = persisted.workspaceRoot ? normalizeRoot(persisted.workspaceRoot) : "";
-    const checkpointRoot = checkpoint.workspaceRoot ? normalizeRoot(checkpoint.workspaceRoot) : "";
+    const persistedRoot = persisted.workspaceRoot ? normalizeRoot(persisted.workspaceRoot) : '';
+    const checkpointRoot = checkpoint.workspaceRoot ? normalizeRoot(checkpoint.workspaceRoot) : '';
     if (checkpointRoot && persistedRoot && checkpointRoot !== persistedRoot) return false;
     const persistedPermission = storedPermissionMode(persisted.permissionMode);
-    if (checkpoint.permissionMode && checkpoint.permissionMode !== persistedPermission) return false;
+    if (checkpoint.permissionMode && checkpoint.permissionMode !== persistedPermission)
+      return false;
 
     const now = new Date().toISOString();
-    const workspaceRoot = persisted.workspaceRoot || checkpoint.workspaceRoot || getRunWorkspaceRoot(runId);
+    const workspaceRoot =
+      persisted.workspaceRoot || checkpoint.workspaceRoot || getRunWorkspaceRoot(runId);
     const workspaceName = persisted.workspaceName;
     const run: InternalRun = {
       runId,
       sessionId: persisted.sessionId,
       turnIndex: persisted.turnIndex,
       task: persisted.task,
-      status: "running",
+      status: 'running',
       createdAt: persisted.createdAt,
       updatedAt: now,
       events: this.store.listEvents(runId).map((item) => item.event),
@@ -660,7 +692,7 @@ export class RunManager {
     };
     this.store.updateRun(this.toStoredRun(run));
     this.runs.set(runId, run);
-    this.record(run, { type: "run_started", runId, timestamp: now });
+    this.record(run, { type: 'run_started', runId, timestamp: now });
     this.startAgent(run, checkpoint.task, checkpoint);
     return true;
   }
@@ -679,18 +711,18 @@ export class RunManager {
 
   deleteWorkspace(sessionId: string): { deleted: number; updatedAt: string } {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error("Workspace not found");
+    if (!session) throw new Error('Workspace not found');
     const workspaceRoot = session.workspaceRoot;
 
     for (const run of this.runs.values()) {
       if (isCancellable(run.status) && run.workspaceRoot === workspaceRoot) {
-        throw new Error("Workspace has a running Run");
+        throw new Error('Workspace has a running Run');
       }
     }
-    const runningInStore = this.store.listRuns({ includeDeleted: true }).some(
-      (r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status)
-    );
-    if (runningInStore) throw new Error("Workspace has a running Run");
+    const runningInStore = this.store
+      .listRuns({ includeDeleted: true })
+      .some((r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status));
+    if (runningInStore) throw new Error('Workspace has a running Run');
 
     const now = new Date().toISOString();
     const deleted = this.store.softDeleteWorkspace(workspaceRoot, now);
@@ -703,19 +735,19 @@ export class RunManager {
 
   restoreWorkspace(sessionId: string): { restored: number; updatedAt: string } {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error("Workspace not found");
+    if (!session) throw new Error('Workspace not found');
     const workspaceRoot = session.workspaceRoot;
 
     if (!fs.existsSync(workspaceRoot)) {
-      throw new Error("Workspace path no longer exists");
+      throw new Error('Workspace path no longer exists');
     }
     const stat = fs.statSync(workspaceRoot);
     if (!stat.isDirectory()) {
-      throw new Error("Workspace path is no longer a directory");
+      throw new Error('Workspace path is no longer a directory');
     }
     const real = fs.realpathSync.native(workspaceRoot);
     if (real !== workspaceRoot) {
-      throw new Error("Workspace path has changed");
+      throw new Error('Workspace path has changed');
     }
 
     const now = new Date().toISOString();
@@ -725,21 +757,21 @@ export class RunManager {
 
   purgeWorkspace(sessionId: string): { purged: number; cleanupErrors: CleanupError[] } {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error("Workspace not found");
+    if (!session) throw new Error('Workspace not found');
     const workspaceRoot = session.workspaceRoot;
 
     if (!session.deletedAt) {
-      throw new Error("Workspace has not been deleted");
+      throw new Error('Workspace has not been deleted');
     }
 
-    const hasRunning = this.store.listRuns({ includeDeleted: true }).some(
-      (r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status)
-    );
-    if (hasRunning) throw new Error("Workspace has a running Run");
+    const hasRunning = this.store
+      .listRuns({ includeDeleted: true })
+      .some((r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status));
+    if (hasRunning) throw new Error('Workspace has a running Run');
 
-    const runs = this.store.listRuns({ includeDeleted: true }).filter(
-      (r) => r.workspaceRoot === workspaceRoot
-    );
+    const runs = this.store
+      .listRuns({ includeDeleted: true })
+      .filter((r) => r.workspaceRoot === workspaceRoot);
 
     // 先清理数据库，再清理文件；数据库失败则 checkpoint 仍在，避免半完成状态
     const purged = this.store.purgeWorkspace(workspaceRoot);
@@ -749,7 +781,11 @@ export class RunManager {
       const sinks = this.subscribers.get(run.runId);
       if (sinks) {
         for (const sink of sinks) {
-          try { sink.end(); } catch { /* ignore shutdown write failures */ }
+          try {
+            sink.end();
+          } catch {
+            /* ignore shutdown write failures */
+          }
         }
         this.subscribers.delete(run.runId);
       }
@@ -766,13 +802,13 @@ export class RunManager {
 
   archiveSession(sessionId: string): { archived: number; updatedAt: string } {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error("Session not found");
-    if (session.deletedAt) throw new Error("Session already archived");
+    if (!session) throw new Error('Session not found');
+    if (session.deletedAt) throw new Error('Session already archived');
 
     const hasRunning = [...this.runs.values()].some(
-      (r) => r.sessionId === sessionId && isCancellable(r.status)
+      (r) => r.sessionId === sessionId && isCancellable(r.status),
     );
-    if (hasRunning) throw new Error("Session has a running Run");
+    if (hasRunning) throw new Error('Session has a running Run');
 
     const now = new Date().toISOString();
     const archived = this.store.archiveSession(sessionId, now);
@@ -781,8 +817,8 @@ export class RunManager {
 
   restoreSession(sessionId: string): { restored: number; updatedAt: string } {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error("Session not found");
-    if (!session.deletedAt) throw new Error("Session is not archived");
+    if (!session) throw new Error('Session not found');
+    if (!session.deletedAt) throw new Error('Session is not archived');
 
     const now = new Date().toISOString();
     const restored = this.store.restoreSession(sessionId, now);
@@ -791,13 +827,13 @@ export class RunManager {
 
   deleteSession(sessionId: string): { deleted: number; cleanupErrors: CleanupError[] } {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error("Session not found");
-    if (!session.deletedAt) throw new Error("Session has not been archived");
+    if (!session) throw new Error('Session not found');
+    if (!session.deletedAt) throw new Error('Session has not been archived');
 
-    const hasRunning = this.store.listRuns({ includeDeleted: true }).some(
-      (r) => r.sessionId === sessionId && isCancellable(r.status)
-    );
-    if (hasRunning) throw new Error("Session has a running Run");
+    const hasRunning = this.store
+      .listRuns({ includeDeleted: true })
+      .some((r) => r.sessionId === sessionId && isCancellable(r.status));
+    if (hasRunning) throw new Error('Session has a running Run');
 
     const runs = this.store.listRunsBySession(sessionId, { includeDeleted: true });
     const deleted = this.store.deleteSession(sessionId);
@@ -807,7 +843,11 @@ export class RunManager {
       const sinks = this.subscribers.get(run.runId);
       if (sinks) {
         for (const sink of sinks) {
-          try { sink.end(); } catch { /* ignore shutdown write failures */ }
+          try {
+            sink.end();
+          } catch {
+            /* ignore shutdown write failures */
+          }
         }
         this.subscribers.delete(run.runId);
       }
@@ -822,8 +862,10 @@ export class RunManager {
       fs.rmSync(checkpointPath(runId), { force: true });
     } catch (err) {
       // 原始错误（可能含绝对路径）只写 Host 日志，不返回前端
-      console.error(`[RunStore] purge checkpoint cleanup failed for ${runId}: ${(err as Error).message}`);
-      errors.push({ runId, target: "checkpoint" });
+      console.error(
+        `[RunStore] purge checkpoint cleanup failed for ${runId}: ${(err as Error).message}`,
+      );
+      errors.push({ runId, target: 'checkpoint' });
     }
     try {
       const sandboxRoot = getRunWorkspaceRoot(runId);
@@ -831,8 +873,10 @@ export class RunManager {
         fs.rmSync(sandboxRoot, { recursive: true, force: true });
       }
     } catch (err) {
-      console.error(`[RunStore] purge sandbox cleanup failed for ${runId}: ${(err as Error).message}`);
-      errors.push({ runId, target: "sandbox" });
+      console.error(
+        `[RunStore] purge sandbox cleanup failed for ${runId}: ${(err as Error).message}`,
+      );
+      errors.push({ runId, target: 'sandbox' });
     }
     return errors;
   }
@@ -853,7 +897,7 @@ export class RunManager {
     // legacy fallback flag：主机制是 abortController.abort()；
     // 覆盖「abort 之后 agent 才 resolve」的完成竞态判定。
     run.cancelled = true;
-    if (run.status === "running") {
+    if (run.status === 'running') {
       if (run.abortController) {
         this.markStopping(run);
       } else {
@@ -866,11 +910,11 @@ export class RunManager {
   }
 
   private markStopping(run: InternalRun): void {
-    if (run.status !== "running") return;
-    run.status = "stopping";
+    if (run.status !== 'running') return;
+    run.status = 'stopping';
     run.updatedAt = new Date().toISOString();
     this.persistRunSafely(run);
-    this.record(run, { type: "run_stopping", runId: run.runId, timestamp: run.updatedAt });
+    this.record(run, { type: 'run_stopping', runId: run.runId, timestamp: run.updatedAt });
     run.abortController?.abort();
   }
 
@@ -887,17 +931,17 @@ export class RunManager {
     const timestamp = new Date().toISOString();
     // 终态映射（业务语义归 RunManager；Store 只负责原子持久化）
     const terminalEvent: HostEvent =
-      status === "completed"
-        ? { type: "run_completed", runId: run.runId, timestamp, result: extra?.result }
-        : status === "failed"
-          ? { type: "run_failed", runId: run.runId, timestamp, error: extra?.error }
-          : { type: "run_stopped", runId: run.runId, timestamp };
+      status === 'completed'
+        ? { type: 'run_completed', runId: run.runId, timestamp, result: extra?.result }
+        : status === 'failed'
+          ? { type: 'run_failed', runId: run.runId, timestamp, error: extra?.error }
+          : { type: 'run_stopped', runId: run.runId, timestamp };
     const persisted: StoredRun = {
       ...this.toStoredRun(run),
       status,
       updatedAt: timestamp,
-      ...(status === "completed" ? { result: extra?.result, error: undefined } : {}),
-      ...(status === "failed" ? { error: extra?.error } : {}),
+      ...(status === 'completed' ? { result: extra?.result, error: undefined } : {}),
+      ...(status === 'failed' ? { error: extra?.error } : {}),
     };
 
     let seq: number;
@@ -908,18 +952,18 @@ export class RunManager {
       // 禁止降级为单独 updateRun/appendEvent（会重新制造状态与事件的不一致）。
       console.error(
         `[RunManager] terminal finalization failed for ${run.runId} (${run.status} → ${status}): ` +
-        `${(err as Error).message} — run stays ${run.status}, terminal event not broadcast`
+          `${(err as Error).message} — run stays ${run.status}, terminal event not broadcast`,
       );
       return false;
     }
     // 提交成功后才应用到内存并发布（memory 不会提前显示未持久化的终态）
     run.status = status;
     run.updatedAt = timestamp;
-    if (status === "completed") {
+    if (status === 'completed') {
       run.result = extra?.result;
       run.error = undefined;
     }
-    if (status === "failed") {
+    if (status === 'failed') {
       run.error = extra?.error;
     }
     this.publishEvent(run, terminalEvent, seq);
@@ -928,7 +972,7 @@ export class RunManager {
 
   private finish(run: InternalRun): void {
     // stopped 的进入边：running（同步 stop 竞态 / 占位 Run）或 stopping（取消完成路径）
-    this.finalizeRun(run, "stopped");
+    this.finalizeRun(run, 'stopped');
   }
 
   // v1.6：仅发布已在持久层落库的事件（memory + SSE）；durability 优先于 delivery
@@ -939,7 +983,11 @@ export class RunManager {
     const chunk = sseEncode(seq, event);
     for (const sink of sinks) {
       if (!sink.closed()) {
-        try { sink.write(chunk); } catch { /* isolate one broken SSE client */ }
+        try {
+          sink.write(chunk);
+        } catch {
+          /* isolate one broken SSE client */
+        }
       }
     }
   }
@@ -957,7 +1005,10 @@ export class RunManager {
     return session ? this.publicSessionView(session) : null;
   }
 
-  findSessionByWorkspaceName(name: string, opts?: { includeDeleted?: boolean }): StoredSession | null {
+  findSessionByWorkspaceName(
+    name: string,
+    opts?: { includeDeleted?: boolean },
+  ): StoredSession | null {
     const sessions = this.store.listSessions(opts).filter((s) => s.workspaceName === name);
     if (sessions.length === 0) return null;
     const roots = new Set(sessions.map((s) => s.workspaceRoot));
@@ -977,7 +1028,9 @@ export class RunManager {
     const active = this.runs.get(runId);
     if (active && !this.isSessionDeleted(active.sessionId)) return this.publicView(active);
     const stored = this.store.getRun(runId);
-    return stored && !this.isSessionDeleted(stored.sessionId) ? this.publicStoredView(stored) : null;
+    return stored && !this.isSessionDeleted(stored.sessionId)
+      ? this.publicStoredView(stored)
+      : null;
   }
 
   getRaw(runId: string): InternalRun | undefined {
@@ -987,7 +1040,7 @@ export class RunManager {
   getWorkspaceRoot(runId: string): string | null {
     const active = this.runs.get(runId);
     if (active) {
-        return this.isSessionDeleted(active.sessionId) ? null : active.workspaceRoot;
+      return this.isSessionDeleted(active.sessionId) ? null : active.workspaceRoot;
     }
     const stored = this.store.getRun(runId);
     return stored && !this.isSessionDeleted(stored.sessionId) ? stored.workspaceRoot : null;
@@ -1018,7 +1071,7 @@ export class RunManager {
     while (Date.now() - start < timeoutMs) {
       const run = this.runs.get(runId);
       if (!run || isTerminalRunStatus(run.status)) return;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     // 超时后强制终止（理论上 abort 已发出，这里做最后清理）
     const run = this.runs.get(runId);
@@ -1060,9 +1113,9 @@ export class RunManager {
     };
     const queueDelta = (delta: ChatStreamDelta) => {
       if (
-        pendingDelta
-        && pendingDelta.type === delta.type
-        && pendingDelta.messageId === delta.messageId
+        pendingDelta &&
+        pendingDelta.type === delta.type &&
+        pendingDelta.messageId === delta.messageId
       ) {
         pendingDelta.delta += delta.delta;
       } else {
@@ -1126,7 +1179,7 @@ export class RunManager {
           return;
         }
         // v1.6：completed 终态原子落盘（status + run_completed 同一事务）
-        this.finalizeRun(run, "completed", { result });
+        this.finalizeRun(run, 'completed', { result });
       } catch (err) {
         flushDelta();
         // 用户主动取消（signal 已 abort）→ stopped，绝不算 failed；
@@ -1142,7 +1195,7 @@ export class RunManager {
 
   private failRun(run: InternalRun, message: string): void {
     // v1.6：failed 终态与 run_failed 事件原子落盘（与 completed/stopped 同一管线）
-    this.finalizeRun(run, "failed", { error: message });
+    this.finalizeRun(run, 'failed', { error: message });
   }
 
   // Persistence precedes SSE. If local storage fails, do not broadcast an
@@ -1165,7 +1218,11 @@ export class RunManager {
     const chunk = sseEncode(seq, event);
     for (const sink of sinks) {
       if (!sink.closed()) {
-        try { sink.write(chunk); } catch { /* isolate one broken SSE client */ }
+        try {
+          sink.write(chunk);
+        } catch {
+          /* isolate one broken SSE client */
+        }
       }
     }
   }
@@ -1186,7 +1243,7 @@ export class RunManager {
       task: run.task,
       status: run.status,
       workspaceRoot: run.workspaceRoot,
-      workspaceName: run.workspace?.name ?? "",
+      workspaceName: run.workspace?.name ?? '',
       permissionMode: run.permissionMode,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
@@ -1247,20 +1304,20 @@ export class RunManager {
   }
 
   private sessionTitle(task: string): string {
-    return task.replace(/\s+/g, " ").trim().slice(0, 80) || "未命名任务";
+    return task.replace(/\s+/g, ' ').trim().slice(0, 80) || '未命名任务';
   }
 
   private conversationHistory(runs: StoredRun[]): ChatMessage[] {
     const messages: ChatMessage[] = [];
     for (const run of runs) {
-      if (run.status === "running" || run.status === "interrupted") continue;
-      messages.push({ role: "user", content: run.task });
-      if (run.status === "completed" && run.result) {
-        messages.push({ role: "assistant", content: run.result });
+      if (run.status === 'running' || run.status === 'interrupted') continue;
+      messages.push({ role: 'user', content: run.task });
+      if (run.status === 'completed' && run.result) {
+        messages.push({ role: 'assistant', content: run.result });
       } else {
         // Product errors may contain Host-only paths/provider details. Preserve
         // conversational continuity without feeding those internals to the LLM.
-        messages.push({ role: "assistant", content: `上一轮未完成（${run.status}）` });
+        messages.push({ role: 'assistant', content: `上一轮未完成（${run.status}）` });
       }
     }
     return messages;
@@ -1304,7 +1361,11 @@ export class RunManager {
   }
 
   // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）
-  importEnvModelProvider(input: { baseUrl: string; apiKey: string; model: string }): { providerId: string; modelId: string } | null {
+  importEnvModelProvider(input: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  }): { providerId: string; modelId: string } | null {
     return this.store.importEnvFallback(input);
   }
 
@@ -1315,7 +1376,7 @@ export class RunManager {
     const providers = this.store.listModelProviders();
     const usable = (p: ModelProviderView): boolean => p.hasApiKey && p.models.length > 0;
     const defaultId = this.store.getDefaultProviderId();
-    const byDefault = providers.find(p => p.id === defaultId && usable(p));
+    const byDefault = providers.find((p) => p.id === defaultId && usable(p));
     const configured = byDefault ?? providers.find(usable);
     if (!configured) return undefined;
     const full = this.store.getModelProviderSecret(configured.id);

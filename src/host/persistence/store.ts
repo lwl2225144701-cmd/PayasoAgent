@@ -1,15 +1,27 @@
-import type { HostEvent } from "../run-events.js";
-import type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./settings-store.js";
-import type { PermissionMode } from "../../permission-mode.js";
+import type { PermissionMode } from '../../permission-mode.js';
+import type { HostEvent } from '../run-events.js';
+import type {
+  CreateModelProviderInput,
+  DefaultModelSelection,
+  ModelProviderView,
+  StoredModelProvider,
+  UpdateModelProviderInput,
+} from './settings-store.js';
 
 // stopping（v1.6）：用户已请求停止、AbortSignal 已发出，但执行尚未真正退出。
-export type StoredRunStatus = "running" | "stopping" | "completed" | "failed" | "stopped" | "interrupted";
+export type StoredRunStatus =
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
+  | 'stopped'
+  | 'interrupted';
 
 // 终态（v1.6 Atomic Run Finalization）：终态状态 + 对应终态事件必须原子持久化
-export type TerminalRunStatus = "completed" | "failed" | "stopped";
+export type TerminalRunStatus = 'completed' | 'failed' | 'stopped';
 
 export function isTerminalRunStatus(status: StoredRunStatus): boolean {
-  return status === "completed" || status === "failed" || status === "stopped";
+  return status === 'completed' || status === 'failed' || status === 'stopped';
 }
 
 export interface StoredSession {
@@ -66,7 +78,10 @@ export interface RunStore {
   restoreWorkspace(workspaceRoot: string, now: string): number;
   purgeWorkspace(workspaceRoot: string): number;
   listDeletedWorkspaces(): DeletedWorkspaceView[];
-  findSessionByWorkspaceName(name: string, opts?: { includeDeleted?: boolean }): StoredSession | null;
+  findSessionByWorkspaceName(
+    name: string,
+    opts?: { includeDeleted?: boolean },
+  ): StoredSession | null;
   createRun(run: StoredRun): void;
   updateRun(run: StoredRun): void;
   getRun(runId: string, opts?: { includeDeleted?: boolean }): StoredRun | null;
@@ -88,11 +103,21 @@ export interface RunStore {
   getDefaultProviderId(): string;
   getDefaultModelId(): string;
   setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection;
-  importEnvFallback(input: { baseUrl: string; apiKey: string; model: string }): DefaultModelSelection | null;
+  importEnvFallback(input: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  }): DefaultModelSelection | null;
   addModelProvider(input: CreateModelProviderInput): ModelProviderView;
   updateModelProvider(id: string, input: UpdateModelProviderInput): ModelProviderView | null;
   deleteModelProvider(id: string): boolean;
   close(): void;
 }
 
-export type { StoredModelProvider, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelSelection } from "./settings-store.js";
+export type {
+  CreateModelProviderInput,
+  DefaultModelSelection,
+  ModelProviderView,
+  StoredModelProvider,
+  UpdateModelProviderInput,
+} from './settings-store.js';

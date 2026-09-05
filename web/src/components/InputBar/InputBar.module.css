@@ -28,15 +28,21 @@
   background: var(--color-composer);
   border: 1px solid var(--color-border-default);
   border-radius: 20px;
-  box-shadow: var(--shadow-composer), inset 0 1px 0 var(--color-glass-highlight);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  box-shadow:
+    var(--shadow-composer),
+    inset 0 1px 0 var(--color-glass-highlight);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
   backdrop-filter: blur(var(--glass-composer-blur));
   -webkit-backdrop-filter: blur(var(--glass-composer-blur));
 }
 
 .conversationComposer:focus-within {
   border-color: var(--color-brand-border);
-  box-shadow: var(--shadow-composer), 0 0 0 2px var(--color-brand-soft);
+  box-shadow:
+    var(--shadow-composer),
+    0 0 0 2px var(--color-brand-soft);
 }
 
 .conversationInput {
@@ -109,7 +115,9 @@
   gap: 7px;
   min-width: 0;
   color: var(--text-tertiary);
-  transition: color 0.15s ease, background 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 
 .metaButton {
@@ -141,15 +149,21 @@
   background: var(--color-composer);
   border: 1px solid var(--color-border-default);
   border-radius: 20px;
-  box-shadow: var(--shadow-composer), inset 0 1px 0 var(--color-glass-highlight);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  box-shadow:
+    var(--shadow-composer),
+    inset 0 1px 0 var(--color-glass-highlight);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
   backdrop-filter: blur(var(--glass-composer-blur));
   -webkit-backdrop-filter: blur(var(--glass-composer-blur));
 }
 
 .heroInputWrapper:focus-within {
   border-color: var(--color-brand-border);
-  box-shadow: var(--shadow-composer), 0 0 0 2px var(--color-brand-soft);
+  box-shadow:
+    var(--shadow-composer),
+    0 0 0 2px var(--color-brand-soft);
 }
 
 .heroInput {
@@ -236,7 +250,6 @@
     min-height: 154px;
     border-radius: 20px;
   }
-
 }
 
 .modelDropdown {

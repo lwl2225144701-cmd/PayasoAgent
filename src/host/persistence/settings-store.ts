@@ -1,8 +1,8 @@
-import { DatabaseSync } from "node:sqlite";
-import { createSecretStore, providerSecretKey, type SecretStore } from "../secrets/secret-store.js";
-import { canonicalizeProviderBaseUrl } from "../provider-url.js";
+import type { DatabaseSync } from 'node:sqlite';
+import { canonicalizeProviderBaseUrl } from '../provider-url.js';
+import { createSecretStore, providerSecretKey, type SecretStore } from '../secrets/secret-store.js';
 
-export type ModelProviderKind = "builtin" | "custom";
+export type ModelProviderKind = 'builtin' | 'custom';
 
 // Provider metadata（SQLite 持久化）。raw apiKey 不在此结构中：
 // 凭证唯一存放在 SecretStore（macOS Keychain），以 providerSecretKey(id) 引用。
@@ -24,7 +24,7 @@ export interface ModelProviderView {
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
-  status: "unconfigured" | "configured" | "available" | "error" | "checking";
+  status: 'unconfigured' | 'configured' | 'available' | 'error' | 'checking';
 }
 
 export interface CreateModelProviderInput {
@@ -76,38 +76,38 @@ const DEFAULT_MODELS: StoredModelProvider[] = [];
 // 旧内置模板 id 白名单：用于迁移识别历史 builtin 记录。
 // 早期 schema 可能缺少 kind 字段（kind 为 undefined），故除 kind==="builtin" 外，
 // 也按 id 命中这些固定 id 来兜底清理，避免"隐藏的内置"继续占用名字/出现在列表。
-const BUILTIN_PROVIDER_IDS = new Set(["deepseek-chat", "openai-gpt4o", "stepfun-step"]);
+const BUILTIN_PROVIDER_IDS = new Set(['deepseek-chat', 'openai-gpt4o', 'stepfun-step']);
 
 // 从 baseUrl 推导 Provider 的展示名：环境导入创建的 Provider 不用模型名命名，
 // 否则目录扩充后（如 MiniMax-M3 + 8 个模型）每个模型都挂着同一个模型名。
 const KNOWN_PROVIDER_NAMES: Record<string, string> = {
-  "api.minimaxi.com": "MiniMax",
-  "api.openai.com": "OpenAI",
-  "api.deepseek.com": "DeepSeek",
-  "api.stepfun.com": "StepFun",
-  "api.moonshot.cn": "Moonshot",
-  "dashscope.aliyuncs.com": "Qwen",
-  "api.zhipuai.cn": "Zhipu",
-  "api.groq.com": "Groq",
-  "api.anthropic.com": "Anthropic",
+  'api.minimaxi.com': 'MiniMax',
+  'api.openai.com': 'OpenAI',
+  'api.deepseek.com': 'DeepSeek',
+  'api.stepfun.com': 'StepFun',
+  'api.moonshot.cn': 'Moonshot',
+  'dashscope.aliyuncs.com': 'Qwen',
+  'api.zhipuai.cn': 'Zhipu',
+  'api.groq.com': 'Groq',
+  'api.anthropic.com': 'Anthropic',
 };
 
 function deriveProviderName(baseUrl: string): string {
   try {
-    const host = new URL(baseUrl).hostname.toLowerCase().replace(/^www\./, "");
+    const host = new URL(baseUrl).hostname.toLowerCase().replace(/^www\./, '');
     if (KNOWN_PROVIDER_NAMES[host]) return KNOWN_PROVIDER_NAMES[host];
-    const main = host.split(".").find(seg => !seg.startsWith("api")) ?? host;
+    const main = host.split('.').find((seg) => !seg.startsWith('api')) ?? host;
     return main.charAt(0).toUpperCase() + main.slice(1);
   } catch {
-    return "Custom Provider";
+    return 'Custom Provider';
   }
 }
 
 function defaultSettings(): AppSettingsBlob {
   return {
     models: JSON.parse(JSON.stringify(DEFAULT_MODELS)) as StoredModelProvider[],
-    defaultProviderId: DEFAULT_MODELS[0]?.id ?? "",
-    defaultModelId: DEFAULT_MODELS[0]?.models[0] ?? "",
+    defaultProviderId: DEFAULT_MODELS[0]?.id ?? '',
+    defaultModelId: DEFAULT_MODELS[0]?.models[0] ?? '',
     envImported: false,
   };
 }
@@ -125,7 +125,9 @@ export class SettingsStore {
         value TEXT NOT NULL
       )
     `);
-    const row = (this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as { value: string } | undefined);
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as
+      | { value: string }
+      | undefined;
     if (!row) {
       this.writeSettings(defaultSettings());
     } else {
@@ -138,48 +140,63 @@ export class SettingsStore {
 
   private readSettings(): AppSettingsBlob {
     const fallback = defaultSettings();
-    const row = (this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as { value: string } | undefined);
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as
+      | { value: string }
+      | undefined;
     if (!row) return fallback;
     let settings: AppSettingsBlob;
     try {
       const parsed = JSON.parse(row.value) as Partial<AppSettingsBlob>;
       settings = {
-        models: Array.isArray(parsed.models) && parsed.models.length > 0 ? parsed.models : fallback.models,
-        defaultProviderId: typeof parsed.defaultProviderId === "string" ? parsed.defaultProviderId : "",
-        defaultModelId: typeof parsed.defaultModelId === "string" ? parsed.defaultModelId : "",
+        models:
+          Array.isArray(parsed.models) && parsed.models.length > 0
+            ? parsed.models
+            : fallback.models,
+        defaultProviderId:
+          typeof parsed.defaultProviderId === 'string' ? parsed.defaultProviderId : '',
+        defaultModelId: typeof parsed.defaultModelId === 'string' ? parsed.defaultModelId : '',
         envImported: parsed.envImported === true,
       };
     } catch (err) {
-      console.error(`[SettingsStore] settings blob is corrupted, falling back to defaults: ${(err as Error).message}`);
+      console.error(
+        `[SettingsStore] settings blob is corrupted, falling back to defaults: ${(err as Error).message}`,
+      );
       settings = fallback;
     }
     // 内置模板概念移除（仅保留自定义提供方）：一次性清理历史 builtin 记录，
     // 连同其 Secret 一并删除，避免"隐藏的内置"继续占用名字或出现在任何视图。
     // 兼容旧 schema：kind 丢失（undefined）的内置模板按 id 白名单兜底识别。
     const isLegacyBuiltin = (p: StoredModelProvider): boolean =>
-      p.kind === "builtin" || (p.kind == null && BUILTIN_PROVIDER_IDS.has(p.id));
+      p.kind === 'builtin' || (p.kind == null && BUILTIN_PROVIDER_IDS.has(p.id));
     const builtins = settings.models.filter(isLegacyBuiltin);
     if (builtins.length > 0) {
       for (const b of builtins) {
-        try { this.secrets.delete(providerSecretKey(b.id)); } catch { /* best-effort */ }
+        try {
+          this.secrets.delete(providerSecretKey(b.id));
+        } catch {
+          /* best-effort */
+        }
       }
-      settings.models = settings.models.filter(p => !isLegacyBuiltin(p));
-      if (settings.defaultProviderId && !settings.models.some(m => m.id === settings.defaultProviderId)) {
-        settings.defaultProviderId = "";
-        settings.defaultModelId = "";
+      settings.models = settings.models.filter((p) => !isLegacyBuiltin(p));
+      if (
+        settings.defaultProviderId &&
+        !settings.models.some((m) => m.id === settings.defaultProviderId)
+      ) {
+        settings.defaultProviderId = '';
+        settings.defaultModelId = '';
       }
       // 持久化回写，避免下次启动再次重复清理（幂等但保持库干净）
       this.writeSettings(settings);
     }
     // 旧库迁移 / 目录变化后的安全网：默认模型必须仍在默认 provider 的模型目录里
-    const provider = settings.models.find(m => m.id === settings.defaultProviderId);
+    const provider = settings.models.find((m) => m.id === settings.defaultProviderId);
     if (!provider || !provider.models.includes(settings.defaultModelId)) {
-      settings.defaultModelId = provider?.models[0] ?? "";
+      settings.defaultModelId = provider?.models[0] ?? '';
     }
     // 旧库迁移：早期环境导入曾用模型名命名自定义 Provider（name === models[0]），
     // 目录扩充后（models.length > 1）名字会与模型混在一起，按 baseUrl 重命名为通用名。
     for (const p of settings.models) {
-      if (p.kind === "custom" && p.models.length > 1 && p.name === p.models[0]) {
+      if (p.kind === 'custom' && p.models.length > 1 && p.name === p.models[0]) {
         p.name = deriveProviderName(p.baseUrl);
       }
     }
@@ -188,10 +205,12 @@ export class SettingsStore {
 
   private writeSettings(settings: AppSettingsBlob): void {
     // UPSERT：settings 行可能尚不存在（首次初始化），仅 UPDATE 会静默写入 0 行
-    this.db.prepare(`
+    this.db
+      .prepare(`
       INSERT INTO settings (key, value) VALUES ('app', ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(JSON.stringify(settings));
+    `)
+      .run(JSON.stringify(settings));
   }
 
   // v1.6 SecretStore 迁移：legacy blob 中的明文 apiKey → SecretStore，成功后才从
@@ -200,7 +219,8 @@ export class SettingsStore {
   // 绝不静默回退明文。迁移天然幂等：剥离完成后再次启动为 no-op。
   private migrateLegacyPlaintextKeys(settings: AppSettingsBlob): void {
     const legacy = settings.models.filter(
-      (m): m is LegacyStoredModelProvider => typeof (m as LegacyStoredModelProvider).apiKey === "string"
+      (m): m is LegacyStoredModelProvider =>
+        typeof (m as LegacyStoredModelProvider).apiKey === 'string',
     );
     if (legacy.length === 0) return;
     for (const model of legacy) {
@@ -210,7 +230,7 @@ export class SettingsStore {
     }
     for (const model of settings.models) {
       const raw = model as LegacyStoredModelProvider;
-      if (typeof raw.apiKey === "string") {
+      if (typeof raw.apiKey === 'string') {
         raw.hasApiKey = raw.apiKey.length > 0;
         delete raw.apiKey;
       }
@@ -222,9 +242,9 @@ export class SettingsStore {
   }
 
   private normalizeModels(models: string[]): string[] {
-    const normalized = [...new Set(models.map(model => model.trim()).filter(Boolean))];
+    const normalized = [...new Set(models.map((model) => model.trim()).filter(Boolean))];
     if (normalized.length > 50) {
-      throw new Error("models cannot exceed 50");
+      throw new Error('models cannot exceed 50');
     }
     return normalized;
   }
@@ -234,20 +254,20 @@ export class SettingsStore {
     try {
       canonicalizeProviderBaseUrl(url, { allowLoopbackHttp: false });
     } catch (err) {
-      throw new Error((err as Error).message || "baseUrl must be a valid HTTP/HTTPS URL");
+      throw new Error((err as Error).message || 'baseUrl must be a valid HTTP/HTTPS URL');
     }
   }
 
   private toView(provider: StoredModelProvider): ModelProviderView {
     const hasApiKey = Boolean(provider.hasApiKey);
-    const status: ModelProviderView["status"] = hasApiKey ? "configured" : "unconfigured";
+    const status: ModelProviderView['status'] = hasApiKey ? 'configured' : 'unconfigured';
     return {
       id: provider.id,
       kind: provider.kind,
       name: provider.name,
       baseUrl: provider.baseUrl,
       // 掩码不再来自真实密钥（Host 不为展示读取它），只反映凭证存在性
-      apiKeyMasked: hasApiKey ? "********" : "****",
+      apiKeyMasked: hasApiKey ? '********' : '****',
       hasApiKey,
       models: provider.models,
       status,
@@ -256,7 +276,7 @@ export class SettingsStore {
 
   // 列表暴露所有自定义 Provider（内置模板已移除，无隐藏项）。
   listViews(): ModelProviderView[] {
-    return this.getAllModels().map(p => this.toView(p));
+    return this.getAllModels().map((p) => this.toView(p));
   }
 
   getDefaultProviderId(): string {
@@ -271,12 +291,12 @@ export class SettingsStore {
   // 已配置凭证、至少有一个模型；显式传入的 modelId 必须在目录内。
   setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection {
     const settings = this.readSettings();
-    const provider = settings.models.find(m => m.id === providerId);
-    if (!provider) throw new Error("Provider not found");
-    if (!provider.hasApiKey) throw new Error("Provider has no API key configured");
-    if (provider.models.length === 0) throw new Error("Provider has no models");
+    const provider = settings.models.find((m) => m.id === providerId);
+    if (!provider) throw new Error('Provider not found');
+    if (!provider.hasApiKey) throw new Error('Provider has no API key configured');
+    if (provider.models.length === 0) throw new Error('Provider has no models');
     let resolvedModelId: string;
-    if (modelId !== undefined && modelId !== "") {
+    if (modelId !== undefined && modelId !== '') {
       if (!provider.models.includes(modelId)) {
         throw new Error(`Model "${modelId}" is not in provider catalog`);
       }
@@ -284,7 +304,11 @@ export class SettingsStore {
     } else {
       resolvedModelId = provider.models[0];
     }
-    this.writeSettings({ ...settings, defaultProviderId: provider.id, defaultModelId: resolvedModelId });
+    this.writeSettings({
+      ...settings,
+      defaultProviderId: provider.id,
+      defaultModelId: resolvedModelId,
+    });
     return { providerId: provider.id, modelId: resolvedModelId };
   }
 
@@ -292,7 +316,11 @@ export class SettingsStore {
   // baseUrl 与现有 Provider 一致时填入该 Provider（模型不在目录则插到最前），
   // 否则新建以 baseUrl 推导命名的自定义 Provider；导入后即设为默认。
   // 凭证路径：.env → SecretStore → metadata(hasApiKey)，key 不写 SQLite。
-  importEnvFallback(input: { baseUrl: string; apiKey: string; model: string }): DefaultModelSelection | null {
+  importEnvFallback(input: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  }): DefaultModelSelection | null {
     const settings = this.readSettings();
     if (settings.envImported) return null;
     settings.envImported = true;
@@ -305,7 +333,7 @@ export class SettingsStore {
       return null;
     }
 
-    const existing = settings.models.find(m => m.baseUrl.toLowerCase() === baseUrl.toLowerCase());
+    const existing = settings.models.find((m) => m.baseUrl.toLowerCase() === baseUrl.toLowerCase());
     if (existing) {
       this.secrets.set(providerSecretKey(existing.id), apiKey);
       existing.hasApiKey = true;
@@ -317,7 +345,7 @@ export class SettingsStore {
     } else {
       const provider: StoredModelProvider = {
         id: crypto.randomUUID(),
-        kind: "custom",
+        kind: 'custom',
         // 用从 baseUrl 推导的通用名（如 api.minimaxi.com → MiniMax），
         // 避免 provider 名等于模型名、目录扩充后每项重复标注。
         name: deriveProviderName(baseUrl),
@@ -337,7 +365,7 @@ export class SettingsStore {
   // 凭证读取路径（RunManager / available-models 共用）：metadata + SecretStore 合成。
   // provider 不存在、未配置凭证、或 SecretStore 中已不存在 → null（调用方 fail-closed）。
   getProviderCredentials(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {
-    const provider = this.getAllModels().find(m => m.id === id);
+    const provider = this.getAllModels().find((m) => m.id === id);
     if (!provider || !provider.hasApiKey) return null;
     const apiKey = this.secrets.get(providerSecretKey(id));
     if (!apiKey) return null;
@@ -347,30 +375,34 @@ export class SettingsStore {
   addModel(input: CreateModelProviderInput): ModelProviderView {
     const name = input.name.trim();
     const baseUrl = input.baseUrl.trim();
-    const apiKey = (input.apiKey ?? "").trim();
+    const apiKey = (input.apiKey ?? '').trim();
     const models = this.normalizeModels(input.models);
 
     // 1. 标准化输入 + 基础校验
-    if (!name) throw new Error("name is required");
-    if (!baseUrl) throw new Error("baseUrl is required");
+    if (!name) throw new Error('name is required');
+    if (!baseUrl) throw new Error('baseUrl is required');
     this.validateUrl(baseUrl);
-    if (models.length === 0) throw new Error("models is required");
+    if (models.length === 0) throw new Error('models is required');
 
     // 2. 读取 settings（校验前快照，用于后续判断）
     const settings = this.readSettings();
 
     // 3. 通用创建：业务校验必须在 Secret 写入之前完成
     const existing = settings.models.find(
-      m => m.name.toLowerCase() === name.toLowerCase() || m.baseUrl.toLowerCase() === baseUrl.toLowerCase()
+      (m) =>
+        m.name.toLowerCase() === name.toLowerCase() ||
+        m.baseUrl.toLowerCase() === baseUrl.toLowerCase(),
     );
     if (existing) {
-      throw new Error(`Provider with same name or baseUrl already exists: ${existing.name} (${existing.baseUrl})`);
+      throw new Error(
+        `Provider with same name or baseUrl already exists: ${existing.name} (${existing.baseUrl})`,
+      );
     }
 
     const id = crypto.randomUUID();
     const provider: StoredModelProvider = {
       id,
-      kind: "custom",
+      kind: 'custom',
       name,
       baseUrl,
       hasApiKey: Boolean(apiKey),
@@ -379,7 +411,7 @@ export class SettingsStore {
 
     // 4. 所有业务校验通过后，再写入 Secret
     let secretWritten = false;
-    let secretKey = providerSecretKey(id);
+    const secretKey = providerSecretKey(id);
     try {
       if (apiKey) {
         this.secrets.set(secretKey, apiKey);
@@ -391,7 +423,11 @@ export class SettingsStore {
     } catch (err) {
       // 补偿：删除本次新增 Secret，防止孤儿凭证
       if (secretWritten) {
-        try { this.secrets.delete(secretKey); } catch { /* best-effort compensation */ }
+        try {
+          this.secrets.delete(secretKey);
+        } catch {
+          /* best-effort compensation */
+        }
       }
       throw err;
     }
@@ -400,7 +436,7 @@ export class SettingsStore {
   updateModel(id: string, input: UpdateModelProviderInput): ModelProviderView | null {
     const settings = this.readSettings();
     const current = settings.models;
-    const idx = current.findIndex(m => m.id === id);
+    const idx = current.findIndex((m) => m.id === id);
     if (idx === -1) return null;
 
     // 保存旧 Secret 状态，以便 writeSettings 失败时恢复（补偿事务）
@@ -410,33 +446,33 @@ export class SettingsStore {
       oldApiKey = this.secrets.get(providerSecretKey(id));
       if (oldApiKey === null) {
         // 元数据显示有 Secret，但 SecretStore 中不存在 → fail-closed
-        throw new Error("Provider credentials inconsistent; contact support");
+        throw new Error('Provider credentials inconsistent; contact support');
       }
     }
 
     // 先做所有业务校验，再修改 Secret
     if (input.name !== undefined) {
       const name = input.name.trim();
-      if (!name) throw new Error("name is required");
-      if (current.some(m => m.id !== id && m.name.toLowerCase() === name.toLowerCase())) {
-        throw new Error("Provider with same name already exists");
+      if (!name) throw new Error('name is required');
+      if (current.some((m) => m.id !== id && m.name.toLowerCase() === name.toLowerCase())) {
+        throw new Error('Provider with same name already exists');
       }
       current[idx].name = name;
     }
 
     if (input.baseUrl !== undefined) {
       const baseUrl = input.baseUrl.trim();
-      if (!baseUrl) throw new Error("baseUrl is required");
+      if (!baseUrl) throw new Error('baseUrl is required');
       this.validateUrl(baseUrl);
-      if (current.some(m => m.id !== id && m.baseUrl.toLowerCase() === baseUrl.toLowerCase())) {
-        throw new Error("Provider with same baseUrl already exists");
+      if (current.some((m) => m.id !== id && m.baseUrl.toLowerCase() === baseUrl.toLowerCase())) {
+        throw new Error('Provider with same baseUrl already exists');
       }
       current[idx].baseUrl = baseUrl;
     }
 
     if (input.models !== undefined) {
       const models = this.normalizeModels(input.models);
-      if (models.length === 0) throw new Error("models is required");
+      if (models.length === 0) throw new Error('models is required');
       current[idx].models = models;
     }
 
@@ -452,7 +488,7 @@ export class SettingsStore {
       } else {
         const apiKey = input.apiKey.trim();
         if (!apiKey) {
-          throw new Error("apiKey must be non-empty or null");
+          throw new Error('apiKey must be non-empty or null');
         }
         this.secrets.set(providerSecretKey(id), apiKey);
         current[idx].hasApiKey = true;
@@ -465,10 +501,10 @@ export class SettingsStore {
     // 例如清除默认 Provider 的凭证时 hasApiKey 刚变为 false，必须立即清空默认引用）
     if (settings.defaultProviderId === id) {
       if (!current[idx].hasApiKey) {
-        settings.defaultProviderId = "";
-        settings.defaultModelId = "";
+        settings.defaultProviderId = '';
+        settings.defaultModelId = '';
       } else if (!current[idx].models.includes(settings.defaultModelId)) {
-        settings.defaultModelId = current[idx].models[0] ?? "";
+        settings.defaultModelId = current[idx].models[0] ?? '';
       }
     }
 
@@ -484,8 +520,10 @@ export class SettingsStore {
               this.secrets.set(providerSecretKey(id), oldApiKey);
             } catch (secretErr) {
               // 补偿失败：返回统一的脱敏一致性错误
-              console.error(`[SettingsStore] updateModel recovery failed for ${id}: ${(secretErr as Error).message}`);
-              throw new Error("settings_consistency_recovery_failed");
+              console.error(
+                `[SettingsStore] updateModel recovery failed for ${id}: ${(secretErr as Error).message}`,
+              );
+              throw new Error('settings_consistency_recovery_failed');
             }
           }
         } else {
@@ -494,8 +532,10 @@ export class SettingsStore {
             try {
               this.secrets.delete(providerSecretKey(id));
             } catch (secretErr) {
-              console.error(`[SettingsStore] updateModel recovery delete failed for ${id}: ${(secretErr as Error).message}`);
-              throw new Error("settings_consistency_recovery_failed");
+              console.error(
+                `[SettingsStore] updateModel recovery delete failed for ${id}: ${(secretErr as Error).message}`,
+              );
+              throw new Error('settings_consistency_recovery_failed');
             }
           }
         }
@@ -507,10 +547,10 @@ export class SettingsStore {
 
   deleteModel(id: string): boolean {
     const settings = this.readSettings();
-    const target = settings.models.find(m => m.id === id);
+    const target = settings.models.find((m) => m.id === id);
     if (!target) return false;
 
-    const next = settings.models.filter(m => m.id !== id);
+    const next = settings.models.filter((m) => m.id !== id);
     if (next.length === settings.models.length) return false;
 
     // 读取旧 Secret 状态，以便 metadata 删除失败时恢复
@@ -529,14 +569,16 @@ export class SettingsStore {
       secretDeleted = true;
     } catch (err) {
       // Secret 删除失败则中止，避免前端收到 deleted=true 但 Secret 仍可被使用的半完成状态
-      console.error(`[SettingsStore] provider secret delete failed for ${id}: ${(err as Error).message}`);
-      throw new Error("Failed to delete provider credentials");
+      console.error(
+        `[SettingsStore] provider secret delete failed for ${id}: ${(err as Error).message}`,
+      );
+      throw new Error('Failed to delete provider credentials');
     }
 
     // 删除的是默认 provider → 默认选择一并清空（与 metadata 在同一次写入中完成）
     if (settings.defaultProviderId === id) {
-      settings.defaultProviderId = "";
-      settings.defaultModelId = "";
+      settings.defaultProviderId = '';
+      settings.defaultModelId = '';
     }
     settings.models = next;
 
@@ -549,8 +591,10 @@ export class SettingsStore {
           try {
             this.secrets.set(providerSecretKey(id), oldSecretValue);
           } catch (secretErr) {
-            console.error(`[SettingsStore] deleteModel recovery failed for ${id}: ${(secretErr as Error).message}`);
-            throw new Error("settings_consistency_recovery_failed");
+            console.error(
+              `[SettingsStore] deleteModel recovery failed for ${id}: ${(secretErr as Error).message}`,
+            );
+            throw new Error('settings_consistency_recovery_failed');
           }
         } else {
           // 原来有 Secret 标记但读取不到值 → 不恢复（保持已删状态）
@@ -568,6 +612,6 @@ export class SettingsStore {
   }
 
   getModel(id: string): StoredModelProvider | null {
-    return this.getAllModels().find(m => m.id === id) ?? null;
+    return this.getAllModels().find((m) => m.id === id) ?? null;
   }
 }

@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
-import type { FileEntry } from '../../types';
+import { useEffect, useState } from 'react';
 import { readFile } from '../../api';
 import { formatBytes } from '../../format';
-import { CloseIcon, FileIcon } from '../icons';
-import { Modal } from '../Modal';
+import type { FileEntry } from '../../types';
 import { CopyButton } from '../CopyButton';
 import { IconButton } from '../IconButton';
+import { CloseIcon, FileIcon } from '../icons';
+import { Modal } from '../Modal';
 import styles from './FileModal.module.css';
 
 interface FileModalProps {
@@ -23,7 +23,7 @@ export function FileModal({ runId, file, onClose }: FileModalProps) {
     setContent(null);
     setError(null);
     readFile(runId, file.name)
-      .then(resp => {
+      .then((resp) => {
         if (!cancelled) setContent(resp.content);
       })
       .catch(() => {

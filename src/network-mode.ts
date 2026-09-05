@@ -8,16 +8,16 @@
 // - on/off 之外的模式：ask = 网络工具执行前必须经 ApprovalPort 即时授权（JIT）。
 //   allowlist / domain policy 留给后续版本。
 
-export const NETWORK_MODES = ["on", "off", "ask"] as const;
+export const NETWORK_MODES = ['on', 'off', 'ask'] as const;
 
 export type NetworkMode = (typeof NETWORK_MODES)[number];
 
 // v2.0 决策：默认允许联网（作为 Network Control 第一版的目标就是反转
 // 原 v1.6 shell 固定 deny 网络的默认值 —— 联网可审计、可全局关闭）。
-export const DEFAULT_NETWORK_MODE: NetworkMode = "on";
+export const DEFAULT_NETWORK_MODE: NetworkMode = 'on';
 
 export function isNetworkMode(value: unknown): value is NetworkMode {
-  return typeof value === "string" && NETWORK_MODES.includes(value as NetworkMode);
+  return typeof value === 'string' && NETWORK_MODES.includes(value as NetworkMode);
 }
 
 // 回退语义：未知/缺省 → 默认 on（尽量不阻塞工具执行；显式 off/ask 才收紧）

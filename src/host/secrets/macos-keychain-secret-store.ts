@@ -8,11 +8,11 @@
 //   `security` 原始 stderr 不记录（避免 account/key 或环境细节进日志），只记退出码
 // - Secret 仅经 stdin 传入（-w 置于 argv 最后），绝不进入 argv/进程列表
 
-import { spawnSync } from "node:child_process";
-import type { SecretStore } from "./secret-store.js";
+import { spawnSync } from 'node:child_process';
+import type { SecretStore } from './secret-store.js';
 
-const SERVICE = "PayasoAgent";
-const DEFAULT_SECURITY_CLI = "/usr/bin/security";
+const SERVICE = 'PayasoAgent';
+const DEFAULT_SECURITY_CLI = '/usr/bin/security';
 
 // `security` 退出码（部分）：44 = item not found；其余非 0 视为访问/权限失败
 const ITEM_NOT_FOUND = 44;
@@ -20,7 +20,7 @@ const ITEM_NOT_FOUND = 44;
 // 剥离 `find-generic-password -w` 输出末尾的单个换行（兼容 CRLF）。
 // 只剥一个，避免误删密钥本身结尾的换行；内部换行保留（Secret 允许任意字符）。
 export function stripTrailingLineBreak(stdout: string): string {
-  return stdout.replace(/\r?\n$/, "");
+  return stdout.replace(/\r?\n$/, '');
 }
 
 export class MacOSKeychainSecretStore implements SecretStore {
@@ -30,16 +30,16 @@ export class MacOSKeychainSecretStore implements SecretStore {
   get(key: string): string | null {
     const result = spawnSync(
       this.cliPath,
-      ["find-generic-password", "-s", SERVICE, "-a", key, "-w"],
-      { encoding: "utf8", timeout: 10_000 },
+      ['find-generic-password', '-s', SERVICE, '-a', key, '-w'],
+      { encoding: 'utf8', timeout: 10_000 },
     );
     if (result.status === 0) {
       // `-w` 输出值 + 换行；剥离结尾单个换行（兼容 CRLF），不误删密钥本身尾部字符
       return stripTrailingLineBreak(result.stdout);
     }
     if (result.status === ITEM_NOT_FOUND) return null;
-    this.fail("access", result.status);
-    throw new Error("unreachable"); // fail() 总是抛出
+    this.fail('access', result.status);
+    throw new Error('unreachable'); // fail() 总是抛出
   }
 
   set(key: string, value: string): void {
@@ -50,28 +50,27 @@ export class MacOSKeychainSecretStore implements SecretStore {
     // 相比密钥进入明文 SQLite / 日志 / 代码库，这是安全模型中可接受的取舍。
     const result = spawnSync(
       this.cliPath,
-      ["add-generic-password", "-s", SERVICE, "-a", key, "-U", "-w", value],
-      { encoding: "utf8", timeout: 10_000 },
+      ['add-generic-password', '-s', SERVICE, '-a', key, '-U', '-w', value],
+      { encoding: 'utf8', timeout: 10_000 },
     );
     if (result.status !== 0) {
-      this.fail("store", result.status);
+      this.fail('store', result.status);
     }
   }
 
   delete(key: string): void {
-    const result = spawnSync(
-      this.cliPath,
-      ["delete-generic-password", "-s", SERVICE, "-a", key],
-      { encoding: "utf8", timeout: 10_000 },
-    );
+    const result = spawnSync(this.cliPath, ['delete-generic-password', '-s', SERVICE, '-a', key], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
     if (result.status !== 0 && result.status !== ITEM_NOT_FOUND) {
-      this.fail("delete", result.status);
+      this.fail('delete', result.status);
     }
   }
 
   // 对外统一脱敏消息；不记录 security 原始 stderr（避免 account/key 或环境细节进日志）
-  private fail(operation: "access" | "store" | "delete", status: number | null): never {
+  private fail(operation: 'access' | 'store' | 'delete', status: number | null): never {
     console.error(`[SecretStore] keychain ${operation} failed (exit=${status})`);
-    throw new Error("Unable to access the system credential store. Unlock Keychain and try again.");
+    throw new Error('Unable to access the system credential store. Unlock Keychain and try again.');
   }
 }

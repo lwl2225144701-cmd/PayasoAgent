@@ -4,7 +4,7 @@ export interface ContextHarnessState {
 }
 
 export function createContextHarnessState(): ContextHarnessState {
-  return { conversationSummary: "", summarizedMessageCount: 0 };
+  return { conversationSummary: '', summarizedMessageCount: 0 };
 }
 
 export function normalizeContextHarnessState(
@@ -12,12 +12,11 @@ export function normalizeContextHarnessState(
 ): ContextHarnessState {
   if (!value) return createContextHarnessState();
   return {
-    conversationSummary: typeof value.conversationSummary === "string"
-      ? value.conversationSummary
-      : "",
-    summarizedMessageCount: Number.isSafeInteger(value.summarizedMessageCount)
-      && value.summarizedMessageCount >= 0
-      ? value.summarizedMessageCount
-      : 0,
+    conversationSummary:
+      typeof value.conversationSummary === 'string' ? value.conversationSummary : '',
+    summarizedMessageCount:
+      Number.isSafeInteger(value.summarizedMessageCount) && value.summarizedMessageCount >= 0
+        ? value.summarizedMessageCount
+        : 0,
   };
 }

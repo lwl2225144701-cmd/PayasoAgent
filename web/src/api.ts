@@ -1,4 +1,15 @@
-import type { HostRun, HostSession, FileEntry, HostEvent, WorkspaceView, ModelProviderView, CreateModelProviderInput, UpdateModelProviderInput, DefaultModelView, PermissionMode } from './types';
+import type {
+  CreateModelProviderInput,
+  DefaultModelView,
+  FileEntry,
+  HostEvent,
+  HostRun,
+  HostSession,
+  ModelProviderView,
+  PermissionMode,
+  UpdateModelProviderInput,
+  WorkspaceView,
+} from './types';
 
 const API_BASE = '';
 
@@ -26,7 +37,9 @@ export function createRun(
   const url = sessionId ? `/sessions/${sessionId}/runs` : '/runs';
   return jsonFetch(url, {
     method: 'POST',
-    body: JSON.stringify(workspaceName ? { task, workspaceName, permissionMode } : { task, permissionMode }),
+    body: JSON.stringify(
+      workspaceName ? { task, workspaceName, permissionMode } : { task, permissionMode },
+    ),
   });
 }
 
@@ -47,14 +60,19 @@ export function openWorkspace(): Promise<{ workspace: WorkspaceView | null; canc
 }
 
 export function renameWorkspace(fromName: string, toName: string): Promise<{ updated: number }> {
-  return jsonFetch('/workspace/rename', { method: 'POST', body: JSON.stringify({ fromName, toName }) });
+  return jsonFetch('/workspace/rename', {
+    method: 'POST',
+    body: JSON.stringify({ fromName, toName }),
+  });
 }
 
 export function renameSession(sessionId: string, title: string): Promise<{ updatedAt: string }> {
   return jsonFetch(`/sessions/${sessionId}`, { method: 'PATCH', body: JSON.stringify({ title }) });
 }
 
-export function archiveSession(sessionId: string): Promise<{ archived: number; updatedAt: string }> {
+export function archiveSession(
+  sessionId: string,
+): Promise<{ archived: number; updatedAt: string }> {
   return jsonFetch(`/sessions/${sessionId}/archive`, { method: 'POST' });
 }
 
@@ -82,11 +100,17 @@ export function listFiles(runId: string): Promise<{ runId: string; files: FileEn
   return jsonFetch(`/runs/${runId}/files`);
 }
 
-export function readFile(runId: string, filePath: string): Promise<{ runId: string; name: string; content: string }> {
+export function readFile(
+  runId: string,
+  filePath: string,
+): Promise<{ runId: string; name: string; content: string }> {
   return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}`);
 }
 
-export function openFileInDefaultBrowser(runId: string, filePath: string): Promise<{ runId: string; name: string; opened: true }> {
+export function openFileInDefaultBrowser(
+  runId: string,
+  filePath: string,
+): Promise<{ runId: string; name: string; opened: true }> {
   return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}/open`, { method: 'POST' });
 }
 
@@ -103,16 +127,38 @@ export function connectSSE(
   const es = new EventSource(url);
 
   const eventTypes = [
-    'run_started', 'run_stopping', 'run_completed', 'run_failed', 'run_stopped', 'run_interrupted',
-    'assistant_delta', 'reasoning_delta',
-    'llm_call', 'tool_call', 'tool_call_invalid', 'tool_result', 'tool_result_invalid',
-    'tool_error', 'final_answer', 'context_trim', 'context_usage', 'context_compaction', 'recovery_decision',
-    'side_effect_skip', 'side_effect_uncertain', 'tool_output_truncated',
-    'shell_sandbox_started', 'shell_sandbox_denied',
-    'scratchpad_update', 'error',
-    'approval_requested', 'approval_resolved',
-    'toolchain_preparation_requested', 'toolchain_preparation_started',
-    'toolchain_preparation_progress', 'toolchain_preparation_resolved',
+    'run_started',
+    'run_stopping',
+    'run_completed',
+    'run_failed',
+    'run_stopped',
+    'run_interrupted',
+    'assistant_delta',
+    'reasoning_delta',
+    'llm_call',
+    'tool_call',
+    'tool_call_invalid',
+    'tool_result',
+    'tool_result_invalid',
+    'tool_error',
+    'final_answer',
+    'context_trim',
+    'context_usage',
+    'context_compaction',
+    'recovery_decision',
+    'side_effect_skip',
+    'side_effect_uncertain',
+    'tool_output_truncated',
+    'shell_sandbox_started',
+    'shell_sandbox_denied',
+    'scratchpad_update',
+    'error',
+    'approval_requested',
+    'approval_resolved',
+    'toolchain_preparation_requested',
+    'toolchain_preparation_started',
+    'toolchain_preparation_progress',
+    'toolchain_preparation_resolved',
   ];
 
   const handler = (e: MessageEvent) => {
@@ -133,13 +179,19 @@ export function connectSSE(
   const MAX_FAILS_BEFORE_CLOSE = 5;
   let connectedOnce = false;
 
-  es.onopen = () => { connectedOnce = true; failedAttempts = 0; onConnect?.(); };
+  es.onopen = () => {
+    connectedOnce = true;
+    failedAttempts = 0;
+    onConnect?.();
+  };
   es.onerror = () => {
     // 一旦服务器返回非 200（例如 404/502/握手失败），EventSource 会按 retry:3000 自动重连。
     // 若连续多次连不上，通常就是永久失败（run 不存在、Host 挂了、反代挂了），主动关掉避免 Network 里一直重连。
     if (!connectedOnce) failedAttempts += 1;
     if (failedAttempts >= MAX_FAILS_BEFORE_CLOSE) {
-      console.warn(`[SSE] 连续 ${failedAttempts} 次连接失败，关闭 EventSource 以避免无限重连（runId=${runId}）`);
+      console.warn(
+        `[SSE] 连续 ${failedAttempts} 次连接失败，关闭 EventSource 以避免无限重连（runId=${runId}）`,
+      );
       es.close();
     }
     if (!live) es.close();
@@ -204,7 +256,10 @@ export function createModel(input: CreateModelProviderInput): Promise<ModelProvi
   });
 }
 
-export function updateModel(id: string, input: UpdateModelProviderInput): Promise<ModelProviderView> {
+export function updateModel(
+  id: string,
+  input: UpdateModelProviderInput,
+): Promise<ModelProviderView> {
   return jsonFetch(`/settings/models/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
@@ -242,7 +297,10 @@ export function fetchAvailableModels(input: { providerId: string }): Promise<{ m
 
 // 新增 Provider 时的临时预检：用表单中的 baseUrl + apiKey 拉取模型目录。
 // 凭证不落盘、不进日志、不回显；由 Host 走 /settings/available-models/preview（需鉴权、协议白名单）。
-export function previewAvailableModels(input: { baseUrl: string; apiKey: string }): Promise<{ models: string[] }> {
+export function previewAvailableModels(input: {
+  baseUrl: string;
+  apiKey: string;
+}): Promise<{ models: string[] }> {
   return jsonFetch('/settings/available-models/preview', {
     method: 'POST',
     body: JSON.stringify(input),

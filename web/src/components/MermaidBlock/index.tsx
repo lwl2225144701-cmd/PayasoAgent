@@ -8,7 +8,7 @@ import styles from './MermaidBlock.module.css';
 // 失败必须自诊断可见：chunk 加载失败（页面版本过期）/ 语法错误 / 超时三类，
 // 都落到可读的回退视图，绝不允许永远停在加载态。
 
-type MermaidApi = (typeof import('mermaid'))['default'];
+type MermaidApi = typeof import('mermaid')['default'];
 
 let mermaidPromise: Promise<MermaidApi> | null = null;
 
@@ -124,5 +124,6 @@ export function MermaidBlock({ chart }: { chart: string }) {
     );
   }
   // mermaid 产出的 SVG 已按 securityLevel: strict 消毒
+  // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid strict 模式消毒后的可信 SVG（项目零第三方依赖，不引入 DOMPurify）
   return <div className={styles.wrap} dangerouslySetInnerHTML={{ __html: svg }} />;
 }

@@ -1,11 +1,11 @@
 // 模块 1: LLM 封装 — OpenAI 兼容 chat/completions（纯 fetch，无 SDK 依赖）
 
-import { resolveModelContextConfig } from "../harness/model-context.js";
-import { isAbortError } from "../util/abort.js";
+import { resolveModelContextConfig } from '../harness/model-context.js';
+import { isAbortError } from '../util/abort.js';
 
-const BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-const API_KEY = process.env.OPENAI_API_KEY || "";
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const API_KEY = process.env.OPENAI_API_KEY || '';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const MAX_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 100;
 const MAX_ERROR_BODY_CHARS = 2_000;
@@ -20,7 +20,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 240_000;
 
 function requestTimeoutMs(): number {
   const raw = process.env.LLM_REQUEST_TIMEOUT_MS;
-  if (raw && raw.trim() !== "") {
+  if (raw && raw.trim() !== '') {
     const value = Number(raw);
     if (Number.isFinite(value) && value > 0) return value;
   }
@@ -29,12 +29,12 @@ function requestTimeoutMs(): number {
 
 export interface ToolCall {
   id: string;
-  type: "function";
+  type: 'function';
   function: { name: string; arguments: string };
 }
 
 export interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
@@ -42,52 +42,59 @@ export interface ChatMessage {
 }
 
 export interface ToolSchema {
-  type: "function";
+  type: 'function';
   function: { name: string; description: string; parameters: object };
 }
 
 export interface ChatStreamDelta {
   messageId: string;
-  type: "assistant_delta" | "reasoning_delta";
+  type: 'assistant_delta' | 'reasoning_delta';
   delta: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function parseToolCalls(value: unknown): ToolCall[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error("LLM API malformed response: tool_calls must be an array");
+  if (!Array.isArray(value))
+    throw new Error('LLM API malformed response: tool_calls must be an array');
   return value.map((item) => {
-    if (!isRecord(item) || typeof item.id !== "string" || item.type !== "function" || !isRecord(item.function)) {
-      throw new Error("LLM API malformed response: invalid tool_call");
+    if (
+      !isRecord(item) ||
+      typeof item.id !== 'string' ||
+      item.type !== 'function' ||
+      !isRecord(item.function)
+    ) {
+      throw new Error('LLM API malformed response: invalid tool_call');
     }
     const fn = item.function;
-    if (typeof fn.name !== "string" || typeof fn.arguments !== "string") {
-      throw new Error("LLM API malformed response: invalid tool_call function");
+    if (typeof fn.name !== 'string' || typeof fn.arguments !== 'string') {
+      throw new Error('LLM API malformed response: invalid tool_call function');
     }
-    return { id: item.id, type: "function", function: { name: fn.name, arguments: fn.arguments } };
+    return { id: item.id, type: 'function', function: { name: fn.name, arguments: fn.arguments } };
   });
 }
 
 function parseAssistantMessage(data: unknown): ChatMessage {
   if (!isRecord(data) || !Array.isArray(data.choices) || data.choices.length === 0) {
-    throw new Error("LLM API malformed response: missing choices");
+    throw new Error('LLM API malformed response: missing choices');
   }
   const choice = data.choices[0];
   if (!isRecord(choice) || !isRecord(choice.message)) {
-    throw new Error("LLM API malformed response: missing assistant message");
+    throw new Error('LLM API malformed response: missing assistant message');
   }
   const msg = choice.message;
-  if (msg.content !== undefined && msg.content !== null && typeof msg.content !== "string") {
-    throw new Error("LLM API malformed response: content must be a string or null");
+  if (msg.content !== undefined && msg.content !== null && typeof msg.content !== 'string') {
+    throw new Error('LLM API malformed response: content must be a string or null');
   }
   return {
-    role: "assistant",
-    content: typeof msg.content === "string" ? msg.content : "",
+    role: 'assistant',
+    content: typeof msg.content === 'string' ? msg.content : '',
     tool_calls: parseToolCalls(msg.tool_calls),
-    reasoning_content: typeof msg.reasoning_content === "string" ? msg.reasoning_content : undefined,
+    reasoning_content:
+      typeof msg.reasoning_content === 'string' ? msg.reasoning_content : undefined,
   };
 }
 
@@ -140,15 +147,15 @@ async function doRequest(
   const onExternalAbort = () => controller.abort();
   if (signal) {
     if (signal.aborted) onExternalAbort();
-    else signal.addEventListener("abort", onExternalAbort, { once: true });
+    else signal.addEventListener('abort', onExternalAbort, { once: true });
   }
   try {
     let res: Response;
     try {
       res = await fetch(url, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
@@ -159,7 +166,7 @@ async function doRequest(
       if (signal?.aborted && isAbortError(err)) throw err;
       return {
         status: 0,
-        errorBody: "",
+        errorBody: '',
         networkError: (err as Error).message,
         timedOut: controller.signal.aborted,
         retryAfter: null,
@@ -167,38 +174,38 @@ async function doRequest(
     }
 
     if (!res.ok) {
-      let errorBody = "";
+      let errorBody = '';
       try {
         errorBody = (await res.text()).slice(0, MAX_ERROR_BODY_CHARS);
       } catch (err) {
         if (signal?.aborted && isAbortError(err)) throw err;
         // Timed out while reading the error body; timedOut below reports it.
-        errorBody = "";
+        errorBody = '';
       }
       return {
         status: res.status,
         errorBody,
         timedOut: controller.signal.aborted,
-        retryAfter: res.headers.get("retry-after"),
+        retryAfter: res.headers.get('retry-after'),
       };
     }
 
     let data: unknown;
     try {
-      const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
-      data = contentType.includes("text/event-stream")
+      const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+      data = contentType.includes('text/event-stream')
         ? { choices: [{ message: await readStreamingMessage(res, onDelta) }] }
         : await res.json();
     } catch (err) {
       // 流式/非流式 body 读取被外部 abort 打断 → 保持 AbortError 语义
       if (signal?.aborted && isAbortError(err)) throw err;
-      return { status: -1, errorBody: "", timedOut: controller.signal.aborted, retryAfter: null };
+      return { status: -1, errorBody: '', timedOut: controller.signal.aborted, retryAfter: null };
     }
 
-    return { status: 200, data, errorBody: "", timedOut: false, retryAfter: null };
+    return { status: 200, data, errorBody: '', timedOut: false, retryAfter: null };
   } finally {
     clearTimeout(timeout);
-    if (signal) signal.removeEventListener("abort", onExternalAbort);
+    if (signal) signal.removeEventListener('abort', onExternalAbort);
   }
 }
 
@@ -206,18 +213,18 @@ async function readStreamingMessage(
   res: Response,
   onDelta?: (delta: ChatStreamDelta) => void,
 ): Promise<ChatMessage> {
-  if (!res.body) throw new Error("LLM streaming response has no body");
+  if (!res.body) throw new Error('LLM streaming response has no body');
   const messageId = crypto.randomUUID();
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
-  let content = "";
-  let reasoning = "";
-  let inlinePending = "";
+  let buffer = '';
+  let content = '';
+  let reasoning = '';
+  let inlinePending = '';
   let insideInlineThink = false;
   const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
 
-  const emitInline = (type: ChatStreamDelta["type"], delta: string): void => {
+  const emitInline = (type: ChatStreamDelta['type'], delta: string): void => {
     if (delta) onDelta?.({ messageId, type, delta });
   };
   const retainedTagPrefix = (value: string, tag: string): number => {
@@ -230,17 +237,20 @@ async function readStreamingMessage(
   const feedInlineContent = (delta: string, final = false): void => {
     inlinePending += delta;
     while (inlinePending) {
-      const tag = insideInlineThink ? "</think>" : "<think>";
+      const tag = insideInlineThink ? '</think>' : '<think>';
       const index = inlinePending.indexOf(tag);
       if (index >= 0) {
-        emitInline(insideInlineThink ? "reasoning_delta" : "assistant_delta", inlinePending.slice(0, index));
+        emitInline(
+          insideInlineThink ? 'reasoning_delta' : 'assistant_delta',
+          inlinePending.slice(0, index),
+        );
         inlinePending = inlinePending.slice(index + tag.length);
         insideInlineThink = !insideInlineThink;
         continue;
       }
       const retained = final ? 0 : retainedTagPrefix(inlinePending, tag);
       const ready = inlinePending.slice(0, inlinePending.length - retained);
-      emitInline(insideInlineThink ? "reasoning_delta" : "assistant_delta", ready);
+      emitInline(insideInlineThink ? 'reasoning_delta' : 'assistant_delta', ready);
       inlinePending = inlinePending.slice(inlinePending.length - retained);
       break;
     }
@@ -251,39 +261,40 @@ async function readStreamingMessage(
   const consumeBlock = (block: string): void => {
     const payload = block
       .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
+      .filter((line) => line.startsWith('data:'))
       .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (!payload || payload === "[DONE]") return;
+      .join('\n');
+    if (!payload || payload === '[DONE]') return;
     const parsed = JSON.parse(payload) as unknown;
     if (!isRecord(parsed) || !Array.isArray(parsed.choices) || parsed.choices.length === 0) return;
     const choice = parsed.choices[0];
     if (!isRecord(choice)) return;
 
     // 先检查 finish_reason：某些 provider 最后一个 chunk 可能没有 delta 字段。
-    if (typeof choice.finish_reason === "string" && choice.finish_reason) {
+    if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
       finishReason = choice.finish_reason;
     }
 
     if (!isRecord(choice.delta)) return;
     const delta = choice.delta;
-    if (typeof delta.content === "string" && delta.content) {
+    if (typeof delta.content === 'string' && delta.content) {
       content += delta.content;
       feedInlineContent(delta.content);
     }
-    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+    if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
       reasoning += delta.reasoning_content;
-      onDelta?.({ messageId, type: "reasoning_delta", delta: delta.reasoning_content });
+      onDelta?.({ messageId, type: 'reasoning_delta', delta: delta.reasoning_content });
     }
     if (Array.isArray(delta.tool_calls)) {
       for (const raw of delta.tool_calls) {
-        if (!isRecord(raw)) throw new Error("LLM streaming response has invalid tool_call delta");
-        const index = typeof raw.index === "number" ? raw.index : 0;
-        const previous = toolCalls.get(index) ?? { id: "", name: "", arguments: "" };
-        if (typeof raw.id === "string") previous.id += raw.id;
+        if (!isRecord(raw)) throw new Error('LLM streaming response has invalid tool_call delta');
+        const index = typeof raw.index === 'number' ? raw.index : 0;
+        const previous = toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
+        if (typeof raw.id === 'string') previous.id += raw.id;
         if (isRecord(raw.function)) {
-          if (typeof raw.function.name === "string") previous.name += raw.function.name;
-          if (typeof raw.function.arguments === "string") previous.arguments += raw.function.arguments;
+          if (typeof raw.function.name === 'string') previous.name += raw.function.name;
+          if (typeof raw.function.arguments === 'string')
+            previous.arguments += raw.function.arguments;
         }
         toolCalls.set(index, previous);
       }
@@ -294,24 +305,29 @@ async function readStreamingMessage(
     const { done, value } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
     const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() ?? "";
+    buffer = blocks.pop() ?? '';
     for (const block of blocks) consumeBlock(block);
     if (done || finishReason) break;
   }
   if (buffer.trim()) consumeBlock(buffer);
-  feedInlineContent("", true);
+  feedInlineContent('', true);
 
   const assembledTools: ToolCall[] = [...toolCalls.entries()]
     .sort(([a], [b]) => a - b)
     .map(([, call]) => {
-      if (!call.id || !call.name) throw new Error("LLM streaming response has incomplete tool_call");
+      if (!call.id || !call.name)
+        throw new Error('LLM streaming response has incomplete tool_call');
       // arguments 的 JSON 有效性不在传输层校验：stream 与 non-stream 统一交给
       // Runtime 的 parseToolArguments（可恢复 invocation error，见 tools.ts）。
       // 这里只校验协议形状（id/name 必须存在）。
-      return { id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } };
+      return {
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: call.arguments },
+      };
     });
   return {
-    role: "assistant",
+    role: 'assistant',
     content,
     reasoning_content: reasoning || undefined,
     tool_calls: assembledTools.length ? assembledTools : undefined,
@@ -342,12 +358,16 @@ export interface ModelConfig {
 // 模型配置是原子元组：传入 modelConfig 则三个字段必须齐全并整体采用，
 // 绝不逐字段回退环境配置（否则 provider A 的 baseUrl 会拿到 provider B 的密钥）；
 // 未传入才整体回退环境配置三元组。
-function resolveEndpointConfig(modelConfig?: ModelConfig): { baseUrl: string; apiKey: string; model: string } {
+function resolveEndpointConfig(modelConfig?: ModelConfig): {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+} {
   if (modelConfig) {
     if (!modelConfig.baseUrl || !modelConfig.apiKey || !modelConfig.model) {
       throw new Error(
-        "modelConfig is incomplete: baseUrl, apiKey and model are all required " +
-        "(no per-field fallback to environment config)"
+        'modelConfig is incomplete: baseUrl, apiKey and model are all required ' +
+          '(no per-field fallback to environment config)',
       );
     }
     return { baseUrl: modelConfig.baseUrl, apiKey: modelConfig.apiKey, model: modelConfig.model };
@@ -373,7 +393,7 @@ export async function chat(
     model: resolvedModel,
     messages,
     max_tokens: modelContext.maxOutputTokens,
-    stream: process.env.LLM_STREAMING !== "0",
+    stream: process.env.LLM_STREAMING !== '0',
   };
   if (tools?.length) body.tools = tools;
 
@@ -395,12 +415,14 @@ export async function chat(
         await wait(retryDelay(attempt, null));
         continue;
       }
-      throw new Error(`LLM API request failed after ${attempt + 1} attempts: ${result.networkError}`);
+      throw new Error(
+        `LLM API request failed after ${attempt + 1} attempts: ${result.networkError}`,
+      );
     }
 
     // Body was not valid JSON → not transient, do not retry.
     if (result.status === -1) {
-      throw new Error("LLM API malformed response: invalid JSON");
+      throw new Error('LLM API malformed response: invalid JSON');
     }
 
     // Non-2xx. Retry only transient statuses (408/429/5xx).
@@ -415,5 +437,5 @@ export async function chat(
     return parseAssistantMessage(result.data);
   }
 
-  throw new Error("LLM API request failed");
+  throw new Error('LLM API request failed');
 }

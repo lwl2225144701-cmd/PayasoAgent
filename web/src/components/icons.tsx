@@ -24,7 +24,14 @@ function base(size: number | undefined, children: ReactNode, props: SVGProps<SVG
 }
 
 export function PlusIcon({ size, ...p }: IconProps) {
-  return base(size, <><path d="M12 5v14" /><path d="M5 12h14" /></>, p);
+  return base(
+    size,
+    <>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </>,
+    p,
+  );
 }
 
 export function UserIcon({ size, ...p }: IconProps) {
@@ -76,9 +83,23 @@ export function CheckIcon({ size, ...p }: IconProps) {
 
 export function CheckCircleFilledIcon({ size, ...p }: IconProps) {
   return (
-    <svg width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
+    <svg
+      width={size ?? 16}
+      height={size ?? 16}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      {...p}
+    >
       <circle cx="12" cy="12" r="10" />
-      <path d="M8 12.5l2.6 2.6L16 9.5" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M8 12.5l2.6 2.6L16 9.5"
+        fill="none"
+        stroke="#fff"
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -110,11 +131,7 @@ export function SunIcon({ size, ...p }: IconProps) {
 }
 
 export function MoonIcon({ size, ...p }: IconProps) {
-  return base(
-    size,
-    <path d="M20.5 15.5A8.5 8.5 0 0 1 8.5 3.5 8.5 8.5 0 1 0 20.5 15.5z" />,
-    p,
-  );
+  return base(size, <path d="M20.5 15.5A8.5 8.5 0 0 1 8.5 3.5 8.5 8.5 0 1 0 20.5 15.5z" />, p);
 }
 
 export function MonitorIcon({ size, ...p }: IconProps) {
@@ -163,11 +180,7 @@ export function ArrowUpIcon({ size, ...p }: IconProps) {
 }
 
 export function PencilIcon({ size, ...p }: IconProps) {
-  return base(
-    size,
-    <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />,
-    p,
-  );
+  return base(size, <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />, p);
 }
 
 export function ExternalLinkIcon({ size, ...p }: IconProps) {
@@ -247,11 +260,7 @@ export function TerminalIcon({ size, ...p }: IconProps) {
 }
 
 export function ShieldIcon({ size, ...p }: IconProps) {
-  return base(
-    size,
-    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
-    p,
-  );
+  return base(size, <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />, p);
 }
 
 export function ScissorsIcon({ size, ...p }: IconProps) {
@@ -294,7 +303,14 @@ export function KbdEnterIcon({ size, ...p }: IconProps) {
 
 export function StopFilledIcon({ size, ...p }: IconProps) {
   return (
-    <svg width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
+    <svg
+      width={size ?? 16}
+      height={size ?? 16}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      {...p}
+    >
       <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
   );
@@ -352,7 +368,14 @@ export function FolderIcon({ size, ...p }: IconProps) {
 
 export function FolderFilledIcon({ size, ...p }: IconProps) {
   return (
-    <svg width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
+    <svg
+      width={size ?? 16}
+      height={size ?? 16}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      {...p}
+    >
       <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" />
     </svg>
   );

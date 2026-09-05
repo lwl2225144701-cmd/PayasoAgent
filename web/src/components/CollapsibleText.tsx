@@ -1,8 +1,8 @@
-import { isValidElement, type CSSProperties, useState } from 'react';
+import { type CSSProperties, isValidElement, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { MermaidBlock } from './MermaidBlock';
 import styles from './CollapsibleText.module.css';
+import { MermaidBlock } from './MermaidBlock';
 
 // 模型输出的 fenced code 常见三种畸形：
 //   1. fence 标记拼在上一行行尾（如「### 标题 ```mermaid」）→ 解析不出代码块，源码漏成正文
@@ -13,10 +13,13 @@ export function normalizeFences(md: string): string {
   // 1. 行中出现的 ``` 标记推到独立行
   let out = md.replace(/([^\n`])(```+)/g, (_m, prev: string, fence: string) => `${prev}\n${fence}`);
   // 2. fence 行只保留语言标签（```lang 后面的杂文丢弃）
-  out = out.replace(/^(```+)([\w+-]*)[ \t]+.*$/gm, (_m, fence: string, lang: string) => `${fence}${lang}`);
+  out = out.replace(
+    /^(```+)([\w+-]*)[ \t]+.*$/gm,
+    (_m, fence: string, lang: string) => `${fence}${lang}`,
+  );
   // 3. 奇数个 fence → 补一个闭合，解除"吞内容"级联
   const openings = (out.match(/^[ \t]*```/gm) ?? []).length;
-  if (openings % 2 === 1) out += "\n```";
+  if (openings % 2 === 1) out += '\n```';
   return out;
 }
 
@@ -34,7 +37,12 @@ interface CollapsibleTextProps {
  * Renders long text with a "显示更多" (show more) footer when it exceeds `maxChars`.
  * Preserves whitespace and line breaks.
  */
-export function CollapsibleText({ text, streaming = false, maxChars = 0, maxLinesSoft }: CollapsibleTextProps) {
+export function CollapsibleText({
+  text,
+  streaming = false,
+  maxChars = 0,
+  maxLinesSoft,
+}: CollapsibleTextProps) {
   const [open, setOpen] = useState(false);
   const clamped = maxChars > 0 && !open && text.length > maxChars;
   const display = clamped ? `${text.slice(0, maxChars)}…` : text;
@@ -61,7 +69,9 @@ export function CollapsibleText({ text, streaming = false, maxChars = 0, maxLine
             remarkPlugins={[remarkGfm]}
             components={{
               a: ({ children, ...props }) => (
-                <a {...props} target="_blank" rel="noreferrer">{children}</a>
+                <a {...props} target="_blank" rel="noreferrer">
+                  {children}
+                </a>
               ),
               // ```mermaid 代码块 → 聊天内渲染成矢量图（剥掉外层 <pre>）
               pre: ({ node, children, ...props }) => {
@@ -78,7 +88,11 @@ export function CollapsibleText({ text, streaming = false, maxChars = 0, maxLine
                 if (className && /language-mermaid\b/.test(className)) {
                   return <MermaidBlock chart={String(children).replace(/\n$/, '')} />;
                 }
-                return <code className={className} {...props}>{children}</code>;
+                return (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                );
               },
             }}
           >
@@ -90,7 +104,7 @@ export function CollapsibleText({ text, streaming = false, maxChars = 0, maxLine
         <button
           type="button"
           className={styles.toggle}
-          onClick={() => setOpen(v => !v)}
+          onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
         >
           {open ? '收起' : '显示更多'}

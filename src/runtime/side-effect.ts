@@ -8,18 +8,18 @@
 // read / idempotent 可安全重复执行，不进入本生命周期。
 // 核心原则：对 non_idempotent 操作，Runtime 一旦无法确认"没有执行过"，就不能再次自动执行。
 
-import type { Tool, ToolContext } from "../tools/tools.js";
-import { resolveOperationKey } from "../tools/tools.js";
+import type { Tool, ToolContext } from '../tools/tools.js';
+import { resolveOperationKey } from '../tools/tools.js';
 
 // 操作状态：executing / succeeded / uncertain
-export type OperationState = "executing" | "succeeded" | "uncertain";
+export type OperationState = 'executing' | 'succeeded' | 'uncertain';
 
 // 完整操作身份：`toolName::canonicalOpKey`（跨工具命名空间隔离，避免不同工具同参冲突）
 // context 可选：路径类工具用它做路径归一化（./work/a.txt 与 work/a.txt → 同一 key）。
 export function operationIdentity(
   tool: Tool,
   args: Record<string, unknown>,
-  context?: ToolContext
+  context?: ToolContext,
 ): string {
   return `${tool.name}::${resolveOperationKey(tool, args, context)}`;
 }
@@ -49,23 +49,20 @@ export interface SideEffectGuard {
 }
 
 // 创建 per-run 副作用守卫；seed 用于 resume 时恢复已记录操作
-export function createSideEffectGuard(
-  seed: ExecutedOperation[] = []
-): SideEffectGuard {
+export function createSideEffectGuard(seed: ExecutedOperation[] = []): SideEffectGuard {
   const done = new Map<string, { state: OperationState; result?: string }>();
   for (const op of seed) {
     // 旧 checkpoint 格式 {key,result}（无 state）兼容：v1.3 只记录成功 → 视为 succeeded
-    const state: OperationState = op.state ?? "succeeded";
+    const state: OperationState = op.state ?? 'succeeded';
     done.set(op.key, { state, result: op.result });
   }
   return {
     isExecuted: (key) => done.has(key),
     getState: (key) => done.get(key)?.state,
-    replay: (key) =>
-      done.get(key)?.state === "succeeded" ? done.get(key)!.result : undefined,
-    begin: (key) => done.set(key, { state: "executing" }),
-    succeed: (key, result) => done.set(key, { state: "succeeded", result }),
-    markUncertain: (key) => done.set(key, { state: "uncertain" }),
+    replay: (key) => (done.get(key)?.state === 'succeeded' ? done.get(key)!.result : undefined),
+    begin: (key) => done.set(key, { state: 'executing' }),
+    succeed: (key, result) => done.set(key, { state: 'succeeded', result }),
+    markUncertain: (key) => done.set(key, { state: 'uncertain' }),
     snapshot: () =>
       [...done.entries()].map(([key, v]) => ({
         key,
@@ -82,26 +79,26 @@ export function createSideEffectGuard(
 //   uncertain → executing/uncertain → 不执行，返回明确 uncertain 信息
 //   start     → 无记录 → 正常开始（调用方需在 execute 前持久化 executing）
 export type OperationDisposition =
-  | { kind: "replay"; result: string }
-  | { kind: "uncertain" }
-  | { kind: "start" };
+  | { kind: 'replay'; result: string }
+  | { kind: 'uncertain' }
+  | { kind: 'start' };
 
 export function resolveOperation(
   guard: SideEffectGuard,
   tool: Tool,
   args: Record<string, unknown>,
-  context?: ToolContext
+  context?: ToolContext,
 ): OperationDisposition {
-  if (tool.effect !== "non_idempotent") return { kind: "start" };
+  if (tool.effect !== 'non_idempotent') return { kind: 'start' };
   const key = operationIdentity(tool, args, context);
   const state = guard.getState(key);
-  if (state === "succeeded") {
-    return { kind: "replay", result: guard.replay(key)! };
+  if (state === 'succeeded') {
+    return { kind: 'replay', result: guard.replay(key)! };
   }
-  if (state === "executing" || state === "uncertain") {
-    return { kind: "uncertain" };
+  if (state === 'executing' || state === 'uncertain') {
+    return { kind: 'uncertain' };
   }
-  return { kind: "start" };
+  return { kind: 'start' };
 }
 
 // 非幂等且已成功执行过 → 返回缓存结果（回放）；否则 undefined（含 executing/uncertain）
@@ -109,9 +106,9 @@ export function getReplay(
   guard: SideEffectGuard,
   tool: Tool,
   args: Record<string, unknown>,
-  context?: ToolContext
+  context?: ToolContext,
 ): string | undefined {
-  if (tool.effect !== "non_idempotent") return undefined;
+  if (tool.effect !== 'non_idempotent') return undefined;
   return guard.replay(operationIdentity(tool, args, context));
 }
 
@@ -121,8 +118,8 @@ export function markExecuted(
   tool: Tool,
   args: Record<string, unknown>,
   result: string,
-  context?: ToolContext
+  context?: ToolContext,
 ): void {
-  if (tool.effect !== "non_idempotent") return;
+  if (tool.effect !== 'non_idempotent') return;
   guard.succeed(operationIdentity(tool, args, context), result);
 }

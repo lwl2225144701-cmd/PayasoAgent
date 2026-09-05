@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
-import type { HostSession, WorkspaceView } from '../../types';
-import { ChevronDownIcon, FolderIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from '../icons';
-import { IconButton } from '../IconButton';
-import { Collapse } from '../Collapse';
-import { SessionItem } from '../SessionItem';
-import { Modal } from '../Modal';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import type { HostSession, WorkspaceView } from '../../types';
+import { Collapse } from '../Collapse';
+import { IconButton } from '../IconButton';
+import { ChevronDownIcon, FolderIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from '../icons';
+import { Modal } from '../Modal';
+import { SessionItem } from '../SessionItem';
 import styles from './WorkspaceSection.module.css';
 
 interface WorkspaceSectionProps {
@@ -49,9 +49,7 @@ function groupSessionsByWorkspace(
   }
 
   for (const list of map.values()) {
-    list.sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    );
+    list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
   return Array.from(map.entries())
@@ -137,7 +135,10 @@ function WorkspaceMenu({
       <button
         type="button"
         className={styles.menuItem}
-        onClick={() => { onClose(); onRename(); }}
+        onClick={() => {
+          onClose();
+          onRename();
+        }}
       >
         <PencilIcon size={14} />
         <span>重命名</span>
@@ -145,7 +146,10 @@ function WorkspaceMenu({
       <button
         type="button"
         className={`${styles.menuItem} ${styles.menuDanger}`}
-        onClick={() => { onClose(); onDelete(); }}
+        onClick={() => {
+          onClose();
+          onDelete();
+        }}
       >
         <TrashIcon size={14} />
         <span>删除工作区</span>
@@ -240,25 +244,25 @@ export function WorkspaceSection({
         <div className={styles.empty}>暂无历史任务</div>
       ) : (
         <nav className={styles.tree} aria-label="工作区任务">
-          {groups.map(group => {
+          {groups.map((group) => {
             const isCurrentWorkspace = group.name === (workspace?.name ?? FALLBACK_WORKSPACE_NAME);
             const fallback = isFallbackWorkspace(group.name);
             return (
               <Collapse
                 key={group.name}
-                header={(
+                header={
                   <WorkspaceFolderHeader
                     name={group.name}
                     onOpenMenu={fallback ? () => {} : (x, y) => setMenu({ name: group.name, x, y })}
                     onNewTask={fallback ? () => {} : () => onNewTaskInWorkspace(group.name)}
                   />
-                )}
+                }
                 defaultExpanded={isCurrentWorkspace}
                 headerClassName={styles.headerButton}
                 arrow={false}
                 contentClassName={styles.folderContent}
               >
-                {group.sessions.map(session => (
+                {group.sessions.map((session) => (
                   <SessionItem
                     key={session.sessionId}
                     session={session}
@@ -297,16 +301,21 @@ export function WorkspaceSection({
                 if (e.key === 'Enter') void submitRename();
               }}
               maxLength={120}
+              // biome-ignore lint/a11y/noAutofocus: 重命名输入框自动聚焦为有意 UX
               autoFocus
             />
             <div className={styles.dialogActions}>
-              <button type="button" className={styles.dialogBtn} onClick={() => setRenaming(null)}>取消</button>
+              <button type="button" className={styles.dialogBtn} onClick={() => setRenaming(null)}>
+                取消
+              </button>
               <button
                 type="button"
                 className={`${styles.dialogBtn} ${styles.primaryBtn}`}
                 disabled={busy || !renameValue.trim() || renameValue.trim() === renaming}
                 onClick={() => void submitRename()}
-              >确定</button>
+              >
+                确定
+              </button>
             </div>
           </div>
         </Modal>
@@ -320,13 +329,17 @@ export function WorkspaceSection({
               将删除“{deleting}”下的所有会话与运行记录，此操作不可恢复。
             </p>
             <div className={styles.dialogActions}>
-              <button type="button" className={styles.dialogBtn} onClick={() => setDeleting(null)}>取消</button>
+              <button type="button" className={styles.dialogBtn} onClick={() => setDeleting(null)}>
+                取消
+              </button>
               <button
                 type="button"
                 className={`${styles.dialogBtn} ${styles.dangerBtn}`}
                 disabled={busy}
                 onClick={() => void submitDelete()}
-              >删除</button>
+              >
+                删除
+              </button>
             </div>
           </div>
         </Modal>

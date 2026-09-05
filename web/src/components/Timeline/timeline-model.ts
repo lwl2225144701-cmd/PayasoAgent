@@ -43,7 +43,7 @@ export function buildToolCards(events: HostEvent[]): ToolCardData[] {
     }
     if (ev.type === 'tool_result') {
       const res = ev as ToolResultEvent;
-      const card = [...cards].reverse().find(c => c.tool === res.tool && c.status === 'running');
+      const card = [...cards].reverse().find((c) => c.tool === res.tool && c.status === 'running');
       if (card) {
         card.status = 'completed';
         card.durationMs = res.durationMs;
@@ -53,7 +53,7 @@ export function buildToolCards(events: HostEvent[]): ToolCardData[] {
     }
     if (ev.type === 'tool_error') {
       const err = ev as ToolErrorEvent;
-      const card = [...cards].reverse().find(c => c.tool === err.tool && c.status === 'running');
+      const card = [...cards].reverse().find((c) => c.tool === err.tool && c.status === 'running');
       if (card) {
         card.status = 'failed';
         card.error = err.error;

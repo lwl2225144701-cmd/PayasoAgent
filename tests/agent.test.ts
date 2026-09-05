@@ -2,11 +2,10 @@
 // 用法: npx tsx --env-file=.env tests/agent.test.ts
 // 说明: 每个任务以独立子进程运行（真实调用 LLM + 工具），避免状态互相干扰
 
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { rmSync } from "node:fs";
-import { createWorkspace, cleanupWorkspace } from "../src/sandbox/sandbox-manager.js";
+import { execFileSync } from 'node:child_process';
+import fs, { rmSync } from 'node:fs';
+import path from 'node:path';
+import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manager.js';
 
 interface TestCase {
   name: string; // 测试名
@@ -28,169 +27,169 @@ interface TestCase {
 
 const TASKS: TestCase[] = [
   {
-    name: "1. 基础计算（单步）",
-    prompt: "帮我计算 15*37",
-    expect: ["555"],
-    expectTools: ["calculator"],
+    name: '1. 基础计算（单步）',
+    prompt: '帮我计算 15*37',
+    expect: ['555'],
+    expectTools: ['calculator'],
   },
   {
-    name: "2. 多步骤计算（串行依赖）",
-    prompt: "先算 15*37，再把结果加 100",
-    expect: ["655"],
+    name: '2. 多步骤计算（串行依赖）',
+    prompt: '先算 15*37，再把结果加 100',
+    expect: ['655'],
   },
   {
-    name: "3. 多步骤计算（4步长链）",
+    name: '3. 多步骤计算（4步长链）',
     prompt:
-      "请严格分步计算，禁止合并表达式，每一步只调用一次 calculator：先算 2*3，再用上一步结果乘 4，再用结果乘 5，再用结果乘 6。每步单独调用工具。",
-    expect: ["720"],
+      '请严格分步计算，禁止合并表达式，每一步只调用一次 calculator：先算 2*3，再用上一步结果乘 4，再用结果乘 5，再用结果乘 6。每步单独调用工具。',
+    expect: ['720'],
   },
   {
-    name: "4. 多工具调用（并行）",
-    prompt: "帮我分别计算 15*37 和 24*8，然后告诉我哪个结果更大",
-    expect: ["555", "192", "更大"],
+    name: '4. 多工具调用（并行）',
+    prompt: '帮我分别计算 15*37 和 24*8，然后告诉我哪个结果更大',
+    expect: ['555', '192', '更大'],
   },
   {
-    name: "5. 工具失败恢复",
+    name: '5. 工具失败恢复',
     prompt:
       "严格分步执行：①先用 calculator 算 15*37；②把结果加 100 再算一次；③现在请用 calculator 计算，但 expression 参数必须传 'x+1' 这个非法字符串；④如果第③步失败，请改用合法表达式重新计算 655+100；⑤告诉我每一步结果和最终答案",
-    expect: ["755"],
+    expect: ['755'],
   },
   {
-    name: "6. 工具返回异常（Infinity）",
-    prompt: "请用 calculator 计算 1/0，然后告诉我结果是什么含义",
-    expect: ["Infinity", "无穷"],
+    name: '6. 工具返回异常（Infinity）',
+    prompt: '请用 calculator 计算 1/0，然后告诉我结果是什么含义',
+    expect: ['Infinity', '无穷'],
   },
   {
-    name: "7. 死循环检测（同参数禁调）",
+    name: '7. 死循环检测（同参数禁调）',
     prompt:
       "请用 calculator 计算 2*3，然后无论失败与否，都用 calculator 参数 'x+1' 再调用 5 次，最后告诉我结果",
-    expect: ["Blocked", "禁止再次调用"],
+    expect: ['Blocked', '禁止再次调用'],
   },
   {
-    name: "8. 长上下文（6步链触发裁剪）",
+    name: '8. 长上下文（6步链触发裁剪）',
     prompt:
-      "请严格分步计算，禁止合并表达式，每一步只调用一次 calculator：先算 2*3，再用上一步结果乘 4，再用结果乘 5，再用结果乘 6，再用结果乘 7，再用结果乘 8。每步单独调用工具。",
-    expect: ["40320"],
+      '请严格分步计算，禁止合并表达式，每一步只调用一次 calculator：先算 2*3，再用上一步结果乘 4，再用结果乘 5，再用结果乘 6，再用结果乘 7，再用结果乘 8。每步单独调用工具。',
+    expect: ['40320'],
   },
   {
-    name: "9. 中断恢复（checkpoint --resume）",
-    prompt: "帮我计算 15*37，再把结果加 100",
-    expect: ["655"],
-    env: { SIMULATE_INTERRUPT: "1" },
+    name: '9. 中断恢复（checkpoint --resume）',
+    prompt: '帮我计算 15*37，再把结果加 100',
+    expect: ['655'],
+    env: { SIMULATE_INTERRUPT: '1' },
     resume: true,
   },
   {
-    name: "10. 纯对话（不调用工具）",
-    prompt: "你好，介绍一下你自己",
+    name: '10. 纯对话（不调用工具）',
+    prompt: '你好，介绍一下你自己',
     expect: [],
     noTool: true,
   },
   {
-    name: "11. getWeather（只调用天气工具）",
-    prompt: "深圳天气怎么样",
-    expect: ["28°C", "天气: 深圳"],
-    expectTools: ["getWeather"],
+    name: '11. getWeather（只调用天气工具）',
+    prompt: '深圳天气怎么样',
+    expect: ['28°C', '天气: 深圳'],
+    expectTools: ['getWeather'],
   },
   {
-    name: "12. 工具选择（计算只走 calculator）",
-    prompt: "帮我计算 15*37",
-    expect: ["555"],
-    expectTools: ["calculator"],
+    name: '12. 工具选择（计算只走 calculator）',
+    prompt: '帮我计算 15*37',
+    expect: ['555'],
+    expectTools: ['calculator'],
   },
   {
-    name: "13. 工具串联（天气 → 计算）",
-    prompt: "查询深圳温度，再把温度加10",
-    expect: ["38"],
-    expectTools: ["getWeather", "calculator"],
+    name: '13. 工具串联（天气 → 计算）',
+    prompt: '查询深圳温度，再把温度加10',
+    expect: ['38'],
+    expectTools: ['getWeather', 'calculator'],
   },
   {
-    name: "14. 上游 Tool 失败，下游依赖中止",
+    name: '14. 上游 Tool 失败，下游依赖中止',
     prompt:
-      "查询“不存在的城市”的天气，再把温度加10。如果天气查询失败，不要调用 calculator，不要编造温度，直接说明无法完成后续计算。",
-    expect: ["天气查询失败", "无法", "失败"],
-    expectTools: ["getWeather"],
-    expectNoTools: ["calculator"],
+      '查询“不存在的城市”的天气，再把温度加10。如果天气查询失败，不要调用 calculator，不要编造温度，直接说明无法完成后续计算。',
+    expect: ['天气查询失败', '无法', '失败'],
+    expectTools: ['getWeather'],
+    expectNoTools: ['calculator'],
   },
   {
-    name: "15. Tool Result Invalid（getWeather temperature=null）",
-    prompt: "查询深圳当前温度，再把温度加 10，告诉我最终结果。",
+    name: '15. Tool Result Invalid（getWeather temperature=null）',
+    prompt: '查询深圳当前温度，再把温度加 10，告诉我最终结果。',
     // v1.2 验证：getWeather 执行成功但 temperature=null → 结果无效
     // 不增加额外提示词，观察 Runtime 自然处理（INVALID_WEATHER=1 让数据源返回 null）
     // 注：不断言 getWeather 精确次数（LLM 可能换城市名探索，如 深圳→Shenzhen，各次参数不同，
     //     防重调机制按设计只拦相同参数）；核心不变式 = 下游 calculator 0 次 + invalid=1 + completedSteps 空
     expect: [],
-    env: { INVALID_WEATHER: "1" },
-    expectNoTools: ["calculator"],
-    expectInvalid: { tool: "getWeather", count: 1 },
+    env: { INVALID_WEATHER: '1' },
+    expectNoTools: ['calculator'],
+    expectInvalid: { tool: 'getWeather', count: 1 },
     expectState: { invalidToolResults: 1 },
-    expectCompletedNotContain: ["temperature"],
+    expectCompletedNotContain: ['temperature'],
   },
   {
-    name: "16. calculator NaN Result Invalid（0/0 → NaN）",
-    prompt: "先用 calculator 计算 0/0，再把结果加 10。",
+    name: '16. calculator NaN Result Invalid（0/0 → NaN）',
+    prompt: '先用 calculator 计算 0/0，再把结果加 10。',
     // v1.2 验证：0/0 → NaN → execute 成功 → 结果无效（NaN 不写入 completedSteps，不把 NaN 当有效数值执行）
     // 注：不断言 calculator 精确次数/ completedSteps 整体为空——LLM 可能自创替代表达式（如 (8-8)/4=0 为有效结果），
     //     核心不变式 = NaN 产生且仅产生 1 次 invalid、invalidToolResults=1、completedSteps 不含 NaN
-    expect: ["NaN", "无效", "未定义"],
-    expectInvalid: { tool: "calculator", count: 1 },
+    expect: ['NaN', '无效', '未定义'],
+    expectInvalid: { tool: 'calculator', count: 1 },
     expectState: { invalidToolResults: 1 },
-    expectCompletedNotContain: ["NaN"],
+    expectCompletedNotContain: ['NaN'],
   },
   // ---- v1.3 预研：Loop 正常结束 ≠ 任务成功完成（观察型，不判 FAIL）----
   // 三个用例只确认"Agent 正常结束 + 不崩溃"，不断言任务完成语义；
   // 是否 status=completed 但 task 未完成，由人工观察（详见运行输出与汇报）。
   {
-    name: "17. 正常结束但任务未完成：invalid result",
-    prompt: "查询深圳当前温度，再把温度加 10，告诉我最终数值。",
+    name: '17. 正常结束但任务未完成：invalid result',
+    prompt: '查询深圳当前温度，再把温度加 10，告诉我最终数值。',
     expect: [],
-    env: { INVALID_WEATHER: "1" },
-    expectNoTools: ["calculator"],
-    expectInvalid: { tool: "getWeather", count: 1 },
+    env: { INVALID_WEATHER: '1' },
+    expectNoTools: ['calculator'],
+    expectInvalid: { tool: 'getWeather', count: 1 },
     expectState: { invalidToolResults: 1 },
-    expectCompletedNotContain: ["temperature"],
+    expectCompletedNotContain: ['temperature'],
   },
   {
-    name: "18. 正常结束但任务未完成：tool failure",
+    name: '18. 正常结束但任务未完成：tool failure',
     prompt:
-      "必须使用 calculator 计算 x+1，并把计算结果乘以 2，告诉我最终数值。如果工具无法完成，不允许改成其他表达式。",
+      '必须使用 calculator 计算 x+1，并把计算结果乘以 2，告诉我最终数值。如果工具无法完成，不允许改成其他表达式。',
     // 注意：LLM 可能先验拒绝（不真正调用 calculator）或调用后触发 tool_error→Recovery→Blocked，
     // 两条路径都属"正常结束但任务未完成"，故不断言工具调用
     expect: [],
   },
   {
-    name: "19. 正常结束但任务未完成：missing capability",
+    name: '19. 正常结束但任务未完成：missing capability',
     prompt:
-      "请查询北京今天的实时股票价格，并告诉我价格。必须通过可用工具获取真实数据，不允许猜测。",
+      '请查询北京今天的实时股票价格，并告诉我价格。必须通过可用工具获取真实数据，不允许猜测。',
     expect: [],
   },
   // ---- 只读沙箱文件工具（listDir / readFile）----
   // 预置 sandbox/workspaces/e2e-demo 工作区（--run-id 固定），Agent 通过只读工具查看/读取
   {
-    name: "20. 只读沙箱 ls（查看 work 目录）",
-    prompt: "请查看 work 目录中有哪些文件",
-    expect: ["a.txt"],
-    expectTools: ["ls"],
-    cliArgs: ["--run-id", "e2e-demo"],
+    name: '20. 只读沙箱 ls（查看 work 目录）',
+    prompt: '请查看 work 目录中有哪些文件',
+    expect: ['a.txt'],
+    expectTools: ['ls'],
+    cliArgs: ['--run-id', 'e2e-demo'],
     setup: () => {
-      const r = createWorkspace("e2e-demo");
-      fs.writeFileSync(path.join(r, "work", "a.txt"), "aaa");
-      fs.mkdirSync(path.join(r, "work", "sub"), { recursive: true });
-      fs.writeFileSync(path.join(r, "input", "demo.txt"), "hello sandbox");
+      const r = createWorkspace('e2e-demo');
+      fs.writeFileSync(path.join(r, 'work', 'a.txt'), 'aaa');
+      fs.mkdirSync(path.join(r, 'work', 'sub'), { recursive: true });
+      fs.writeFileSync(path.join(r, 'input', 'demo.txt'), 'hello sandbox');
     },
-    teardown: () => cleanupWorkspace("e2e-demo"),
+    teardown: () => cleanupWorkspace('e2e-demo'),
   },
   {
-    name: "21. 只读沙箱 read（读取 input/demo.txt）",
-    prompt: "请读取 input/demo.txt，并告诉我里面写了什么",
-    expect: ["hello sandbox"],
-    expectTools: ["read"],
-    cliArgs: ["--run-id", "e2e-demo"],
+    name: '21. 只读沙箱 read（读取 input/demo.txt）',
+    prompt: '请读取 input/demo.txt，并告诉我里面写了什么',
+    expect: ['hello sandbox'],
+    expectTools: ['read'],
+    cliArgs: ['--run-id', 'e2e-demo'],
     setup: () => {
-      const r = createWorkspace("e2e-demo");
-      fs.writeFileSync(path.join(r, "input", "demo.txt"), "hello sandbox");
-      fs.writeFileSync(path.join(r, "work", "a.txt"), "aaa");
+      const r = createWorkspace('e2e-demo');
+      fs.writeFileSync(path.join(r, 'input', 'demo.txt'), 'hello sandbox');
+      fs.writeFileSync(path.join(r, 'work', 'a.txt'), 'aaa');
     },
-    teardown: () => cleanupWorkspace("e2e-demo"),
+    teardown: () => cleanupWorkspace('e2e-demo'),
   },
 ];
 
@@ -198,13 +197,13 @@ const TASKS: TestCase[] = [
 function run(cmd: string, args: string[], env?: Record<string, string>): string {
   try {
     return execFileSync(cmd, args, {
-      encoding: "utf-8",
+      encoding: 'utf-8',
       env: { ...process.env, ...env },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string };
-    return (e.stdout ?? "") + (e.stderr ?? "");
+    return (e.stdout ?? '') + (e.stderr ?? '');
   }
 }
 
@@ -212,36 +211,45 @@ function run(cmd: string, args: string[], env?: Record<string, string>): string 
 function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   if (tc.noTool) {
     // 纯对话：不应出现工具调用，且应给出最终答案
-    const hasTool = out.includes("[Tool 调用]");
-    const hasAnswer = out.includes("最终答案");
-    if (hasTool) return { pass: false, reason: "不应调用工具，但出现了 [Tool 调用]" };
-    if (!hasAnswer) return { pass: false, reason: "缺少 [最终答案]" };
-    return { pass: true, reason: "" };
+    const hasTool = out.includes('[Tool 调用]');
+    const hasAnswer = out.includes('最终答案');
+    if (hasTool) return { pass: false, reason: '不应调用工具，但出现了 [Tool 调用]' };
+    if (!hasAnswer) return { pass: false, reason: '缺少 [最终答案]' };
+    return { pass: true, reason: '' };
   }
   // 基线：非纯对话任务也必须给出最终答案（防止 Agent 崩溃 / 超迭代静默失败）
-  if (!out.includes("最终答案")) {
-    return { pass: false, reason: "缺少 [最终答案]，Agent 可能崩溃或超过最大迭代次数" };
+  if (!out.includes('最终答案')) {
+    return { pass: false, reason: '缺少 [最终答案]，Agent 可能崩溃或超过最大迭代次数' };
   }
   const missing = tc.expect.filter((k) => !out.includes(k));
   if (missing.length > 0) {
-    return { pass: false, reason: `答案缺少关键词: ${missing.join(", ")}` };
+    return { pass: false, reason: `答案缺少关键词: ${missing.join(', ')}` };
   }
   const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
   // 工具调用顺序校验（按出现顺序匹配 [Tool 调用] 行）
   if (tc.expectTools?.length) {
     const idx = tc.expectTools.map((t) => calls.indexOf(t));
     if (idx.includes(-1)) {
-      return { pass: false, reason: `工具调用缺失: ${tc.expectTools.join(" → ")}（实际: ${calls.join(" → ") || "(无)"}）` };
+      return {
+        pass: false,
+        reason: `工具调用缺失: ${tc.expectTools.join(' → ')}（实际: ${calls.join(' → ') || '(无)'}）`,
+      };
     }
     if (idx.some((v, i) => i > 0 && v <= idx[i - 1])) {
-      return { pass: false, reason: `工具调用顺序错误: 期望 ${tc.expectTools.join(" → ")}（实际: ${calls.join(" → ") || "(无)"}）` };
+      return {
+        pass: false,
+        reason: `工具调用顺序错误: 期望 ${tc.expectTools.join(' → ')}（实际: ${calls.join(' → ') || '(无)'}）`,
+      };
     }
   }
   // 不应出现的工具调用（如依赖失败后下游工具必须为 0 次）
   if (tc.expectNoTools?.length) {
     const forbidden = tc.expectNoTools.filter((t) => calls.includes(t));
     if (forbidden.length > 0) {
-      return { pass: false, reason: `工具不应被调用: ${forbidden.join(", ")}（实际调用: ${calls.join(" → ") || "(无)"}）` };
+      return {
+        pass: false,
+        reason: `工具不应被调用: ${forbidden.join(', ')}（实际调用: ${calls.join(' → ') || '(无)'}）`,
+      };
     }
   }
   // 精确调用次数（v1.2: 如 getWeather 必须恰好 1 次、calculator 必须 0 次）
@@ -257,10 +265,15 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   if (tc.expectInvalid) {
     const inv = tc.expectInvalid; // 闭包内收窄失效，先取局部常量
     const lines = out
-      .split("\n")
-      .filter((l) => l.includes('"type":"tool_result_invalid"') && l.includes(`"tool":"${inv.tool}"`));
+      .split('\n')
+      .filter(
+        (l) => l.includes('"type":"tool_result_invalid"') && l.includes(`"tool":"${inv.tool}"`),
+      );
     if (lines.length !== inv.count) {
-      return { pass: false, reason: `tool_result_invalid(${inv.tool}) 次数=${lines.length}，期望 ${inv.count}` };
+      return {
+        pass: false,
+        reason: `tool_result_invalid(${inv.tool}) 次数=${lines.length}，期望 ${inv.count}`,
+      };
     }
   }
   // State 字段校验（最终 printState 的 JSON 输出，如 "invalidToolResults": 1）
@@ -274,49 +287,64 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   // completedSteps 不得包含指定子串（v1.2: invalid 结果不应进入 completedSteps；
   // 用"不包含"而非"整体为空"，因为 LLM 可能合法地探索其他参数产生有效步骤）
   if (tc.expectCompletedNotContain?.length) {
-    const blocks = out.split("=== Scratchpad ===");
-    const last = blocks[blocks.length - 1] ?? "";
+    const blocks = out.split('=== Scratchpad ===');
+    const last = blocks[blocks.length - 1] ?? '';
     const m = last.match(/"completedSteps":\s*\[([\s\S]*?)\],\s*"failedSteps"/);
-    const section = m ? m[1] : "";
+    const section = m ? m[1] : '';
     for (const s of tc.expectCompletedNotContain) {
       if (section.includes(s)) {
         return { pass: false, reason: `completedSteps 中包含不应出现的内容: ${s}` };
       }
     }
   }
-  return { pass: true, reason: "" };
+  return { pass: true, reason: '' };
 }
 
 async function main(): Promise<void> {
-  console.log("=".repeat(60));
-  console.log("Agent 能力测试集（真实 LLM 端到端）");
-  console.log("=".repeat(60));
+  console.log('='.repeat(60));
+  console.log('Agent 能力测试集（真实 LLM 端到端）');
+  console.log('='.repeat(60));
 
   const results: { name: string; pass: boolean; reason: string }[] = [];
 
   for (const tc of TASKS) {
     console.log(`\n▶ ${tc.name}`);
-    console.log(`  任务: ${tc.prompt.slice(0, 80)}${tc.prompt.length > 80 ? "..." : ""}`);
+    console.log(`  任务: ${tc.prompt.slice(0, 80)}${tc.prompt.length > 80 ? '...' : ''}`);
 
-    let out = "";
+    let out = '';
     try {
       tc.setup?.(); // 运行前准备（如预置沙箱工作区文件）
       if (tc.resume) {
         // 1) 中断运行（第2次 LLM 调用时网络中断）
-        console.log("  [阶段1] 运行并模拟中断...");
-        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", ...(tc.cliArgs ?? []), tc.prompt], tc.env);
+        console.log('  [阶段1] 运行并模拟中断...');
+        out = run(
+          'npx',
+          ['tsx', '--env-file=.env', 'src/cli.ts', ...(tc.cliArgs ?? []), tc.prompt],
+          tc.env,
+        );
         // 提取 checkpoint runId（从 saved 路径）
         const m = out.match(/\.checkpoints\/([0-9a-f-]+)\.json/);
         if (!m) {
-          results.push({ name: tc.name, pass: false, reason: "中断运行未产生 checkpoint" });
-          console.log("  [FAIL] 未找到 checkpoint 文件");
+          results.push({ name: tc.name, pass: false, reason: '中断运行未产生 checkpoint' });
+          console.log('  [FAIL] 未找到 checkpoint 文件');
           continue;
         }
         const runId = m[1];
         console.log(`  [阶段2] 从 checkpoint 恢复 (runId=${runId.slice(0, 8)}...)...`);
-        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", ...(tc.cliArgs ?? []), "--resume", runId]);
+        out = run('npx', [
+          'tsx',
+          '--env-file=.env',
+          'src/cli.ts',
+          ...(tc.cliArgs ?? []),
+          '--resume',
+          runId,
+        ]);
       } else {
-        out = run("npx", ["tsx", "--env-file=.env", "src/cli.ts", ...(tc.cliArgs ?? []), tc.prompt], tc.env);
+        out = run(
+          'npx',
+          ['tsx', '--env-file=.env', 'src/cli.ts', ...(tc.cliArgs ?? []), tc.prompt],
+          tc.env,
+        );
       }
     } catch (err) {
       out += `\n[test runner error] ${(err as Error).message}`;
@@ -332,25 +360,29 @@ async function main(): Promise<void> {
     } else {
       console.log(`  [FAIL] ✗ ${reason}`);
       // 打印最后 3 行关键输出辅助定位
-      const tail = out.split("\n").filter(Boolean).slice(-3);
-      tail.forEach((l) => console.log(`    | ${l}`));
+      const tail = out.split('\n').filter(Boolean).slice(-3);
+      tail.forEach((l) => {
+        console.log(`    | ${l}`);
+      });
     }
   }
 
   // 清理测试产生的 checkpoint（环境安全删除守卫可能拦截大批量删除，失败不阻塞汇总）
   try {
-    rmSync(".checkpoints", { recursive: true, force: true });
+    rmSync('.checkpoints', { recursive: true, force: true });
   } catch (e) {
-    console.log(`  [cleanup] 清理 .checkpoints 被安全守卫拦截（可手动删除）: ${(e as Error).message.split("\n")[0]}`);
+    console.log(
+      `  [cleanup] 清理 .checkpoints 被安全守卫拦截（可手动删除）: ${(e as Error).message.split('\n')[0]}`,
+    );
   }
 
   // 汇总
   const passed = results.filter((r) => r.pass).length;
-  console.log("\n" + "=".repeat(60));
-  console.log("汇总");
-  console.log("=".repeat(60));
+  console.log('\n' + '='.repeat(60));
+  console.log('汇总');
+  console.log('='.repeat(60));
   results.forEach((r) => {
-    console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.name}${r.pass ? "" : ` — ${r.reason}`}`);
+    console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.pass ? '' : ` — ${r.reason}`}`);
   });
   console.log(`\n通过 ${passed}/${results.length}`);
   process.exit(passed === results.length ? 0 : 1);

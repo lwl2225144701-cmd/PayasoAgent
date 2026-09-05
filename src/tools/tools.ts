@@ -4,12 +4,12 @@
 // - 工具只接收"相对路径"参数；文件类工具必须相对 context.workspaceRoot 解析真实路径。
 // - 模型决定"做什么"，Runtime 决定"在哪里执行"。
 
-import type { ToolSchema } from "../llm/llm.js";
-import type { PermissionMode } from "../permission-mode.js";
-import type { NetworkMode } from "../network-mode.js";
-import { getNetworkMode } from "../network-mode.js";
-import type { ApprovalPort } from "../runtime/approval-port.js";
-import type { RuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
+import type { ToolSchema } from '../llm/llm.js';
+import type { NetworkMode } from '../network-mode.js';
+import { getNetworkMode } from '../network-mode.js';
+import type { PermissionMode } from '../permission-mode.js';
+import type { ApprovalPort } from '../runtime/approval-port.js';
+import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
 
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
@@ -36,14 +36,14 @@ export interface ToolContext {
 }
 
 export type ToolSandboxEvent =
-  | { type: "shell_sandbox_started"; platform: "macos" }
-  | { type: "shell_sandbox_denied"; platform: "macos"; reason: "workspace_policy" };
+  | { type: 'shell_sandbox_started'; platform: 'macos' }
+  | { type: 'shell_sandbox_denied'; platform: 'macos'; reason: 'workspace_policy' };
 
 // v1.3 契约收紧：Tool 副作用类别声明
 // - read: 纯读取，无副作用
 // - idempotent: 可安全重复执行（同参数 → 等价结果）
 // - non_idempotent: 高风险副作用，重复执行可能产生不同结果/不可逆影响
-export type ToolEffect = "read" | "idempotent" | "non_idempotent";
+export type ToolEffect = 'read' | 'idempotent' | 'non_idempotent';
 
 export interface Tool {
   name: string;
@@ -78,13 +78,10 @@ const registry = new Map<string, Tool>();
 export function register(tool: Tool): void {
   // v1.3 契约收紧：non_idempotent（高风险副作用）必须显式声明"什么叫同一个操作"。
   // 不能依赖默认 JSON.stringify(args) 猜测操作身份 → 注册期直接失败（fail-fast）。
-  if (
-    tool.effect === "non_idempotent" &&
-    typeof tool.getOperationKey !== "function"
-  ) {
+  if (tool.effect === 'non_idempotent' && typeof tool.getOperationKey !== 'function') {
     throw new Error(
       `Tool "${tool.name}" 声明为 non_idempotent（高风险副作用）但未实现 getOperationKey，注册失败。` +
-        `non_idempotent 必须显式定义 canonical operation key，禁止回退到 JSON.stringify(args)。`
+        `non_idempotent 必须显式定义 canonical operation key，禁止回退到 JSON.stringify(args)。`,
     );
   }
   registry.set(tool.name, tool);
@@ -117,13 +114,13 @@ export function toolRequiresNetwork(tool: Tool): boolean {
 // v2.0.1 JIT Approval：ask 模式下网络工具是否需要即时授权。
 // 供 Agent pipeline 在执行前判定；批准逻辑集中在 Runtime，工具不感知。
 export function needsNetworkApproval(tool: Tool, networkMode: string | undefined): boolean {
-  return networkMode === "ask" && toolRequiresNetwork(tool);
+  return networkMode === 'ask' && toolRequiresNetwork(tool);
 }
 
 // 结构化网络拒绝错误文案（模型可见、稳定、可测试）
 export const NETWORK_DENIED_MESSAGE =
-  "Network is disabled (network.mode=off) and this tool requires network access. " +
-  "Retry without network or ask the user to enable network.";
+  'Network is disabled (network.mode=off) and this tool requires network access. ' +
+  'Retry without network or ask the user to enable network.';
 
 // Shell command lookup failed before a known executable could run. This is a
 // structured Runtime error so Host can offer the separate, user-approved
@@ -131,7 +128,7 @@ export const NETWORK_DENIED_MESSAGE =
 export class RequiredRuntimeToolUnavailableError extends Error {
   constructor(public readonly toolName: string) {
     super(`Required shell tool "${toolName}" is not available in the current controlled runtime.`);
-    this.name = "RequiredRuntimeToolUnavailableError";
+    this.name = 'RequiredRuntimeToolUnavailableError';
   }
 }
 
@@ -143,7 +140,7 @@ export class RequiredRuntimeToolUnavailableError extends Error {
 export class NetworkDeniedError extends Error {
   constructor(public readonly toolName: string) {
     super(`Tool "${toolName}" requires network access: ${NETWORK_DENIED_MESSAGE}`);
-    this.name = "NetworkDeniedError";
+    this.name = 'NetworkDeniedError';
   }
 }
 
@@ -152,7 +149,7 @@ export class NetworkDeniedError extends Error {
 export async function execute(
   name: string,
   args: Record<string, unknown>,
-  context: ToolContext
+  context: ToolContext,
 ): Promise<string> {
   const tool = registry.get(name);
   if (!tool) throw new Error(`tool "${name}" not found`);
@@ -163,7 +160,7 @@ export async function execute(
   //                             工具本身不感知批准，也无需二次判断）
   // - mode === "on"           → 正常执行
   // - 非网络工具               → 不受任何模式影响
-  if (getNetworkMode() === "off" && toolRequiresNetwork(tool)) {
+  if (getNetworkMode() === 'off' && toolRequiresNetwork(tool)) {
     throw new NetworkDeniedError(name);
   }
 
@@ -175,7 +172,7 @@ export function getSchemas(): ToolSchema[] {
   return [...registry.values()]
     .filter((t) => !t.hidden)
     .map((t) => ({
-      type: "function",
+      type: 'function',
       function: {
         name: t.name,
         description: t.description,
@@ -188,12 +185,12 @@ export function getSchemas(): ToolSchema[] {
 // 返回 { valid, reason? }，供 Agent Loop 区分"执行成功"与"结果有效"两个维度。
 export function validateToolResult(
   name: string,
-  result: unknown
+  result: unknown,
 ): { valid: boolean; reason?: string } {
   const tool = registry.get(name);
   if (!tool || !tool.validateResult) return { valid: true };
   const r = tool.validateResult(result);
-  if (typeof r === "boolean") return { valid: r };
+  if (typeof r === 'boolean') return { valid: r };
   return r;
 }
 
@@ -204,12 +201,12 @@ export function validateToolResult(
 export function resolveOperationKey(
   tool: Tool,
   args: Record<string, unknown>,
-  context?: ToolContext
+  context?: ToolContext,
 ): string {
   if (tool.getOperationKey) return tool.getOperationKey(args, context);
-  if (tool.effect !== "non_idempotent") return JSON.stringify(args);
+  if (tool.effect !== 'non_idempotent') return JSON.stringify(args);
   throw new Error(
-    `Tool "${tool.name}" 为 non_idempotent 但未实现 getOperationKey，禁止回退到 JSON.stringify(args)`
+    `Tool "${tool.name}" 为 non_idempotent 但未实现 getOperationKey，禁止回退到 JSON.stringify(args)`,
   );
 }
 
@@ -220,9 +217,9 @@ export function resolveOperationKey(
 // 与 Execution Error（文件系统/shell/业务失败，走既有 retry+recovery）严格分离。
 
 export type ToolCallErrorCode =
-  | "INVALID_ARGUMENT_JSON" // arguments 不是合法 JSON（含空/缺失）
-  | "INVALID_ARGUMENTS"     // 合法 JSON 但不是 object
-  | "TOOL_NOT_FOUND";       // 注册表中不存在该工具
+  | 'INVALID_ARGUMENT_JSON' // arguments 不是合法 JSON（含空/缺失）
+  | 'INVALID_ARGUMENTS' // 合法 JSON 但不是 object
+  | 'TOOL_NOT_FOUND'; // 注册表中不存在该工具
 
 export interface ToolCallError {
   code: ToolCallErrorCode;
@@ -231,7 +228,7 @@ export interface ToolCallError {
 }
 
 const INVALID_ARGUMENT_JSON_MESSAGE =
-  "Tool arguments are not valid JSON. Retry this tool call with arguments as one valid JSON object.";
+  'Tool arguments are not valid JSON. Retry this tool call with arguments as one valid JSON object.';
 const INVALID_ARGUMENTS_MESSAGE =
   'Tool arguments must be a single JSON object, e.g. {"key": "value"}.';
 
@@ -242,13 +239,13 @@ export type ToolArgumentParseResult =
 // 统一入口：streaming 与 non-streaming 两条传输路径最终都经过这里，
 // 不存在各自的 JSON.parse 分支。不做任何自动修复（不猜模型意图）。
 export function parseToolArguments(
-  rawArguments: string | undefined | null
+  rawArguments: string | undefined | null,
 ): ToolArgumentParseResult {
-  const raw = typeof rawArguments === "string" ? rawArguments.trim() : "";
+  const raw = typeof rawArguments === 'string' ? rawArguments.trim() : '';
   if (!raw) {
     return {
       ok: false,
-      error: { code: "INVALID_ARGUMENT_JSON", message: INVALID_ARGUMENT_JSON_MESSAGE },
+      error: { code: 'INVALID_ARGUMENT_JSON', message: INVALID_ARGUMENT_JSON_MESSAGE },
     };
   }
   let parsed: unknown;
@@ -258,14 +255,14 @@ export function parseToolArguments(
     // 解析器内部细节只进 trace（由调用方记录），模型只看到稳定文案
     return {
       ok: false,
-      error: { code: "INVALID_ARGUMENT_JSON", message: INVALID_ARGUMENT_JSON_MESSAGE },
+      error: { code: 'INVALID_ARGUMENT_JSON', message: INVALID_ARGUMENT_JSON_MESSAGE },
     };
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     // null / 数组 / 字符串 / 数字：合法 JSON 但不符合 Tool Contract（必须是 object）
     return {
       ok: false,
-      error: { code: "INVALID_ARGUMENTS", message: INVALID_ARGUMENTS_MESSAGE },
+      error: { code: 'INVALID_ARGUMENTS', message: INVALID_ARGUMENTS_MESSAGE },
     };
   }
   return { ok: true, args: parsed as Record<string, unknown> };
@@ -273,7 +270,7 @@ export function parseToolArguments(
 
 export function toolNotFoundError(toolName: string): ToolCallError {
   return {
-    code: "TOOL_NOT_FOUND",
+    code: 'TOOL_NOT_FOUND',
     message: `Tool "${toolName}" does not exist. Retry with one of the available tools.`,
   };
 }

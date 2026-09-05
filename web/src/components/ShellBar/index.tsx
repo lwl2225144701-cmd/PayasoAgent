@@ -29,7 +29,7 @@ export function ShellBar({ run, title, onResume, resuming }: ShellBarProps) {
   // Subtle pulse-cycle ticker while running — keeps animation in sync without over-rendering.
   useEffect(() => {
     if (run?.status !== 'running') return;
-    const id = window.setInterval(() => tick(t => (t + 1) % 1_000), 1200);
+    const id = window.setInterval(() => tick((t) => (t + 1) % 1_000), 1200);
     autoTickRef.current = id;
     return () => {
       if (autoTickRef.current != null) window.clearInterval(autoTickRef.current);
@@ -53,7 +53,12 @@ export function ShellBar({ run, title, onResume, resuming }: ShellBarProps) {
             <span className={styles.statusText}>{label}</span>
           </span>
           {run?.status === 'interrupted' && (
-            <button className={styles.resumeButton} type="button" onClick={onResume} disabled={resuming}>
+            <button
+              className={styles.resumeButton}
+              type="button"
+              onClick={onResume}
+              disabled={resuming}
+            >
               {resuming ? '正在恢复…' : '继续运行'}
             </button>
           )}
