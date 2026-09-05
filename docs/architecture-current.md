@@ -184,7 +184,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
               └─ throw   → non_idempotent markUncertain / 其余 recordFailure+重试
 ```
 
-常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：输入参数 > 内置模型表 > 保守 fallback；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
+常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：输入参数 > 内置模型表 > fallback 256K（引入模型的已知窗口下限；显式模型缺失时按此保守上限，接更低窗口模型需在注册表登记）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
 
 ### 4.2 三层状态职责
 

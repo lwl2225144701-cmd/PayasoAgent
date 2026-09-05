@@ -1,29 +1,29 @@
-import type { ChatMessage, ModelConfig, ToolSchema } from "../llm/llm.js";
-import type { PermissionMode } from "../permission-mode.js";
-import { ContextManager, type ContextUsage } from "./context-manager.js";
+import type { ChatMessage, ModelConfig, ToolSchema } from '../llm/llm.js';
+import { getNetworkMode } from '../network-mode.js';
+import type { PermissionMode } from '../permission-mode.js';
+import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
+import { ContextManager, type ContextUsage } from './context-manager.js';
+import {
+  type ContextHarnessState,
+  createContextHarnessState,
+  normalizeContextHarnessState,
+} from './context-state.js';
+import {
+  type ConversationSummarizer,
+  LlmConversationSummarizer,
+} from './conversation-summarizer.js';
 import {
   BASE_SYSTEM_PROMPT,
   networkSystemPrompt,
   permissionSystemPrompt,
   toolchainSystemPrompt,
-} from "./instructions.js";
-import { getNetworkMode } from "../network-mode.js";
+} from './instructions.js';
 import {
   estimateTextTokens,
-  resolveModelContextConfig,
   type ModelContextConfig,
-} from "./model-context.js";
-import { renderBoundedScratchpadView, type ScratchpadView } from "./scratchpad-view.js";
-import {
-  createContextHarnessState,
-  normalizeContextHarnessState,
-  type ContextHarnessState,
-} from "./context-state.js";
-import {
-  LlmConversationSummarizer,
-  type ConversationSummarizer,
-} from "./conversation-summarizer.js";
-import type { RuntimeToolchainCapabilities } from "../sandbox/toolchain-manager.js";
+  resolveModelContextConfig,
+} from './model-context.js';
+import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
 
 export interface ContextCompactionResult {
   summarizedMessages: number;
@@ -58,8 +58,8 @@ export interface AgentContextHarness {
 }
 
 function stripThink(text: string): string {
-  let output = text.replace(/<think>[\s\S]*?<\/think>/g, "");
-  if (output.includes("<think>")) output = output.split("<think>")[0];
+  let output = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+  if (output.includes('<think>')) output = output.split('<think>')[0];
   return output.trim();
 }
 
@@ -80,8 +80,9 @@ export class DefaultContextHarness implements AgentContextHarness {
     modelContext?: ModelContextConfig;
     toolchain?: RuntimeToolchainCapabilities;
   }) {
-    this.modelContext = options.modelContext
-      ?? resolveModelContextConfig({ model: options.modelConfig?.model ?? options.model });
+    this.modelContext =
+      options.modelContext ??
+      resolveModelContextConfig({ model: options.modelConfig?.model ?? options.model });
     this.contextManager = new ContextManager(this.modelContext.maxInputTokens);
     this.systemInstructions = `${BASE_SYSTEM_PROMPT}\n${permissionSystemPrompt(options.permissionMode)}`;
     this.toolchain = options.toolchain;
@@ -97,12 +98,12 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   createTranscript(task: string, history: ChatMessage[] = []): ChatMessage[] {
     const conversation = history
-      .filter((message) => message.role === "user" || message.role === "assistant")
-      .map((message) => ({ role: message.role, content: message.content } as ChatMessage));
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({ role: message.role, content: message.content }) as ChatMessage);
     return [
-      { role: "system", content: this.systemPromptText() },
+      { role: 'system', content: this.systemPromptText() },
       ...conversation,
-      { role: "user", content: task },
+      { role: 'user', content: task },
     ];
   }
 
@@ -122,7 +123,7 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   private truncateToTokens(text: string, maxTokens: number): string {
     if (estimateTextTokens(text) <= maxTokens) return text;
-    const marker = "\n…[truncated]";
+    const marker = '\n…[truncated]';
     let low = 0;
     let high = text.length;
     while (low < high) {
@@ -135,25 +136,24 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   private buildModelView(transcript: ChatMessage[], scratchpadText: string): ChatMessage[] {
     const modelView = transcript.map((message) => ({ ...message }));
-    const systemIndex = modelView.findIndex((message) => message.role === "system");
+    const systemIndex = modelView.findIndex((message) => message.role === 'system');
     const summaryText = this.state.conversationSummary
       ? `\n\n[Conversation Summary]\n${this.state.conversationSummary}`
-      : "";
+      : '';
     const systemMessage: ChatMessage = {
-      role: "system",
+      role: 'system',
       content: `${this.systemPromptText()}\n\n${scratchpadText}${summaryText}`,
     };
     if (systemIndex >= 0) {
-      const maxSummarizable = Math.max(0, modelView.map((message) => message.role).lastIndexOf("user") - systemIndex - 1);
+      const maxSummarizable = Math.max(
+        0,
+        modelView.map((message) => message.role).lastIndexOf('user') - systemIndex - 1,
+      );
       this.state.summarizedMessageCount = Math.min(
         this.state.summarizedMessageCount,
         maxSummarizable,
       );
-      modelView.splice(
-        systemIndex,
-        1 + this.state.summarizedMessageCount,
-        systemMessage,
-      );
+      modelView.splice(systemIndex, 1 + this.state.summarizedMessageCount, systemMessage);
     } else {
       this.state.summarizedMessageCount = 0;
       modelView.unshift(systemMessage);
@@ -167,7 +167,10 @@ export class DefaultContextHarness implements AgentContextHarness {
     tools: ToolSchema[],
     signal?: AbortSignal,
   ): Promise<PreparedModelTurn> {
-    const maxScratchpadTokens = Math.max(256, Math.min(8_000, Math.floor(this.modelContext.maxInputTokens * 0.1)));
+    const maxScratchpadTokens = Math.max(
+      256,
+      Math.min(8_000, Math.floor(this.modelContext.maxInputTokens * 0.1)),
+    );
     const boundedScratchpad = renderBoundedScratchpadView(scratchpad);
     const scratchpadText = this.truncateToTokens(boundedScratchpad.text, maxScratchpadTokens);
     let modelView = this.buildModelView(transcript, scratchpadText);
@@ -178,16 +181,18 @@ export class DefaultContextHarness implements AgentContextHarness {
     const targetTokens = Math.floor(this.modelContext.maxInputTokens * 0.65);
     // 触发判断必须用修剪前的原始估值：修剪本身会把估值压到阈值附近，
     // system 消息变大一点点就会让修剪后估值恰好落到触发线下，摘要永不发生。
-    const preTrimEstimated =
-      processed.usage.beforeMessageTokens + processed.usage.toolSchemaTokens;
+    const preTrimEstimated = processed.usage.beforeMessageTokens + processed.usage.toolSchemaTokens;
     if (preTrimEstimated > triggerTokens) {
       const compacted = this.contextManager.process(modelView, tools, targetTokens);
       const removedCount = compacted.usage.trimmedMessages;
       if (removedCount > 0) {
-        const systemIndex = transcript.findIndex((message) => message.role === "system");
+        const systemIndex = transcript.findIndex((message) => message.role === 'system');
         const start = (systemIndex >= 0 ? systemIndex + 1 : 0) + this.state.summarizedMessageCount;
         const removedMessages = transcript.slice(start, start + removedCount);
-        const maxSummaryTokens = Math.max(128, Math.min(4_096, Math.floor(this.modelContext.maxInputTokens * 0.08)));
+        const maxSummaryTokens = Math.max(
+          128,
+          Math.min(4_096, Math.floor(this.modelContext.maxInputTokens * 0.08)),
+        );
         try {
           const nextSummary = await this.summarizer.summarize({
             previousSummary: this.state.conversationSummary,
@@ -196,7 +201,10 @@ export class DefaultContextHarness implements AgentContextHarness {
             signal,
           });
           if (nextSummary.trim()) {
-            this.state.conversationSummary = this.truncateToTokens(nextSummary.trim(), maxSummaryTokens);
+            this.state.conversationSummary = this.truncateToTokens(
+              nextSummary.trim(),
+              maxSummaryTokens,
+            );
             this.state.summarizedMessageCount += removedCount;
             modelView = this.buildModelView(transcript, scratchpadText);
             processed = this.contextManager.process(modelView, tools);
@@ -212,13 +220,25 @@ export class DefaultContextHarness implements AgentContextHarness {
           processed = this.contextManager.process(modelView, tools);
         }
       }
+
+      // v1.6 紧急兜底：轮边界压缩处理不了"单任务长执行"——全部工具交互都在
+      // 当前任务轮内，历史轮裁剪触不到。仍超预算时进入紧急确定性裁剪：
+      // system + summary + 当前轮内保留最近交互（从最旧逐条丢弃），视图必然
+      // 有界。canonical transcript 不受影响；resume 走同一条确定性路径。
+      // 仅在极端情况（最近 2 条消息本身就超预算）才保留 overBudget 交给
+      // 调用方 fail-closed。
+      if (processed.usage.overBudget) {
+        const emergencyTarget = Math.floor(this.modelContext.maxInputTokens * 0.85);
+        processed = this.contextManager.process(processed.messages, tools, emergencyTarget, {
+          trimCurrentTurn: true,
+        });
+      }
     }
     return {
       messages: processed.messages,
       usage: processed.usage,
       scratchpadTokens: estimateTextTokens(scratchpadText),
-      scratchpadTruncated: boundedScratchpad.truncated
-        || scratchpadText !== boundedScratchpad.text,
+      scratchpadTruncated: boundedScratchpad.truncated || scratchpadText !== boundedScratchpad.text,
       compaction,
     };
   }

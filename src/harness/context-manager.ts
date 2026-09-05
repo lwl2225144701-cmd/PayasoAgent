@@ -1,5 +1,5 @@
-import type { ChatMessage, ToolSchema } from "../llm/llm.js";
-import { estimateJsonTokens } from "./model-context.js";
+import type { ChatMessage, ToolSchema } from '../llm/llm.js';
+import { estimateJsonTokens } from './model-context.js';
 
 const DEFAULT_MAX_INPUT_TOKENS = 24_000;
 
@@ -14,6 +14,8 @@ export interface ContextUsage {
   usageRatio: number;
   trimmedMessages: number;
   overBudget: boolean;
+  // v1.6 紧急兜底标记：本轮视图触发了"当前任务轮内逐条丢弃"的紧急裁剪
+  emergencyTrim?: boolean;
 }
 
 // Historical messages are removed as complete conversation turns. A user
@@ -22,7 +24,7 @@ function groupConversationTurns(messages: ChatMessage[]): ChatMessage[][] {
   const turns: ChatMessage[][] = [];
   let current: ChatMessage[] = [];
   for (const message of messages) {
-    if (message.role === "user" && current.length > 0) {
+    if (message.role === 'user' && current.length > 0) {
       turns.push(current);
       current = [];
     }
@@ -41,13 +43,22 @@ export class ContextManager {
 
   // Preserve the system message and the entire current turn. Only complete
   // historical turns before the latest user task may be trimmed.
-  trimMessages(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
+  //
+  // v1.6 紧急兜底（options.trimCurrentTurn）：单任务长执行的全部工具交互都在
+  // "当前任务轮"内，轮边界裁剪对它无能为力。开启后允许在当前轮内从最旧开始
+  // 逐条丢弃、保留最后 2 条（最近一次交互）——任务背景已由 system 内的
+  // conversation summary 承载，视图必然有界。canonical transcript 不受影响。
+  trimMessages(
+    messages: ChatMessage[],
+    maxTokens: number,
+    options: { trimCurrentTurn?: boolean } = {},
+  ): ChatMessage[] {
     if (this.estimateTokens(messages) <= maxTokens) return messages;
 
-    const system = messages.find((message) => message.role === "system");
+    const system = messages.find((message) => message.role === 'system');
     let lastUserIndex = -1;
     for (let index = 0; index < messages.length; index++) {
-      if (messages[index].role === "user") lastUserIndex = index;
+      if (messages[index].role === 'user') lastUserIndex = index;
     }
 
     const historyStart = system ? messages.indexOf(system) + 1 : 0;
@@ -55,19 +66,45 @@ export class ContextManager {
     const historicalTurns = groupConversationTurns(messages.slice(historyStart, historyEnd));
     const currentTurn = lastUserIndex >= 0 ? messages.slice(lastUserIndex) : [];
 
-    let keepFrom = 0;
-    const rebuild = (): ChatMessage[] => [
+    const assemble = (keepFrom: number, currentTurnFrom: number): ChatMessage[] => [
       ...(system ? [system] : []),
       ...historicalTurns.slice(keepFrom).flat(),
-      ...currentTurn,
+      ...currentTurn.slice(currentTurnFrom),
     ];
-    while (this.estimateTokens(rebuild()) > maxTokens && keepFrom < historicalTurns.length) {
+
+    let keepFrom = 0;
+    while (this.estimateTokens(assemble(keepFrom, 0)) > maxTokens && keepFrom < historicalTurns.length) {
       keepFrom++;
     }
-    return rebuild();
+    let currentTurnFrom = 0;
+    if (
+      options.trimCurrentTurn
+      && this.estimateTokens(assemble(keepFrom, 0)) > maxTokens
+      && currentTurn.length > 0
+    ) {
+      // 分级兜底：先保留最近 2 条交互；仍超 → 保留最近 1 条 → 仍超则仅保留
+      // system + summary（保证视图必然有界；任务背景由 summary 承载）。
+      for (const keepLast of [2, 1, 0]) {
+        currentTurnFrom = 0;
+        const maxFrom = currentTurn.length - keepLast;
+        while (
+          this.estimateTokens(assemble(keepFrom, currentTurnFrom)) > maxTokens
+          && currentTurnFrom < maxFrom
+        ) {
+          currentTurnFrom++;
+        }
+        if (this.estimateTokens(assemble(keepFrom, currentTurnFrom)) <= maxTokens) break;
+      }
+    }
+    return assemble(keepFrom, currentTurnFrom);
   }
 
-  process(messages: ChatMessage[], tools: ToolSchema[] = [], targetInputTokens = this.maxInputTokens): {
+  process(
+    messages: ChatMessage[],
+    tools: ToolSchema[] = [],
+    targetInputTokens = this.maxInputTokens,
+    options: { trimCurrentTurn?: boolean } = {},
+  ): {
     messages: ChatMessage[];
     usage: ContextUsage;
   } {
@@ -76,7 +113,7 @@ export class ContextManager {
     const toolSchemaTokens = estimateJsonTokens(tools);
     const effectiveTarget = Math.min(this.maxInputTokens, Math.max(0, targetInputTokens));
     const messageBudget = Math.max(0, effectiveTarget - toolSchemaTokens);
-    const trimmed = this.trimMessages(messages, messageBudget);
+    const trimmed = this.trimMessages(messages, messageBudget, options);
     const messageTokens = this.estimateTokens(trimmed);
     const estimatedInputTokens = messageTokens + toolSchemaTokens;
     return {
@@ -92,6 +129,7 @@ export class ContextManager {
         usageRatio: Number((estimatedInputTokens / this.maxInputTokens).toFixed(4)),
         trimmedMessages: beforeMessages - trimmed.length,
         overBudget: estimatedInputTokens > this.maxInputTokens,
+        emergencyTrim: options.trimCurrentTurn === true && beforeMessages !== trimmed.length,
       },
     };
   }
