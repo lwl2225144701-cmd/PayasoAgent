@@ -99,7 +99,11 @@ export interface RunStore {
   deleteSession(sessionId: string): number;
   listModelProviders(): ModelProviderView[];
   getModelProvider(id: string): ModelProviderView | null;
-  getModelProviderSecret(id: string): { apiKey: string; baseUrl: string; models: string[] } | null;
+  // model 提供时返回该模型的能力覆盖（contextWindow/maxOutputTokens，来自设置页配置）
+  getModelProviderSecret(
+    id: string,
+    model?: string,
+  ): { apiKey: string; baseUrl: string; models: string[]; contextWindow?: number; maxOutputTokens?: number } | null;
   getDefaultProviderId(): string;
   getDefaultModelId(): string;
   setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection;

@@ -44,6 +44,11 @@ export interface FileEntry {
 }
 
 // 模型配置 — 对齐后端 ModelProviderView / StoredModelProvider
+export interface ModelCapabilitySetting {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 export interface ModelProviderView {
   id: string;
   kind: 'builtin' | 'custom';
@@ -52,6 +57,7 @@ export interface ModelProviderView {
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
   status: 'unconfigured' | 'configured' | 'available' | 'error' | 'checking';
 }
 
@@ -60,6 +66,7 @@ export interface CreateModelProviderInput {
   baseUrl: string;
   apiKey?: string;
   models: string[];
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
 }
 
 export interface UpdateModelProviderInput {
@@ -67,6 +74,7 @@ export interface UpdateModelProviderInput {
   baseUrl?: string;
   apiKey?: string | null;
   models?: string[];
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
 }
 
 // 默认模型（provider + model 成对）— 对齐后端 GET/POST /settings(/default) 响应

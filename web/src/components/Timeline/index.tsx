@@ -15,6 +15,7 @@ import {
 import { useEventStream } from '../../hooks/useEventStream';
 import type {
   ApprovalRequestedEvent,
+  ContextUsageEvent,
   FileEntry,
   HostEvent,
   HostRun,
@@ -29,6 +30,7 @@ import type {
 } from '../../types';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
+import { findLatestContextUsage } from './context-gauge';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { ThinkBlock } from './ThinkBlock';
@@ -43,6 +45,8 @@ interface TimelineProps {
   // v1.6 工具链闭环②：准备成功后用户显式重试 —— 以新会话轮次发起
   // （新轮次拥有全新 side-effect 身份空间；Runtime 不自动重放）
   onRetryCommand?: (message: string) => void;
+  // 上下文预算指示：最新 context_usage 上抛给宿主（输入栏环形指示器数据源）
+  onContextUsage?: (usage: ContextUsageEvent | null) => void;
 }
 
 function preparationPhaseLabel(phase: ToolchainPreparationPhase): string {
@@ -224,7 +228,7 @@ function ExecutionPanel({
   );
 }
 
-export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand }: TimelineProps) {
+export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand, onContextUsage }: TimelineProps) {
   // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
@@ -413,6 +417,13 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand 
     toolSteps,
     globalThinking,
   } = structure;
+
+  // 上下文预算环形指示器：取最新一条 context_usage（压缩/紧急裁剪状态随之可见）
+  const latestContextUsage = findLatestContextUsage(events);
+  // 上抛给宿主（输入栏底部环形指示器的数据源）；随 events 变化自动更新
+  useEffect(() => {
+    onContextUsage?.(latestContextUsage);
+  }, [onContextUsage, latestContextUsage]);
 
   // Has any work actually been performed? (tools + visible reasoning + final answer).
   // running 时强制渲染：首条事件（reasoning/tool）到达前的空窗期也要立刻给出

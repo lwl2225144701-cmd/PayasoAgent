@@ -176,6 +176,35 @@
   color: var(--color-danger-text);
 }
 
+/* ---- 上下文预算环形指示器 ---- */
+.gaugeWrap {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: 6px;
+}
+
+.gaugeTrack {
+  stroke: var(--border-color);
+  opacity: 0.9;
+}
+
+.gaugeArc {
+  transition: stroke-dashoffset 0.4s ease, stroke 0.2s ease;
+}
+
+.gaugeNormal {
+  stroke: var(--text-muted);
+}
+
+.gaugeWarning {
+  stroke: var(--color-warning);
+}
+
+.gaugeDanger {
+  stroke: var(--color-danger);
+}
+
 .executionChevron {
   margin-left: auto;
   width: 24px;

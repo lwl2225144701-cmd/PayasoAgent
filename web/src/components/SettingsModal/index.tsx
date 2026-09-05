@@ -52,6 +52,8 @@ type FormMode = 'list' | 'add' | 'edit';
 interface ModelTag {
   id: string;
   value: string;
+  // 可选的上下文窗口（tokens）；空字符串 = 未配置
+  contextWindow?: string;
 }
 
 interface FormState {
@@ -162,7 +164,10 @@ export function SettingsModal({
       baseUrl: m.baseUrl,
       apiKey: '',
       hadApiKey: m.hasApiKey,
-      tags: m.models.map((value, idx) => ({ id: `${m.id}-${idx}`, value })),
+      tags: m.models.map((value, idx) => {
+        const window = m.modelCapabilities?.[value]?.contextWindow;
+        return { id: `${m.id}-${idx}`, value, contextWindow: window !== undefined ? String(window) : '' };
+      }),
       newTag: '',
     });
     setFormMode('edit');
@@ -189,6 +194,19 @@ export function SettingsModal({
       setError('至少需要一个模型标识。');
       return;
     }
+    // 按模型能力覆盖：仅收集填写了上下文窗口的模型；数值必须为正整数
+    let modelCapabilities: Record<string, { contextWindow: number }> | undefined;
+    for (const tag of form.tags) {
+      const raw = (tag.contextWindow ?? '').trim();
+      if (!raw) continue;
+      const window = Number(raw);
+      if (!Number.isSafeInteger(window) || window <= 0) {
+        setError(`模型 ${tag.value} 的上下文窗口必须是正整数。`);
+        return;
+      }
+      modelCapabilities = modelCapabilities ?? {};
+      modelCapabilities[tag.value] = { contextWindow: window };
+    }
 
     setSaving(true);
     try {
@@ -197,6 +215,7 @@ export function SettingsModal({
           name,
           baseUrl,
           models: modelsList,
+          ...(modelCapabilities ? { modelCapabilities } : {}),
         };
         if (form.apiKey) {
           input.apiKey = form.apiKey;
@@ -207,6 +226,7 @@ export function SettingsModal({
           name,
           baseUrl,
           models: modelsList,
+          modelCapabilities,
         };
         if (form.apiKey) {
           input.apiKey = form.apiKey;
@@ -424,6 +444,22 @@ export function SettingsModal({
                     {form.tags.map((tag) => (
                       <span key={tag.id} className={styles.tag}>
                         <span className={styles.tagValue}>{tag.value}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          className={styles.tagWindowInput}
+                          placeholder="上下文窗口"
+                          title="上下文窗口（tokens，可选；来自模型供应商文档）"
+                          value={tag.contextWindow ?? ''}
+                          onChange={(e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              tags: prev.tags.map((t) =>
+                                t.id === tag.id ? { ...t, contextWindow: e.target.value } : t,
+                              ),
+                            }))
+                          }
+                        />
                         <button
                           type="button"
                           className={styles.tagRemove}

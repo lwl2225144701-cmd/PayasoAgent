@@ -27,6 +27,7 @@ import { TurnNavigator } from './components/TurnNavigator';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import { useThemeMode } from './hooks/useThemeMode';
 import type {
+  ContextUsageEvent,
   DefaultModelView,
   FileEntry,
   HostRun,
@@ -49,6 +50,8 @@ export default function App() {
   const [sessions, setSessions] = useState<HostSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  // 上下文预算环形指示器数据：Timeline 从 context_usage 事件上抛，输入栏展示
+  const [contextUsage, setContextUsage] = useState<ContextUsageEvent | null>(null);
   const [online, setOnline] = useState(false);
   const [, setFiles] = useState<FileEntry[]>([]);
   const [viewingFile, setViewingFile] = useState<FileEntry | null>(null);
@@ -325,6 +328,7 @@ export default function App() {
         .sort((a, b) => b.turnIndex - a.turnIndex);
       setCurrentSessionId(sessionId);
       setCurrentRunId(sessionRuns[0]?.runId ?? null);
+      setContextUsage(null); // 切换会话时清空，待新 Timeline 回放后更新
       setViewingFile(null);
     },
     [runs],
@@ -515,6 +519,7 @@ export default function App() {
                     embedded
                     onRunTerminal={handleRunTerminal}
                     onRetryCommand={handleCreateRun}
+                    onContextUsage={setContextUsage}
                   />
                 ))
               ) : (
@@ -557,6 +562,7 @@ export default function App() {
             currentModel={currentModelSelection ?? undefined}
             models={models}
             onSelectModel={handleSelectModel}
+            contextUsage={contextUsage ?? undefined}
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}
           />

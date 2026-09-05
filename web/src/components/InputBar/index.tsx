@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
-import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
+import type { ContextUsageEvent, ModelProviderView, ModelSelection, PermissionMode } from '../../types';
+import { ContextUsageRing } from '../Timeline/ContextUsageRing';
 import { ChevronDownIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import styles from './InputBar.module.css';
@@ -19,6 +20,8 @@ interface InputBarProps {
   currentModel?: ModelSelection;
   models?: ModelProviderView[];
   onSelectModel?: (providerId: string, model: string) => void;
+  // 上下文预算环形指示器（当前 Run 最新 context_usage；无则不显示）
+  contextUsage?: ContextUsageEvent;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
 }
@@ -37,6 +40,7 @@ export function InputBar({
   currentModel,
   models = [],
   onSelectModel,
+  contextUsage,
   permissionMode,
   onSelectPermission,
 }: InputBarProps) {
@@ -132,6 +136,7 @@ export function InputBar({
           currentModel={currentModel}
           models={models}
           onSelectModel={onSelectModel}
+          contextUsage={contextUsage}
           permissionMode={permissionMode}
           onSelectPermission={onSelectPermission}
         />

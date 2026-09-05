@@ -360,3 +360,24 @@ await test('emergency 裁剪：历史轮先裁，分级兜底保证视图有界'
 
 console.log(`\nContext tests: ${passed} passed / ${failed} failed`);
 if (failed) process.exitCode = 1;
+
+// ---- v1.6 闭环：模型设置按模型配置的能力覆盖（run_model 路径，优先于注册表）----
+
+await test('模型设置按模型配置的能力覆盖优先于注册表', async () => {
+  const config = resolveModelContextConfig({
+    model: 'MiniMax-M3',
+    contextWindowTokens: 131_072,
+    maxOutputTokens: 8_192,
+  });
+  assert.equal(config.source, 'run_model');
+  assert.equal(config.contextWindowTokens, 131_072);
+  assert.equal(config.maxOutputTokens, 8_192);
+  // maxInput = 窗口 - 输出预留 - 安全余量（2%，下限 2048）
+  assert.equal(config.maxInputTokens, 131_072 - 8_192 - 2_622);
+});
+
+await test('能力覆盖缺省字段回退注册表', async () => {
+  const config = resolveModelContextConfig({ model: 'MiniMax-M3', contextWindowTokens: 100_000 });
+  assert.equal(config.contextWindowTokens, 100_000);
+  assert.equal(config.maxOutputTokens, 16_384);
+});

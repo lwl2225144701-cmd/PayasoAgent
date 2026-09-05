@@ -82,7 +82,12 @@ export class DefaultContextHarness implements AgentContextHarness {
   }) {
     this.modelContext =
       options.modelContext ??
-      resolveModelContextConfig({ model: options.modelConfig?.model ?? options.model });
+      resolveModelContextConfig({
+        model: options.modelConfig?.model ?? options.model,
+        // 模型设置按模型配置的能力覆盖优先于内置注册表
+        contextWindowTokens: options.modelConfig?.contextWindow,
+        maxOutputTokens: options.modelConfig?.maxOutputTokens,
+      });
     this.contextManager = new ContextManager(this.modelContext.maxInputTokens);
     this.systemInstructions = `${BASE_SYSTEM_PROMPT}\n${permissionSystemPrompt(options.permissionMode)}`;
     this.toolchain = options.toolchain;

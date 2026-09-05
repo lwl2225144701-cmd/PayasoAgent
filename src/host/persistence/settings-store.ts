@@ -4,6 +4,13 @@ import { createSecretStore, providerSecretKey, type SecretStore } from '../secre
 
 export type ModelProviderKind = 'builtin' | 'custom';
 
+// 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出。
+// 缺省字段走"内置注册表 → fallback 256K"链路；预算解析优先级见 model-context.ts。
+export interface ModelCapabilitySetting {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 // Provider metadata（SQLite 持久化）。raw apiKey 不在此结构中：
 // 凭证唯一存放在 SecretStore（macOS Keychain），以 providerSecretKey(id) 引用。
 export interface StoredModelProvider {
@@ -14,6 +21,8 @@ export interface StoredModelProvider {
   // 凭证存在性元数据（UI / 解析判定的唯一依据）；真实密钥经 SecretStore 读取
   hasApiKey: boolean;
   models: string[];
+  // 按模型 ID 的能力覆盖（可选；预算解析时优先于内置注册表）
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
 }
 
 export interface ModelProviderView {
@@ -24,6 +33,7 @@ export interface ModelProviderView {
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
   status: 'unconfigured' | 'configured' | 'available' | 'error' | 'checking';
 }
 
@@ -33,6 +43,7 @@ export interface CreateModelProviderInput {
   // 提供即设置凭证（SecretStore）；缺省/空 = 不设置。响应绝不回传 key（只回 hasApiKey）。
   apiKey?: string | null;
   models: string[];
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
 }
 
 // API Key 编辑三态（明确、可测试）：
@@ -45,6 +56,8 @@ export interface UpdateModelProviderInput {
   baseUrl?: string;
   apiKey?: string | null;
   models?: string[];
+  // 提供即整表替换（先校验引用的模型都在目录内）
+  modelCapabilities?: Record<string, ModelCapabilitySetting>;
 }
 
 // 默认模型 = provider + model 成对选择，二者必须一起持久化、一起校验
@@ -249,6 +262,36 @@ export class SettingsStore {
     return normalized;
   }
 
+  // 模型能力元数据校验：引用的模型必须在目录内；数值必须为正整数。
+  // 只保留有字段的条目；空表返回 undefined（不写无意义的空对象）。
+  private normalizeModelCapabilities(
+    input: Record<string, ModelCapabilitySetting> | undefined,
+    models: string[],
+  ): Record<string, ModelCapabilitySetting> | undefined {
+    if (input === undefined) return undefined;
+    const result: Record<string, ModelCapabilitySetting> = {};
+    for (const [modelId, capability] of Object.entries(input)) {
+      if (!models.includes(modelId)) {
+        throw new Error(`modelCapabilities references model outside catalog: ${modelId}`);
+      }
+      const entry: ModelCapabilitySetting = {};
+      if (capability.contextWindow !== undefined) {
+        if (!Number.isSafeInteger(capability.contextWindow) || capability.contextWindow <= 0) {
+          throw new Error('contextWindow must be a positive integer');
+        }
+        entry.contextWindow = capability.contextWindow;
+      }
+      if (capability.maxOutputTokens !== undefined) {
+        if (!Number.isSafeInteger(capability.maxOutputTokens) || capability.maxOutputTokens <= 0) {
+          throw new Error('maxOutputTokens must be a positive integer');
+        }
+        entry.maxOutputTokens = capability.maxOutputTokens;
+      }
+      if (Object.keys(entry).length > 0) result[modelId] = entry;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+
   private validateUrl(url: string): void {
     // 统一走 provider-url 校验模块：协议白名单、凭证拒绝、HTTP 仅限 loopback、空 hostname 拒绝
     try {
@@ -270,6 +313,7 @@ export class SettingsStore {
       apiKeyMasked: hasApiKey ? '********' : '****',
       hasApiKey,
       models: provider.models,
+      ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
       status,
     };
   }
@@ -363,13 +407,32 @@ export class SettingsStore {
   }
 
   // 凭证读取路径（RunManager / available-models 共用）：metadata + SecretStore 合成。
+  // model 提供时附带该模型的能力覆盖（contextWindow/maxOutputTokens，来自设置页配置）。
   // provider 不存在、未配置凭证、或 SecretStore 中已不存在 → null（调用方 fail-closed）。
-  getProviderCredentials(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {
+  getProviderCredentials(
+    id: string,
+    model?: string,
+  ): {
+    apiKey: string;
+    baseUrl: string;
+    models: string[];
+    contextWindow?: number;
+    maxOutputTokens?: number;
+  } | null {
     const provider = this.getAllModels().find((m) => m.id === id);
     if (!provider || !provider.hasApiKey) return null;
     const apiKey = this.secrets.get(providerSecretKey(id));
     if (!apiKey) return null;
-    return { apiKey, baseUrl: provider.baseUrl, models: provider.models };
+    const capability = model ? provider.modelCapabilities?.[model] : undefined;
+    return {
+      apiKey,
+      baseUrl: provider.baseUrl,
+      models: provider.models,
+      ...(capability?.contextWindow !== undefined ? { contextWindow: capability.contextWindow } : {}),
+      ...(capability?.maxOutputTokens !== undefined
+        ? { maxOutputTokens: capability.maxOutputTokens }
+        : {}),
+    };
   }
 
   addModel(input: CreateModelProviderInput): ModelProviderView {
@@ -377,6 +440,7 @@ export class SettingsStore {
     const baseUrl = input.baseUrl.trim();
     const apiKey = (input.apiKey ?? '').trim();
     const models = this.normalizeModels(input.models);
+    const modelCapabilities = this.normalizeModelCapabilities(input.modelCapabilities, models);
 
     // 1. 标准化输入 + 基础校验
     if (!name) throw new Error('name is required');
@@ -407,6 +471,7 @@ export class SettingsStore {
       baseUrl,
       hasApiKey: Boolean(apiKey),
       models,
+      ...(modelCapabilities ? { modelCapabilities } : {}),
     };
 
     // 4. 所有业务校验通过后，再写入 Secret
@@ -474,6 +539,22 @@ export class SettingsStore {
       const models = this.normalizeModels(input.models);
       if (models.length === 0) throw new Error('models is required');
       current[idx].models = models;
+      // 目录收缩时清掉已移除模型的能力覆盖
+      if (current[idx].modelCapabilities) {
+        const pruned: Record<string, ModelCapabilitySetting> = {};
+        for (const [modelId, capability] of Object.entries(current[idx].modelCapabilities)) {
+          if (models.includes(modelId)) pruned[modelId] = capability;
+        }
+        if (Object.keys(pruned).length > 0) current[idx].modelCapabilities = pruned;
+        else delete current[idx].modelCapabilities;
+      }
+    }
+
+    // 模型能力覆盖：提供即整表替换（引用模型必须都在最终目录内）
+    if (input.modelCapabilities !== undefined) {
+      const validated = this.normalizeModelCapabilities(input.modelCapabilities, current[idx].models);
+      if (validated) current[idx].modelCapabilities = validated;
+      else delete current[idx].modelCapabilities;
     }
 
     // API Key 三态：undefined=保持 / null=删除 Secret / 非空=替换 Secret / ""=拒绝。

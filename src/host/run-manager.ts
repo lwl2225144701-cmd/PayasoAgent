@@ -1332,8 +1332,8 @@ export class RunManager {
   }
 
   // 密钥只在服务端使用（如代拉 /models 目录），绝不进入 API 响应
-  getModelProviderSecret(id: string) {
-    return this.store.getModelProviderSecret(id);
+  getModelProviderSecret(id: string, model?: string) {
+    return this.store.getModelProviderSecret(id, model);
   }
 
   addModelProvider(input: CreateModelProviderInput) {
@@ -1379,19 +1379,22 @@ export class RunManager {
     const byDefault = providers.find((p) => p.id === defaultId && usable(p));
     const configured = byDefault ?? providers.find(usable);
     if (!configured) return undefined;
-    const full = this.store.getModelProviderSecret(configured.id);
-    if (!full?.apiKey || !full.baseUrl) return undefined;
     const defaultModelId = this.store.getDefaultModelId();
     const model =
       defaultId === configured.id && defaultModelId && configured.models.includes(defaultModelId)
         ? defaultModelId
         : configured.models[0];
     if (!model) return undefined;
+    // 凭证按最终选定的模型读取（附带设置页按模型配置的能力覆盖）
+    const full = this.store.getModelProviderSecret(configured.id, model);
+    if (!full?.apiKey || !full.baseUrl) return undefined;
     return {
       providerId: configured.id,
       baseUrl: full.baseUrl,
       apiKey: full.apiKey,
       model,
+      ...(full.contextWindow !== undefined ? { contextWindow: full.contextWindow } : {}),
+      ...(full.maxOutputTokens !== undefined ? { maxOutputTokens: full.maxOutputTokens } : {}),
     };
   }
 
@@ -1401,7 +1404,7 @@ export class RunManager {
   // 禁止历史 baseUrl 与当前 Secret 混用；模型也必须在当前 provider 目录中。
   private modelConfigForRun(run: InternalRun): ModelConfig | undefined {
     if (run.providerId && run.model) {
-      const secret = this.store.getModelProviderSecret(run.providerId);
+      const secret = this.store.getModelProviderSecret(run.providerId, run.model);
       const provider = this.store.getModelProvider(run.providerId);
       if (!secret?.apiKey || !provider) {
         throw new Error(`Provider ${run.providerId} is not available for run ${run.runId}`);
@@ -1414,6 +1417,11 @@ export class RunManager {
         baseUrl: secret.baseUrl,
         apiKey: secret.apiKey,
         model: run.model,
+        // 设置页按模型配置的能力覆盖（缺省走注册表/fallback）
+        ...(secret.contextWindow !== undefined ? { contextWindow: secret.contextWindow } : {}),
+        ...(secret.maxOutputTokens !== undefined
+          ? { maxOutputTokens: secret.maxOutputTokens }
+          : {}),
       };
     }
     return this.resolveModelConfig();

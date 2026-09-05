@@ -353,6 +353,10 @@ export interface ModelConfig {
   apiKey: string;
   model: string;
   providerId?: string;
+  // Host 按模型解析的能力覆盖（设置页按模型配置；缺省走注册表/fallback），
+  // 用于本请求的 max_tokens 与 Harness 的 Context Budget
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 // 模型配置是原子元组：传入 modelConfig 则三个字段必须齐全并整体采用，
@@ -387,8 +391,12 @@ export async function chat(
   const resolvedApiKey = endpoint.apiKey;
   const resolvedModel = endpoint.model;
   // max_tokens 必须来自当前实际请求的模型（Run snapshot 或环境 fallback），
-  // 逐请求解析；禁止模块加载时按环境模型冻结能力。
-  const modelContext = resolveModelContextConfig({ model: resolvedModel });
+  // 逐请求解析；模型设置按模型配置的窗口/输出预留优先于注册表。
+  const modelContext = resolveModelContextConfig({
+    model: resolvedModel,
+    contextWindowTokens: modelConfig?.contextWindow,
+    maxOutputTokens: modelConfig?.maxOutputTokens,
+  });
   const body: Record<string, unknown> = {
     model: resolvedModel,
     messages,

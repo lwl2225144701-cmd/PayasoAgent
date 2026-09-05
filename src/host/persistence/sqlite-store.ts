@@ -723,9 +723,16 @@ export class SqliteRunStore implements RunStore {
     return this.settings.getModelView(id);
   }
 
-  getModelProviderSecret(id: string): { apiKey: string; baseUrl: string; models: string[] } | null {
-    // 凭证经 SecretStore（macOS Keychain）读取；metadata 只提供 hasApiKey
-    return this.settings.getProviderCredentials(id);
+  getModelProviderSecret(id: string, model?: string): {
+    apiKey: string;
+    baseUrl: string;
+    models: string[];
+    contextWindow?: number;
+    maxOutputTokens?: number;
+  } | null {
+    // 凭证经 SecretStore（macOS Keychain）读取；metadata 只提供 hasApiKey；
+    // model 提供时附带该模型的能力覆盖（设置页配置）
+    return this.settings.getProviderCredentials(id, model);
   }
 
   getDefaultProviderId(): string {

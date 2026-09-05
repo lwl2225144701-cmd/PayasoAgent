@@ -6,9 +6,10 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
+import type { ContextUsageEvent, ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import { DropdownTrigger } from '../DropdownTrigger';
 import { IconButton } from '../IconButton';
+import { ContextUsageRing } from '../Timeline/ContextUsageRing';
 import { ArrowUpIcon, StopIcon } from '../icons';
 import { PermissionDropdown } from '../PermissionDropdown';
 import styles from './InputBar.module.css';
@@ -56,6 +57,8 @@ interface ComposerFooterProps {
   currentModel?: ModelSelection;
   models?: ModelProviderView[];
   onSelectModel?: (providerId: string, model: string) => void;
+  // v1.6 上下文预算环形指示器：当前 Run 最新 context_usage（无则不显示）
+  contextUsage?: ContextUsageEvent;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
 }
@@ -215,6 +218,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
     <div className={styles.conversationFooter}>
       <PermissionButton mode={props.permissionMode} onSelect={props.onSelectPermission} />
       <div className={styles.conversationActions}>
+        {props.contextUsage && <ContextUsageRing usage={props.contextUsage} />}
         <ModelButton
           currentModel={props.currentModel}
           models={props.models}
