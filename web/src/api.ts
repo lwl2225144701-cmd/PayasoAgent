@@ -31,24 +31,52 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/** createRun 线上报的图片附件：base64 负载仅在本次请求中传输，落盘后只留工作区路径 */
+export interface CreateRunAttachment {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
 export function createRun(
   task: string,
   sessionId?: string,
   workspaceName?: string,
   permissionMode: PermissionMode = 'workspace-write',
   modelSelection?: Pick<ModelSelection, 'providerId' | 'model'>,
+  attachments?: CreateRunAttachment[],
 ): Promise<{ runId: string; sessionId: string; status: string; permissionMode: PermissionMode }> {
   const url = sessionId ? `/sessions/${sessionId}/runs` : '/runs';
   const modelFields = modelSelection
     ? { providerId: modelSelection.providerId, model: modelSelection.model }
     : {};
+  const attachmentFields = attachments && attachments.length > 0 ? { attachments } : {};
   return jsonFetch(url, {
     method: 'POST',
     body: JSON.stringify(
       workspaceName
-        ? { task, workspaceName, permissionMode, ...modelFields }
-        : { task, permissionMode, ...modelFields },
+        ? { task, workspaceName, permissionMode, ...modelFields, ...attachmentFields }
+        : { task, permissionMode, ...modelFields, ...attachmentFields },
     ),
+  });
+}
+
+/** 工作区内文件（含图片）的二进制访问地址；图片扩展名由 Host 直接返回二进制，可供 <img> 使用 */
+export function workspaceFileUrl(runId: string, relPath: string): string {
+  return `/runs/${runId}/files/${encodeURIComponent(relPath)}`;
+}
+
+/** 读取图片文件为纯 base64（去掉 data: URL 前缀），供 createRun 附件上报 */
+export function readImageAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '');
+      const comma = dataUrl.indexOf(',');
+      resolve(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'));
+    reader.readAsDataURL(file);
   });
 }
 

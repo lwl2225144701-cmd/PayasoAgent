@@ -6,7 +6,20 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { execute, getSchemas, type ToolContext } from '../src/tools/tools.js';
+import {
+  execute as executeRaw,
+  getSchemas,
+  normalizeToolResult,
+  type ToolContext,
+} from '../src/tools/tools.js';
+// 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
+}
 import '../src/tools/filesystem.js';
 import '../src/tools/runtime-tools.js';
 import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';

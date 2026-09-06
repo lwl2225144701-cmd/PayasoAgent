@@ -1,5 +1,6 @@
 import {
   type ChangeEventHandler,
+  type ClipboardEventHandler,
   forwardRef,
   type KeyboardEventHandler,
   useEffect,
@@ -24,6 +25,8 @@ interface ComposerTextareaProps {
   value: string;
   onChange: ChangeEventHandler<HTMLTextAreaElement>;
   onKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  // 粘贴图片（截图）时拦截剪贴板中的图片项作为消息附件
+  onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   placeholder: string;
   disabled?: boolean;
   autoFocus?: boolean;
@@ -31,7 +34,7 @@ interface ComposerTextareaProps {
 
 export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
   function ComposerTextarea(
-    { variant, value, onChange, onKeyDown, placeholder, disabled, autoFocus },
+    { variant, value, onChange, onKeyDown, onPaste, placeholder, disabled, autoFocus },
     ref,
   ) {
     return (
@@ -41,6 +44,7 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
         value={value}
         onChange={onChange}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
         placeholder={placeholder}
         rows={2}
         disabled={disabled}

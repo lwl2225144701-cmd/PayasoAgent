@@ -6,7 +6,23 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execute, getSchemas, type ToolContext, validateToolResult } from '../src/tools/tools.js';
+import {
+  execute as executeRaw,
+  getSchemas,
+  normalizeToolResult,
+  type ToolContext,
+  validateToolResult,
+} from '../src/tools/tools.js';
+
+// 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
+}
+
 import '../src/tools/filesystem.js'; // 副作用：注册 listDir / readFile
 import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manager.js';
 
@@ -146,6 +162,22 @@ test('read 图片文件（PNG magic）→ 省略提示（valid）', async () => 
   assert.ok(res.includes('PNG'), `结果: ${res}`);
   const v = validateToolResult('read', res);
   assert.equal(v.valid, true, '图片省略提示应视为有效');
+});
+
+test('read 图片文件 + vision 上下文 → 多模态结果（图片走 images，文本只留提示）', async () => {
+  const visionCtx: ToolContext = { runId: RUN, workspaceRoot: root, vision: true };
+  const withVision = normalizeToolResult(
+    await executeRaw('read', { path: 'work/pic.png' }, visionCtx),
+  );
+  assert.ok(withVision.images && withVision.images.length === 1, '应返回 1 张图片引用');
+  assert.equal(withVision.images![0].mimeType, 'image/png');
+  assert.equal(withVision.images![0].path, 'work/pic.png', '图片路径必须是工作区相对路径');
+  assert.ok(!withVision.text.includes('宿主机'), '文本不得泄露宿主路径');
+
+  // 非视觉上下文：保持向后兼容，只给省略提示、不附图
+  const plain = normalizeToolResult(await executeRaw('read', { path: 'work/pic.png' }, ctx));
+  assert.ok(plain.text.includes('图片文件省略'), `结果: ${plain.text}`);
+  assert.equal(plain.images, undefined);
 });
 
 test('read 文件为空 → 空文件提示（valid）', async () => {

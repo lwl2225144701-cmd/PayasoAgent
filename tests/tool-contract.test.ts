@@ -5,13 +5,22 @@
 import assert from 'node:assert/strict';
 import '../src/tools/builtin-tools.js';
 import {
-  execute,
+  execute as executeRaw,
   getSchemas,
+  normalizeToolResult,
   register,
   resolveOperationKey,
   type Tool,
   type ToolContext,
 } from '../src/tools/tools.js';
+// 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
+}
 
 interface Case {
   name: string;

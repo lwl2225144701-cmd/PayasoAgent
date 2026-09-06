@@ -98,7 +98,7 @@ export interface RunStore {
   deleteSession(sessionId: string): number;
   listModelProviders(): ModelProviderView[];
   getModelProvider(id: string): ModelProviderView | null;
-  // model 提供时返回该模型的能力覆盖（contextWindow/maxOutputTokens，来自设置页配置）
+  // model 提供时返回该模型的能力覆盖（contextWindow/maxOutputTokens/vision，来自设置页配置）
   getModelProviderSecret(
     id: string,
     model?: string,
@@ -109,6 +109,7 @@ export interface RunStore {
     piProviderId?: string;
     contextWindow?: number;
     maxOutputTokens?: number;
+    vision?: boolean;
   } | null;
   getDefaultProviderId(): string;
   getDefaultModelId(): string;

@@ -20,7 +20,7 @@ import { openFileInDefaultBrowser } from './default-browser.js';
 import type { CreateModelProviderInput, UpdateModelProviderInput } from './persistence/store.js';
 import { listPiAiProviderCatalog } from './pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from './provider-url.js';
-import type { RunManager, SseSink } from './run-manager.js';
+import type { CreateRunAttachmentInput, RunManager, SseSink } from './run-manager.js';
 import {
   clearWorkspace,
   getWorkspace,
@@ -28,9 +28,21 @@ import {
   workspacePublicView,
 } from './workspace.js';
 
-const MAX_FILE_BYTES = 1024 * 1024; // 读文件大小上限
+const MAX_FILE_BYTES = 1024 * 1024; // 文本文件读取上限
+const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024; // 图片附件/预览上限（与 read 读图一致）
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
-const MAX_BODY_BYTES = 64 * 1024; // Host JSON 请求体上限
+// JSON 请求体上限：消息可携带 base64 图片附件（4 张 × ≤8MB 原始 → base64 膨胀 ~1.33 倍）。
+const MAX_BODY_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS = 4; // 单条消息最多图片数
+const ATTACHMENT_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+// files 端点可直接返回二进制的图片扩展名（<img src> 直接预览）。
+const IMAGE_EXT_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
 const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 const SAFE_SESSION_ID = SAFE_RUN_ID;
 const WORKSPACE_DIRS = ['input', 'work', 'output'];
@@ -57,6 +69,36 @@ function requestModelSelection(body: Record<string, unknown>): {
     throw new Error('providerId and model must be provided together');
   }
   return { providerId: body.providerId.trim(), model: body.model.trim() };
+}
+
+// 解析并校验消息图片附件：MIME 白名单、数量上限、单张 ≤8MB（base64 估算）。
+// 文件名只取 basename 并交由落盘层二次清洗，任何穿越尝试都到不了磁盘。
+function requestAttachments(body: Record<string, unknown>): CreateRunAttachmentInput[] {
+  if (body.attachments === undefined) return [];
+  if (!Array.isArray(body.attachments)) throw new Error('attachments 必须是数组');
+  if (body.attachments.length > MAX_ATTACHMENTS) {
+    throw new Error(`附件最多 ${MAX_ATTACHMENTS} 张`);
+  }
+  return body.attachments.map((raw, index) => {
+    const label = `附件 ${index + 1}`;
+    if (typeof raw !== 'object' || raw === null) throw new Error(`${label} 格式非法`);
+    const item = raw as Record<string, unknown>;
+    const name = typeof item.name === 'string' ? path.basename(item.name.trim()) : '';
+    const mimeType = typeof item.mimeType === 'string' ? item.mimeType.trim().toLowerCase() : '';
+    const dataBase64 =
+      typeof item.dataBase64 === 'string' ? item.dataBase64.replace(/\s+/g, '') : '';
+    if (!name || name.length > 200) throw new Error(`${label} 文件名非法`);
+    if (!ATTACHMENT_MIME.has(mimeType)) {
+      throw new Error(`${label} 仅支持 PNG / JPEG / WebP / GIF 图片`);
+    }
+    if (!/^[A-Za-z0-9+/=]+$/.test(dataBase64) || dataBase64.length < 8) {
+      throw new Error(`${label} 数据非法`);
+    }
+    // base64 每 4 字符 ≈ 3 字节，先按估算拦超大图，避免无谓解码占内存。
+    const approxBytes = Math.floor((dataBase64.length * 3) / 4);
+    if (approxBytes > MAX_IMAGE_FILE_BYTES) throw new Error(`${label} 超过 8MB 上限`);
+    return { name, mimeType, dataBase64 };
+  });
 }
 
 // Host API Token（进程内存唯一，不进入 URL/日志/前端状态）
@@ -398,6 +440,28 @@ function readFileChecked(
     if (st.size > MAX_FILE_BYTES) return { ok: false, error: '文件过大' };
     const content = fs.readFileSync(real, 'utf8');
     return { ok: true, name: rel, content };
+  } catch {
+    return { ok: false, error: '路径被拒绝或不存在' };
+  }
+}
+
+// 图片二进制读取：与 readFileChecked 同一套路径校验，返回 Buffer + MIME，
+// 供 <img src> 直接预览（前端附件缩略图 / read 读图结果都走这个端点）。
+function readImageChecked(
+  root: string,
+  rel: string,
+): { ok: true; buffer: Buffer; mimeType: string } | { ok: false; error: string } {
+  try {
+    if (rel === '' || rel === '.' || rel.includes('..'))
+      return { ok: false, error: '非法相对路径' };
+    const mimeType = IMAGE_EXT_MIME[path.extname(rel).toLowerCase()];
+    if (!mimeType) return { ok: false, error: '不支持的图片类型' };
+    const real = resolveWorkspacePath(root, rel);
+    assertInsideRoot(root, real);
+    const st = fs.statSync(real);
+    if (st.isDirectory()) return { ok: false, error: '是目录，非文件' };
+    if (st.size > MAX_IMAGE_FILE_BYTES) return { ok: false, error: '图片过大' };
+    return { ok: true, buffer: fs.readFileSync(real), mimeType };
   } catch {
     return { ok: false, error: '路径被拒绝或不存在' };
   }
@@ -847,9 +911,16 @@ export async function handleRequest(
         } catch (err) {
           return bad(res, (err as Error).message);
         }
+        let attachments: CreateRunAttachmentInput[];
+        try {
+          attachments = requestAttachments(body);
+        } catch (err) {
+          return bad(res, (err as Error).message);
+        }
         try {
           const created = manager.createInSession(task, sessionId, {
             permissionMode,
+            attachments,
             ...modelSelection,
           });
           return sendJson(res, 202, { ...created, status: 'running', permissionMode });
@@ -941,10 +1012,17 @@ export async function handleRequest(
       } catch (err) {
         return bad(res, (err as Error).message);
       }
+      let attachments: CreateRunAttachmentInput[];
+      try {
+        attachments = requestAttachments(body);
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
       try {
         const created = manager.createInSession(task, requestedSessionId, {
           workspaceName,
           permissionMode,
+          attachments,
           ...modelSelection,
         });
         return sendJson(res, 202, { ...created, status: 'running', permissionMode });
@@ -1060,10 +1138,21 @@ export async function handleRequest(
         const files = listFiles(root);
         return sendJson(res, 200, { runId, files });
       }
-      // GET /runs/:id/files/<rel> → 读文件
+      // GET /runs/:id/files/<rel> → 读文件（图片扩展名直接返回二进制，供 <img> 预览）
       const rel = s.slice(3).join('/');
       const root = manager.getWorkspaceRoot(runId);
       if (!root) return notFound(res);
+      if (IMAGE_EXT_MIME[path.extname(rel).toLowerCase()]) {
+        const image = readImageChecked(root, rel);
+        if (!image.ok) return bad(res, image.error);
+        res.writeHead(200, {
+          'content-type': image.mimeType,
+          'content-length': image.buffer.length,
+          'cache-control': 'no-store',
+        });
+        res.end(image.buffer);
+        return;
+      }
       const read = readFileChecked(root, rel);
       return read.ok
         ? sendJson(res, 200, { runId, name: read.name, content: read.content })

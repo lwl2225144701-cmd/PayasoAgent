@@ -25,14 +25,23 @@ import {
   type NetworkApprovalRequest,
 } from '../src/runtime/approval-port.js';
 import {
-  execute,
+  execute as executeRaw,
   getSchemas,
   getTool,
   NetworkDeniedError,
   needsNetworkApproval,
+  normalizeToolResult,
   type ToolContext,
   toolRequiresNetwork,
 } from '../src/tools/tools.js';
+// 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
+}
 import '../src/tools/filesystem.js'; // read/write/ls
 import '../src/tools/runtime-tools.js'; // shell（capabilities.network=true）
 import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';

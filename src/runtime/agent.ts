@@ -2,7 +2,13 @@
 
 import { type AgentContextHarness, DefaultContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
-import { type ChatMessage, type ChatStreamDelta, chat, type ModelConfig } from '../llm/llm.js';
+import {
+  type ChatMessage,
+  type ChatStreamDelta,
+  chat,
+  type MessageImage,
+  type ModelConfig,
+} from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import { storedPermissionMode } from '../permission-mode.js';
 import {
@@ -16,9 +22,11 @@ import {
   getTool,
   NetworkDeniedError,
   needsNetworkApproval,
+  normalizeToolResult,
   parseToolArguments,
   RequiredRuntimeToolUnavailableError,
   type ToolCallError,
+  type ToolImage,
   type ToolSandboxEvent,
   toolNotFoundError,
   toolRequiresNetwork,
@@ -28,6 +36,7 @@ import { isAbortError, throwIfAborted } from '../util/abort.js';
 import { type ApprovalPort, resolveApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
 import type { AgentExecutionContext } from './contracts.js';
+import { materializeMessagesForModel } from './image-materialize.js';
 import { protectRuntimeObserver, type RuntimeObserver } from './observer-port.js';
 import { guardToolOutput } from './output-guard.js';
 import {
@@ -63,6 +72,9 @@ export async function runAgent(
     checkpointWriter: CheckpointWriter;
     observer: RuntimeObserver;
     conversationHistory?: ChatMessage[];
+    // 本轮用户消息附带的图片（工作区相对路径引用；Host 已落盘到
+    // input/attachments/）。随首条 user 消息进入 transcript，调用模型前物化。
+    attachments?: MessageImage[];
     onStreamDelta?: (delta: ChatStreamDelta) => void;
     onTrace?: (ev: TraceEvent) => void;
     // True cancellation (v1.6)：Run 的 AbortSignal，是唯一取消机制。
@@ -100,6 +112,8 @@ export async function runAgent(
   if (resume?.permissionMode && storedPermissionMode(resume.permissionMode) !== permissionMode) {
     throw new Error('Execution context permission does not match checkpoint');
   }
+  // 视觉能力随模型配置固化：read 等读图工具据此决定返回图片块还是文本占位。
+  const visionEnabled = opts.modelConfig?.vision === true;
   const toolContext = {
     runId,
     workspaceRoot,
@@ -107,6 +121,7 @@ export async function runAgent(
     networkMode: getNetworkMode(),
     approvalPort: resolveApprovalPort(opts.approvalPort),
     toolchain,
+    vision: visionEnabled,
   };
   const observer = protectRuntimeObserver(opts.observer);
   const emit = (input: TraceEventInput): TraceEvent => {
@@ -143,7 +158,7 @@ export async function runAgent(
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
   const messages: ChatMessage[] = resume
     ? resume.messages
-    : contextHarness.createTranscript(task, opts.conversationHistory);
+    : contextHarness.createTranscript(task, opts.conversationHistory, opts.attachments);
   // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
   const startIter = resume ? Math.max(0, resume.iteration - 1) : 0;
 
@@ -256,8 +271,11 @@ export async function runAgent(
 
       // 1. 调用 LLM 判断下一步
       // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
+      // 图片在调用边界物化：Harness 视图里的图片是路径引用，这里读取为 base64
+      // 副本（不污染 transcript / checkpoint）；非视觉模型则剥离图片并文本注明。
+      const modelMessages = materializeMessagesForModel(ctx.messages, workspaceRoot, visionEnabled);
       const assistantMsg = await chat(
-        ctx.messages,
+        modelMessages,
         schemas,
         opts.onStreamDelta,
         opts.modelConfig,
@@ -510,11 +528,16 @@ export async function runAgent(
             });
             const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
+            // 多模态结果归一：文本部分走 validation/guard/状态；图片引用
+            // （工作区相对路径）直接挂到 tool 消息与 trace，下轮物化进模型。
+            const normalized = normalizeToolResult(rawResult);
+            const attachedImages: ToolImage[] | undefined = normalized.images;
+
             // ---- v1.2 Tool Result Validation：执行成功 ≠ 结果有效（validateResult 必须看到完整 raw）----
             const vr = validateToolResult(toolName, rawResult);
 
             // ---- v1.3.3 Tool Output Guard：validation 之后，任何进入 Runtime 状态 / LLM Context 的内容一律受限 ----
-            const guarded = guardToolOutput(rawResult);
+            const guarded = guardToolOutput(normalized.text);
             if (guarded.truncated) {
               emit({
                 type: 'tool_output_truncated',
@@ -588,6 +611,7 @@ export async function runAgent(
               tool: toolName,
               result,
               durationMs,
+              ...(attachedImages ? { images: attachedImages } : {}),
               network: getNetworkMode(),
             });
 
@@ -604,11 +628,12 @@ export async function runAgent(
               lastResult: scratchpad.lastResult,
             });
 
-            // 4. 将工具结果返回给 LLM
+            // 4. 将工具结果返回给 LLM（文本 + 图片路径引用；base64 下轮物化）
             messages.push({
               role: 'tool',
               tool_call_id: call.id,
               content: result,
+              ...(attachedImages ? { images: attachedImages } : {}),
             });
             // Checkpoint: 工具成功后保存
             save();

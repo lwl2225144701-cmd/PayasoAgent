@@ -8,9 +8,22 @@ import type {
   ToolchainPreparationStatus,
 } from '../sandbox/toolchain-preparation.js';
 
+// 用户随消息发送的图片附件（落盘后的引用：工作区相对路径，可走 files 端点预览）。
+export interface HostAttachment {
+  name: string;
+  mimeType: string;
+  path: string;
+}
+
 // Host 生命周期事件
 export type LifecycleEvent =
-  | { type: 'run_started'; runId: string; timestamp: string }
+  | {
+      type: 'run_started';
+      runId: string;
+      timestamp: string;
+      // 本轮用户消息附带的图片（无附件时缺省）；前端据此在用户气泡渲染图片。
+      attachments?: HostAttachment[];
+    }
   | { type: 'run_stopping'; runId: string; timestamp: string }
   | { type: 'run_completed'; runId: string; timestamp: string; result?: string }
   | { type: 'run_failed'; runId: string; timestamp: string; error?: string }

@@ -1018,3 +1018,64 @@
     color: var(--text-tertiary);
   }
 }
+
+/* 用户随消息上传的图片附件（气泡下方、右对齐） */
+.userAttachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.userAttachmentLink {
+  display: block;
+  width: 132px;
+  height: 132px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-composer);
+}
+
+.userAttachmentImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.15s ease;
+}
+
+.userAttachmentLink:hover .userAttachmentImg {
+  transform: scale(1.03);
+}
+
+/* 工具结果附带的图片（如视觉模型读取图片文件）：行内缩略图，点击开原图 */
+.toolImageStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 4px 26px;
+}
+
+.toolImageLink {
+  display: block;
+  width: 120px;
+  height: 120px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-composer);
+}
+
+.toolImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.15s ease;
+}
+
+.toolImageLink:hover .toolImage {
+  transform: scale(1.03);
+}

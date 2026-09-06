@@ -56,6 +56,8 @@ interface ModelTag {
   value: string;
   // 可选的上下文窗口（tokens）；空字符串 = 未配置
   contextWindow?: string;
+  // 模型支持图片输入（视觉能力）；显式配置优先于 pi-ai 注册表声明
+  vision?: boolean;
 }
 
 interface FormState {
@@ -106,6 +108,8 @@ function catalogFromPiAiProvider(provider: PiAiProviderInfo): ProviderModelInfo[
     category: 'chat' as const,
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
+    // pi-ai 模型 input modalities 含 'image' 即声明视觉能力
+    vision: model.input.includes('image'),
   }));
 }
 
@@ -132,6 +136,7 @@ function mergeCatalogIntoTags(
       id: crypto.randomUUID(),
       value: model.id,
       ...(model.contextWindow !== undefined ? { contextWindow: String(model.contextWindow) } : {}),
+      ...(model.vision ? { vision: true } : {}),
     }));
   contextFilledCount += added.filter((tag) => tag.contextWindow !== undefined).length;
 
@@ -299,6 +304,7 @@ export function SettingsModal({
       id: crypto.randomUUID(),
       value: model.id,
       contextWindow: model.contextWindow !== undefined ? String(model.contextWindow) : '',
+      ...(model.vision ? { vision: true } : {}),
     }));
     setForm((prev) => ({
       ...prev,
@@ -325,10 +331,12 @@ export function SettingsModal({
       hadApiKey: m.hasApiKey,
       tags: m.models.map((value, idx) => {
         const window = m.modelCapabilities?.[value]?.contextWindow;
+        const vision = m.modelCapabilities?.[value]?.vision === true;
         return {
           id: `${m.id}-${idx}`,
           value,
           contextWindow: window !== undefined ? String(window) : '',
+          ...(vision ? { vision: true } : {}),
         };
       }),
       newTag: '',
@@ -421,18 +429,25 @@ export function SettingsModal({
       setError('请填写 API 密钥后再保存 pi-ai 提供方。');
       return;
     }
-    // 按模型能力覆盖：仅收集填写了上下文窗口的模型；数值必须为正整数
-    let modelCapabilities: Record<string, { contextWindow: number }> | undefined;
+    // 按模型能力覆盖：收集填写了上下文窗口或开启了视觉能力的模型；窗口数值必须为正整数
+    let modelCapabilities: Record<string, { contextWindow?: number; vision?: boolean }> | undefined;
     for (const tag of form.tags) {
       const raw = (tag.contextWindow ?? '').trim();
-      if (!raw) continue;
-      const window = Number(raw);
-      if (!Number.isSafeInteger(window) || window <= 0) {
-        setError(`模型 ${tag.value} 的上下文窗口必须是正整数。`);
-        return;
+      let contextWindow: number | undefined;
+      if (raw) {
+        const window = Number(raw);
+        if (!Number.isSafeInteger(window) || window <= 0) {
+          setError(`模型 ${tag.value} 的上下文窗口必须是正整数。`);
+          return;
+        }
+        contextWindow = window;
       }
+      if (contextWindow === undefined && !tag.vision) continue;
       modelCapabilities = modelCapabilities ?? {};
-      modelCapabilities[tag.value] = { contextWindow: window };
+      modelCapabilities[tag.value] = {
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(tag.vision ? { vision: true } : {}),
+      };
     }
 
     setSaving(true);
@@ -762,6 +777,23 @@ export function SettingsModal({
                             }))
                           }
                         />
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={tag.vision ?? false}
+                          className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
+                          title="该模型支持图片输入（视觉能力）；pi-ai 目录已按模型声明预选"
+                          onClick={() =>
+                            setForm((prev) => ({
+                              ...prev,
+                              tags: prev.tags.map((t) =>
+                                t.id === tag.id ? { ...t, vision: !t.vision } : t,
+                              ),
+                            }))
+                          }
+                        >
+                          视觉
+                        </button>
                         <button
                           type="button"
                           className={styles.tagRemove}

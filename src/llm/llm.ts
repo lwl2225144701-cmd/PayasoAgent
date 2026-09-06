@@ -8,8 +8,10 @@ import {
   type Context,
   createModels,
   createProvider,
+  type ImageContent,
   type Model,
   type ProviderStreams,
+  type TextContent,
   type TSchema,
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
@@ -37,12 +39,24 @@ export interface ToolCall {
   function: { name: string; arguments: string };
 }
 
+// 多模态图片块。canonical transcript / checkpoint 中只存 workspace 相对路径
+// （path）；base64（data）仅在发起 LLM 请求前物化到模型视图，绝不持久化。
+export interface MessageImage {
+  mimeType: string;
+  // Workspace 相对路径（如 input/attachments/a.png），由 Runtime 在调用边界解析。
+  path?: string;
+  // 临时 base64（无 data: 前缀），只存在于本轮模型视图。
+  data?: string;
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   reasoning_content?: string;
+  // user / tool 消息可携带图片（user 附件或 read 工具读出的工作区图片）。
+  images?: MessageImage[];
 }
 
 export interface ToolSchema {
@@ -67,6 +81,9 @@ export interface ModelConfig {
   // 用于本请求的 max_tokens 与 Harness 的 Context Budget。
   contextWindow?: number;
   maxOutputTokens?: number;
+  // 视觉能力：为 true 时模型 input 声明包含 image，pi-ai 才会把图片块
+  // 转成 image_url / 原生多模态协议。Host 按"设置位 || pi-ai 注册表"解析。
+  vision?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,6 +205,20 @@ function toPiAssistant(
   };
 }
 
+// 把消息上的图片引用转成 pi-ai ImageContent 块。只有已物化 base64（data）的
+// 图片才会进入模型请求：canonical transcript / checkpoint 中只存 path，
+// 由 Runtime 在调用边界物化；未物化的图片（如摘要器的裁剪消息）直接跳过。
+function toPiImageBlocks(images: ChatMessage['images']): ImageContent[] {
+  if (!images) return [];
+  const blocks: ImageContent[] = [];
+  for (const image of images) {
+    if (typeof image.data === 'string' && image.data.length > 0) {
+      blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
+    }
+  }
+  return blocks;
+}
+
 function toPiContext(
   messages: ChatMessage[],
   tools: ToolSchema[] | undefined,
@@ -205,7 +236,19 @@ function toPiContext(
     if (message.role === 'system') continue;
 
     if (message.role === 'user') {
-      converted.push({ role: 'user', content: message.content, timestamp: Date.now() });
+      const imageBlocks = toPiImageBlocks(message.images);
+      if (imageBlocks.length > 0) {
+        converted.push({
+          role: 'user',
+          content: [
+            ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+            ...imageBlocks,
+          ],
+          timestamp: Date.now(),
+        });
+      } else {
+        converted.push({ role: 'user', content: message.content, timestamp: Date.now() });
+      }
       continue;
     }
 
@@ -218,7 +261,7 @@ function toPiContext(
       role: 'toolResult',
       toolCallId: message.tool_call_id ?? 'unknown-tool-call',
       toolName: findToolName(messages, message.tool_call_id ?? ''),
-      content: [{ type: 'text', text: message.content }],
+      content: [{ type: 'text', text: message.content }, ...toPiImageBlocks(message.images)],
       isError: false,
       timestamp: Date.now(),
     });
@@ -544,6 +587,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
   piProviderId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  vision: boolean;
 } {
   if (modelConfig) {
     if (!modelConfig.baseUrl || !modelConfig.apiKey || !modelConfig.model) {
@@ -560,6 +604,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
       ...(modelConfig.piProviderId ? { piProviderId: modelConfig.piProviderId } : {}),
       contextWindow: modelConfig.contextWindow,
       maxOutputTokens: modelConfig.maxOutputTokens,
+      vision: modelConfig.vision === true,
     };
   }
   return {
@@ -567,6 +612,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
     apiKey: API_KEY,
     model: MODEL,
     providerId: 'payaso-env',
+    vision: false,
   };
 }
 
@@ -619,11 +665,18 @@ function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>)
       contextWindowTokens: config.contextWindow ?? sourceModel.contextWindow,
       maxOutputTokens: config.maxOutputTokens ?? sourceModel.maxTokens,
     });
+    // 内置 Provider 的 input 能力来自注册表；设置位显式开启视觉时补登记 image，
+    // 让 openai-completions 适配层把图片块转成 image_url（它按 model.input 判定）。
+    const input: Model<Api>['input'] =
+      config.vision && !sourceModel.input.includes('image')
+        ? ([...sourceModel.input, 'image'] as Model<Api>['input'])
+        : sourceModel.input;
     const model: Model<Api> = {
       ...sourceModel,
       id: config.model,
       provider: config.providerId,
       baseUrl: config.baseUrl,
+      input,
       contextWindow: modelContext.contextWindowTokens,
       maxTokens: modelContext.maxOutputTokens,
     };
@@ -652,7 +705,8 @@ function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>)
     provider: config.providerId,
     baseUrl: config.baseUrl,
     reasoning: false,
-    input: ['text'],
+    // 自定义 OpenAI 兼容端点：视觉能力由设置页按模型显式声明（无法从协议探测）。
+    input: config.vision ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: modelContext.contextWindowTokens,
     maxTokens: modelContext.maxOutputTokens,

@@ -12,7 +12,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execute, type ToolContext, type ToolSandboxEvent } from '../src/tools/tools.js';
+import {
+  execute as executeRaw,
+  normalizeToolResult,
+  type ToolContext,
+  type ToolSandboxEvent,
+} from '../src/tools/tools.js';
+// 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
+}
 import '../src/tools/runtime-tools.js';
 import type { PermissionMode } from '../src/permission-mode.js';
 import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';

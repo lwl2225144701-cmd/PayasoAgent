@@ -10,7 +10,7 @@ import {
 } from '../bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
-import type { ChatMessage, ChatStreamDelta, ModelConfig } from '../llm/llm.js';
+import type { ChatMessage, ChatStreamDelta, MessageImage, ModelConfig } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import {
   DEFAULT_PERMISSION_MODE,
@@ -20,6 +20,7 @@ import {
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
 import { runAgent } from '../runtime/agent.js';
 import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
+import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
 import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
 import {
@@ -47,8 +48,24 @@ import {
   type TerminalRunStatus,
   type UpdateModelProviderInput,
 } from './persistence/store.js';
-import { type HostEvent, type StreamingEvent, sseEncode } from './run-events.js';
+import { getPiAiProviderModel } from './pi-ai-providers.js';
+import {
+  type HostAttachment,
+  type HostEvent,
+  type StreamingEvent,
+  sseEncode,
+} from './run-events.js';
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from './workspace.js';
+
+// 创建 Run 时随消息上传的图片附件（routes 已做 MIME/大小/数量校验）。
+export interface CreateRunAttachmentInput {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
+// 附件在工作区内的落盘目录（相对 workspaceRoot）。
+const ATTACHMENT_DIR = 'input/attachments';
 
 // v2.0.1 JIT Approval：批准请求等待超时（用户 60s 未裁决 → 拒绝，不无限挂起 Run）
 const APPROVAL_TIMEOUT_MS = 60_000;
@@ -586,6 +603,9 @@ export class RunManager {
       permissionMode?: PermissionMode;
       providerId?: string;
       model?: string;
+      // 用户随消息发送的图片附件：Host 在会话工作区内落盘后把路径引用
+      // 交给 Runtime（base64 不进 Run 状态 / 事件 / checkpoint）。
+      attachments?: CreateRunAttachmentInput[];
     },
   ): { runId: string; sessionId: string } {
     this.ensureOpen();
@@ -645,12 +665,39 @@ export class RunManager {
       permissionMode,
     };
 
+    // 附件落盘：写入会话工作区 input/attachments/，文件名带 runId 前缀避免
+    // 同一会话多轮 Run 互相覆盖。落盘失败按创建失败处理（不留下无附件的 Run）。
+    const attachmentImages: MessageImage[] = [];
+    const attachmentViews: HostAttachment[] = [];
+    for (const attachment of opts?.attachments ?? []) {
+      const { relPath } = writeAttachmentFile({
+        workspaceRoot: run.workspaceRoot,
+        directory: ATTACHMENT_DIR,
+        fileName: `${runId.slice(0, 8)}-${attachment.name}`,
+        dataBase64: attachment.dataBase64,
+      });
+      attachmentImages.push({ mimeType: attachment.mimeType, path: relPath });
+      attachmentViews.push({ name: attachment.name, mimeType: attachment.mimeType, path: relPath });
+    }
+
     // Persist before execution starts, so every Runtime event has a parent Run.
     this.store.createRun(this.toStoredRun(run));
     this.runs.set(runId, run);
-    this.record(run, { type: 'run_started', runId, timestamp: now });
+    this.record(run, {
+      type: 'run_started',
+      runId,
+      timestamp: now,
+      ...(attachmentViews.length > 0 ? { attachments: attachmentViews } : {}),
+    });
     if (opts?.startAgent !== false) {
-      this.startAgent(run, task, undefined, conversationHistory, previousHarnessState);
+      this.startAgent(
+        run,
+        task,
+        undefined,
+        conversationHistory,
+        previousHarnessState,
+        attachmentImages,
+      );
     }
     return { runId, sessionId: session.sessionId };
   }
@@ -1114,6 +1161,7 @@ export class RunManager {
     resume?: Parameters<typeof runAgent>[1],
     conversationHistory: ChatMessage[] = [],
     previousHarnessState?: ContextHarnessState,
+    attachments?: MessageImage[],
   ): void {
     let pendingDelta: StreamingEvent | null = null;
     let deltaTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1170,6 +1218,7 @@ export class RunManager {
           approvalPort: this.approvalPort(),
           toolchainPreparationPort: this.toolchainPreparationPort(),
           conversationHistory,
+          attachments,
           modelConfig,
           contextHarness: new DefaultContextHarness({
             permissionMode: run.permissionMode,
@@ -1408,6 +1457,21 @@ export class RunManager {
     return this.store.importEnvFallback(input);
   }
 
+  // 视觉能力解析：设置页显式勾选优先；pi-ai 内置 Provider 再兜底查注册表
+  // （注册表的 model.input 是权威能力声明）；自定义 OpenAI 兼容端点无法从
+  // 协议探测，缺省 false —— 由用户按供应商文档在设置页勾选。
+  private resolveVision(
+    piProviderId: string | undefined,
+    model: string,
+    explicit?: boolean,
+  ): boolean {
+    if (explicit === true) return true;
+    if (piProviderId) {
+      return getPiAiProviderModel(piProviderId, model)?.model.input.includes('image') ?? false;
+    }
+    return false;
+  }
+
   // 原子解析模型配置：要么返回完整可用的 {providerId, baseUrl, apiKey, model}，
   // 要么返回 undefined（调用方整组回退环境配置）。绝不返回残缺元组：
   // 默认 Provider 只有配置了密钥且有模型时才参与选中，否则跳过（而不是拿着空密钥命中）。
@@ -1433,6 +1497,9 @@ export class RunManager {
       return {
         providerId: requestedProviderId,
         ...(selected.piProviderId ? { piProviderId: selected.piProviderId } : {}),
+        ...(this.resolveVision(selected.piProviderId, requestedModelId, selected.vision)
+          ? { vision: true }
+          : {}),
         baseUrl: selected.baseUrl,
         apiKey: selected.apiKey,
         model: requestedModelId,
@@ -1486,6 +1553,9 @@ export class RunManager {
       return {
         providerId: run.providerId,
         ...(secret.piProviderId ? { piProviderId: secret.piProviderId } : {}),
+        ...(this.resolveVision(secret.piProviderId, run.model, secret.vision)
+          ? { vision: true }
+          : {}),
         baseUrl: secret.baseUrl,
         apiKey: secret.apiKey,
         model: run.model,

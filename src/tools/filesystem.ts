@@ -88,6 +88,16 @@ export function canonicalPathKey(context: ToolContext, rel: string): string | nu
   }
 }
 
+// 视觉读图用：把真实路径转成工作区相对路径（"/" 分隔）。
+// full-access 下读取工作区外文件时返回 null —— 图片物化与前端预览都以
+// 工作区为根，工作区外图片无法随消息传输，调用方回退文本占位。
+function workspaceRelativePath(context: ToolContext, real: string): string | null {
+  const relKey = path.relative(context.workspaceRoot, real);
+  if (relKey.startsWith('..') || path.isAbsolute(relKey)) return null;
+  const norm = relKey.split(path.sep).join('/').replace(/^\.\//, '');
+  return norm === '' || norm === '..' ? null : norm;
+}
+
 // 简单二进制检测：NUL 字节或大量不可打印控制字符（UTF-8 多字节 >0x7F 不误判）
 export function isProbablyBinary(buf: Buffer): boolean {
   const sample = buf.length > 8192 ? buf.subarray(0, 8192) : buf;
@@ -193,16 +203,16 @@ registerAlias('ls', 'listDir');
 
 // ---- ② read（文本截断 + continuation hint；图片省略；其他二进制乱码截断）----
 
-// 图片 magic bytes 检测：JPEG / PNG / GIF / WebP / BMP
-function sniffImage(buf: Buffer): { kind: string } | null {
+// 图片 magic bytes 检测：JPEG / PNG / GIF / WebP / BMP，返回 kind 与 MIME
+function sniffImage(buf: Buffer): { kind: string; mimeType: string } | null {
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-    return { kind: 'JPEG' };
+    return { kind: 'JPEG', mimeType: 'image/jpeg' };
   }
   if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-    return { kind: 'PNG' };
+    return { kind: 'PNG', mimeType: 'image/png' };
   }
   if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) {
-    return { kind: 'GIF' };
+    return { kind: 'GIF', mimeType: 'image/gif' };
   }
   if (
     buf.length >= 12 &&
@@ -215,18 +225,21 @@ function sniffImage(buf: Buffer): { kind: string } | null {
     buf[10] === 0x42 &&
     buf[11] === 0x50
   ) {
-    return { kind: 'WebP' };
+    return { kind: 'WebP', mimeType: 'image/webp' };
   }
   if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
-    return { kind: 'BMP' };
+    return { kind: 'BMP', mimeType: 'image/bmp' };
   }
   return null;
 }
 
+// 视觉模型下单张图片的最大字节数（超限返回文本提示，不塞进上下文）。
+const MAX_IMAGE_READ_BYTES = 8 * 1024 * 1024;
+
 register({
   name: 'read',
   description:
-    '读取文件内容。文本自动截断（超 64KB 时返回前部+尾部与续读提示，可用 offset 字节偏移续读剩余部分）；图片文件省略返回；其他二进制按文本截断返回。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
+    '读取文件内容。文本自动截断（超 64KB 时返回前部+尾部与续读提示，可用 offset 字节偏移续读剩余部分）；图片文件：当前模型支持视觉时直接返回图片供查看分析（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示；其他二进制按文本截断返回。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
   effect: 'read',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '').trim();
@@ -273,13 +286,35 @@ register({
       fs.closeSync(chunk);
     }
 
-    // 图片 → 省略提示（不把二进制喂给模型，也不判 invalid）
+    // 图片 → 视觉模型：返回图片引用（Runtime 在调用模型前物化为 base64）；
+    // 非视觉模型 / 工作区外文件 / 超大图 → 文本占位（不把二进制喂给模型，也不判 invalid）。
     const image = sniffImage(buf);
     if (image) {
-      return (
-        `[图片文件省略] ${rel}: ${image.kind} 图片（文件共 ${st.size} 字节）。` +
-        `当前 read 模式省略图片内容。`
-      );
+      if (context.vision !== true) {
+        return (
+          `[图片文件省略] ${rel}: ${image.kind} 图片（文件共 ${st.size} 字节）。` +
+          `当前模型不支持视觉输入，无法查看图片内容。`
+        );
+      }
+      if (st.size > MAX_IMAGE_READ_BYTES) {
+        return (
+          `[图片过大省略] ${rel}: ${image.kind} 图片（文件共 ${st.size} 字节，` +
+          `上限 ${MAX_IMAGE_READ_BYTES} 字节）。图片过大未载入上下文，请缩小后再读。`
+        );
+      }
+      const relPath = workspaceRelativePath(context, real);
+      if (!relPath) {
+        return (
+          `[工作区外图片省略] ${rel}: ${image.kind} 图片。视觉读图仅支持工作区内文件，` +
+          `可先将图片复制到工作区再用 read 读取。`
+        );
+      }
+      return {
+        content:
+          `[图片] ${rel}: ${image.kind} 图片（${st.size} 字节）。` +
+          `图片已随本结果提供，可直接查看并分析其内容。`,
+        images: [{ mimeType: image.mimeType, path: relPath }],
+      };
     }
 
     const total = st.size;

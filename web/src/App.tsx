@@ -10,9 +10,11 @@ import {
   getWorkspace,
   listFiles,
   listModels,
+  listPiAiProviders,
   listRuns,
   listSessions,
   openWorkspace,
+  readImageAsBase64,
   resumeRun,
   setDefaultModel,
   stopRun,
@@ -34,6 +36,7 @@ import type {
   HostSession,
   ModelProviderView,
   ModelSelection,
+  PiAiProviderInfo,
   WorkspaceView,
 } from './types';
 
@@ -66,6 +69,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaultModel, setDefaultModelState] = useState<DefaultModelView | null>(null);
   const [models, setModels] = useState<ModelProviderView[]>([]);
+  // pi-ai 内置目录：用于解析未显式配置视觉开关的内置 Provider 模型是否支持图片输入
+  const [piProviders, setPiProviders] = useState<PiAiProviderInfo[]>([]);
   const previousDefaultModelRef = useRef<DefaultModelView | null>(null);
   const modelSaveVersionRef = useRef(0);
   // 默认模型保存请求在途标记：轮询/聚焦刷新时避免用旧服务端快照覆盖乐观更新
@@ -148,6 +153,16 @@ export default function App() {
     }
   }, []);
 
+  // pi-ai 目录只影响视觉能力提示，加载失败静默降级（不显示视觉警告）
+  const refreshPiProviders = useCallback(async () => {
+    try {
+      const resp = await listPiAiProviders();
+      setPiProviders(resp.providers);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const refreshSessions = useCallback(
     async (mode: 'merge' | 'replace' = 'merge'): Promise<HostSession[]> => {
       try {
@@ -179,8 +194,9 @@ export default function App() {
       .then((resp) => setWorkspace(resp.workspace))
       .catch(() => {});
     void refreshModels();
+    void refreshPiProviders();
     void refreshDefaultModel();
-  }, [refreshRuns, refreshSessions, refreshModels, refreshDefaultModel]);
+  }, [refreshRuns, refreshSessions, refreshModels, refreshPiProviders, refreshDefaultModel]);
 
   // 窄视口下自动折叠 Sidebar；用户手动切换后不再自动干预本次会话
   useEffect(() => {
@@ -230,6 +246,25 @@ export default function App() {
         : {}),
     };
   })();
+
+  // 当前模型是否支持图片输入：用户显式开关 > pi-ai 注册表声明 > false。
+  // 与后端 run-manager.resolveVision 的解析优先级保持一致。
+  const currentModelVision: boolean = (() => {
+    if (!currentModelSelection) return false;
+    const provider = models.find((m) => m.id === currentModelSelection.providerId);
+    if (!provider) return false;
+    if (provider.modelCapabilities?.[currentModelSelection.model]?.vision === true) return true;
+    if (provider.piProviderId) {
+      const pi = piProviders.find((p) => p.id === provider.piProviderId);
+      return (
+        pi?.models.some(
+          (m) => m.id === currentModelSelection.model && m.input.includes('image'),
+        ) ?? false
+      );
+    }
+    return false;
+  })();
+
   const currentSessionRuns = runs
     .filter((run) => run.sessionId === currentSessionId)
     .sort((a, b) => a.turnIndex - b.turnIndex);
@@ -257,10 +292,21 @@ export default function App() {
   }, [currentRunId]);
 
   const handleCreateRun = useCallback(
-    async (task: string) => {
+    async (task: string, attachments?: File[]) => {
       const trimmed = task.trim();
       if (!trimmed) return;
       try {
+        // 图片先转 base64 随 createRun 上报；落盘后 Host 只在工作区保留文件，
+        // base64 不进入任何持久化状态。
+        const attachmentPayload = attachments?.length
+          ? await Promise.all(
+              attachments.map(async (file) => ({
+                name: file.name.replace(/[\\/]/g, '_') || 'image.png',
+                mimeType: file.type || 'application/octet-stream',
+                dataBase64: await readImageAsBase64(file),
+              })),
+            )
+          : undefined;
         const resp = await createRun(
           trimmed,
           currentSessionId ?? undefined,
@@ -269,6 +315,7 @@ export default function App() {
           currentModelSelection
             ? { providerId: currentModelSelection.providerId, model: currentModelSelection.model }
             : undefined,
+          attachmentPayload,
         );
         const isNewSession = !currentSessionId;
         // 立刻把刚创建的 Run 合并进 runs 数组（乐观更新），避免等 refreshRuns 回来之前 landing 分支还在显示
@@ -577,6 +624,7 @@ export default function App() {
               currentModel={currentModelSelection ?? undefined}
               models={models}
               onSelectModel={handleSelectModel}
+              visionSupported={currentModelVision}
               permissionMode={permissionMode}
               onSelectPermission={setPermissionMode}
             />
@@ -594,6 +642,7 @@ export default function App() {
             currentModel={currentModelSelection ?? undefined}
             models={models}
             onSelectModel={handleSelectModel}
+            visionSupported={currentModelVision}
             contextUsage={contextUsage ?? undefined}
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}

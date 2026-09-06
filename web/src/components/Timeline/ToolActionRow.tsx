@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { workspaceFileUrl } from '../../api';
 import { formatDurationMs, previewArgs, TOOL_STATUS_LABELS } from '../../format';
 import {
   ChartIcon,
@@ -14,6 +15,7 @@ import styles from './Timeline.module.css';
 
 interface ToolActionRowProps {
   data: ToolCallData;
+  runId: string;
 }
 
 /**
@@ -27,7 +29,7 @@ interface ToolActionRowProps {
  * Click expands an inline "技术详情" section with tool name / args / result /
  * error / duration / operationKey / reasoning.
  */
-export function ToolActionRow({ data }: ToolActionRowProps) {
+export function ToolActionRow({ data, runId }: ToolActionRowProps) {
   const [open, setOpen] = useState(false);
   const toolName = displayToolName(data.tool);
   const argsPreview = previewArgs(data.args);
@@ -70,6 +72,28 @@ export function ToolActionRow({ data }: ToolActionRowProps) {
           <ChevronRightIcon size={14} className={`${styles.chev} ${open ? styles.chevOpen : ''}`} />
         </span>
       </button>
+
+      {data.images && data.images.length > 0 && (
+        <div className={styles.toolImageStrip}>
+          {data.images.map((img) => (
+            <a
+              key={img.path}
+              href={workspaceFileUrl(runId, img.path)}
+              target="_blank"
+              rel="noreferrer"
+              title={img.path}
+              className={styles.toolImageLink}
+            >
+              <img
+                src={workspaceFileUrl(runId, img.path)}
+                alt={img.path}
+                loading="lazy"
+                className={styles.toolImage}
+              />
+            </a>
+          ))}
+        </div>
+      )}
 
       {open && (
         <div className={styles.toolDetail}>

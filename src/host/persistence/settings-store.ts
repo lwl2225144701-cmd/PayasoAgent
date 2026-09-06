@@ -5,11 +5,14 @@ import { createSecretStore, providerSecretKey, type SecretStore } from '../secre
 export type ModelProviderKind = 'builtin' | 'custom';
 export type ModelProviderProbeStatus = 'available' | 'error';
 
-// 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出。
+// 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出/视觉支持。
 // 缺省字段走"内置注册表 → fallback 256K"链路；预算解析优先级见 model-context.ts。
 export interface ModelCapabilitySetting {
   contextWindow?: number;
   maxOutputTokens?: number;
+  // 该模型是否支持图片输入（视觉）。自定义 OpenAI 兼容端点无法从协议探测，
+  // 由用户按供应商文档勾选；pi-ai 内置模型另走注册表自动识别。
+  vision?: boolean;
 }
 
 // Provider metadata（SQLite 持久化）。raw apiKey 不在此结构中：
@@ -299,6 +302,12 @@ export class SettingsStore {
         }
         entry.maxOutputTokens = capability.maxOutputTokens;
       }
+      if (capability.vision !== undefined) {
+        if (typeof capability.vision !== 'boolean') {
+          throw new Error('vision must be a boolean');
+        }
+        entry.vision = capability.vision;
+      }
       if (Object.keys(entry).length > 0) result[modelId] = entry;
     }
     return Object.keys(result).length > 0 ? result : undefined;
@@ -440,6 +449,7 @@ export class SettingsStore {
     piProviderId?: string;
     contextWindow?: number;
     maxOutputTokens?: number;
+    vision?: boolean;
   } | null {
     const provider = this.getAllModels().find((m) => m.id === id);
     if (!provider?.hasApiKey) return null;
@@ -457,6 +467,7 @@ export class SettingsStore {
       ...(capability?.maxOutputTokens !== undefined
         ? { maxOutputTokens: capability.maxOutputTokens }
         : {}),
+      ...(capability?.vision !== undefined ? { vision: capability.vision } : {}),
     };
   }
 

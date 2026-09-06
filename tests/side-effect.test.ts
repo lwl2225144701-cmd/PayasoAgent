@@ -12,7 +12,21 @@ import {
   resolveOperation,
   type SideEffectGuard,
 } from '../src/runtime/side-effect.js';
-import { execute, getTool, register, type ToolContext } from '../src/tools/tools.js';
+import {
+  execute as executeRaw,
+  getTool,
+  normalizeToolResult,
+  register,
+  type ToolContext,
+} from '../src/tools/tools.js';
+// 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
+}
 
 const tests: { name: string; fn: () => void | Promise<void> }[] = [];
 function test(name: string, fn: () => void | Promise<void>) {

@@ -33,6 +33,34 @@ export interface ToolContext {
   // Startup-discovered, path-free capability snapshot. Runtime-only: the LLM
   // cannot supply or upgrade it, and concrete tools cannot widen the policy.
   toolchain?: RuntimeToolchainCapabilities;
+  // 当前 Run 使用的模型是否支持图片输入（Runtime 按模型能力注入，LLM 不可见）。
+  // 读图类工具据此返回图片块；为 false 时一律返回文本占位，保证文本模型可用。
+  vision?: boolean;
+}
+
+// 多模态工具返回：文本说明（模型可见、走 output-guard 截断）+ 图片引用。
+// images 只携带工作区相对路径；base64 物化在 Runtime 调用模型前统一完成，
+// 工具本身不读图片字节进返回值（避免大对象穿过 trace / checkpoint）。
+export interface ToolImage {
+  mimeType: string;
+  path: string;
+}
+
+export interface ToolMultimodalResult {
+  content: string;
+  images?: ToolImage[];
+}
+
+// 工具执行结果：纯文本（向后兼容）或 文本+图片 的多模态结果。
+export type ToolResult = string | ToolMultimodalResult;
+
+export function normalizeToolResult(result: ToolResult): {
+  text: string;
+  images?: ToolImage[];
+} {
+  return typeof result === 'string'
+    ? { text: result }
+    : { text: result.content, ...(result.images?.length ? { images: result.images } : {}) };
 }
 
 export type ToolSandboxEvent =
@@ -63,7 +91,7 @@ export interface Tool {
   // v1.5 融合身份机制：getOperationKey 可选接收 ToolContext（运行时注入，含 runId/workspaceRoot），
   //   路径类工具用它做路径归一化（canonicalPathKey），使 ./work/a.txt 与 work/a.txt 归一为同一 key 且不暴露宿主绝对路径。
   getOperationKey?: (args: Record<string, unknown>, context?: ToolContext) => string;
-  execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>;
+  execute: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
   // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
   // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
   validateResult?: (result: unknown) => boolean | { valid: boolean; reason?: string };
@@ -150,7 +178,7 @@ export async function execute(
   name: string,
   args: Record<string, unknown>,
   context: ToolContext,
-): Promise<string> {
+): Promise<ToolResult> {
   const tool = registry.get(name);
   if (!tool) throw new Error(`tool "${name}" not found`);
 

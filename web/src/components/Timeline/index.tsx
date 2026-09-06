@@ -4,6 +4,7 @@ import {
   openFileInDefaultBrowser,
   resolveApproval,
   resolveToolchainPreparation,
+  workspaceFileUrl,
 } from '../../api';
 import {
   formatBytes,
@@ -27,11 +28,12 @@ import type {
   ToolchainPreparationRequestedEvent,
   ToolErrorEvent,
   ToolResultEvent,
+  TraceImage,
 } from '../../types';
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
-import { findLatestContextUsage } from './context-gauge';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
+import { findLatestContextUsage } from './context-gauge';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { ThinkBlock } from './ThinkBlock';
 import styles from './Timeline.module.css';
@@ -69,6 +71,8 @@ export interface ToolCallData {
   durationMs?: number;
   result?: unknown;
   error?: unknown;
+  /** 工具产出的图片（工作区相对路径，需配合 runId 拼访问地址） */
+  images?: TraceImage[];
 }
 
 function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -95,6 +99,7 @@ function ExecutionPanel({
   startedAt,
   status,
   finishedAt,
+  runId,
 }: {
   groups: ToolStepGroup[];
   thinking: string;
@@ -102,6 +107,7 @@ function ExecutionPanel({
   startedAt: string | undefined;
   status: HostRunStatus;
   finishedAt: string;
+  runId: string;
 }) {
   const [open, setOpen] = useState(running);
   const wasRunning = useRef(running);
@@ -211,6 +217,7 @@ function ExecutionPanel({
                     <ToolActionRow
                       key={tool.operationKey ?? `${tool.tool}-${tool.startedAt}`}
                       data={tool}
+                      runId={runId}
                     />
                   ))}
                 </ul>
@@ -228,7 +235,13 @@ function ExecutionPanel({
   );
 }
 
-export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand, onContextUsage }: TimelineProps) {
+export function Timeline({
+  run,
+  embedded = false,
+  onRunTerminal,
+  onRetryCommand,
+  onContextUsage,
+}: TimelineProps) {
   // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
@@ -446,6 +459,29 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand,
       <div className={styles.timeline}>
         <article className={styles.userBlock}>
           <p className={styles.userText}>{run.task}</p>
+          {runStarted?.type === 'run_started' &&
+            runStarted.attachments &&
+            runStarted.attachments.length > 0 && (
+              <div className={styles.userAttachments}>
+                {runStarted.attachments.map((att) => (
+                  <a
+                    key={att.path}
+                    className={styles.userAttachmentLink}
+                    href={workspaceFileUrl(run.runId, att.path)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={att.name}
+                  >
+                    <img
+                      className={styles.userAttachmentImg}
+                      src={workspaceFileUrl(run.runId, att.path)}
+                      alt={att.name}
+                      loading="lazy"
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
           <time className={styles.time}>{formatTime(runStarted?.timestamp ?? run.createdAt)}</time>
         </article>
 
@@ -582,6 +618,7 @@ export function Timeline({ run, embedded = false, onRunTerminal, onRetryCommand,
               startedAt={runStarted?.timestamp ?? run.createdAt}
               status={run.status}
               finishedAt={finalTimestamp}
+              runId={run.runId}
             />
 
             {/* Final result — exactly once, no card, no success badge. */}
@@ -892,6 +929,7 @@ function buildFlatToolCards(events: HostEvent[]): Array<ToolCallData & { __step:
       if (target) {
         target.status = 'completed';
         target.result = res.result;
+        if (res.images && res.images.length > 0) target.images = res.images;
         target.durationMs =
           res.durationMs != null
             ? res.durationMs

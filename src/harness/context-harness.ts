@@ -1,4 +1,4 @@
-import type { ChatMessage, ModelConfig, ToolSchema } from '../llm/llm.js';
+import type { ChatMessage, MessageImage, ModelConfig, ToolSchema } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import type { PermissionMode } from '../permission-mode.js';
 import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
@@ -41,7 +41,11 @@ export interface PreparedModelTurn {
 
 export interface AgentContextHarness {
   readonly modelContext: ModelContextConfig;
-  createTranscript(task: string, history?: ChatMessage[]): ChatMessage[];
+  createTranscript(
+    task: string,
+    history?: ChatMessage[],
+    attachments?: MessageImage[],
+  ): ChatMessage[];
   prepareTurn(
     transcript: ChatMessage[],
     scratchpad: ScratchpadView,
@@ -101,10 +105,16 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.toolchain = capabilities;
   }
 
-  createTranscript(task: string, history: ChatMessage[] = []): ChatMessage[] {
+  createTranscript(
+    task: string,
+    history: ChatMessage[] = [],
+    attachments: MessageImage[] = [],
+  ): ChatMessage[] {
     // 会话历史可能来自上一轮 checkpoint 的完整 transcript（含工具交互）。
     // 保留 tool 消息及其 tool_calls / tool_call_id，跨轮调用链对模型保持连贯；
     // 上一轮的 system 不携带（本轮由 Harness 重新构建）。
+    // images 只保留路径引用（checkpoint/transcript 轻量），base64 物化在
+    // 每轮调用模型前由 Runtime 完成；data 字段不进入 transcript。
     const conversation = history
       .filter(
         (message) =>
@@ -115,11 +125,30 @@ export class DefaultContextHarness implements AgentContextHarness {
         content: message.content,
         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
         ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+        ...(message.images?.length
+          ? {
+              images: message.images.map((image) => ({
+                mimeType: image.mimeType,
+                path: image.path,
+              })),
+            }
+          : {}),
       })) as ChatMessage[];
     return [
       { role: 'system', content: this.systemPromptText() },
       ...conversation,
-      { role: 'user', content: task },
+      {
+        role: 'user',
+        content: task,
+        ...(attachments.length > 0
+          ? {
+              images: attachments.map((image) => ({
+                mimeType: image.mimeType,
+                path: image.path,
+              })),
+            }
+          : {}),
+      },
     ];
   }
 

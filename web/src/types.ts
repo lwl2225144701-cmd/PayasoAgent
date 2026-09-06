@@ -48,6 +48,8 @@ export interface FileEntry {
 export interface ModelCapabilitySetting {
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** 模型是否支持图片输入（视觉能力）；显式配置优先于 pi-ai 注册表声明 */
+  vision?: boolean;
 }
 
 export type ProviderModelCategory =
@@ -63,6 +65,8 @@ export interface ProviderModelInfo {
   category: ProviderModelCategory;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** pi-ai 注册表声明的图片输入能力（来自模型 input modalities） */
+  vision?: boolean;
 }
 
 export interface PiAiModelInfo extends ProviderModelInfo {
@@ -156,11 +160,19 @@ export interface ToolCallInvalidEvent extends TraceEventBase {
   code: 'INVALID_ARGUMENT_JSON' | 'INVALID_ARGUMENTS' | 'TOOL_NOT_FOUND';
 }
 
+/** 工具产出的图片引用：工作区相对路径，二进制经 GET /runs/:id/files/<path> 读取 */
+export interface TraceImage {
+  mimeType: string;
+  path: string;
+}
+
 export interface ToolResultEvent extends TraceEventBase {
   type: 'tool_result';
   tool: string;
   result: string;
   durationMs: number;
+  /** 多模态工具结果附带的图片（如视觉模型读取图片文件） */
+  images?: TraceImage[];
 }
 
 export interface ToolResultInvalidEvent extends TraceEventBase {
@@ -265,11 +277,19 @@ export interface ErrorEvent extends TraceEventBase {
   message: string;
 }
 
+/** 用户随任务上传的图片附件（已落盘到会话工作区 input/attachments/） */
+export interface RunAttachment {
+  name: string;
+  mimeType: string;
+  path: string;
+}
+
 // Host 生命周期事件（无 step 字段）
 export interface RunStartedEvent {
   type: 'run_started';
   runId: string;
   timestamp: string;
+  attachments?: RunAttachment[];
 }
 
 // 用户已请求停止（run_stopping）；执行真正退出后才会收到 run_stopped

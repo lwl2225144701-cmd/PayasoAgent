@@ -1,5 +1,12 @@
 // Trace 模块 — 记录 Agent 每一步执行过程（LLM 调用 / 工具调用 / 最终答案 / 错误）
 
+// 工具结果附带的图片引用（工作区相对路径 + MIME），与 tools.js 的 ToolImage 同构。
+// trace 只存路径引用，不存 base64（事件持久化进 checkpoint，须保持轻量）。
+export interface TraceImage {
+  mimeType: string;
+  path: string;
+}
+
 // ---- 事件类型定义 ----
 // 完整事件（存储在 trace.events 中，step/timestamp 由 addEvent 自动填充）
 export type TraceEvent =
@@ -38,8 +45,10 @@ export type TraceEvent =
       step: number;
       timestamp: string;
       tool: string;
-      result: string; // 执行结果
+      result: string; // 执行结果（文本部分；图片以路径引用携带）
       durationMs: number; // 执行耗时
+      // 视觉读图：工具返回的图片引用（工作区相对路径），前端可据此预览
+      images?: TraceImage[];
       // v2.0 审计：执行时的全局网络模式
       network?: 'on' | 'off' | 'ask';
     }
@@ -190,6 +199,7 @@ export type TraceEventInput =
       tool: string;
       result: string;
       durationMs: number;
+      images?: TraceImage[];
       network?: 'on' | 'off' | 'ask';
     }
   | {
