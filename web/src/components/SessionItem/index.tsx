@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { formatRelativeTime } from '../../format';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import type { HostSession } from '../../types';
-import { IconButton } from '../IconButton';
 import { ArchiveIcon, MoreIcon, PencilIcon } from '../icons';
 import styles from './SessionItem.module.css';
 
@@ -113,29 +113,31 @@ export function SessionItem({
         <MoreIcon size={14} />
       </button>
 
-      {menu && (
-        <div
-          ref={menuRef}
-          className={styles.menu}
-          style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 188)), top: menu.y }}
-        >
-          <button
-            type="button"
-            className={styles.menuItem}
-            onClick={() => {
-              setMenu(null);
-              setRenaming(true);
-            }}
+      {menu &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className={styles.menu}
+            style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 188)), top: menu.y }}
           >
-            <PencilIcon size={14} />
-            <span>重命名</span>
-          </button>
-          <button type="button" className={styles.menuItem} onClick={confirmArchive}>
-            <ArchiveIcon size={14} />
-            <span>归档</span>
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              className={styles.menuItem}
+              onClick={() => {
+                setMenu(null);
+                setRenaming(true);
+              }}
+            >
+              <PencilIcon size={14} />
+              <span>重命名</span>
+            </button>
+            <button type="button" className={styles.menuItem} onClick={confirmArchive}>
+              <ArchiveIcon size={14} />
+              <span>归档</span>
+            </button>
+          </div>,
+          document.getElementById('payaso-portal-root') ?? document.body,
+        )}
     </div>
   );
 }

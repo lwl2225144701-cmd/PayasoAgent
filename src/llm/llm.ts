@@ -259,44 +259,49 @@ async function readStreamingMessage(
   let finishReason: string | null = null;
 
   const consumeBlock = (block: string): void => {
-    const payload = block
+    // SSE 的每条 data 记录都是一个独立 JSON 帧。部分 OpenAI 兼容服务
+    // 会省略事件之间的空行；逐行解析可以避免把相邻帧拼成非法 JSON。
+    const payloads = block
       .split(/\r?\n/)
       .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).trimStart())
-      .join('\n');
-    if (!payload || payload === '[DONE]') return;
-    const parsed = JSON.parse(payload) as unknown;
-    if (!isRecord(parsed) || !Array.isArray(parsed.choices) || parsed.choices.length === 0) return;
-    const choice = parsed.choices[0];
-    if (!isRecord(choice)) return;
+      .map((line) => line.slice(5).trimStart());
 
-    // 先检查 finish_reason：某些 provider 最后一个 chunk 可能没有 delta 字段。
-    if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
-      finishReason = choice.finish_reason;
-    }
+    for (const payload of payloads) {
+      if (!payload || payload === '[DONE]') continue;
+      const parsed = JSON.parse(payload) as unknown;
+      if (!isRecord(parsed) || !Array.isArray(parsed.choices) || parsed.choices.length === 0)
+        continue;
+      const choice = parsed.choices[0];
+      if (!isRecord(choice)) continue;
 
-    if (!isRecord(choice.delta)) return;
-    const delta = choice.delta;
-    if (typeof delta.content === 'string' && delta.content) {
-      content += delta.content;
-      feedInlineContent(delta.content);
-    }
-    if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-      reasoning += delta.reasoning_content;
-      onDelta?.({ messageId, type: 'reasoning_delta', delta: delta.reasoning_content });
-    }
-    if (Array.isArray(delta.tool_calls)) {
-      for (const raw of delta.tool_calls) {
-        if (!isRecord(raw)) throw new Error('LLM streaming response has invalid tool_call delta');
-        const index = typeof raw.index === 'number' ? raw.index : 0;
-        const previous = toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
-        if (typeof raw.id === 'string') previous.id += raw.id;
-        if (isRecord(raw.function)) {
-          if (typeof raw.function.name === 'string') previous.name += raw.function.name;
-          if (typeof raw.function.arguments === 'string')
-            previous.arguments += raw.function.arguments;
+      // 先检查 finish_reason：某些 provider 最后一个 chunk 可能没有 delta 字段。
+      if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+
+      if (!isRecord(choice.delta)) continue;
+      const delta = choice.delta;
+      if (typeof delta.content === 'string' && delta.content) {
+        content += delta.content;
+        feedInlineContent(delta.content);
+      }
+      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+        reasoning += delta.reasoning_content;
+        onDelta?.({ messageId, type: 'reasoning_delta', delta: delta.reasoning_content });
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        for (const raw of delta.tool_calls) {
+          if (!isRecord(raw)) throw new Error('LLM streaming response has invalid tool_call delta');
+          const index = typeof raw.index === 'number' ? raw.index : 0;
+          const previous = toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
+          if (typeof raw.id === 'string') previous.id += raw.id;
+          if (isRecord(raw.function)) {
+            if (typeof raw.function.name === 'string') previous.name += raw.function.name;
+            if (typeof raw.function.arguments === 'string')
+              previous.arguments += raw.function.arguments;
+          }
+          toolCalls.set(index, previous);
         }
-        toolCalls.set(index, previous);
       }
     }
   };
@@ -374,9 +379,34 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
           '(no per-field fallback to environment config)',
       );
     }
-    return { baseUrl: modelConfig.baseUrl, apiKey: modelConfig.apiKey, model: modelConfig.model };
+    return {
+      baseUrl: resolveKnownProviderBaseUrl(modelConfig.baseUrl, modelConfig.model),
+      apiKey: modelConfig.apiKey,
+      model: modelConfig.model,
+    };
   }
   return { baseUrl: BASE_URL, apiKey: API_KEY, model: MODEL };
+}
+
+function resolveKnownProviderBaseUrl(baseUrl: string, model: string): string {
+  try {
+    const url = new URL(baseUrl);
+    // StepFun 的 step_plan 通道只接受 step-router-v1；标准模型应走 /v1。
+    // 仅对官方域名和精确路径做兼容，不覆盖用户配置的其他服务。
+    if (
+      url.hostname === 'api.stepfun.com' &&
+      url.pathname.replace(/\/$/, '') === '/step_plan/v1' &&
+      model !== 'step-router-v1'
+    ) {
+      url.pathname = '/v1';
+      url.search = '';
+      url.hash = '';
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {
+    // 保持原值，让后续请求返回原有的可诊断错误。
+  }
+  return baseUrl;
 }
 
 export async function chat(

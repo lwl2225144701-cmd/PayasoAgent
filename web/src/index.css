@@ -150,9 +150,9 @@ pre {
      display:none 会让 getBBox() 归零导致 "svg element not in render tree"。
    - [id^="dmmd-"]：mermaid 渲染期往 body 下挂的临时容器（d + 渲染 id）。 */
 body
-> :not(#root):not(script):not(style):not(link):not(meta):not(title):not(base):not(noscript):not(
-  template
-):not(svg):not([id^="dmmd-"]) {
+> :not(#root):not(#payaso-portal-root):not(script):not(style):not(link):not(meta):not(title):not(
+  base
+):not(noscript):not(template):not(svg):not([id^="dmmd-"]) {
   display: none !important;
 }
 

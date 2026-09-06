@@ -68,6 +68,22 @@ try {
     ]);
   });
 
+  await test('streaming frames without blank-line separators remain parseable', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"第一段"}}]}\n',
+      'data: {"choices":[{"delta":{"content":"第二段"}}]}\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n',
+      'data: [DONE]\n',
+    ];
+    globalThis.fetch = async () =>
+      new Response(chunks.join(''), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    const message = await chat([{ role: 'user', content: 'hello' }]);
+    assert.equal(message.content, '第一段第二段');
+  });
+
   await test('malformed JSON and missing choices are rejected deterministically', async () => {
     globalThis.fetch = async () => new Response('not-json', { status: 200 });
     await assert.rejects(() => chat([{ role: 'user', content: 'hello' }]), /invalid JSON/);
@@ -253,6 +269,23 @@ try {
     assert.equal(requests[0].url, 'https://provider.example/v1/chat/completions');
     assert.equal(requests[0].authorization, 'Bearer sk-provider-key');
     assert.equal(requests[0].model, 'model-from-provider');
+  });
+
+  await test('StepFun standard models use the standard chat endpoint', async () => {
+    let requestUrl = '';
+    globalThis.fetch = async (input) => {
+      requestUrl = String(input);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      baseUrl: 'https://api.stepfun.com/step_plan/v1',
+      apiKey: 'sk-test',
+      model: 'step-3.7-flash',
+    });
+    assert.equal(requestUrl, 'https://api.stepfun.com/v1/chat/completions');
   });
   await test('max_tokens follows the requested run model, not the env model (Case 2/3)', async () => {
     const originalModel = process.env.OPENAI_MODEL;

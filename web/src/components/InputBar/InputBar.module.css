@@ -193,11 +193,12 @@
   justify-content: space-between;
   gap: 16px;
   padding: 8px 10px 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .heroActions {
   margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .heroTools,
@@ -208,6 +209,7 @@
 }
 
 .heroTools {
+  flex: 1 1 auto;
   gap: 8px;
 }
 
@@ -240,6 +242,15 @@
   .heroMetaRow {
     gap: 13px;
     padding-inline: 5px;
+  }
+
+  .heroFooter {
+    gap: 8px;
+    padding-inline: 7px;
+  }
+
+  .heroTools {
+    gap: 4px;
   }
 
   .metaButton {

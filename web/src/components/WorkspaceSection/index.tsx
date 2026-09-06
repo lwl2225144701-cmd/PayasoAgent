@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import type { HostSession, WorkspaceView } from '../../types';
@@ -110,14 +111,12 @@ function WorkspaceFolderHeader({
 }
 
 function WorkspaceMenu({
-  name,
   x,
   y,
   onClose,
   onRename,
   onDelete,
 }: {
-  name: string;
   x: number;
   y: number;
   onClose: () => void;
@@ -130,7 +129,7 @@ function WorkspaceMenu({
 
   const left = Math.max(8, Math.min(x, window.innerWidth - 188));
 
-  return (
+  return createPortal(
     <div ref={ref} className={styles.menu} style={{ left, top: y }}>
       <button
         type="button"
@@ -154,7 +153,8 @@ function WorkspaceMenu({
         <TrashIcon size={14} />
         <span>删除工作区</span>
       </button>
-    </div>
+    </div>,
+    document.getElementById('payaso-portal-root') ?? document.body,
   );
 }
 
@@ -280,7 +280,6 @@ export function WorkspaceSection({
 
       {menu && !isFallbackWorkspace(menu.name) && (
         <WorkspaceMenu
-          name={menu.name}
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
