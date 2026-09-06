@@ -3,6 +3,7 @@ import { canonicalizeProviderBaseUrl } from '../provider-url.js';
 import { createSecretStore, providerSecretKey, type SecretStore } from '../secrets/secret-store.js';
 
 export type ModelProviderKind = 'builtin' | 'custom';
+export type ModelProviderProbeStatus = 'available' | 'error';
 
 // 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出。
 // 缺省字段走"内置注册表 → fallback 256K"链路；预算解析优先级见 model-context.ts。
@@ -18,11 +19,18 @@ export interface StoredModelProvider {
   kind: ModelProviderKind;
   name: string;
   baseUrl: string;
+  // 若存在，则该记录使用 pi-ai 的内置 Provider 工厂/协议分发。
+  // 这里保存的是公开的 Provider id，不保存任何认证信息。
+  piProviderId?: string;
   // 凭证存在性元数据（UI / 解析判定的唯一依据）；真实密钥经 SecretStore 读取
   hasApiKey: boolean;
   models: string[];
   // 按模型 ID 的能力覆盖（可选；预算解析时优先于内置注册表）
   modelCapabilities?: Record<string, ModelCapabilitySetting>;
+  // /models 最近一次检测结果；不保存响应原文或凭证
+  lastProbeAt?: string;
+  lastProbeStatus?: ModelProviderProbeStatus;
+  lastProbeError?: string;
 }
 
 export interface ModelProviderView {
@@ -30,16 +38,20 @@ export interface ModelProviderView {
   kind: ModelProviderKind;
   name: string;
   baseUrl: string;
+  piProviderId?: string;
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
   modelCapabilities?: Record<string, ModelCapabilitySetting>;
+  lastCheckedAt?: string;
+  probeError?: string;
   status: 'unconfigured' | 'configured' | 'available' | 'error' | 'checking';
 }
 
 export interface CreateModelProviderInput {
   name: string;
   baseUrl: string;
+  piProviderId?: string;
   // 提供即设置凭证（SecretStore）；缺省/空 = 不设置。响应绝不回传 key（只回 hasApiKey）。
   apiKey?: string | null;
   models: string[];
@@ -203,7 +215,7 @@ export class SettingsStore {
     }
     // 旧库迁移 / 目录变化后的安全网：默认模型必须仍在默认 provider 的模型目录里
     const provider = settings.models.find((m) => m.id === settings.defaultProviderId);
-    if (!provider || !provider.models.includes(settings.defaultModelId)) {
+    if (!provider?.models.includes(settings.defaultModelId)) {
       settings.defaultModelId = provider?.models[0] ?? '';
     }
     // 旧库迁移：早期环境导入曾用模型名命名自定义 Provider（name === models[0]），
@@ -303,17 +315,26 @@ export class SettingsStore {
 
   private toView(provider: StoredModelProvider): ModelProviderView {
     const hasApiKey = Boolean(provider.hasApiKey);
-    const status: ModelProviderView['status'] = hasApiKey ? 'configured' : 'unconfigured';
+    const status: ModelProviderView['status'] = !hasApiKey
+      ? 'unconfigured'
+      : provider.lastProbeStatus === 'available'
+        ? 'available'
+        : provider.lastProbeStatus === 'error'
+          ? 'error'
+          : 'configured';
     return {
       id: provider.id,
       kind: provider.kind,
       name: provider.name,
       baseUrl: provider.baseUrl,
+      ...(provider.piProviderId ? { piProviderId: provider.piProviderId } : {}),
       // 掩码不再来自真实密钥（Host 不为展示读取它），只反映凭证存在性
       apiKeyMasked: hasApiKey ? '********' : '****',
       hasApiKey,
       models: provider.models,
       ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
+      ...(provider.lastProbeAt ? { lastCheckedAt: provider.lastProbeAt } : {}),
+      ...(provider.lastProbeError ? { probeError: provider.lastProbeError } : {}),
       status,
     };
   }
@@ -416,11 +437,12 @@ export class SettingsStore {
     apiKey: string;
     baseUrl: string;
     models: string[];
+    piProviderId?: string;
     contextWindow?: number;
     maxOutputTokens?: number;
   } | null {
     const provider = this.getAllModels().find((m) => m.id === id);
-    if (!provider || !provider.hasApiKey) return null;
+    if (!provider?.hasApiKey) return null;
     const apiKey = this.secrets.get(providerSecretKey(id));
     if (!apiKey) return null;
     const capability = model ? provider.modelCapabilities?.[model] : undefined;
@@ -428,7 +450,10 @@ export class SettingsStore {
       apiKey,
       baseUrl: provider.baseUrl,
       models: provider.models,
-      ...(capability?.contextWindow !== undefined ? { contextWindow: capability.contextWindow } : {}),
+      ...(provider.piProviderId ? { piProviderId: provider.piProviderId } : {}),
+      ...(capability?.contextWindow !== undefined
+        ? { contextWindow: capability.contextWindow }
+        : {}),
       ...(capability?.maxOutputTokens !== undefined
         ? { maxOutputTokens: capability.maxOutputTokens }
         : {}),
@@ -438,6 +463,7 @@ export class SettingsStore {
   addModel(input: CreateModelProviderInput): ModelProviderView {
     const name = input.name.trim();
     const baseUrl = input.baseUrl.trim();
+    const piProviderId = input.piProviderId?.trim();
     const apiKey = (input.apiKey ?? '').trim();
     const models = this.normalizeModels(input.models);
     const modelCapabilities = this.normalizeModelCapabilities(input.modelCapabilities, models);
@@ -445,6 +471,9 @@ export class SettingsStore {
     // 1. 标准化输入 + 基础校验
     if (!name) throw new Error('name is required');
     if (!baseUrl) throw new Error('baseUrl is required');
+    if (input.piProviderId !== undefined && !piProviderId) {
+      throw new Error('piProviderId must be non-empty when provided');
+    }
     this.validateUrl(baseUrl);
     if (models.length === 0) throw new Error('models is required');
 
@@ -469,6 +498,7 @@ export class SettingsStore {
       kind: 'custom',
       name,
       baseUrl,
+      ...(piProviderId ? { piProviderId } : {}),
       hasApiKey: Boolean(apiKey),
       models,
       ...(modelCapabilities ? { modelCapabilities } : {}),
@@ -504,16 +534,16 @@ export class SettingsStore {
     const idx = current.findIndex((m) => m.id === id);
     if (idx === -1) return null;
 
-    // 保存旧 Secret 状态，以便 writeSettings 失败时恢复（补偿事务）
+    // 保存旧 Secret 状态，以便 writeSettings 失败时恢复（补偿事务）。
+    // 旧版本可能留下 hasApiKey=true 但 SecretStore 中已没有密钥的元数据；
+    // 这种情况可安全自愈为未配置，允许用户重新输入密钥或仅修改其他信息。
     const oldHasApiKey = current[idx].hasApiKey;
     let oldApiKey: string | null = null;
     if (oldHasApiKey) {
       oldApiKey = this.secrets.get(providerSecretKey(id));
-      if (oldApiKey === null) {
-        // 元数据显示有 Secret，但 SecretStore 中不存在 → fail-closed
-        throw new Error('Provider credentials inconsistent; contact support');
-      }
+      if (oldApiKey === null) current[idx].hasApiKey = false;
     }
+    const oldSecretPresent = oldApiKey !== null;
 
     // 先做所有业务校验，再修改 Secret
     if (input.name !== undefined) {
@@ -550,9 +580,19 @@ export class SettingsStore {
       }
     }
 
+    // 地址、模型目录或密钥变化后，旧的 /models 检测结果不能继续沿用。
+    if (input.baseUrl !== undefined || input.apiKey !== undefined) {
+      delete current[idx].lastProbeAt;
+      delete current[idx].lastProbeStatus;
+      delete current[idx].lastProbeError;
+    }
+
     // 模型能力覆盖：提供即整表替换（引用模型必须都在最终目录内）
     if (input.modelCapabilities !== undefined) {
-      const validated = this.normalizeModelCapabilities(input.modelCapabilities, current[idx].models);
+      const validated = this.normalizeModelCapabilities(
+        input.modelCapabilities,
+        current[idx].models,
+      );
       if (validated) current[idx].modelCapabilities = validated;
       else delete current[idx].modelCapabilities;
     }
@@ -595,29 +635,25 @@ export class SettingsStore {
     } catch (err) {
       // 补偿：恢复旧 Secret 状态
       if (secretMutated) {
-        if (oldHasApiKey) {
-          if (oldApiKey !== null) {
-            try {
-              this.secrets.set(providerSecretKey(id), oldApiKey);
-            } catch (secretErr) {
-              // 补偿失败：返回统一的脱敏一致性错误
-              console.error(
-                `[SettingsStore] updateModel recovery failed for ${id}: ${(secretErr as Error).message}`,
-              );
-              throw new Error('settings_consistency_recovery_failed');
-            }
+        if (oldSecretPresent && oldApiKey !== null) {
+          try {
+            this.secrets.set(providerSecretKey(id), oldApiKey);
+          } catch (secretErr) {
+            // 补偿失败：返回统一的脱敏一致性错误
+            console.error(
+              `[SettingsStore] updateModel recovery failed for ${id}: ${(secretErr as Error).message}`,
+            );
+            throw new Error('settings_consistency_recovery_failed');
           }
-        } else {
-          // 原来无 Secret，本次新增了 Secret → 删除本次新增
-          if (newSecretWritten) {
-            try {
-              this.secrets.delete(providerSecretKey(id));
-            } catch (secretErr) {
-              console.error(
-                `[SettingsStore] updateModel recovery delete failed for ${id}: ${(secretErr as Error).message}`,
-              );
-              throw new Error('settings_consistency_recovery_failed');
-            }
+        } else if (newSecretWritten) {
+          // 原来没有可恢复的 Secret，本次新增了 Secret → 删除本次新增
+          try {
+            this.secrets.delete(providerSecretKey(id));
+          } catch (secretErr) {
+            console.error(
+              `[SettingsStore] updateModel recovery delete failed for ${id}: ${(secretErr as Error).message}`,
+            );
+            throw new Error('settings_consistency_recovery_failed');
           }
         }
       }
@@ -694,5 +730,24 @@ export class SettingsStore {
 
   getModel(id: string): StoredModelProvider | null {
     return this.getAllModels().find((m) => m.id === id) ?? null;
+  }
+
+  recordModelProbe(
+    id: string,
+    result: { status: ModelProviderProbeStatus; error?: string },
+  ): ModelProviderView | null {
+    const settings = this.readSettings();
+    const provider = settings.models.find((m) => m.id === id);
+    if (!provider) return null;
+
+    provider.lastProbeAt = new Date().toISOString();
+    provider.lastProbeStatus = result.status;
+    if (result.status === 'error' && result.error) {
+      provider.lastProbeError = result.error.slice(0, 240);
+    } else {
+      delete provider.lastProbeError;
+    }
+    this.writeSettings(settings);
+    return this.toView(provider);
   }
 }

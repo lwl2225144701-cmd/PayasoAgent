@@ -6,12 +6,17 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ContextUsageEvent, ModelProviderView, ModelSelection, PermissionMode } from '../../types';
+import type {
+  ContextUsageEvent,
+  ModelProviderView,
+  ModelSelection,
+  PermissionMode,
+} from '../../types';
 import { DropdownTrigger } from '../DropdownTrigger';
 import { IconButton } from '../IconButton';
-import { ContextUsageRing } from '../Timeline/ContextUsageRing';
 import { ArrowUpIcon, StopIcon } from '../icons';
 import { PermissionDropdown } from '../PermissionDropdown';
+import { ContextUsageRing } from '../Timeline/ContextUsageRing';
 import styles from './InputBar.module.css';
 
 interface ComposerTextareaProps {
@@ -75,12 +80,40 @@ function PermissionButton({
 
 // 下拉按 Provider 分组：组标题 = Provider 名，组内是其模型目录。
 // 只展示已配置密钥且有模型的 provider——未配置的选项选中后也会被后端回退，展示即误导。
-function buildModelGroups(
-  models: ModelProviderView[],
-): Array<{ providerId: string; providerName: string; models: string[] }> {
+interface ModelOption {
+  id: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+interface ModelGroup {
+  providerId: string;
+  providerName: string;
+  models: ModelOption[];
+}
+
+function buildModelGroups(models: ModelProviderView[]): ModelGroup[] {
   return models
     .filter((p) => p.hasApiKey && p.models.length > 0)
-    .map((p) => ({ providerId: p.id, providerName: p.name, models: p.models }));
+    .map((p) => ({
+      providerId: p.id,
+      providerName: p.name,
+      models: p.models.map((id) => ({ id, ...p.modelCapabilities?.[id] })),
+    }));
+}
+
+function modelCapabilityLabel(
+  model: Pick<ModelOption, 'contextWindow' | 'maxOutputTokens'>,
+): string | null {
+  if (model.contextWindow === undefined && model.maxOutputTokens === undefined) return null;
+  const parts: string[] = [];
+  if (model.contextWindow !== undefined) {
+    parts.push(`${Math.round(model.contextWindow / 1000)}K 上下文`);
+  }
+  if (model.maxOutputTokens !== undefined) {
+    parts.push(`${Math.round(model.maxOutputTokens / 1000)}K 输出`);
+  }
+  return parts.join(' · ');
 }
 
 function ModelButton({
@@ -115,6 +148,7 @@ function ModelButton({
       ? `${currentModel.model.slice(0, 16)}…`
       : currentModel.model
     : '选择模型';
+  const currentCapability = currentModel ? modelCapabilityLabel(currentModel) : null;
 
   return (
     <div className={styles.modelDropdown} ref={containerRef}>
@@ -122,7 +156,7 @@ function ModelButton({
         label={label}
         title={
           currentModel
-            ? `当前模型：${currentModel.providerName} · ${currentModel.model}`
+            ? `当前模型：${currentModel.providerName} · ${currentModel.model}${currentCapability ? ` · ${currentCapability}` : ''}`
             : '选择模型'
         }
         ariaLabel={
@@ -141,17 +175,23 @@ function ModelButton({
                 <div className={styles.modelGroupTitle}>{group.providerName}</div>
                 {group.models.map((model) => (
                   <button
-                    key={model}
+                    key={model.id}
                     type="button"
                     className={styles.modelDropdownItem}
                     role="option"
-                    aria-selected={isSelected(group.providerId, model)}
+                    aria-selected={isSelected(group.providerId, model.id)}
+                    title={`${group.providerName} · ${model.id}${modelCapabilityLabel(model) ? ` · ${modelCapabilityLabel(model)}` : ''}`}
                     onClick={() => {
-                      onSelectModel?.(group.providerId, model);
+                      onSelectModel?.(group.providerId, model.id);
                       setOpen(false);
                     }}
                   >
-                    <span className={styles.modelDropdownName}>{model}</span>
+                    <span className={styles.modelDropdownName}>{model.id}</span>
+                    {modelCapabilityLabel(model) && (
+                      <span className={styles.modelDropdownMeta}>
+                        {modelCapabilityLabel(model)}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

@@ -4,7 +4,6 @@ import type {
   CreateModelProviderInput,
   DefaultModelSelection,
   ModelProviderView,
-  StoredModelProvider,
   UpdateModelProviderInput,
 } from './settings-store.js';
 
@@ -103,10 +102,21 @@ export interface RunStore {
   getModelProviderSecret(
     id: string,
     model?: string,
-  ): { apiKey: string; baseUrl: string; models: string[]; contextWindow?: number; maxOutputTokens?: number } | null;
+  ): {
+    apiKey: string;
+    baseUrl: string;
+    models: string[];
+    piProviderId?: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+  } | null;
   getDefaultProviderId(): string;
   getDefaultModelId(): string;
   setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection;
+  recordModelProbe(
+    id: string,
+    result: { status: 'available' | 'error'; error?: string },
+  ): ModelProviderView | null;
   importEnvFallback(input: {
     baseUrl: string;
     apiKey: string;

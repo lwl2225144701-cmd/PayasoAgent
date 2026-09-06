@@ -1,21 +1,25 @@
-// 模块 1: LLM 封装 — OpenAI 兼容 chat/completions（纯 fetch，无 SDK 依赖）
+// 模块 1: LLM 适配 — PayasoAgent 的旧 ChatMessage 契约由 pi-ai 驱动。
+// Runtime 仍然消费本文件的 OpenAI 风格消息；Provider、认证、SSE/tool-call
+// 拼装和请求重试交给 @earendil-works/pi-ai。
 
+import {
+  type Api,
+  type AssistantMessage,
+  type Context,
+  createModels,
+  createProvider,
+  type Model,
+  type ProviderStreams,
+  type TSchema,
+} from '@earendil-works/pi-ai';
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { resolveModelContextConfig } from '../harness/model-context.js';
-import { isAbortError } from '../util/abort.js';
+import { asProviderStreams, getPiAiProviderModel } from '../host/pi-ai-providers.js';
 
 const BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const API_KEY = process.env.OPENAI_API_KEY || '';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const MAX_RETRIES = 2;
-const RETRY_BASE_DELAY_MS = 100;
-const MAX_ERROR_BODY_CHARS = 2_000;
-
-// Total per-attempt request budget. Reading env per call keeps it configurable
-// at runtime (tests set a tiny value) and defaults to a safe generous ceiling.
-// A timeout ANYWHERE in the attempt — waiting for headers OR reading the body —
-// is a terminal failure for that run. We never auto-retry a long generation:
-// that would multiply latency (3 × timeout) and bill the same completion twice.
-// Ordinary connection errors / 408 / 429 / 5xx still retry as before.
 const DEFAULT_REQUEST_TIMEOUT_MS = 240_000;
 
 function requestTimeoutMs(): number {
@@ -52,14 +56,28 @@ export interface ChatStreamDelta {
   delta: string;
 }
 
+export interface ModelConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  providerId?: string;
+  // pi-ai 内置 Provider id；为空时使用通用 OpenAI-compatible Provider。
+  piProviderId?: string;
+  // Host 按模型解析的能力覆盖（设置页按模型配置；缺省走注册表/fallback），
+  // 用于本请求的 max_tokens 与 Harness 的 Context Budget。
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function parseToolCalls(value: unknown): ToolCall[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value))
+  if (!Array.isArray(value)) {
     throw new Error('LLM API malformed response: tool_calls must be an array');
+  }
   return value.map((item) => {
     if (
       !isRecord(item) ||
@@ -98,279 +116,434 @@ function parseAssistantMessage(data: unknown): ChatMessage {
   };
 }
 
-function retryableStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500;
-}
-
-function retryDelay(attempt: number, retryAfter: string | null): number {
-  if (retryAfter) {
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 5000);
-    const dateMs = Date.parse(retryAfter);
-    if (Number.isFinite(dateMs)) return Math.min(Math.max(0, dateMs - Date.now()), 5000);
-  }
-  return RETRY_BASE_DELAY_MS * 2 ** attempt;
-}
-
-async function wait(ms: number): Promise<void> {
-  if (ms <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Result of a single attempt. status: HTTP status, 0 = no response (network
-// error before headers), -1 = response body was not valid JSON.
-interface RawResult {
-  status: number;
-  data?: unknown;
-  errorBody: string;
-  networkError?: string;
-  timedOut: boolean;
-  retryAfter: string | null;
-}
-
-// One attempt under a single abort timer that stays armed across BOTH the
-// header phase and the body read, so a stalled body (or stalled error body)
-// cannot hang forever. clearTimeout runs only after the body/error is read.
-// True cancellation (v1.6): 外部 signal（Run 的 AbortSignal）与内部超时定时器
-// 组合到同一个 controller；外部 abort 让 fetch/流式读取立即以 AbortError 失败，
-// chat 层不捕获、不重试，直接向上传播。
-async function doRequest(
-  url: string,
-  body: Record<string, unknown>,
-  timeoutMs: number,
-  apiKey: string,
-  onDelta?: (delta: ChatStreamDelta) => void,
-  signal?: AbortSignal,
-): Promise<RawResult> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const onExternalAbort = () => controller.abort();
-  if (signal) {
-    if (signal.aborted) onExternalAbort();
-    else signal.addEventListener('abort', onExternalAbort, { once: true });
-  }
+function parseToolArguments(raw: string): Record<string, unknown> {
   try {
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } catch (err) {
-      // 外部取消（用户 Stop）→ 以原始 AbortError 终态上抛，绝不进入重试路径
-      if (signal?.aborted && isAbortError(err)) throw err;
-      return {
-        status: 0,
-        errorBody: '',
-        networkError: (err as Error).message,
-        timedOut: controller.signal.aborted,
-        retryAfter: null,
-      };
-    }
-
-    if (!res.ok) {
-      let errorBody = '';
-      try {
-        errorBody = (await res.text()).slice(0, MAX_ERROR_BODY_CHARS);
-      } catch (err) {
-        if (signal?.aborted && isAbortError(err)) throw err;
-        // Timed out while reading the error body; timedOut below reports it.
-        errorBody = '';
-      }
-      return {
-        status: res.status,
-        errorBody,
-        timedOut: controller.signal.aborted,
-        retryAfter: res.headers.get('retry-after'),
-      };
-    }
-
-    let data: unknown;
-    try {
-      const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
-      data = contentType.includes('text/event-stream')
-        ? { choices: [{ message: await readStreamingMessage(res, onDelta) }] }
-        : await res.json();
-    } catch (err) {
-      // 流式/非流式 body 读取被外部 abort 打断 → 保持 AbortError 语义
-      if (signal?.aborted && isAbortError(err)) throw err;
-      return { status: -1, errorBody: '', timedOut: controller.signal.aborted, retryAfter: null };
-    }
-
-    return { status: 200, data, errorBody: '', timedOut: false, retryAfter: null };
-  } finally {
-    clearTimeout(timeout);
-    if (signal) signal.removeEventListener('abort', onExternalAbort);
+    const value: unknown = JSON.parse(raw);
+    return isRecord(value) ? value : {};
+  } catch {
+    // pi-ai 的流式协议必须提供对象；PayasoAgent 的 Runtime 仍会在下一步
+    // 对工具调用做最终的 JSON/契约校验，因此这里 fail-closed。
+    return {};
   }
 }
 
-async function readStreamingMessage(
-  res: Response,
-  onDelta?: (delta: ChatStreamDelta) => void,
-): Promise<ChatMessage> {
-  if (!res.body) throw new Error('LLM streaming response has no body');
-  const messageId = crypto.randomUUID();
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let content = '';
-  let reasoning = '';
-  let inlinePending = '';
-  let insideInlineThink = false;
-  const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
-
-  const emitInline = (type: ChatStreamDelta['type'], delta: string): void => {
-    if (delta) onDelta?.({ messageId, type, delta });
+function zeroUsage(): AssistantMessage['usage'] {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
-  const retainedTagPrefix = (value: string, tag: string): number => {
-    const max = Math.min(value.length, tag.length - 1);
-    for (let size = max; size > 0; size--) {
-      if (tag.startsWith(value.slice(-size))) return size;
-    }
-    return 0;
+}
+
+function toPiTool(schema: ToolSchema) {
+  return {
+    name: schema.function.name,
+    description: schema.function.description,
+    // PayasoAgent 的注册表目前存的是已生成 JSON Schema；pi-ai 的 API 层
+    // 接受同一份 JSON Schema，TypeBox 只在定义/校验 Tool 时提供类型能力。
+    parameters: schema.function.parameters as TSchema,
   };
-  const feedInlineContent = (delta: string, final = false): void => {
-    inlinePending += delta;
-    while (inlinePending) {
-      const tag = insideInlineThink ? '</think>' : '<think>';
-      const index = inlinePending.indexOf(tag);
-      if (index >= 0) {
-        emitInline(
-          insideInlineThink ? 'reasoning_delta' : 'assistant_delta',
-          inlinePending.slice(0, index),
-        );
-        inlinePending = inlinePending.slice(index + tag.length);
-        insideInlineThink = !insideInlineThink;
-        continue;
-      }
-      const retained = final ? 0 : retainedTagPrefix(inlinePending, tag);
-      const ready = inlinePending.slice(0, inlinePending.length - retained);
-      emitInline(insideInlineThink ? 'reasoning_delta' : 'assistant_delta', ready);
-      inlinePending = inlinePending.slice(inlinePending.length - retained);
-      break;
-    }
-  };
+}
 
-  let finishReason: string | null = null;
-
-  const consumeBlock = (block: string): void => {
-    // SSE 的每条 data 记录都是一个独立 JSON 帧。部分 OpenAI 兼容服务
-    // 会省略事件之间的空行；逐行解析可以避免把相邻帧拼成非法 JSON。
-    const payloads = block
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).trimStart());
-
-    for (const payload of payloads) {
-      if (!payload || payload === '[DONE]') continue;
-      const parsed = JSON.parse(payload) as unknown;
-      if (!isRecord(parsed) || !Array.isArray(parsed.choices) || parsed.choices.length === 0)
-        continue;
-      const choice = parsed.choices[0];
-      if (!isRecord(choice)) continue;
-
-      // 先检查 finish_reason：某些 provider 最后一个 chunk 可能没有 delta 字段。
-      if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
-        finishReason = choice.finish_reason;
-      }
-
-      if (!isRecord(choice.delta)) continue;
-      const delta = choice.delta;
-      if (typeof delta.content === 'string' && delta.content) {
-        content += delta.content;
-        feedInlineContent(delta.content);
-      }
-      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-        reasoning += delta.reasoning_content;
-        onDelta?.({ messageId, type: 'reasoning_delta', delta: delta.reasoning_content });
-      }
-      if (Array.isArray(delta.tool_calls)) {
-        for (const raw of delta.tool_calls) {
-          if (!isRecord(raw)) throw new Error('LLM streaming response has invalid tool_call delta');
-          const index = typeof raw.index === 'number' ? raw.index : 0;
-          const previous = toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
-          if (typeof raw.id === 'string') previous.id += raw.id;
-          if (isRecord(raw.function)) {
-            if (typeof raw.function.name === 'string') previous.name += raw.function.name;
-            if (typeof raw.function.arguments === 'string')
-              previous.arguments += raw.function.arguments;
-          }
-          toolCalls.set(index, previous);
-        }
-      }
-    }
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() ?? '';
-    for (const block of blocks) consumeBlock(block);
-    if (done || finishReason) break;
+function findToolName(messages: ChatMessage[], toolCallId: string): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    const call = message.tool_calls?.find((item) => item.id === toolCallId);
+    if (call) return call.function.name;
   }
-  if (buffer.trim()) consumeBlock(buffer);
-  feedInlineContent('', true);
+  return 'tool';
+}
 
-  const assembledTools: ToolCall[] = [...toolCalls.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, call]) => {
-      if (!call.id || !call.name)
-        throw new Error('LLM streaming response has incomplete tool_call');
-      // arguments 的 JSON 有效性不在传输层校验：stream 与 non-stream 统一交给
-      // Runtime 的 parseToolArguments（可恢复 invocation error，见 tools.ts）。
-      // 这里只校验协议形状（id/name 必须存在）。
-      return {
-        id: call.id,
-        type: 'function',
-        function: { name: call.name, arguments: call.arguments },
-      };
+function toPiAssistant(
+  message: ChatMessage,
+  providerId: string,
+  modelId: string,
+  api: Api,
+): AssistantMessage {
+  const content: AssistantMessage['content'] = [];
+  if (message.reasoning_content) {
+    content.push({ type: 'thinking', thinking: message.reasoning_content });
+  }
+  if (message.content) content.push({ type: 'text', text: message.content });
+  for (const call of message.tool_calls ?? []) {
+    content.push({
+      type: 'toolCall',
+      id: call.id,
+      name: call.function.name,
+      arguments: parseToolArguments(call.function.arguments),
     });
+  }
   return {
     role: 'assistant',
     content,
-    reasoning_content: reasoning || undefined,
-    tool_calls: assembledTools.length ? assembledTools : undefined,
+    api,
+    provider: providerId,
+    model: modelId,
+    usage: zeroUsage(),
+    stopReason: message.tool_calls?.length ? 'toolUse' : 'stop',
+    timestamp: Date.now(),
   };
 }
 
-// 调用 LLM，返回 assistant 消息（可能含 tool_calls）
-// ---- 模拟中断开关（测试用，已注释）----
-// 需要模拟"任务执行中途网络中断"时，取消注释下面 4 行，并带 SIMULATE_INTERRUPT=1 运行：
-//   SIMULATE_INTERRUPT=1 npx tsx --env-file=.env src/cli.ts "任务"
-// 第 2 次 LLM 调用会抛网络错误，用于验证 checkpoint --resume 恢复链路。
-// let __callCount = 0;
-// export async function chat(
-//   messages: ChatMessage[],
-//   tools?: ToolSchema[]
-// ): Promise<ChatMessage> {
-//   __callCount++;
-//   if (process.env.SIMULATE_INTERRUPT === "1" && __callCount === 2) {
-//     throw new Error("Simulated network interruption: fetch failed (ECONNRESET)");
-//   }
-export interface ModelConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  providerId?: string;
-  // Host 按模型解析的能力覆盖（设置页按模型配置；缺省走注册表/fallback），
-  // 用于本请求的 max_tokens 与 Harness 的 Context Budget
-  contextWindow?: number;
-  maxOutputTokens?: number;
+function toPiContext(
+  messages: ChatMessage[],
+  tools: ToolSchema[] | undefined,
+  providerId: string,
+  modelId: string,
+  api: Api,
+): Context {
+  const systemMessages = messages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content)
+    .filter(Boolean);
+
+  const converted: Context['messages'] = [];
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+
+    if (message.role === 'user') {
+      converted.push({ role: 'user', content: message.content, timestamp: Date.now() });
+      continue;
+    }
+
+    if (message.role === 'assistant') {
+      converted.push(toPiAssistant(message, providerId, modelId, api));
+      continue;
+    }
+
+    converted.push({
+      role: 'toolResult',
+      toolCallId: message.tool_call_id ?? 'unknown-tool-call',
+      toolName: findToolName(messages, message.tool_call_id ?? ''),
+      content: [{ type: 'text', text: message.content }],
+      isError: false,
+      timestamp: Date.now(),
+    });
+  }
+
+  return {
+    systemPrompt: systemMessages.length > 0 ? systemMessages.join('\n\n') : undefined,
+    messages: converted,
+    tools: tools?.map(toPiTool),
+  };
 }
 
-// 模型配置是原子元组：传入 modelConfig 则三个字段必须齐全并整体采用，
-// 绝不逐字段回退环境配置（否则 provider A 的 baseUrl 会拿到 provider B 的密钥）；
-// 未传入才整体回退环境配置三元组。
+function toLegacyMessage(
+  message: AssistantMessage,
+  toolNamesById?: ReadonlyMap<string, string>,
+  toolArgumentsById?: ReadonlyMap<string, string>,
+): ChatMessage {
+  const text = message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => (block.type === 'text' ? block.text : ''))
+    .join('');
+  const thinking = message.content
+    .filter((block) => block.type === 'thinking')
+    .map((block) => (block.type === 'thinking' ? block.thinking : ''))
+    .join('');
+  const toolCalls = message.content
+    .filter((block) => block.type === 'toolCall')
+    .map((block) =>
+      block.type === 'toolCall'
+        ? {
+            id: block.id,
+            type: 'function' as const,
+            function: {
+              name: toolNamesById?.get(block.id) ?? block.name,
+              // pi-ai 的流式 reducer 会把尚未闭合的 JSON 暂时表示为 {}。
+              // 如果适配层保存了原始片段，必须把它交给 Runtime 的统一解析器，
+              // 否则 malformed tool call 会被误当成合法空对象而执行工具。
+              arguments: toolArgumentsById?.get(block.id) ?? JSON.stringify(block.arguments),
+            },
+          }
+        : undefined,
+    )
+    .filter((call): call is ToolCall => call !== undefined);
+
+  return {
+    role: 'assistant',
+    content: text,
+    reasoning_content: thinking || undefined,
+    tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+  };
+}
+
+class InlineThinkEmitter {
+  private pending = '';
+  private inside = false;
+
+  constructor(private readonly emit: (type: ChatStreamDelta['type'], delta: string) => void) {}
+
+  push(input: string, final = false): void {
+    this.pending += input;
+    while (this.pending) {
+      const tag = this.inside ? '</think>' : '<think>';
+      const index = this.pending.indexOf(tag);
+      if (index >= 0) {
+        const before = this.pending.slice(0, index);
+        if (before) this.emit(this.inside ? 'reasoning_delta' : 'assistant_delta', before);
+        this.pending = this.pending.slice(index + tag.length);
+        this.inside = !this.inside;
+        continue;
+      }
+      const max = Math.min(this.pending.length, tag.length - 1);
+      let retained = 0;
+      if (!final) {
+        for (let size = max; size > 0; size--) {
+          if (tag.startsWith(this.pending.slice(-size))) {
+            retained = size;
+            break;
+          }
+        }
+      }
+      const ready = this.pending.slice(0, this.pending.length - retained);
+      if (ready) this.emit(this.inside ? 'reasoning_delta' : 'assistant_delta', ready);
+      this.pending = this.pending.slice(this.pending.length - retained);
+      // Retained tag prefixes (for example "<thi") intentionally stay in the
+      // buffer until the next upstream delta; do not spin on the same prefix.
+      if (retained > 0 || !this.pending) break;
+    }
+  }
+}
+
+/**
+ * Some existing providers/tests return one JSON Chat Completions response even
+ * when `stream: true` is requested. pi-ai intentionally consumes the streaming
+ * wire protocol, so normalize that non-stream response at the fetch boundary.
+ * Real SSE responses pass through untouched.
+ */
+interface FetchDiagnostics {
+  attempts: number;
+  error?: Error;
+  status?: number;
+  body?: string;
+  toolNamesById?: Map<string, string>;
+  toolArgumentsById?: Map<string, string>;
+}
+
+function normalizeSseResponse(response: Response, diagnostics: FetchDiagnostics): Response {
+  if (!response.body) return response;
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = '';
+  const toolNames = new Map<number, string>();
+  const toolIds = new Map<number, string>();
+  const toolArguments = new Map<number, string>();
+
+  const transformLine = (line: string): string => {
+    if (!line.startsWith('data:')) return `${line}\n`;
+    const payload = line.slice(5).trimStart();
+    if (!payload || payload === '[DONE]') return `${line}\n\n`;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      return `${line}\n\n`;
+    }
+    if (!isRecord(parsed) || !Array.isArray(parsed.choices)) return `${line}\n\n`;
+
+    const choice = parsed.choices[0];
+    if (!isRecord(choice) || !isRecord(choice.delta)) {
+      return `data: ${JSON.stringify(parsed)}\n\n`;
+    }
+
+    if (!Array.isArray(choice.delta.tool_calls)) {
+      const pendingNames = [...toolNames.entries()];
+      if (pendingNames.length === 0) return `data: ${JSON.stringify(parsed)}\n\n`;
+      const finishDelta = {
+        tool_calls: pendingNames.map(([index, name]) => ({
+          index,
+          ...(toolIds.get(index) ? { id: toolIds.get(index) } : {}),
+          type: 'function',
+          function: { name },
+        })),
+      };
+      diagnostics.toolNamesById ??= new Map();
+      for (const [index, name] of pendingNames) {
+        const id = toolIds.get(index);
+        if (id) diagnostics.toolNamesById.set(id, name);
+      }
+      toolNames.clear();
+      return `data: ${JSON.stringify({ ...parsed, choices: [{ ...choice, delta: finishDelta }] })}\n\n`;
+    }
+
+    const delta = { ...choice.delta, tool_calls: [] as Record<string, unknown>[] };
+    for (const rawCall of choice.delta.tool_calls) {
+      if (!isRecord(rawCall)) continue;
+      const call = { ...rawCall };
+      const index = typeof call.index === 'number' ? call.index : 0;
+      if (typeof call.id === 'string') toolIds.set(index, call.id);
+      const functionPart = isRecord(call.function) ? { ...call.function } : undefined;
+      if (functionPart && typeof functionPart.name === 'string') {
+        const previousName = toolNames.get(index) ?? '';
+        // A few OpenAI-compatible endpoints split the function name across
+        // deltas ("cal" + "culator"), while others repeat the full name on
+        // each delta. Keep a canonical name for the legacy result, but leave
+        // the wire delta untouched so pi-ai's reducer can still consume it.
+        const fullName =
+          previousName && !functionPart.name.startsWith(previousName)
+            ? previousName + functionPart.name
+            : functionPart.name;
+        toolNames.set(index, fullName);
+      }
+      const hasArguments = functionPart && typeof functionPart.arguments === 'string';
+      if (hasArguments) {
+        const fullArguments = (toolArguments.get(index) ?? '') + functionPart.arguments;
+        toolArguments.set(index, fullArguments);
+        const fullName = toolNames.get(index);
+        const id = toolIds.get(index);
+        if (id) {
+          diagnostics.toolArgumentsById ??= new Map();
+          diagnostics.toolArgumentsById.set(id, fullArguments);
+          if (fullName) {
+            diagnostics.toolNamesById ??= new Map();
+            diagnostics.toolNamesById.set(id, fullName);
+          }
+        }
+      }
+      if (functionPart) call.function = functionPart;
+      delta.tool_calls.push(call);
+    }
+
+    const next = { ...parsed, choices: [{ ...choice, delta }] };
+    return `data: ${JSON.stringify(next)}\n\n`;
+  };
+
+  const stream = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? '';
+        for (const line of lines) controller.enqueue(encoder.encode(transformLine(line)));
+      },
+      flush(controller) {
+        buffer += decoder.decode();
+        if (buffer) controller.enqueue(encoder.encode(transformLine(buffer)));
+      },
+    }),
+  );
+  return new Response(stream, { status: response.status, headers: response.headers });
+}
+
+async function piFetch(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  diagnostics: FetchDiagnostics,
+  normalizeOpenAiResponse: boolean,
+): Promise<Response> {
+  diagnostics.attempts++;
+  const requestHeaders = new Headers(init?.headers);
+  const headers: Record<string, string> = {};
+  for (const [key, value] of requestHeaders.entries()) {
+    headers[key.toLowerCase() === 'authorization' ? 'Authorization' : key] = value;
+  }
+  const requestInit = { ...init, headers };
+  let response: Response;
+  try {
+    response = await globalThis.fetch(input, requestInit);
+  } catch (error) {
+    diagnostics.error = error instanceof Error ? error : new Error(String(error));
+    throw error;
+  }
+  if (!response.ok) {
+    diagnostics.status = response.status;
+    diagnostics.body = (await response.clone().text()).slice(0, 2_000);
+    return response;
+  }
+
+  if (
+    normalizeOpenAiResponse &&
+    response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
+  ) {
+    return normalizeSseResponse(response, diagnostics);
+  }
+
+  // Anthropic/Google/Mistral 等 pi-ai 原生适配器各自解析自己的 wire response，
+  // 不能套用 OpenAI Chat Completions 的 JSON→SSE 兼容转换。
+  if (!normalizeOpenAiResponse) return response;
+
+  const raw = await response.clone().text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    const error = new Error('LLM API malformed response: invalid JSON');
+    diagnostics.error = error;
+    throw error;
+  }
+
+  // 保持既有错误语义，同时把兼容服务的单次 JSON 响应转换成 SSE。
+  let message: ChatMessage;
+  try {
+    message = parseAssistantMessage(parsed);
+  } catch (error) {
+    diagnostics.error = error instanceof Error ? error : new Error(String(error));
+    throw error;
+  }
+  for (const call of message.tool_calls ?? []) {
+    diagnostics.toolArgumentsById ??= new Map();
+    diagnostics.toolArgumentsById.set(call.id, call.function.arguments);
+  }
+  const original = isRecord(parsed) ? parsed : {};
+  const chunks: string[] = [];
+  const id = typeof original.id === 'string' ? original.id : crypto.randomUUID();
+  const model = typeof original.model === 'string' ? original.model : undefined;
+
+  const push = (delta: Record<string, unknown>): void => {
+    chunks.push(
+      `data: ${JSON.stringify({
+        id,
+        ...(model ? { model } : {}),
+        choices: [{ index: 0, delta, finish_reason: null }],
+      })}\n\n`,
+    );
+  };
+
+  if (message.reasoning_content) push({ reasoning_content: message.reasoning_content });
+  if (message.content) push({ content: message.content });
+  for (const call of message.tool_calls ?? []) {
+    push({
+      tool_calls: [
+        {
+          index: 0,
+          id: call.id,
+          type: 'function',
+          function: { name: call.function.name, arguments: call.function.arguments },
+        },
+      ],
+    });
+  }
+  const finishReason = message.tool_calls?.length ? 'tool_calls' : 'stop';
+  chunks.push(
+    `data: ${JSON.stringify({
+      id,
+      ...(model ? { model } : {}),
+      choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+      ...(isRecord(original.usage) ? { usage: original.usage } : {}),
+    })}\n\n`,
+  );
+  chunks.push('data: [DONE]\n\n');
+
+  return new Response(chunks.join(''), {
+    status: response.status,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
 function resolveEndpointConfig(modelConfig?: ModelConfig): {
   baseUrl: string;
   apiKey: string;
   model: string;
+  providerId: string;
+  piProviderId?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
 } {
   if (modelConfig) {
     if (!modelConfig.baseUrl || !modelConfig.apiKey || !modelConfig.model) {
@@ -383,16 +556,24 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
       baseUrl: resolveKnownProviderBaseUrl(modelConfig.baseUrl, modelConfig.model),
       apiKey: modelConfig.apiKey,
       model: modelConfig.model,
+      providerId: modelConfig.providerId || 'payaso-configured',
+      ...(modelConfig.piProviderId ? { piProviderId: modelConfig.piProviderId } : {}),
+      contextWindow: modelConfig.contextWindow,
+      maxOutputTokens: modelConfig.maxOutputTokens,
     };
   }
-  return { baseUrl: BASE_URL, apiKey: API_KEY, model: MODEL };
+  return {
+    baseUrl: resolveKnownProviderBaseUrl(BASE_URL, MODEL),
+    apiKey: API_KEY,
+    model: MODEL,
+    providerId: 'payaso-env',
+  };
 }
 
 function resolveKnownProviderBaseUrl(baseUrl: string, model: string): string {
   try {
     const url = new URL(baseUrl);
     // StepFun 的 step_plan 通道只接受 step-router-v1；标准模型应走 /v1。
-    // 仅对官方域名和精确路径做兼容，不覆盖用户配置的其他服务。
     if (
       url.hostname === 'api.stepfun.com' &&
       url.pathname.replace(/\/$/, '') === '/step_plan/v1' &&
@@ -404,9 +585,145 @@ function resolveKnownProviderBaseUrl(baseUrl: string, model: string): string {
       return url.toString().replace(/\/$/, '');
     }
   } catch {
-    // 保持原值，让后续请求返回原有的可诊断错误。
+    // 保持原值，让 pi-ai 返回可诊断的 URL 错误。
   }
   return baseUrl;
+}
+
+function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>): {
+  models: ReturnType<typeof createModels>;
+  model: Model<Api>;
+} {
+  const auth = {
+    apiKey: {
+      name: `${config.providerId} API key`,
+      resolve: async () => ({
+        // Explicit ModelConfig values are validated before this point. The
+        // env fallback path keeps its historical behavior for an empty key.
+        auth: { apiKey: config.apiKey || 'unused' },
+        source: 'PayasoAgent Run snapshot',
+      }),
+    },
+  };
+
+  if (config.piProviderId) {
+    const resolved = getPiAiProviderModel(config.piProviderId, config.model);
+    if (!resolved) {
+      throw new Error(
+        `pi-ai provider/model is not available: ${config.piProviderId}/${config.model}`,
+      );
+    }
+    const sourceModel = resolved.model;
+    const modelContext = resolveModelContextConfig({
+      model: config.model,
+      contextWindowTokens: config.contextWindow ?? sourceModel.contextWindow,
+      maxOutputTokens: config.maxOutputTokens ?? sourceModel.maxTokens,
+    });
+    const model: Model<Api> = {
+      ...sourceModel,
+      id: config.model,
+      provider: config.providerId,
+      baseUrl: config.baseUrl,
+      contextWindow: modelContext.contextWindowTokens,
+      maxTokens: modelContext.maxOutputTokens,
+    };
+    const provider = createProvider({
+      id: config.providerId,
+      name: config.providerId,
+      baseUrl: config.baseUrl,
+      auth,
+      models: [model],
+      api: asProviderStreams(resolved.provider) as ProviderStreams,
+    });
+    const models = createModels();
+    models.setProvider(provider);
+    return { models, model };
+  }
+
+  const modelContext = resolveModelContextConfig({
+    model: config.model,
+    contextWindowTokens: config.contextWindow,
+    maxOutputTokens: config.maxOutputTokens,
+  });
+  const model: Model<Api> = {
+    id: config.model,
+    name: config.model,
+    api: 'openai-completions',
+    provider: config.providerId,
+    baseUrl: config.baseUrl,
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: modelContext.contextWindowTokens,
+    maxTokens: modelContext.maxOutputTokens,
+    compat: {
+      // PayasoAgent 的现有 Provider 契约是 Chat Completions + max_tokens。
+      maxTokensField: 'max_tokens',
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      // Some of the existing compatible endpoints terminate with [DONE]
+      // without a final finish_reason; pi-ai can infer stop/toolUse safely.
+      supportsFinishReason: false,
+    },
+  };
+
+  const provider = createProvider({
+    id: config.providerId,
+    name: config.providerId,
+    baseUrl: config.baseUrl,
+    auth,
+    models: [model],
+    api: openAICompletionsApi(),
+  });
+  const models = createModels();
+  models.setProvider(provider);
+  return { models, model };
+}
+
+function isAbortOrTimeoutMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('abort') ||
+    normalized.includes('timeout') ||
+    normalized.includes('timed out')
+  );
+}
+
+function shouldRetry(result: AssistantMessage, diagnostics: FetchDiagnostics): boolean {
+  if (result.stopReason !== 'error') return false;
+  if (result.errorMessage === 'Request timed out.') return false;
+  if (diagnostics.status !== undefined) {
+    return diagnostics.status === 408 || diagnostics.status === 429 || diagnostics.status >= 500;
+  }
+  return diagnostics.error !== undefined && !isAbortOrTimeoutMessage(diagnostics.error.message);
+}
+
+function retryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+}
+
+function formatTransportError(
+  result: AssistantMessage,
+  diagnostics: FetchDiagnostics,
+  timeoutMs: number,
+  totalAttempts: number,
+): Error {
+  if (diagnostics.error) {
+    const message = diagnostics.error.message;
+    if (isAbortOrTimeoutMessage(message)) {
+      return new Error(`LLM request timed out after ${timeoutMs}ms`);
+    }
+    if (message.startsWith('LLM API malformed response:')) return diagnostics.error;
+    return new Error(`LLM API request failed after ${totalAttempts} attempts: ${message}`);
+  }
+  if (diagnostics.status !== undefined) {
+    return new Error(`LLM API error: ${diagnostics.status} ${diagnostics.body ?? ''}`.trim());
+  }
+  if (result.errorMessage === 'Request timed out.') {
+    return new Error(`LLM request timed out after ${timeoutMs}ms`);
+  }
+  return new Error(result.errorMessage ?? 'LLM request failed');
 }
 
 export async function chat(
@@ -416,64 +733,55 @@ export async function chat(
   modelConfig?: ModelConfig,
   signal?: AbortSignal,
 ): Promise<ChatMessage> {
-  const endpoint = resolveEndpointConfig(modelConfig);
-  const resolvedBaseUrl = endpoint.baseUrl;
-  const resolvedApiKey = endpoint.apiKey;
-  const resolvedModel = endpoint.model;
-  // max_tokens 必须来自当前实际请求的模型（Run snapshot 或环境 fallback），
-  // 逐请求解析；模型设置按模型配置的窗口/输出预留优先于注册表。
-  const modelContext = resolveModelContextConfig({
-    model: resolvedModel,
-    contextWindowTokens: modelConfig?.contextWindow,
-    maxOutputTokens: modelConfig?.maxOutputTokens,
-  });
-  const body: Record<string, unknown> = {
-    model: resolvedModel,
-    messages,
-    max_tokens: modelContext.maxOutputTokens,
-    stream: process.env.LLM_STREAMING !== '0',
-  };
-  if (tools?.length) body.tools = tools;
+  const config = resolveEndpointConfig(modelConfig);
+  const { models, model } = createConfiguredModel(config);
+  const context = toPiContext(messages, tools, config.providerId, config.model, model.api);
+  const messageId = crypto.randomUUID();
+  const timeoutMs = requestTimeoutMs();
+  let totalAttempts = 0;
 
-  const url = `${resolvedBaseUrl}/chat/completions`;
-
+  // pi-ai's stream owns one request lifecycle. Keep its internal retry count at
+  // zero and retry the whole lifecycle here so timeout/abort errors are never
+  // retried, while transient HTTP/network errors still get two retries.
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const timeoutMs = requestTimeoutMs();
-    const result = await doRequest(url, body, timeoutMs, resolvedApiKey, onDelta, signal);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const diagnostics: FetchDiagnostics = { attempts: 0 };
+    const inline = new InlineThinkEmitter((type, delta) => {
+      if (delta) onDelta?.({ messageId, type, delta });
+    });
+    const stream = models.stream(model, context, {
+      signal,
+      fetch: (input, init) => piFetch(input, init, diagnostics, model.api === 'openai-completions'),
+      timeoutMs,
+      maxRetries: 0,
+      maxTokens: model.maxTokens,
+    });
 
-    // Total request timeout (no headers, stalled body, or stalled error body)
-    // is terminal: do not auto-retry a long generation.
-    if (result.timedOut) {
-      throw new Error(`LLM request timed out after ${timeoutMs}ms`);
-    }
-
-    // Connection error before any response → retry (bounded).
-    if (result.status === 0) {
-      if (attempt < MAX_RETRIES) {
-        await wait(retryDelay(attempt, null));
-        continue;
+    for await (const event of stream) {
+      if (event.type === 'text_delta') inline.push(event.delta);
+      if (event.type === 'thinking_delta') {
+        onDelta?.({ messageId, type: 'reasoning_delta', delta: event.delta });
       }
-      throw new Error(
-        `LLM API request failed after ${attempt + 1} attempts: ${result.networkError}`,
-      );
-    }
-
-    // Body was not valid JSON → not transient, do not retry.
-    if (result.status === -1) {
-      throw new Error('LLM API malformed response: invalid JSON');
-    }
-
-    // Non-2xx. Retry only transient statuses (408/429/5xx).
-    if (result.status !== 200) {
-      if (retryableStatus(result.status) && attempt < MAX_RETRIES) {
-        await wait(retryDelay(attempt, result.retryAfter));
-        continue;
+      if (event.type === 'error' && event.reason === 'aborted') {
+        throw new DOMException('Aborted', 'AbortError');
       }
-      throw new Error(`LLM API error: ${result.status} ${result.errorBody}`.trim());
     }
+    inline.push('', true);
 
-    return parseAssistantMessage(result.data);
+    const result = await stream.result();
+    totalAttempts += diagnostics.attempts;
+    if (result.stopReason === 'aborted' || signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    if (result.stopReason !== 'error') {
+      return toLegacyMessage(result, diagnostics.toolNamesById, diagnostics.toolArgumentsById);
+    }
+    if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
+      await retryDelay(attempt);
+      continue;
+    }
+    throw formatTransportError(result, diagnostics, timeoutMs, totalAttempts);
   }
 
-  throw new Error('LLM API request failed');
+  throw new Error('LLM request failed');
 }

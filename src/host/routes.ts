@@ -15,9 +15,10 @@ import {
   getRuntimeToolchainCapabilities,
   refreshRuntimeToolchainCapabilities,
 } from '../sandbox/toolchain-manager.js';
-import { fetchAvailableModels } from './available-models.js';
+import { fetchAvailableModelCatalog } from './available-models.js';
 import { openFileInDefaultBrowser } from './default-browser.js';
 import type { CreateModelProviderInput, UpdateModelProviderInput } from './persistence/store.js';
+import { listPiAiProviderCatalog } from './pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from './provider-url.js';
 import type { RunManager, SseSink } from './run-manager.js';
 import {
@@ -38,6 +39,24 @@ function requestPermissionMode(value: unknown): PermissionMode {
   if (value === undefined) return DEFAULT_PERMISSION_MODE;
   if (!isPermissionMode(value)) throw new Error('invalid_permission_mode');
   return value;
+}
+
+function requestModelSelection(body: Record<string, unknown>): {
+  providerId?: string;
+  model?: string;
+} {
+  const hasProviderId = body.providerId !== undefined;
+  const hasModel = body.model !== undefined;
+  if (!hasProviderId && !hasModel) return {};
+  if (
+    typeof body.providerId !== 'string' ||
+    typeof body.model !== 'string' ||
+    !body.providerId.trim() ||
+    !body.model.trim()
+  ) {
+    throw new Error('providerId and model must be provided together');
+  }
+  return { providerId: body.providerId.trim(), model: body.model.trim() };
 }
 
 // Host API Token（进程内存唯一，不进入 URL/日志/前端状态）
@@ -417,6 +436,11 @@ export async function handleRequest(
 
   if (s[0] === 'settings') {
     try {
+      if (s.length === 3 && s[1] === 'pi-ai' && s[2] === 'providers' && method === 'GET') {
+        // pi-ai 内置 Provider 的公开目录：只返回可选 Provider、模型能力和默认地址，
+        // 不执行认证解析，也不把任何 API key 返回给浏览器。
+        return sendJson(res, 200, { providers: listPiAiProviderCatalog() });
+      }
       if (s.length === 2 && s[1] === 'models') {
         if (method === 'GET') {
           try {
@@ -446,6 +470,9 @@ export async function handleRequest(
               typeof body.baseUrl !== 'string' ||
               !Array.isArray(body.models)
             ) {
+              return bad(res, 'invalid_request_body');
+            }
+            if (body.piProviderId !== undefined && typeof body.piProviderId !== 'string') {
               return bad(res, 'invalid_request_body');
             }
             const created = manager.addModelProvider(body);
@@ -573,10 +600,16 @@ export async function handleRequest(
           return bad(res, (err as Error).message || 'baseUrl protocol not allowed');
         }
         try {
-          const models = await fetchAvailableModels(targetUrl, secret.apiKey);
-          return sendJson(res, 200, { models });
+          const catalog = await fetchAvailableModelCatalog(targetUrl, secret.apiKey);
+          manager.recordModelProbe(providerId, { status: 'available' });
+          return sendJson(res, 200, {
+            models: catalog.map((model) => model.id),
+            catalog,
+          });
         } catch (err) {
-          return bad(res, (err as Error).message);
+          const message = (err as Error).message;
+          manager.recordModelProbe(providerId, { status: 'error', error: message });
+          return bad(res, message);
         }
       }
       if (
@@ -611,8 +644,11 @@ export async function handleRequest(
           return bad(res, (err as Error).message || 'baseUrl protocol not allowed');
         }
         try {
-          const models = await fetchAvailableModels(targetUrl, apiKey);
-          return sendJson(res, 200, { models });
+          const catalog = await fetchAvailableModelCatalog(targetUrl, apiKey);
+          return sendJson(res, 200, {
+            models: catalog.map((model) => model.id),
+            catalog,
+          });
         } catch (err) {
           return bad(res, (err as Error).message);
         }
@@ -805,8 +841,17 @@ export async function handleRequest(
         } catch {
           return bad(res, 'invalid_permission_mode');
         }
+        let modelSelection: { providerId?: string; model?: string };
         try {
-          const created = manager.createInSession(task, sessionId, { permissionMode });
+          modelSelection = requestModelSelection(body);
+        } catch (err) {
+          return bad(res, (err as Error).message);
+        }
+        try {
+          const created = manager.createInSession(task, sessionId, {
+            permissionMode,
+            ...modelSelection,
+          });
           return sendJson(res, 202, { ...created, status: 'running', permissionMode });
         } catch (err) {
           return bad(res, (err as Error).message);
@@ -890,10 +935,17 @@ export async function handleRequest(
       } catch {
         return bad(res, 'invalid_permission_mode');
       }
+      let modelSelection: { providerId?: string; model?: string };
+      try {
+        modelSelection = requestModelSelection(body);
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
       try {
         const created = manager.createInSession(task, requestedSessionId, {
           workspaceName,
           permissionMode,
+          ...modelSelection,
         });
         return sendJson(res, 202, { ...created, status: 'running', permissionMode });
       } catch (err) {

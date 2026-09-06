@@ -127,7 +127,7 @@ function WorkspaceMenu({
   useEscapeKey(true, onClose);
   useClickOutside(ref, true, onClose);
 
-  const left = Math.max(8, Math.min(x, window.innerWidth - 188));
+  const left = Math.max(8, Math.min(x + 22 - 160, window.innerWidth - 168));
 
   return createPortal(
     <div ref={ref} className={styles.menu} style={{ left, top: y }}>

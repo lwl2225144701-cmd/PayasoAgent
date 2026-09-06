@@ -1,6 +1,10 @@
 // 模块: Provider URL 校验测试 — 失败必须非零退出
 
-import { canonicalizeProviderBaseUrl, fetchAvailableModelsSafe } from '../src/host/provider-url.js';
+import {
+  canonicalizeProviderBaseUrl,
+  fetchAvailableModelCatalogSafe,
+  fetchAvailableModelsSafe,
+} from '../src/host/provider-url.js';
 
 let passed = 0;
 let failed = 0;
@@ -101,6 +105,39 @@ console.log('Provider URL tests:');
     } catch {
       check('redirect rejected', true);
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// 8b. /models 元数据解析：识别 Agent 对话模型与非对话模型
+{
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'chat-pro', context_length: 131072, max_output_tokens: 8192 },
+            { id: 'MiniMax-M3' },
+            { id: 'text-embedding-3-large' },
+            { id: 'rerank-v3' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    const catalog = await fetchAvailableModelCatalogSafe('https://api.example.com/v1', 'sk-test');
+    check('model catalog classifies chat model', catalog[0]?.category === 'chat');
+    check('model catalog reads context window', catalog[0]?.contextWindow === 131072);
+    check(
+      'model catalog falls back to known model context',
+      catalog.find((model) => model.id === 'MiniMax-M3')?.contextWindow === 512_000,
+    );
+    check(
+      'model catalog excludes non-chat candidates',
+      catalog.find((model) => model.id === 'text-embedding-3-large')?.category === 'embedding' &&
+        catalog.find((model) => model.id === 'rerank-v3')?.category === 'rerank',
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

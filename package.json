@@ -14,6 +14,7 @@
     "test:stress": "tsx --env-file=.env tests/stress.test.ts",
     "test:sandbox": "tsx tests/sandbox-manager.test.ts",
     "test:contract": "tsx tests/tool-contract.test.ts",
+    "test:model-selection": "tsx tests/model-selection.test.ts",
     "test:tools": "tsx tests/filesystem-tools.test.ts",
     "test:operation-identity": "tsx tests/operation-identity.test.ts",
     "test:side-effect": "tsx tests/side-effect.test.ts",
@@ -34,5 +35,8 @@
     "concurrently": "^9.2.4",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.85.1"
   }
 }

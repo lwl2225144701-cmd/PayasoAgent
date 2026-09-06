@@ -118,7 +118,10 @@ export function SessionItem({
           <div
             ref={menuRef}
             className={styles.menu}
-            style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 188)), top: menu.y }}
+            style={{
+              left: `${Math.max(8, Math.min(menu.x + 22 - 160, window.innerWidth - 168))}px`,
+              top: `${menu.y}px`,
+            }}
           >
             <button
               type="button"

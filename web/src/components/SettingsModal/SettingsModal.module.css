@@ -213,6 +213,22 @@
   background-position: right 10px center;
 }
 
+.selectInput {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.selectInput:focus {
+  border-color: var(--color-brand-border);
+  box-shadow: 0 0 0 2px var(--color-brand-soft);
+}
+
 .buttonGroup {
   display: flex;
   gap: 10px;
@@ -554,6 +570,45 @@
   color: var(--text-primary);
 }
 
+.detectedPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--border-color));
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.detectedTitle {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detectedSummary {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.detectedList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.detectedModel {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
 .error {
   padding: 8px 10px;
   border-radius: 8px;
@@ -561,6 +616,15 @@
   color: var(--color-danger-text);
   font-size: 12.5px;
   border: 1px solid var(--color-danger-border);
+}
+
+.success {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+  font-size: 12.5px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 
 .list {
@@ -611,10 +675,34 @@
   flex-shrink: 0;
 }
 
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .cardMeta {
   font-size: 12px;
   color: var(--text-secondary);
   word-break: break-all;
+}
+
+.probeCatalog {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.probeCatalogTitle,
+.probeCatalogMore {
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .statusDot {

@@ -573,6 +573,15 @@ async function postJSONWithOrigin(
         'available-models via providerId',
         JSON.stringify(viaProvider.models) === JSON.stringify(['touch-max', 'touch-pro']),
       );
+      check(
+        'available-models returns catalog',
+        Array.isArray(viaProvider.catalog) &&
+          viaProvider.catalog.some((model: any) => model.id === 'touch-pro' && model.category === 'chat'),
+      );
+      const touchAfterProbe = (await getJSON(`${base}/settings/models`)).models.find(
+        (m: any) => m.id === touch.id,
+      );
+      check('available-models marks provider available', touchAfterProbe?.status === 'available');
 
       // 未配置密钥的 provider → 400
       const noKeyProv = await postJSON(
@@ -1294,6 +1303,27 @@ async function postJSONWithOrigin(
         'Default-clear: secret deleted',
         failingSecretStore.get('model-provider:dp1:api-key') === null,
       );
+    }
+
+    // Case B4: 元数据残留 hasApiKey=true 但 SecretStore 已无密钥 → 保存时自愈，不再阻塞用户
+    {
+      const db2 = new DatabaseSync(path.join(ROOT, 'stale-api-key-metadata.db'));
+      db2.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)');
+      db2.exec(
+        'INSERT INTO settings (key, value) VALUES (\'app\', \'{"models":[{"id":"stale1","name":"Stale","baseUrl":"https://stale","hasApiKey":true,"models":["m"],"kind":"custom"}],"defaultProviderId":"stale1","defaultModelId":"m"}\')',
+      );
+      const store2 = new SettingsStore(db2, new MemorySecretStore());
+      const updated = store2.updateModel('stale1', { name: 'Stale Renamed' });
+      check('Stale credentials: metadata edit succeeds', updated?.name === 'Stale Renamed');
+      check('Stale credentials: hasApiKey repaired', updated?.hasApiKey === false);
+      check(
+        'Stale credentials: default reference cleared',
+        JSON.parse(
+          (db2.prepare("SELECT value FROM settings WHERE key='app'").get() as { value: string })
+            .value,
+        ).defaultProviderId === '',
+      );
+      db2.close();
     }
 
     // Case C1: SecretStore.delete 失败 → metadata 不被删除（防止 orphan secret）

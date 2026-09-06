@@ -580,11 +580,22 @@ export class RunManager {
   createInSession(
     task: string,
     requestedSessionId?: string,
-    opts?: { workspaceName?: string; startAgent?: boolean; permissionMode?: PermissionMode },
+    opts?: {
+      workspaceName?: string;
+      startAgent?: boolean;
+      permissionMode?: PermissionMode;
+      providerId?: string;
+      model?: string;
+    },
   ): { runId: string; sessionId: string } {
     this.ensureOpen();
     const runId = crypto.randomUUID();
     const now = new Date().toISOString();
+    // Validate and snapshot the browser's explicit model selection before
+    // creating a session/run. This prevents a fast send immediately after a
+    // dropdown change from racing the asynchronous default-model save, and it
+    // avoids leaving an orphan session when the selection is invalid.
+    const resolved = this.resolveModelConfig(opts?.providerId, opts?.model);
     let session: StoredSession;
     if (requestedSessionId) {
       const persisted = this.store.getSession(requestedSessionId);
@@ -615,7 +626,6 @@ export class RunManager {
     const previousRuns = this.store.listRunsBySession(session.sessionId);
     const { messages: conversationHistory, harnessState: previousHarnessState } =
       this.conversationHistory(previousRuns);
-    const resolved = this.resolveModelConfig();
     const permissionMode = opts?.permissionMode ?? DEFAULT_PERMISSION_MODE;
     const run: InternalRun = {
       runId,
@@ -1385,6 +1395,10 @@ export class RunManager {
     return this.store.setDefaultModel(providerId, modelId);
   }
 
+  recordModelProbe(id: string, result: { status: 'available' | 'error'; error?: string }) {
+    return this.store.recordModelProbe(id, result);
+  }
+
   // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）
   importEnvModelProvider(input: {
     baseUrl: string;
@@ -1397,7 +1411,38 @@ export class RunManager {
   // 原子解析模型配置：要么返回完整可用的 {providerId, baseUrl, apiKey, model}，
   // 要么返回 undefined（调用方整组回退环境配置）。绝不返回残缺元组：
   // 默认 Provider 只有配置了密钥且有模型时才参与选中，否则跳过（而不是拿着空密钥命中）。
-  private resolveModelConfig(): ModelConfig | undefined {
+  private resolveModelConfig(
+    requestedProviderId?: string,
+    requestedModelId?: string,
+  ): ModelConfig | undefined {
+    if (requestedProviderId !== undefined || requestedModelId !== undefined) {
+      if (!requestedProviderId || !requestedModelId) {
+        throw new Error('providerId and model must be provided together');
+      }
+      const provider = this.store.getModelProvider(requestedProviderId);
+      if (!provider?.hasApiKey) {
+        throw new Error(`Provider ${requestedProviderId} is not configured`);
+      }
+      if (!provider.models.includes(requestedModelId)) {
+        throw new Error(`Model ${requestedModelId} is not in provider catalog`);
+      }
+      const selected = this.store.getModelProviderSecret(requestedProviderId, requestedModelId);
+      if (!selected?.apiKey || !selected.baseUrl) {
+        throw new Error(`Provider ${requestedProviderId} is not available`);
+      }
+      return {
+        providerId: requestedProviderId,
+        ...(selected.piProviderId ? { piProviderId: selected.piProviderId } : {}),
+        baseUrl: selected.baseUrl,
+        apiKey: selected.apiKey,
+        model: requestedModelId,
+        ...(selected.contextWindow !== undefined ? { contextWindow: selected.contextWindow } : {}),
+        ...(selected.maxOutputTokens !== undefined
+          ? { maxOutputTokens: selected.maxOutputTokens }
+          : {}),
+      };
+    }
+
     const providers = this.store.listModelProviders();
     const usable = (p: ModelProviderView): boolean => p.hasApiKey && p.models.length > 0;
     const defaultId = this.store.getDefaultProviderId();
@@ -1415,6 +1460,7 @@ export class RunManager {
     if (!full?.apiKey || !full.baseUrl) return undefined;
     return {
       providerId: configured.id,
+      ...(full.piProviderId ? { piProviderId: full.piProviderId } : {}),
       baseUrl: full.baseUrl,
       apiKey: full.apiKey,
       model,
@@ -1439,6 +1485,7 @@ export class RunManager {
       }
       return {
         providerId: run.providerId,
+        ...(secret.piProviderId ? { piProviderId: secret.piProviderId } : {}),
         baseUrl: secret.baseUrl,
         apiKey: secret.apiKey,
         model: run.model,

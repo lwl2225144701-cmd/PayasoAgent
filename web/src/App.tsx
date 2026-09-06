@@ -68,6 +68,8 @@ export default function App() {
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const previousDefaultModelRef = useRef<DefaultModelView | null>(null);
   const modelSaveVersionRef = useRef(0);
+  // 默认模型保存请求在途标记：轮询/聚焦刷新时避免用旧服务端快照覆盖乐观更新
+  const defaultModelSaveInFlightRef = useRef(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -85,6 +87,7 @@ export default function App() {
       previousDefaultModelRef.current = next;
 
       const version = ++modelSaveVersionRef.current;
+      defaultModelSaveInFlightRef.current = true;
       setDefaultModel(providerId, model)
         .then(() => {
           if (version === modelSaveVersionRef.current) {
@@ -97,6 +100,11 @@ export default function App() {
             showToast(`默认模型保存失败：${msg}`);
             setDefaultModelState(previous);
             previousDefaultModelRef.current = previous;
+          }
+        })
+        .finally(() => {
+          if (version === modelSaveVersionRef.current) {
+            defaultModelSaveInFlightRef.current = false;
           }
         });
     },
@@ -116,12 +124,16 @@ export default function App() {
   }, []);
 
   const refreshDefaultModel = useCallback(async () => {
+    // 本地保存请求在途时跳过：避免用旧服务端快照覆盖乐观更新
+    if (defaultModelSaveInFlightRef.current) return;
     try {
       const resp = await getDefaultModel();
-      setDefaultModelState({
+      const next = {
         defaultProviderId: resp.defaultProviderId,
         defaultModelId: resp.defaultModelId,
-      });
+      };
+      setDefaultModelState(next);
+      previousDefaultModelRef.current = next;
     } catch {
       // ignore：下拉仍可用，仅默认选择显示为占位
     }
@@ -205,7 +217,18 @@ export default function App() {
         ? defaultModel.defaultModelId
         : provider.models[0];
     if (!model) return null;
-    return { providerId: provider.id, providerName: provider.name, model };
+    const capability = provider.modelCapabilities?.[model];
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      model,
+      ...(capability?.contextWindow !== undefined
+        ? { contextWindow: capability.contextWindow }
+        : {}),
+      ...(capability?.maxOutputTokens !== undefined
+        ? { maxOutputTokens: capability.maxOutputTokens }
+        : {}),
+    };
   })();
   const currentSessionRuns = runs
     .filter((run) => run.sessionId === currentSessionId)
@@ -243,6 +266,9 @@ export default function App() {
           currentSessionId ?? undefined,
           preferredWorkspaceName ?? undefined,
           permissionMode,
+          currentModelSelection
+            ? { providerId: currentModelSelection.providerId, model: currentModelSelection.model }
+            : undefined,
         );
         const isNewSession = !currentSessionId;
         // 立刻把刚创建的 Run 合并进 runs 数组（乐观更新），避免等 refreshRuns 回来之前 landing 分支还在显示
@@ -253,6 +279,8 @@ export default function App() {
           task: trimmed,
           status: (resp.status as HostRun['status']) ?? 'running',
           workspace: workspace ?? undefined,
+          providerId: currentModelSelection?.providerId,
+          model: currentModelSelection?.model,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           permissionMode: resp.permissionMode,
@@ -293,6 +321,7 @@ export default function App() {
       preferredWorkspaceName,
       refreshSessions,
       workspace,
+      currentModelSelection,
     ],
   );
 

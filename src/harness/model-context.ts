@@ -43,6 +43,18 @@ const MODEL_CAPABILITIES: ModelCapability[] = [
   },
 ];
 
+export function getKnownModelCapability(
+  model: string,
+): { contextWindowTokens: number; maxOutputTokens: number } | undefined {
+  const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(model.trim()));
+  return capability
+    ? {
+        contextWindowTokens: capability.contextWindowTokens,
+        maxOutputTokens: capability.maxOutputTokens,
+      }
+    : undefined;
+}
+
 function positiveIntegerEnv(raw: string | undefined, name: string): number | null {
   if (raw === undefined || raw.trim() === '') return null;
   const value = Number(raw);
@@ -93,7 +105,7 @@ export function resolveModelContextConfig(
 ): ModelContextConfig {
   const explicitModel = input.model?.trim();
   if (explicitModel) {
-    const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(explicitModel));
+    const capability = getKnownModelCapability(explicitModel);
     const hasSettingsOverride =
       input.contextWindowTokens !== undefined || input.maxOutputTokens !== undefined;
     return buildConfig({
@@ -113,7 +125,7 @@ export function resolveModelContextConfig(
   }
 
   const model = env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
-  const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(model));
+  const capability = getKnownModelCapability(model);
   const configuredWindow = positiveIntegerEnv(
     env.MODEL_CONTEXT_WINDOW_TOKENS,
     'MODEL_CONTEXT_WINDOW_TOKENS',

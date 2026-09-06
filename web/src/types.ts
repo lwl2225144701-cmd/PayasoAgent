@@ -21,6 +21,7 @@ export interface HostRun {
   result?: string;
   error?: string;
   workspace?: WorkspaceView;
+  providerId?: string;
   model?: string;
   permissionMode: PermissionMode;
 }
@@ -49,21 +50,54 @@ export interface ModelCapabilitySetting {
   maxOutputTokens?: number;
 }
 
+export type ProviderModelCategory =
+  | 'chat'
+  | 'embedding'
+  | 'rerank'
+  | 'image'
+  | 'audio'
+  | 'moderation';
+
+export interface ProviderModelInfo {
+  id: string;
+  category: ProviderModelCategory;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+export interface PiAiModelInfo extends ProviderModelInfo {
+  name: string;
+  api: string;
+  reasoning: boolean;
+  input: string[];
+}
+
+export interface PiAiProviderInfo {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: PiAiModelInfo[];
+}
+
 export interface ModelProviderView {
   id: string;
   kind: 'builtin' | 'custom';
   name: string;
   baseUrl: string;
+  piProviderId?: string;
   apiKeyMasked: string;
   hasApiKey: boolean;
   models: string[];
   modelCapabilities?: Record<string, ModelCapabilitySetting>;
+  lastCheckedAt?: string;
+  probeError?: string;
   status: 'unconfigured' | 'configured' | 'available' | 'error' | 'checking';
 }
 
 export interface CreateModelProviderInput {
   name: string;
   baseUrl: string;
+  piProviderId?: string;
   apiKey?: string;
   models: string[];
   modelCapabilities?: Record<string, ModelCapabilitySetting>;
@@ -88,6 +122,8 @@ export interface ModelSelection {
   providerId: string;
   providerName: string;
   model: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 // Runtime Trace 事件

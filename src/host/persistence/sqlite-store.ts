@@ -727,6 +727,7 @@ export class SqliteRunStore implements RunStore {
     apiKey: string;
     baseUrl: string;
     models: string[];
+    piProviderId?: string;
     contextWindow?: number;
     maxOutputTokens?: number;
   } | null {
@@ -745,6 +746,13 @@ export class SqliteRunStore implements RunStore {
 
   setDefaultModel(providerId: string, modelId?: string): DefaultModelSelection {
     return this.settings.setDefaultModel(providerId, modelId);
+  }
+
+  recordModelProbe(
+    id: string,
+    result: { status: 'available' | 'error'; error?: string },
+  ): ModelProviderView | null {
+    return this.settings.recordModelProbe(id, result);
   }
 
   importEnvFallback(input: {

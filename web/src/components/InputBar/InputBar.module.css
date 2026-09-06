@@ -312,6 +312,12 @@
   font-weight: 600;
 }
 
+.modelDropdownMeta {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .modelGroup {
   display: flex;
   flex-direction: column;

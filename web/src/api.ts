@@ -6,7 +6,10 @@ import type {
   HostRun,
   HostSession,
   ModelProviderView,
+  ModelSelection,
   PermissionMode,
+  PiAiProviderInfo,
+  ProviderModelInfo,
   UpdateModelProviderInput,
   WorkspaceView,
 } from './types';
@@ -33,12 +36,18 @@ export function createRun(
   sessionId?: string,
   workspaceName?: string,
   permissionMode: PermissionMode = 'workspace-write',
+  modelSelection?: Pick<ModelSelection, 'providerId' | 'model'>,
 ): Promise<{ runId: string; sessionId: string; status: string; permissionMode: PermissionMode }> {
   const url = sessionId ? `/sessions/${sessionId}/runs` : '/runs';
+  const modelFields = modelSelection
+    ? { providerId: modelSelection.providerId, model: modelSelection.model }
+    : {};
   return jsonFetch(url, {
     method: 'POST',
     body: JSON.stringify(
-      workspaceName ? { task, workspaceName, permissionMode } : { task, permissionMode },
+      workspaceName
+        ? { task, workspaceName, permissionMode, ...modelFields }
+        : { task, permissionMode, ...modelFields },
     ),
   });
 }
@@ -256,6 +265,11 @@ export function createModel(input: CreateModelProviderInput): Promise<ModelProvi
   });
 }
 
+// pi-ai 内置 Provider 的公开目录。只返回模型能力和默认地址，不包含任何凭证。
+export function listPiAiProviders(): Promise<{ providers: PiAiProviderInfo[] }> {
+  return jsonFetch('/settings/pi-ai/providers', { cache: 'no-store' });
+}
+
 export function updateModel(
   id: string,
   input: UpdateModelProviderInput,
@@ -288,7 +302,9 @@ export function setDefaultModel(providerId: string, model: string): Promise<Defa
 // 拉取 OpenAI 兼容端点的可用模型目录。
 // 仅使用服务端已保存的 Provider 配置（providerId），由 Host 读取其 baseUrl 与 apiKey。
 // 不允许前端传入 baseUrl 或 apiKey（SSRF / Secret 外带防线）。
-export function fetchAvailableModels(input: { providerId: string }): Promise<{ models: string[] }> {
+export function fetchAvailableModels(input: {
+  providerId: string;
+}): Promise<{ models: string[]; catalog?: ProviderModelInfo[] }> {
   return jsonFetch('/settings/available-models', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -300,7 +316,7 @@ export function fetchAvailableModels(input: { providerId: string }): Promise<{ m
 export function previewAvailableModels(input: {
   baseUrl: string;
   apiKey: string;
-}): Promise<{ models: string[] }> {
+}): Promise<{ models: string[]; catalog?: ProviderModelInfo[] }> {
   return jsonFetch('/settings/available-models/preview', {
     method: 'POST',
     body: JSON.stringify(input),
