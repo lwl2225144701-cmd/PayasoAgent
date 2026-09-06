@@ -1,7 +1,8 @@
 // Harness-owned model context capabilities and conservative token estimation.
 // These values shape the model view; they are never exposed as tool arguments.
 
-export type ModelContextSource = 'run_model' | 'env' | 'model_registry' | 'fallback';
+export type ModelSelectionSource = 'run' | 'env';
+export type ModelContextSource = 'settings' | 'env' | 'model_registry' | 'fallback';
 
 export interface ModelContextInput {
   /** 当前 Run 显式选中的模型（Run model snapshot）。缺省时走环境变量路径。 */
@@ -17,6 +18,7 @@ export interface ModelContextConfig {
   maxOutputTokens: number;
   safetyTokens: number;
   maxInputTokens: number;
+  modelSource: ModelSelectionSource;
   source: ModelContextSource;
 }
 
@@ -63,6 +65,7 @@ function buildConfig(args: {
   contextWindowTokens: number;
   maxOutputTokens: number;
   safetyTokens: number | null;
+  modelSource: ModelSelectionSource;
   source: ModelContextSource;
 }): ModelContextConfig {
   const safetyTokens =
@@ -79,6 +82,7 @@ function buildConfig(args: {
     maxOutputTokens: args.maxOutputTokens,
     safetyTokens,
     maxInputTokens,
+    modelSource: args.modelSource,
     source: args.source,
   };
 }
@@ -90,6 +94,8 @@ export function resolveModelContextConfig(
   const explicitModel = input.model?.trim();
   if (explicitModel) {
     const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(explicitModel));
+    const hasSettingsOverride =
+      input.contextWindowTokens !== undefined || input.maxOutputTokens !== undefined;
     return buildConfig({
       model: explicitModel,
       contextWindowTokens:
@@ -101,7 +107,8 @@ export function resolveModelContextConfig(
         capability?.maxOutputTokens ??
         FALLBACK_MAX_OUTPUT_TOKENS,
       safetyTokens: positiveIntegerInput(input.safetyTokens, 'safetyTokens'),
-      source: 'run_model',
+      modelSource: 'run',
+      source: hasSettingsOverride ? 'settings' : capability ? 'model_registry' : 'fallback',
     });
   }
 
@@ -111,19 +118,22 @@ export function resolveModelContextConfig(
     env.MODEL_CONTEXT_WINDOW_TOKENS,
     'MODEL_CONTEXT_WINDOW_TOKENS',
   );
+  const configuredOutput = positiveIntegerEnv(
+    env.MODEL_MAX_OUTPUT_TOKENS,
+    'MODEL_MAX_OUTPUT_TOKENS',
+  );
   return buildConfig({
     model,
     contextWindowTokens:
       configuredWindow ?? capability?.contextWindowTokens ?? FALLBACK_CONTEXT_WINDOW_TOKENS,
-    maxOutputTokens:
-      positiveIntegerEnv(env.MODEL_MAX_OUTPUT_TOKENS, 'MODEL_MAX_OUTPUT_TOKENS') ??
-      capability?.maxOutputTokens ??
-      FALLBACK_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: configuredOutput ?? capability?.maxOutputTokens ?? FALLBACK_MAX_OUTPUT_TOKENS,
     safetyTokens: positiveIntegerEnv(
       env.MODEL_CONTEXT_SAFETY_TOKENS,
       'MODEL_CONTEXT_SAFETY_TOKENS',
     ),
-    source: configuredWindow ? 'env' : capability ? 'model_registry' : 'fallback',
+    modelSource: 'env',
+    source:
+      configuredWindow || configuredOutput ? 'env' : capability ? 'model_registry' : 'fallback',
   });
 }
 

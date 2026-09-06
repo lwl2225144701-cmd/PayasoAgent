@@ -64,7 +64,8 @@ await test('explicit run model wins over OPENAI_MODEL env (Case 1)', () => {
     { OPENAI_MODEL: 'gpt-4o-mini' },
   );
   assert.equal(config.model, 'MiniMax-M3');
-  assert.equal(config.source, 'run_model');
+  assert.equal(config.modelSource, 'run');
+  assert.equal(config.source, 'model_registry');
   assert.equal(config.contextWindowTokens, 512_000);
   assert.equal(config.maxOutputTokens, 16_384);
   assert.ok(config.maxInputTokens < config.contextWindowTokens);
@@ -79,18 +80,20 @@ await test('explicit model path ignores numeric env overrides', () => {
       MODEL_MAX_OUTPUT_TOKENS: '7777',
     },
   );
-  assert.equal(config.source, 'run_model');
+  assert.equal(config.modelSource, 'run');
+  assert.equal(config.source, 'settings');
   assert.equal(config.contextWindowTokens, 100_000);
   assert.equal(config.maxOutputTokens, 16_384);
 });
 
-await test('unknown explicit run model uses conservative fallback with run_model source', () => {
+await test('unknown explicit run model uses conservative fallback', () => {
   const config = resolveModelContextConfig(
     { model: 'some-future-model' },
     { OPENAI_MODEL: 'MiniMax-M3' },
   );
   assert.equal(config.model, 'some-future-model');
-  assert.equal(config.source, 'run_model');
+  assert.equal(config.modelSource, 'run');
+  assert.equal(config.source, 'fallback');
   assert.equal(config.contextWindowTokens, 262_144); // 引入模型已知下限 256K
   assert.equal(config.maxOutputTokens, 4_096);
 });
@@ -369,7 +372,8 @@ await test('模型设置按模型配置的能力覆盖优先于注册表', async
     contextWindowTokens: 131_072,
     maxOutputTokens: 8_192,
   });
-  assert.equal(config.source, 'run_model');
+  assert.equal(config.modelSource, 'run');
+  assert.equal(config.source, 'settings');
   assert.equal(config.contextWindowTokens, 131_072);
   assert.equal(config.maxOutputTokens, 8_192);
   // maxInput = 窗口 - 输出预留 - 安全余量（2%，下限 2048）

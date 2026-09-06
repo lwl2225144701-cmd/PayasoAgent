@@ -81,9 +81,10 @@ try {
   check('context_usage trace emitted', !!usage);
   const expected = resolveModelContextConfig({ model: 'MiniMax-M3' });
   check('usage.model is run model', usage?.model === 'MiniMax-M3', `got ${usage?.model}`);
+  check('usage.modelSource is run', usage?.modelSource === 'run', `got ${usage?.modelSource}`);
   check(
-    'usage.configSource is run_model',
-    usage?.configSource === 'run_model',
+    'usage.configSource is model_registry',
+    usage?.configSource === 'model_registry',
     `got ${usage?.configSource}`,
   );
   check(

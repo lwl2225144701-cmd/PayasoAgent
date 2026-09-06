@@ -1,6 +1,7 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
 import { type AgentContextHarness, DefaultContextHarness } from '../harness/context-harness.js';
+import type { ContextHarnessState } from '../harness/context-state.js';
 import { type ChatMessage, type ChatStreamDelta, chat, type ModelConfig } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import { storedPermissionMode } from '../permission-mode.js';
@@ -73,6 +74,10 @@ export async function runAgent(
     // Harness owns the model-visible projection. Host/tests may inject a
     // different implementation without changing Runtime execution semantics.
     contextHarness?: AgentContextHarness;
+    // 会话级上下文延续（非 resume）：新 Run 复用上一轮 checkpoint 的完整
+    // transcript + harness 摘要状态（conversationSummary / summarizedMessageCount），
+    // 使模型视图跨轮累计而不是每轮重置。
+    previousHarnessState?: ContextHarnessState;
     // v2.0.1 JIT Approval：网络访问即时授权端口。ask 模式下网络工具执行前
     // 调用 request()；未注入 → fail-closed（denyAll，一律拒绝）。
     approvalPort?: ApprovalPort;
@@ -131,7 +136,7 @@ export async function runAgent(
       modelConfig: opts.modelConfig,
       toolchain,
     });
-  contextHarness.restoreState(resume?.harnessState);
+  contextHarness.restoreState(resume?.harnessState ?? opts.previousHarnessState);
   const modelContext = contextHarness.modelContext;
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
@@ -213,6 +218,7 @@ export async function runAgent(
       emit({
         type: 'context_usage',
         model: modelContext.model,
+        modelSource: modelContext.modelSource,
         configSource: modelContext.source,
         emergencyTrim: ctx.usage.emergencyTrim,
         contextWindowTokens: modelContext.contextWindowTokens,

@@ -9,6 +9,7 @@ import {
   createDefaultRuntimeServices,
 } from '../bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../harness/context-harness.js';
+import type { ContextHarnessState } from '../harness/context-state.js';
 import type { ChatMessage, ChatStreamDelta, ModelConfig } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import {
@@ -612,7 +613,8 @@ export class RunManager {
       this.store.createSession(session);
     }
     const previousRuns = this.store.listRunsBySession(session.sessionId);
-    const conversationHistory = this.conversationHistory(previousRuns);
+    const { messages: conversationHistory, harnessState: previousHarnessState } =
+      this.conversationHistory(previousRuns);
     const resolved = this.resolveModelConfig();
     const permissionMode = opts?.permissionMode ?? DEFAULT_PERMISSION_MODE;
     const run: InternalRun = {
@@ -638,7 +640,7 @@ export class RunManager {
     this.runs.set(runId, run);
     this.record(run, { type: 'run_started', runId, timestamp: now });
     if (opts?.startAgent !== false) {
-      this.startAgent(run, task, undefined, conversationHistory);
+      this.startAgent(run, task, undefined, conversationHistory, previousHarnessState);
     }
     return { runId, sessionId: session.sessionId };
   }
@@ -1101,6 +1103,7 @@ export class RunManager {
     task: string,
     resume?: Parameters<typeof runAgent>[1],
     conversationHistory: ChatMessage[] = [],
+    previousHarnessState?: ContextHarnessState,
   ): void {
     let pendingDelta: StreamingEvent | null = null;
     let deltaTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1165,6 +1168,7 @@ export class RunManager {
             modelConfig,
             toolchain: executionContext.toolchain,
           }),
+          previousHarnessState,
           signal: abortController.signal,
           onStreamDelta: queueDelta,
           onTrace: (event) => {
@@ -1307,20 +1311,41 @@ export class RunManager {
     return task.replace(/\s+/g, ' ').trim().slice(0, 80) || '未命名任务';
   }
 
-  private conversationHistory(runs: StoredRun[]): ChatMessage[] {
-    const messages: ChatMessage[] = [];
-    for (const run of runs) {
+  private conversationHistory(runs: StoredRun[]): {
+    messages: ChatMessage[];
+    harnessState?: ContextHarnessState;
+  } {
+    // 会话级上下文累计：每轮 Run 的 checkpoint 保存的是完整 canonical transcript
+    // （含之前所有轮次 + 本轮全部工具交互）。新 Run 直接复用最近一个可用
+    // checkpoint 的完整 transcript（去掉旧 system，保留 tool 调用链），而不是
+    // 只拼 task + result —— 否则中间的工具交互/细节每轮都会丢失（上下文"重置"）。
+    let messages: ChatMessage[] = [];
+    let harnessState: ContextHarnessState | undefined;
+    let lastCheckpointIndex = -1;
+    for (let index = 0; index < runs.length; index++) {
+      const run = runs[index];
+      if (run.status === 'running' || run.status === 'interrupted') continue;
+      const checkpoint = loadCheckpoint(run.runId);
+      if (checkpoint?.messages?.length) {
+        messages = checkpoint.messages.filter((message) => message.role !== 'system');
+        if (checkpoint.harnessState) harnessState = checkpoint.harnessState;
+        lastCheckpointIndex = index;
+      }
+    }
+    // 最近 checkpoint 之后的 Run（或全部无 checkpoint）：回退为 task + result 对。
+    // Product errors may contain Host-only paths/provider details. Preserve
+    // conversational continuity without feeding those internals to the LLM.
+    for (let index = lastCheckpointIndex + 1; index < runs.length; index++) {
+      const run = runs[index];
       if (run.status === 'running' || run.status === 'interrupted') continue;
       messages.push({ role: 'user', content: run.task });
       if (run.status === 'completed' && run.result) {
         messages.push({ role: 'assistant', content: run.result });
       } else {
-        // Product errors may contain Host-only paths/provider details. Preserve
-        // conversational continuity without feeding those internals to the LLM.
         messages.push({ role: 'assistant', content: `上一轮未完成（${run.status}）` });
       }
     }
-    return messages;
+    return { messages, harnessState };
   }
 
   listModelProviders() {

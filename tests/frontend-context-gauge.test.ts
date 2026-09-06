@@ -22,6 +22,7 @@ const usageEvent = (over: Partial<ContextUsageEvent> = {}): ContextUsageEvent =>
   ...base,
   type: 'context_usage',
   model: 'step-3.7-flash',
+  modelSource: 'run',
   configSource: 'fallback',
   contextWindowTokens: 32_768,
   maxOutputTokens: 4_096,

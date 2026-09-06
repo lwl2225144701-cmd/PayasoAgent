@@ -115,9 +115,24 @@ export function assertInsideWorkspace(runId: string, targetPath: string): void {
 // user-selected workspaces. Non-existing targets are checked via their nearest
 // existing ancestor; symlink traversal remains fail-closed.
 export function assertInsideRoot(rootPath: string, targetPath: string): void {
-  // root/abs 都取 realpath：macOS /var 是 /private/var 的 symlink，
-  // 仅 path.resolve 不解析 symlink，会导致"逃出 workspace"误判。
-  const root = realpathOfNearestExisting(path.resolve(rootPath));
+  // 必须先检查未解析的 workspace 根。若先 realpath 再 lstat，根 symlink
+  // 已被折叠成目标目录，后续 isSymbolicLink() 将永远无法命中。
+  const unresolvedRoot = path.resolve(rootPath);
+  let unresolvedRootStat: fs.Stats;
+  try {
+    unresolvedRootStat = fs.lstatSync(unresolvedRoot);
+  } catch {
+    throw new Error(`workspace 根不存在或不可访问: ${targetPath}`);
+  }
+  if (unresolvedRootStat.isSymbolicLink()) {
+    throw new Error(`workspace 根是 symlink，拒绝: ${targetPath}`);
+  }
+  if (!unresolvedRootStat.isDirectory()) {
+    throw new Error(`workspace 根不是目录，拒绝: ${targetPath}`);
+  }
+
+  // 再解析真实路径：保留 macOS /var → /private/var 等父级系统 symlink 兼容。
+  const root = fs.realpathSync.native(unresolvedRoot);
   const abs = path.resolve(String(targetPath));
   const realAbs = realpathOfNearestExisting(abs);
 
@@ -126,18 +141,7 @@ export function assertInsideRoot(rootPath: string, targetPath: string): void {
     throw new Error(`逃出 workspace: ${targetPath}`);
   }
 
-  // 3.2 workspace 根不允许是 symlink（防止工作区根被替换指向外部）
-  let rootStat: fs.Stats | undefined;
-  try {
-    rootStat = fs.lstatSync(root);
-  } catch {
-    rootStat = undefined;
-  }
-  if (rootStat?.isSymbolicLink()) {
-    throw new Error(`workspace 根是 symlink，拒绝: ${targetPath}`);
-  }
-
-  // 3.3 真实路径级：基准 = root 的 realpath（处理 macOS /var→/private/var 等系统级 symlink）
+  // 3.2 真实路径级：基准 = root 的 realpath（处理 macOS /var→/private/var 等系统级 symlink）
   const realBase = root; // root 已在上方通过 realpathOfNearestExisting 解析
   let cur = realAbs;
   for (;;) {

@@ -402,6 +402,94 @@ test('Session follow-up receives prior stable turns and keeps original Workspace
   }
 });
 
+test('Session follow-up carries the full prior transcript (tool interactions included)', async () => {
+  const dbPath = path.join(root, 'session-full-context.db');
+  const requestBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async (_input, init) => {
+    requestBodies.push(
+      JSON.parse(String(init?.body)) as { messages: Array<Record<string, unknown>> },
+    );
+    callCount++;
+    if (callCount === 1) {
+      // 第一轮首次 LLM 调用：返回 calculator 工具调用
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_calc_1',
+                    type: 'function',
+                    function: {
+                      name: 'calculator',
+                      arguments: JSON.stringify({ expression: '2*3' }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    const answer = callCount === 2 ? 'first answer' : 'second answer';
+    return new Response(
+      JSON.stringify({ choices: [{ message: { role: 'assistant', content: answer } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+  const runIds: string[] = [];
+  try {
+    setWorkspace(workspace);
+    const manager = new RunManager(new SqliteRunStore(dbPath));
+    const first = manager.createInSession('calculate 2*3');
+    runIds.push(first.runId);
+    await waitFor(() => manager.get(first.runId)?.status === 'completed');
+    assert.equal(manager.get(first.runId)?.result, 'first answer');
+
+    const second = manager.createInSession('follow up on the calculation', first.sessionId);
+    runIds.push(second.runId);
+    await waitFor(() => manager.get(second.runId)?.status === 'completed');
+
+    // 第二轮请求必须携带第一轮的完整交互：assistant(tool_calls) + tool 结果，
+    // 而不仅是 task + result 对（否则上下文每轮"重置"）。
+    const secondMessages = requestBodies[2]?.messages ?? [];
+    const hasToolCall = secondMessages.some(
+      (message) =>
+        message.role === 'assistant' &&
+        Array.isArray(message.tool_calls) &&
+        message.tool_calls.some(
+          (call: { function?: { name?: string } }) => call.function?.name === 'calculator',
+        ),
+    );
+    const hasToolResult = secondMessages.some(
+      (message) =>
+        message.role === 'tool' &&
+        message.tool_call_id === 'call_calc_1' &&
+        String(message.content).includes('6'),
+    );
+    assert.ok(hasToolCall, 'second run must see the prior assistant tool_call');
+    assert.ok(hasToolResult, 'second run must see the prior tool result');
+    // 最后一轮新增消息 = 上一轮最终答案 + 新任务
+    const lastTwo = secondMessages.slice(-2);
+    assert.equal(lastTwo[0]?.role, 'assistant');
+    assert.equal(lastTwo[0]?.content, 'first answer');
+    assert.equal(lastTwo[1]?.role, 'user');
+    assert.equal(lastTwo[1]?.content, 'follow up on the calculation');
+    manager.close();
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWorkspace();
+    for (const runId of runIds) fs.rmSync(checkpointPath(runId), { force: true });
+  }
+});
+
 test('streaming deltas are batched, persisted, and ordered before final events', async () => {
   const dbPath = path.join(root, 'stream-events.db');
   const originalFetch = globalThis.fetch;

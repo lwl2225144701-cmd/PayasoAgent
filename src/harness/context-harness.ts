@@ -102,9 +102,20 @@ export class DefaultContextHarness implements AgentContextHarness {
   }
 
   createTranscript(task: string, history: ChatMessage[] = []): ChatMessage[] {
+    // 会话历史可能来自上一轮 checkpoint 的完整 transcript（含工具交互）。
+    // 保留 tool 消息及其 tool_calls / tool_call_id，跨轮调用链对模型保持连贯；
+    // 上一轮的 system 不携带（本轮由 Harness 重新构建）。
     const conversation = history
-      .filter((message) => message.role === 'user' || message.role === 'assistant')
-      .map((message) => ({ role: message.role, content: message.content }) as ChatMessage);
+      .filter(
+        (message) =>
+          message.role === 'user' || message.role === 'assistant' || message.role === 'tool',
+      )
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+        ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+        ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+      })) as ChatMessage[];
     return [
       { role: 'system', content: this.systemPromptText() },
       ...conversation,

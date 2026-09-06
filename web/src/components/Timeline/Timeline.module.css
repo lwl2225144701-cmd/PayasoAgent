@@ -178,10 +178,118 @@
 
 /* ---- 上下文预算环形指示器 ---- */
 .gaugeWrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
-  margin-right: 6px;
+  margin-right: 4px;
+  padding: 4px;
+  cursor: help;
+  outline: none;
+}
+
+.gaugeWrap:hover,
+.gaugeWrap:focus-visible {
+  z-index: 80;
+}
+
+.gaugeWrap:focus-visible {
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 42%, transparent);
+}
+
+.gaugeTooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  z-index: 80;
+  display: flex;
+  width: max-content;
+  min-width: 218px;
+  max-width: min(280px, calc(100vw - 32px));
+  padding: 12px 14px;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-raised, #20242d) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 32%), inset 0 1px 0 rgb(255 255 255 / 5%);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 5px) scale(0.98);
+  transform-origin: 50% 100%;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+}
+
+.gaugeTooltip::after {
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  content: '';
+  background: inherit;
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.gaugeWrap:hover .gaugeTooltip,
+.gaugeWrap:focus-visible .gaugeTooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.gaugeTooltipLabel {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gaugeTooltipPercent {
+  margin-top: 1px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.gaugeTooltipDetail,
+.gaugeTooltipModel,
+.gaugeTooltipNotice,
+.gaugeTooltipDanger {
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.gaugeTooltipDetail {
+  color: var(--text-secondary);
+}
+
+.gaugeTooltipModel {
+  overflow: hidden;
+  max-width: 248px;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gaugeTooltipNotice {
+  margin-top: 4px;
+  color: var(--color-warning);
+}
+
+.gaugeTooltipDanger {
+  margin-top: 4px;
+  color: var(--color-danger);
 }
 
 .gaugeTrack {

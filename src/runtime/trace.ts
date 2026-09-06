@@ -83,7 +83,8 @@ export type TraceEvent =
       // v1.6 紧急兜底：本轮触发了当前任务轮内的紧急裁剪（视图必然有界）
       emergencyTrim?: boolean;
       model: string;
-      configSource: 'run_model' | 'env' | 'model_registry' | 'fallback';
+      modelSource: 'run' | 'env';
+      configSource: 'settings' | 'env' | 'model_registry' | 'fallback';
       contextWindowTokens: number;
       maxOutputTokens: number;
       safetyTokens: number;
@@ -218,7 +219,8 @@ export type TraceEventInput =
   | {
       type: 'context_usage';
       model: string;
-      configSource: 'run_model' | 'env' | 'model_registry' | 'fallback';
+      modelSource: 'run' | 'env';
+      configSource: 'settings' | 'env' | 'model_registry' | 'fallback';
       emergencyTrim?: boolean;
       contextWindowTokens: number;
       maxOutputTokens: number;

@@ -210,6 +210,9 @@ export default function App() {
   const currentSessionRuns = runs
     .filter((run) => run.sessionId === currentSessionId)
     .sort((a, b) => a.turnIndex - b.turnIndex);
+  // Composer 属于整个会话，其上下文预算应始终取会话最新一轮。
+  // currentRunId 只表示当前滚动/导航到的历史回合，不能改变 Composer 预算。
+  const latestSessionRunId = currentSessionRuns[currentSessionRuns.length - 1]?.runId ?? null;
 
   // Poll run files (kept for future "附件" row; not displayed inline).
   useEffect(() => {
@@ -511,7 +514,7 @@ export default function App() {
                 onNavigate={handleNavigateRun}
               />
               {currentSessionRuns.length > 0 ? (
-                currentSessionRuns.map((run, index) => (
+                currentSessionRuns.map((run) => (
                   <Timeline
                     key={run.runId}
                     run={run}
@@ -519,7 +522,7 @@ export default function App() {
                     embedded
                     onRunTerminal={handleRunTerminal}
                     onRetryCommand={handleCreateRun}
-                    onContextUsage={setContextUsage}
+                    onContextUsage={run.runId === latestSessionRunId ? setContextUsage : undefined}
                   />
                 ))
               ) : (

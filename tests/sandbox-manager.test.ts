@@ -146,6 +146,20 @@ test('assertInsideWorkspace 拒绝 symlink 父目录逃逸（目标不存在）'
   }
 });
 
+test('assertInsideWorkspace 拒绝 workspace 根本身是 symlink', () => {
+  const realTarget = path.join(TEST_ROOT, 'root-symlink-target');
+  const linkedRoot = path.join(TEST_ROOT, 'workspaces', 'root-sym');
+  fs.mkdirSync(realTarget, { recursive: true });
+  fs.rmSync(linkedRoot, { recursive: true, force: true });
+  fs.symlinkSync(realTarget, linkedRoot);
+  try {
+    expectThrow(() => assertInsideWorkspace('root-sym', path.join(linkedRoot, 'new.txt')));
+  } finally {
+    fs.rmSync(linkedRoot, { recursive: true, force: true });
+    fs.rmSync(realTarget, { recursive: true, force: true });
+  }
+});
+
 // ---- 7. cleanup ----
 test('cleanupWorkspace 只删除当前 runId 工作区', () => {
   createWorkspace('run-clean');
