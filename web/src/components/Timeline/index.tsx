@@ -273,20 +273,21 @@ export function Timeline({
     autoScrollRef.current = atBottom;
   }, [getScrollContainer]);
 
-  // Embedded Timelines scroll in App's .sessionTimeline parent, not in the
-  // visible Timeline wrapper itself. Listening to the real scroller prevents
-  // streaming updates from overriding a user's intentional scroll-up.
+  // Embedded turns share App's session scroller and its follow state.
+  // Only standalone Timelines manage their own scroll position here.
   useEffect(() => {
+    if (embedded) return;
     const el = getScrollContainer();
     if (!el) return;
     onScroll();
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [getScrollContainer, onScroll]);
+  }, [embedded, getScrollContainer, onScroll]);
 
   // Scroll once per rendered batch, immediately. Repeated smooth scrolling
   // queues animations and makes a fast stream visibly lag behind the text.
   useEffect(() => {
+    if (embedded) return;
     if (!autoScrollRef.current) return;
     const el = getScrollContainer();
     if (!el) return;
@@ -294,7 +295,7 @@ export function Timeline({
       if (autoScrollRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [getScrollContainer]);
+  }, [embedded, events, getScrollContainer]);
 
   const openInBrowser = async (file: FileEntry) => {
     if (!run) return;

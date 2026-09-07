@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useConversationScroll } from './hooks/useConversationScroll';
 import styles from './App.module.css';
 import {
   archiveSession as apiArchiveSession,
@@ -272,6 +273,9 @@ export default function App() {
   // Composer 属于整个会话，其上下文预算应始终取会话最新一轮。
   // currentRunId 只表示当前滚动/导航到的历史回合，不能改变 Composer 预算。
   const latestSessionRunId = currentSessionRuns[currentSessionRuns.length - 1]?.runId ?? null;
+  const [sentRunId, setSentRunId] = useState<string | null>(null);
+  const { scrollRef: conversationScrollRef, contentRef: conversationContentRef } =
+    useConversationScroll(currentSessionId, sentRunId);
 
   // Poll run files (kept for future "附件" row; not displayed inline).
   useEffect(() => {
@@ -343,6 +347,7 @@ export default function App() {
         };
         setCurrentSessionId(resp.sessionId);
         setCurrentRunId(resp.runId);
+        setSentRunId(resp.runId);
         setRuns((prev) => {
           if (prev.some((r) => r.runId === optimisticRun.runId)) return prev;
           return [...prev, optimisticRun];
@@ -591,30 +596,34 @@ export default function App() {
 
         {currentSessionId ? (
           <div className={styles.workspace}>
-            <div className={styles.sessionTimeline}>
+            <div className={styles.sessionTimeline} ref={conversationScrollRef}>
               {/* 0 高 sticky 槽必须挂在滚动容器内部，rail 才能钉在可视带右缘 */}
               <TurnNavigator
                 runs={currentSessionRuns}
                 activeRunId={currentRunId}
                 onNavigate={handleNavigateRun}
               />
-              {currentSessionRuns.length > 0 ? (
-                currentSessionRuns.map((run) => (
-                  <Timeline
-                    key={run.runId}
-                    run={run}
-                    modelFallback={null}
-                    embedded
-                    onRunTerminal={handleRunTerminal}
-                    onRetryCommand={handleCreateRun}
-                    onContextUsage={run.runId === latestSessionRunId ? setContextUsage : undefined}
-                  />
-                ))
-              ) : (
-                <div className={styles.sessionTimelineEmpty}>
-                  <p>正在准备工作区…</p>
-                </div>
-              )}
+              <div ref={conversationContentRef}>
+                {currentSessionRuns.length > 0 ? (
+                  currentSessionRuns.map((run) => (
+                    <Timeline
+                      key={run.runId}
+                      run={run}
+                      modelFallback={null}
+                      embedded
+                      onRunTerminal={handleRunTerminal}
+                      onRetryCommand={handleCreateRun}
+                      onContextUsage={
+                        run.runId === latestSessionRunId ? setContextUsage : undefined
+                      }
+                    />
+                  ))
+                ) : (
+                  <div className={styles.sessionTimelineEmpty}>
+                    <p>正在准备工作区…</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ) : (
