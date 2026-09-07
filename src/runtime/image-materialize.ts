@@ -10,12 +10,37 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ChatMessage, MessageImage } from '../llm/llm.js';
 import { assertInsideRoot, resolveWorkspacePath } from '../sandbox/sandbox-manager.js';
+import {
+  getAttachmentStoreRoot,
+  publishAttachmentIntoWorkspace,
+  putAttachmentObject,
+  sweepAttachmentTmpOnce,
+} from './attachment-store.js';
 
 // 单张图片进入模型上下文的字节上限（与 read 工具读图上限一致）。
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 function loadImage(image: MessageImage, workspaceRoot: string): MessageImage | null {
   if (typeof image.data === 'string' && image.data.length > 0) return image;
+  // 内容寻址优先（P1 将在此处加 request-images 变体缓存）：sha256 可直接推导
+  // 库内对象路径，workspace 副本只是同一 inode 的别名/历史回退。
+  if (image.sha256) {
+    const storePath = path.join(
+      getAttachmentStoreRoot(),
+      'objects',
+      image.sha256.slice(0, 2),
+      image.sha256,
+    );
+    try {
+      const stat = fs.statSync(storePath);
+      if (stat.isFile() && stat.size <= MAX_IMAGE_BYTES) {
+        const data = fs.readFileSync(storePath).toString('base64');
+        return { mimeType: image.mimeType, path: image.path, sha256: image.sha256, data };
+      }
+    } catch {
+      /* 库缺失（迁移/清理）→ 回退 workspace 副本 */
+    }
+  }
   if (!image.path) return null;
   try {
     const real = resolveWorkspacePath(workspaceRoot, image.path);
@@ -23,7 +48,7 @@ function loadImage(image: MessageImage, workspaceRoot: string): MessageImage | n
     const stat = fs.statSync(real);
     if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) return null;
     const data = fs.readFileSync(real).toString('base64');
-    return { mimeType: image.mimeType, path: image.path, data };
+    return { mimeType: image.mimeType, path: image.path, sha256: image.sha256, data };
   } catch {
     return null;
   }
@@ -49,7 +74,7 @@ export function materializeMessagesForModel(
           ...message,
           images: undefined,
           content:
-            `${message.content ? message.content + '\n' : ''}` +
+            `${message.content ? `${message.content}\n` : ''}` +
             `[图片已省略：当前模型不支持视觉输入，共 ${total} 张图片未发送给模型。]`,
         };
       }
@@ -79,24 +104,26 @@ export function materializeMessagesForModel(
   });
 }
 
-// 附件落盘辅助（Host 侧）：把 base64 附件写入工作区 attachments 目录，
-// 返回工作区相对路径。文件名做基础清洗防穿越；MIME 白名单由调用方校验。
+// 附件落盘（Host 侧，v2 内容寻址）：字节入库（sha256 去重 + 原子发布，
+// 见 attachment-store.ts）→ 硬链接进工作区 attachments 目录供 agent 可见。
+// 返回工作区相对路径 + 内容键；MIME 白名单/数量/大小由调用方校验。
+// 落盘任一步失败直接抛错（调用方按创建失败处理，不留下无附件的 Run）。
 export function writeAttachmentFile(input: {
   workspaceRoot: string;
   directory: string;
   fileName: string;
   dataBase64: string;
-}): { relPath: string } {
-  const safeName = path
-    .basename(input.fileName)
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
-    .replace(/^\.+/, '_');
-  const dir = resolveWorkspacePath(input.workspaceRoot, input.directory);
-  assertInsideRoot(input.workspaceRoot, dir);
-  fs.mkdirSync(dir, { recursive: true });
-  const target = path.join(dir, safeName);
-  assertInsideRoot(input.workspaceRoot, target);
-  fs.writeFileSync(target, Buffer.from(input.dataBase64, 'base64'));
-  const relPath = path.relative(input.workspaceRoot, target).split(path.sep).join('/');
-  return { relPath };
+}): { relPath: string; sha256: string } {
+  const bytes = Buffer.from(input.dataBase64, 'base64');
+  if (bytes.length === 0) throw new Error('附件内容为空');
+  const storeRoot = getAttachmentStoreRoot();
+  sweepAttachmentTmpOnce(storeRoot);
+  const stored = putAttachmentObject(storeRoot, bytes);
+  const { relPath } = publishAttachmentIntoWorkspace(
+    stored.storePath,
+    input.workspaceRoot,
+    input.directory,
+    input.fileName,
+  );
+  return { relPath, sha256: stored.sha256 };
 }

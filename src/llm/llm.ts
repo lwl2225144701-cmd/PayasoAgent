@@ -40,11 +40,15 @@ export interface ToolCall {
 }
 
 // 多模态图片块。canonical transcript / checkpoint 中只存 workspace 相对路径
-// （path）；base64（data）仅在发起 LLM 请求前物化到模型视图，绝不持久化。
+// 多模态图片块。canonical transcript / checkpoint 中只存 workspace 相对路径
+// （path）与内容键（sha256，P0 起随附件写入产生，可直接推导内容寻址库内
+// 对象路径）；base64（data）仅在发起 LLM 请求前物化到模型视图，绝不持久化。
 export interface MessageImage {
   mimeType: string;
   // Workspace 相对路径（如 input/attachments/a.png），由 Runtime 在调用边界解析。
   path?: string;
+  // 内容寻址键（.data/attachments/v1 内 objects/<前2>/<sha256>），附件写入时产生。
+  sha256?: string;
   // 临时 base64（无 data: 前缀），只存在于本轮模型视图。
   data?: string;
 }

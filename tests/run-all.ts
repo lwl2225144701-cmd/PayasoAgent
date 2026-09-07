@@ -20,6 +20,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'runtime-boundary', file: 'tests/runtime-boundary.test.ts' },
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
   { name: 'filesystem-tools', file: 'tests/filesystem-tools.test.ts' },
+  { name: 'attachment-store', file: 'tests/attachment-store.test.ts' },
   { name: 'sandbox-manager', file: 'tests/sandbox-manager.test.ts' },
   { name: 'toolchain-manager', file: 'tests/toolchain-manager.test.ts' },
   { name: 'toolchain-preparation', file: 'tests/toolchain-preparation.test.ts' },

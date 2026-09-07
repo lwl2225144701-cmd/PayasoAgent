@@ -665,18 +665,19 @@ export class RunManager {
       permissionMode,
     };
 
-    // 附件落盘：写入会话工作区 input/attachments/，文件名带 runId 前缀避免
-    // 同一会话多轮 Run 互相覆盖。落盘失败按创建失败处理（不留下无附件的 Run）。
+    // 附件落盘（v2 内容寻址）：字节入库 sha256 去重 + 原子发布，再硬链接进
+    // 会话工作区 input/attachments/（agent 可见，只读）。同名冲突由库自动加
+    // 后缀，永不覆盖。落盘失败按创建失败处理（不留下无附件的 Run）。
     const attachmentImages: MessageImage[] = [];
     const attachmentViews: HostAttachment[] = [];
     for (const attachment of opts?.attachments ?? []) {
-      const { relPath } = writeAttachmentFile({
+      const { relPath, sha256 } = writeAttachmentFile({
         workspaceRoot: run.workspaceRoot,
         directory: ATTACHMENT_DIR,
         fileName: `${runId.slice(0, 8)}-${attachment.name}`,
         dataBase64: attachment.dataBase64,
       });
-      attachmentImages.push({ mimeType: attachment.mimeType, path: relPath });
+      attachmentImages.push({ mimeType: attachment.mimeType, path: relPath, sha256 });
       attachmentViews.push({ name: attachment.name, mimeType: attachment.mimeType, path: relPath });
     }
 
