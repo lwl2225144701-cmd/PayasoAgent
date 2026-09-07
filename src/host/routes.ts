@@ -125,7 +125,6 @@ function trustedOrigins(hostPort: number): Set<string> {
   return origins;
 }
 
-
 function checkOrigin(req: IncomingMessage, hostPort: number): void {
   const origin = req.headers.origin;
   if (!origin || origin === 'null') {
@@ -525,7 +524,7 @@ export async function handleRequest(
           try {
             if (
               typeof body.name !== 'string' ||
-              typeof body.baseUrl !== 'string' ||
+              (body.baseUrl !== undefined && typeof body.baseUrl !== 'string') ||
               !Array.isArray(body.models)
             ) {
               return bad(res, 'invalid_request_body');

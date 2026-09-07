@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
-import { getPiAiProviderModel, listPiAiProviderCatalog } from '../src/host/pi-ai-providers.js';
+import { DatabaseSync } from 'node:sqlite';
+import { SettingsStore } from '../src/host/persistence/settings-store.js';
+import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
+import {
+  getPiAiProviderBaseUrl,
+  getPiAiProviderModel,
+  listPiAiProviderCatalog,
+} from '../src/host/pi-ai-providers.js';
+import { RunManager } from '../src/host/run-manager.js';
+import { MemorySecretStore } from '../src/host/secrets/secret-store.js';
+import { createHostServer } from '../src/host/server.js';
+import { chat } from '../src/llm/llm.js';
 
 const catalog = listPiAiProviderCatalog();
 assert.ok(catalog.length > 0, 'pi-ai catalog should expose at least one API-key provider');
@@ -21,21 +32,116 @@ assert.equal(resolved.model.provider, 'minimax-cn');
 assert.equal(getPiAiProviderModel('missing-provider', 'missing-model'), undefined);
 
 // provider 级无 baseUrl 的 provider（如 opencode-go）也必须放出来：
-// 地址写在每个 model 上，由用户在新增流程手动填入。目录只暴露能用标准 HTTP API
+// 地址写在每个 model 上，由 Host 在保存/调用时按模型解析。目录只暴露能用标准 HTTP API
 // + 现成 https 端点跑通的模型，故 bedrock/azure/vertex/cloudflare 自然落选。
 const opencodeGo = catalog.find((provider) => provider.id === 'opencode-go');
 assert.ok(opencodeGo, 'opencode-go (per-model baseUrl) should be released into the catalog');
-assert.equal(opencodeGo.baseUrl, '', 'opencode-go has no provider-level baseUrl; user fills it');
+assert.equal(opencodeGo.baseUrl, '', 'opencode-go has no provider-level baseUrl');
 assert.ok(opencodeGo.models.length > 0);
 assert.ok(
   opencodeGo.models.every((model) =>
     ['anthropic-messages', 'openai-completions', 'openai-responses'].includes(model.api),
   ),
-  'released models must use standard HTTP APIs that work with a single user-filled baseUrl',
+  'released models must use standard HTTP APIs with model-resolvable endpoints',
 );
 const ogResolved = getPiAiProviderModel('opencode-go', opencodeGo.models[0].id);
 assert.ok(ogResolved, 'an opencode-go catalog model should resolve at runtime');
 assert.equal(ogResolved.model.provider, 'opencode-go');
+assert.equal(
+  getPiAiProviderBaseUrl('opencode-go', opencodeGo.models[0].id),
+  ogResolved.model.baseUrl,
+  'a model-level baseUrl should be resolved for runtime calls',
+);
+const opencodeGoOpenAi = opencodeGo.models.find((model) => model.api === 'openai-completions');
+assert.ok(opencodeGoOpenAi, 'opencode-go should expose an OpenAI-compatible model');
+const ogOpenAiResolved = getPiAiProviderModel('opencode-go', opencodeGoOpenAi.id);
+assert.ok(ogOpenAiResolved, 'the OpenAI-compatible model should resolve at runtime');
+
+// 回归保护：内置 Provider 保存请求可以省略 baseUrl，但保存后的凭证仍返回可调用地址。
+{
+  const db = new DatabaseSync(':memory:');
+  const settings = new SettingsStore(db, new MemorySecretStore());
+  const saved = settings.addModel({
+    name: 'OpenCode Go',
+    piProviderId: 'opencode-go',
+    apiKey: 'sk-opencode-test',
+    models: [opencodeGo.models[0].id, opencodeGoOpenAi.id],
+  });
+  assert.equal(saved.baseUrl, ogResolved.model.baseUrl);
+  const credentials = settings.getProviderCredentials(saved.id, opencodeGo.models[0].id);
+  assert.equal(credentials?.baseUrl, ogResolved.model.baseUrl);
+  assert.equal(credentials?.apiKey, 'sk-opencode-test');
+  const openAiCredentials = settings.getProviderCredentials(saved.id, opencodeGoOpenAi.id);
+  assert.equal(openAiCredentials?.baseUrl, ogOpenAiResolved.model.baseUrl);
+  const updated = settings.updateModel(saved.id, { baseUrl: '' });
+  assert.equal(updated?.baseUrl, saved.baseUrl, 'built-in updates ignore an empty baseUrl');
+  assert.throws(
+    () => settings.updateModel(saved.id, { models: ['not-a-built-in-model'] }),
+    /内置提供方不支持模型/,
+  );
+  db.close();
+}
+
+// 回归保护：保存后的模型级地址会一路传到 pi-ai 的实际请求 URL。
+{
+  const originalFetch = globalThis.fetch;
+  let requestUrl = '';
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return new Response(
+      'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    );
+  };
+  try {
+    const result = await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      baseUrl: ogOpenAiResolved.model.baseUrl,
+      apiKey: 'sk-opencode-test',
+      model: opencodeGoOpenAi.id,
+      providerId: 'opencode-go-test',
+      piProviderId: 'opencode-go',
+    });
+    assert.equal(result.content, 'ok');
+    assert.equal(requestUrl, `${ogOpenAiResolved.model.baseUrl}/chat/completions`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+// 回归保护：HTTP 保存请求也允许内置 Provider 省略 baseUrl。
+{
+  const runtimeStore = new SqliteRunStore(':memory:', new MemorySecretStore());
+  const server = createHostServer(
+    new RunManager(runtimeStore),
+    'test-token-00000000000000000000000000000000',
+  );
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/settings/models`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token-00000000000000000000000000000000',
+        Origin: `http://localhost:${port}`,
+      },
+      body: JSON.stringify({
+        name: 'OpenCode Go via HTTP',
+        piProviderId: 'opencode-go',
+        apiKey: 'sk-opencode-http-test',
+        models: [opencodeGo.models[0].id],
+      }),
+    });
+    assert.equal(response.status, 201);
+    const saved = (await response.json()) as { baseUrl?: string };
+    assert.equal(saved.baseUrl, ogResolved.model.baseUrl);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    runtimeStore.close();
+  }
+}
 assert.ok(
   !catalog.some((provider) => provider.id === 'amazon-bedrock'),
   'bedrock (AWS SigV4) must stay excluded',

@@ -11,7 +11,6 @@ import {
   type ImageContent,
   type Model,
   type ProviderStreams,
-  type TextContent,
   type TSchema,
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
@@ -84,6 +83,9 @@ export interface ModelConfig {
   providerId?: string;
   // pi-ai 内置 Provider id；为空时使用通用 OpenAI-compatible Provider。
   piProviderId?: string;
+  // 会话级路由标识。OpenCode Go 要求通过 x-opencode-session 传递它，
+  // 让同一 Payaso 会话始终路由到同一个上游会话。
+  sessionId?: string;
   // Host 按模型解析的能力覆盖（设置页按模型配置；缺省走注册表/fallback），
   // 用于本请求的 max_tokens 与 Harness 的 Context Budget。
   contextWindow?: number;
@@ -592,6 +594,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
   model: string;
   providerId: string;
   piProviderId?: string;
+  sessionId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
   vision: boolean;
@@ -609,6 +612,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
       model: modelConfig.model,
       providerId: modelConfig.providerId || 'payaso-configured',
       ...(modelConfig.piProviderId ? { piProviderId: modelConfig.piProviderId } : {}),
+      ...(modelConfig.sessionId ? { sessionId: modelConfig.sessionId } : {}),
       contextWindow: modelConfig.contextWindow,
       maxOutputTokens: modelConfig.maxOutputTokens,
       vision: modelConfig.vision === true,
@@ -742,6 +746,18 @@ function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>)
   return { models, model };
 }
 
+function requestHeadersFor(
+  config: ReturnType<typeof resolveEndpointConfig>,
+): Record<string, string> | undefined {
+  // OpenCode Go's Console Go gateway uses this header for request routing. The
+  // pi-ai provider catalog intentionally does not hard-code it because the
+  // value belongs to the host application's conversation/session boundary.
+  if (config.piProviderId === 'opencode-go' && config.sessionId) {
+    return { 'x-opencode-session': config.sessionId };
+  }
+  return undefined;
+}
+
 function isAbortOrTimeoutMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
@@ -813,6 +829,8 @@ export async function chat(
     const stream = models.stream(model, context, {
       signal,
       fetch: (input, init) => piFetch(input, init, diagnostics, model.api === 'openai-completions'),
+      sessionId: config.sessionId,
+      headers: requestHeadersFor(config),
       timeoutMs,
       maxRetries: 0,
       maxTokens: model.maxTokens,

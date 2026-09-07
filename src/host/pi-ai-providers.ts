@@ -18,7 +18,7 @@ const STANDARD_HTTP_APIS = new Set<Api>([
 
 // 可入选目录的模型：标准 HTTP API + 现成 https 端点（非 {占位} 模板）。
 // opencode / opencode-go 这类 provider 级无 baseUrl，但每个 model 自带 https 地址，
-// 用户在新增流程手动填入该地址即可让目录内每个模型都跑通。
+// 保存时由 Host 按所选模型解析真实地址。
 function isEligibleModel(model: Model<Api>): boolean {
   return (
     STANDARD_HTTP_APIS.has(model.api) &&
@@ -52,7 +52,7 @@ function supportedProvider(provider: Provider): boolean {
   // 有 provider 级 baseUrl：沿用旧行为，原生 API wire 已自带正确端点（如 google）。
   if (provider.baseUrl) return true;
   // 无 provider 级 baseUrl（如 opencode / opencode-go：地址写在每个 model 上）：
-  // 仅当存在可入选模型（标准 HTTP API + 现成 https 端点）才放出来，由用户手动填入 baseUrl。
+  // 仅当存在可入选模型（标准 HTTP API + 现成 https 端点）才放出来。
   // bedrock（SigV4）、azure（空地址）、vertex/cloudflare（{占位}模板）因此自然落选。
   return models.some((model) => isEligibleModel(model as Model<Api>));
 }
@@ -80,8 +80,8 @@ export function listPiAiProviderCatalog(): PiAiProviderInfo[] {
     .filter(supportedProvider)
     .map((provider) => {
       const allModels = provider.getModels();
-      // 无 provider 级 baseUrl 时，只暴露能用「用户填入的单个 baseUrl」跑通的标准 HTTP 模型
-      // （其原生 API 端点写在 model 上，但非标准 API 的模型无法靠单个地址跑通，故隐藏）。
+      // 无 provider 级 baseUrl 时，只暴露有独立地址且能由当前协议适配层跑通的模型
+      // （非标准 API 的模型无法在当前运行时安全解析，故隐藏）。
       // 有 provider 级 baseUrl 时沿用全部模型（原生 wire 已自带正确端点）。
       const models = (
         provider.baseUrl
@@ -91,7 +91,7 @@ export function listPiAiProviderCatalog(): PiAiProviderInfo[] {
       return {
         id: provider.id,
         name: provider.name,
-        // provider 级无 baseUrl 时返回空串，由用户在新增流程手动填入
+        // provider 级无 baseUrl 时返回空串；保存/调用阶段按模型解析真实地址
         baseUrl: (provider.baseUrl as string | undefined) ?? '',
         models: models.map((model) => toModelInfo(model as Model<Api>)),
       };
@@ -107,6 +107,17 @@ export function getPiAiProviderModel(
   const model = provider.getModels().find((entry) => entry.id === modelId);
   if (!model) return undefined;
   return { provider, model: model as Model<Api> };
+}
+
+// 返回运行时真正使用的地址。大多数 Provider 在 Provider 级声明地址；
+// opencode 这类 Provider 把地址写在模型级，内置流程不需要用户填写 baseUrl。
+export function getPiAiProviderBaseUrl(providerId: string, modelId?: string): string | undefined {
+  const provider = getSupportedProvider(providerId);
+  if (!provider) return undefined;
+  if (provider.baseUrl) return provider.baseUrl;
+  if (!modelId) return undefined;
+  const model = provider.getModels().find((entry) => entry.id === modelId);
+  return model?.baseUrl || undefined;
 }
 
 // createProvider() 要求的是 API wire 实现；内置 Provider 本身实现了同一份

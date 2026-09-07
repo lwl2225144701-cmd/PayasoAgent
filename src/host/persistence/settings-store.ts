@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { getPiAiProviderBaseUrl, listPiAiProviderCatalog } from '../pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from '../provider-url.js';
 import { createSecretStore, providerSecretKey, type SecretStore } from '../secrets/secret-store.js';
 
@@ -53,7 +54,7 @@ export interface ModelProviderView {
 
 export interface CreateModelProviderInput {
   name: string;
-  baseUrl: string;
+  baseUrl?: string;
   piProviderId?: string;
   // 提供即设置凭证（SecretStore）；缺省/空 = 不设置。响应绝不回传 key（只回 hasApiKey）。
   apiKey?: string | null;
@@ -456,9 +457,12 @@ export class SettingsStore {
     const apiKey = this.secrets.get(providerSecretKey(id));
     if (!apiKey) return null;
     const capability = model ? provider.modelCapabilities?.[model] : undefined;
+    const baseUrl = provider.piProviderId
+      ? (getPiAiProviderBaseUrl(provider.piProviderId, model) ?? provider.baseUrl)
+      : provider.baseUrl;
     return {
       apiKey,
-      baseUrl: provider.baseUrl,
+      baseUrl,
       models: provider.models,
       ...(provider.piProviderId ? { piProviderId: provider.piProviderId } : {}),
       ...(capability?.contextWindow !== undefined
@@ -473,19 +477,34 @@ export class SettingsStore {
 
   addModel(input: CreateModelProviderInput): ModelProviderView {
     const name = input.name.trim();
-    const baseUrl = input.baseUrl.trim();
     const piProviderId = input.piProviderId?.trim();
     const apiKey = (input.apiKey ?? '').trim();
     const models = this.normalizeModels(input.models);
     const modelCapabilities = this.normalizeModelCapabilities(input.modelCapabilities, models);
 
+    const piProvider = piProviderId
+      ? listPiAiProviderCatalog().find((provider) => provider.id === piProviderId)
+      : undefined;
+    if (piProviderId && !piProvider) throw new Error('内置提供方不存在');
+    if (piProvider) {
+      const supportedModels = new Set(piProvider.models.map((model) => model.id));
+      const unsupportedModel = models.find((model) => !supportedModels.has(model));
+      if (unsupportedModel) {
+        throw new Error(`内置提供方不支持模型: ${unsupportedModel}`);
+      }
+    }
+    const piModelId = piProvider?.models.find((model) => models.includes(model.id))?.id;
+    const baseUrl = piProviderId
+      ? (getPiAiProviderBaseUrl(piProviderId, piModelId) ?? '')
+      : (input.baseUrl ?? '').trim();
+
     // 1. 标准化输入 + 基础校验
     if (!name) throw new Error('name is required');
-    if (!baseUrl) throw new Error('baseUrl is required');
+    if (!piProviderId && !baseUrl) throw new Error('baseUrl is required');
     if (input.piProviderId !== undefined && !piProviderId) {
       throw new Error('piProviderId must be non-empty when provided');
     }
-    this.validateUrl(baseUrl);
+    if (!piProviderId) this.validateUrl(baseUrl);
     if (models.length === 0) throw new Error('models is required');
 
     // 2. 读取 settings（校验前快照，用于后续判断）
@@ -544,6 +563,10 @@ export class SettingsStore {
     const current = settings.models;
     const idx = current.findIndex((m) => m.id === id);
     if (idx === -1) return null;
+    const piProvider = current[idx].piProviderId
+      ? listPiAiProviderCatalog().find((provider) => provider.id === current[idx].piProviderId)
+      : undefined;
+    if (current[idx].piProviderId && !piProvider) throw new Error('内置提供方不存在');
 
     // 保存旧 Secret 状态，以便 writeSettings 失败时恢复（补偿事务）。
     // 旧版本可能留下 hasApiKey=true 但 SecretStore 中已没有密钥的元数据；
@@ -566,7 +589,9 @@ export class SettingsStore {
       current[idx].name = name;
     }
 
-    if (input.baseUrl !== undefined) {
+    // 内置 Provider 的地址由 pi-ai 的 Provider/Model 目录决定；兼容旧前端传来的空地址，
+    // 但不允许用户覆盖内置运行时地址。自定义 Provider 仍必须校验并保存 baseUrl。
+    if (input.baseUrl !== undefined && !current[idx].piProviderId) {
       const baseUrl = input.baseUrl.trim();
       if (!baseUrl) throw new Error('baseUrl is required');
       this.validateUrl(baseUrl);
@@ -579,6 +604,13 @@ export class SettingsStore {
     if (input.models !== undefined) {
       const models = this.normalizeModels(input.models);
       if (models.length === 0) throw new Error('models is required');
+      if (piProvider) {
+        const supportedModels = new Set(piProvider.models.map((model) => model.id));
+        const unsupportedModel = models.find((model) => !supportedModels.has(model));
+        if (unsupportedModel) {
+          throw new Error(`内置提供方不支持模型: ${unsupportedModel}`);
+        }
+      }
       current[idx].models = models;
       // 目录收缩时清掉已移除模型的能力覆盖
       if (current[idx].modelCapabilities) {

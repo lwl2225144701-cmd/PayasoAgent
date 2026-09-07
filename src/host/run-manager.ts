@@ -1618,6 +1618,7 @@ export class RunManager {
       return {
         providerId: run.providerId,
         ...(secret.piProviderId ? { piProviderId: secret.piProviderId } : {}),
+        sessionId: run.sessionId,
         ...(this.resolveVision(secret.piProviderId, run.model, secret.vision)
           ? { vision: true }
           : {}),

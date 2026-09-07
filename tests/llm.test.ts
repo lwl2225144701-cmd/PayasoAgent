@@ -271,6 +271,26 @@ try {
     assert.equal(requests[0].model, 'model-from-provider');
   });
 
+  await test('OpenCode Go receives the host session routing header', async () => {
+    let sessionHeader: string | null = null;
+    globalThis.fetch = async (_input, init) => {
+      sessionHeader = new Headers(init?.headers).get('x-opencode-session');
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      providerId: 'opencode-go-test',
+      piProviderId: 'opencode-go',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      apiKey: 'sk-opencode-test',
+      model: 'deepseek-v4-flash',
+      sessionId: 'payaso-session-123',
+    });
+    assert.equal(sessionHeader, 'payaso-session-123');
+  });
+
   await test('StepFun standard models use the standard chat endpoint', async () => {
     let requestUrl = '';
     globalThis.fetch = async (input) => {
