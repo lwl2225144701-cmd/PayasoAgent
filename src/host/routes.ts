@@ -49,7 +49,6 @@ const IMAGE_EXT_MIME: Record<string, string> = {
 };
 const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 const SAFE_SESSION_ID = SAFE_RUN_ID;
-const WORKSPACE_DIRS = ['input', 'work', 'output'];
 
 function requestPermissionMode(value: unknown): PermissionMode {
   if (value === undefined) return DEFAULT_PERMISSION_MODE;
@@ -126,18 +125,6 @@ function trustedOrigins(hostPort: number): Set<string> {
   return origins;
 }
 
-// 脱敏 headers（用于日志）
-function safeHeaders(headers: IncomingMessage['headers']): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === 'authorization' || key.toLowerCase() === 'cookie') {
-      out[key] = '[redacted]';
-    } else {
-      out[key] = String(value);
-    }
-  }
-  return out;
-}
 
 function checkOrigin(req: IncomingMessage, hostPort: number): void {
   const origin = req.headers.origin;
@@ -264,7 +251,7 @@ function serveStatic(res: ServerResponse, urlPath: string): void {
       const st = fs.statSync(abs);
       if (st.isDirectory()) {
         // 目录 → 尝试 index.html
-        serveStatic(res, '/' + rel.replace(/\/+$/, '') + '/index.html');
+        serveStatic(res, `/${rel.replace(/\/+$/, '')}/index.html`);
         return;
       }
       if (st.size > MAX_STATIC_BYTES) {

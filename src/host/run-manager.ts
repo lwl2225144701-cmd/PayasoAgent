@@ -149,7 +149,6 @@ function isCancellable(status: HostRunStatus): boolean {
 }
 
 export class RunManager {
-  private acceptingNewRuns = true;
   private runs = new Map<string, InternalRun>();
   private subscribers = new Map<string, Set<SseSink>>();
   private lifecycle: 'open' | 'closing' | 'closed' = 'open';
@@ -210,7 +209,6 @@ export class RunManager {
     if (this.lifecycle === 'closing' && this.closePromise) return this.closePromise;
 
     this.lifecycle = 'closing';
-    this.acceptingNewRuns = false;
     this.closePromise = (async () => {
       const activeRuns = [...this.runs.values()];
       const waitPromises: Promise<void>[] = [];
@@ -1127,8 +1125,11 @@ export class RunManager {
 
   subscribe(runId: string, sink: SseSink, afterSeq = 0, live = true): boolean {
     if (!this.store.getRun(runId)) return false;
-    if (!this.subscribers.has(runId)) this.subscribers.set(runId, new Set());
-    const set = this.subscribers.get(runId)!;
+    let set = this.subscribers.get(runId);
+    if (!set) {
+      set = new Set();
+      this.subscribers.set(runId, set);
+    }
     for (const item of this.store.listEvents(runId)) {
       if (item.seq <= afterSeq) continue;
       if (!sink.closed()) sink.write(sseEncode(item.seq, item.event));
