@@ -79,6 +79,7 @@ const OTOOL = '/usr/bin/otool';
 const DISCOVERY_TIMEOUT_MS = 5_000;
 const MAX_DEPENDENCY_FILES = 512;
 const RUNTIME_CONFIG_PATHS = ['/opt/homebrew/etc/openssl@3/openssl.cnf'];
+const APPLE_COMMAND_LINE_TOOLS_GIT = '/Library/Developer/CommandLineTools/usr/bin/git';
 
 function existingPath(input: string): string | undefined {
   try {
@@ -253,6 +254,36 @@ function gitExecPath(git: string, pathValue: string): string | undefined {
   return firstLine === undefined ? undefined : existingDirectory(firstLine);
 }
 
+// Apple Git resolves its developer-tool installation through xcode-select.
+// The helper directory alone is not enough inside Seatbelt: xcrun also needs
+// to traverse the enclosing .../usr tree to resolve the active toolchain.
+// Keep this narrow to the standard git-core suffix; Homebrew/git-core paths
+// without that suffix are already covered by their own dependency closure.
+function gitDeveloperToolsRoot(helperRoot: string): string | undefined {
+  const suffix = `${path.sep}usr${path.sep}libexec${path.sep}git-core`;
+  if (!helperRoot.endsWith(suffix)) return undefined;
+  const root = helperRoot.slice(0, -suffix.length);
+  return root === '' ? undefined : existingDirectory(root);
+}
+
+function resolveGitExecutable(
+  platform: NodeJS.Platform | string,
+  pathValue: string,
+): string | undefined {
+  // /usr/bin/git is an Apple libxcselect shim. Inside Seatbelt it tries to
+  // update xcrun's host cache, so prefer the full CommandLineTools binary
+  // whenever the normal system PATH is present. Test-injected PATHs remain
+  // deterministic and continue to resolve their fake Git executable.
+  if (
+    platform === 'darwin' &&
+    pathValue.split(path.delimiter).some((entry) => path.resolve(entry) === '/usr/bin') &&
+    isExecutable(APPLE_COMMAND_LINE_TOOLS_GIT)
+  ) {
+    return existingPath(APPLE_COMMAND_LINE_TOOLS_GIT);
+  }
+  return resolveExecutableFromPath('git', pathValue);
+}
+
 function npmInstallRoot(npm: string): string | undefined {
   const npmDirectory = path.dirname(npm);
   return existingDirectory(path.dirname(npmDirectory));
@@ -325,7 +356,9 @@ export function discoverMacOSToolchain(options: ToolchainDiscoveryOptions = {}):
     const executable =
       command === 'node' && nodeExecutable !== undefined
         ? nodeExecutable
-        : resolveExecutableFromPath(command, command === 'npm' ? nodePath : hostPath);
+        : command === 'git'
+          ? resolveGitExecutable(platform, hostPath)
+          : resolveExecutableFromPath(command, command === 'npm' ? nodePath : hostPath);
     if (executable === undefined) {
       tools[command] = toolRecord(
         command,
@@ -356,6 +389,8 @@ export function discoverMacOSToolchain(options: ToolchainDiscoveryOptions = {}):
       if (helperRoot !== undefined) {
         toolRoots.add(helperRoot);
         toolExecutableRoots.add(helperRoot);
+        const developerToolsRoot = gitDeveloperToolsRoot(helperRoot);
+        if (developerToolsRoot !== undefined) toolRoots.add(developerToolsRoot);
         addPathEntry(toolDirectory);
         // Git invokes helper programs that are not necessarily on PATH. Scan
         // every executable in its private helper directory so their dylibs are

@@ -16,7 +16,8 @@ import {
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-toolchain-test-'));
 const BIN = path.join(ROOT, 'bin');
-const GIT_CORE = path.join(ROOT, 'libexec', 'git-core');
+const DEVELOPER_TOOLS_ROOT = path.join(ROOT, 'Library', 'Developer', 'CommandLineTools');
+const GIT_CORE = path.join(DEVELOPER_TOOLS_ROOT, 'usr', 'libexec', 'git-core');
 fs.mkdirSync(BIN, { recursive: true });
 fs.mkdirSync(GIT_CORE, { recursive: true });
 
@@ -56,12 +57,26 @@ fi
   assert.equal(manifest.tools.git.executable, canonicalGit);
   assert.ok(manifest.tools.git.readableRoots.includes(canonicalGitCore));
   assert.ok(manifest.tools.git.executableRoots.includes(canonicalGitCore));
+  assert.ok(
+    manifest.tools.git.readableRoots.includes(fs.realpathSync.native(DEVELOPER_TOOLS_ROOT)),
+  );
+  assert.ok(manifest.readableRoots.includes(fs.realpathSync.native(DEVELOPER_TOOLS_ROOT)));
   assert.equal(manifest.tools.node.source, 'managed');
   assert.equal(manifest.tools.npm.source, 'host');
   assert.ok(manifest.safePath.split(path.delimiter).every((entry) => path.isAbsolute(entry)));
   assert.ok(!manifest.safePath.split(path.delimiter).includes('/relative/bin'));
   assert.ok(manifest.readableRoots.every((entry) => path.isAbsolute(entry)));
   assert.ok(manifest.executableRoots.every((entry) => path.isAbsolute(entry)));
+
+  if (fs.existsSync('/Library/Developer/CommandLineTools/usr/bin/git')) {
+    const appleGit = discoverMacOSToolchain({
+      platform: 'darwin',
+      pathValue: '/usr/bin',
+      nodeExecutable: process.execPath,
+      commands: ['git'],
+    });
+    assert.equal(appleGit.tools.git.executable, '/Library/Developer/CommandLineTools/usr/bin/git');
+  }
 
   const capabilities = summarizeToolchain(manifest);
   assert.equal(capabilities.platform, 'macos');

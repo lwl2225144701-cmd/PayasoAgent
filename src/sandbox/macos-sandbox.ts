@@ -243,6 +243,13 @@ export class MacOSSandbox {
     }
 
     options.onEvent?.('started');
+    const toolchain = getMacOSToolchain();
+    const gitExecPath = toolchain.tools.git?.executableRoots.find((root) =>
+      root.endsWith(`${path.sep}git-core`),
+    );
+    const developerDir = toolchain.tools.git?.readableRoots.find((root) =>
+      root.endsWith(`${path.sep}CommandLineTools`),
+    );
     const env = {
       PATH: this.safePath,
       HOME: home,
@@ -253,6 +260,12 @@ export class MacOSSandbox {
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_TERMINAL_PROMPT: '0',
+      // Avoid Apple Git asking xcrun to rediscover its helper directory
+      // inside Seatbelt (which otherwise attempts to write an inaccessible
+      // host xcrun cache under /var/folders). These are host-discovered,
+      // sandbox-readable paths and never come from the LLM command.
+      ...(gitExecPath === undefined ? {} : { GIT_EXEC_PATH: gitExecPath }),
+      ...(developerDir === undefined ? {} : { DEVELOPER_DIR: developerDir }),
     };
     const timeout = options.timeoutMs ?? SHELL_TIMEOUT_MS;
     const profile = profileFor(this.policy);
