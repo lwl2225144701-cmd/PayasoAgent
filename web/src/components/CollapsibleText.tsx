@@ -60,10 +60,26 @@ export function CollapsibleText({
     <div className={styles.root}>
       <div className={styles.text} style={lineClampStyle}>
         {streaming ? (
-          // Parsing incomplete Markdown/fences on every delta is expensive and
-          // can cause layout jumps (especially when Mermaid is still partial).
-          // The settled answer is upgraded to full Markdown below.
-          <div className={styles.streamingText}>{display}</div>
+          // Keep Markdown readable while tokens arrive. Mermaid is deliberately
+          // left to the settled branch below because an incomplete diagram can
+          // repeatedly fail parsing and cause large layout jumps.
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              a: ({ children, ...props }) => (
+                <a {...props} target="_blank" rel="noreferrer">
+                  {children}
+                </a>
+              ),
+              code: ({ className, children, ...props }) => (
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              ),
+            }}
+          >
+            {display}
+          </ReactMarkdown>
         ) : (
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

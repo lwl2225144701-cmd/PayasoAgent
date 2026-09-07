@@ -109,7 +109,8 @@ function ExecutionPanel({
   finishedAt: string;
   runId: string;
 }) {
-  const [open, setOpen] = useState(running);
+  // 执行详情默认收起，避免每次发送消息都把页面撑开；用户仍可手动展开。
+  const [open, setOpen] = useState(false);
   const wasRunning = useRef(running);
   const tools = groups.flatMap((group) => group.tools);
   const failedCount = tools.filter((tool) => tool.status === 'failed').length;
@@ -143,12 +144,11 @@ function ExecutionPanel({
             : '任务完成';
 
   useEffect(() => {
-    if (running) setOpen(true);
-    else if (wasRunning.current) setOpen(false);
+    if (!running && wasRunning.current) setOpen(false);
     wasRunning.current = running;
   }, [running]);
 
-  if (!hasDetails && !running) return null;
+  if (!hasDetails && !running && status !== 'failed' && status !== 'interrupted') return null;
 
   return (
     <section className={`${styles.executionPanel} ${open ? styles.executionPanelOpen : ''}`}>
@@ -449,6 +449,7 @@ export function Timeline({
     ) ||
     !!finalAnswer ||
     !!globalThinking ||
+    !!finalError ||
     run.status === 'running';
 
   return (
@@ -626,9 +627,7 @@ export function Timeline({
             {finalAnswer && (
               <div className={styles.finalBlock}>
                 <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
-                {finalError && run.status !== 'running' && (
-                  <div className={styles.finalError}>{finalError}</div>
-                )}
+                {finalError && <div className={styles.finalError}>{finalError}</div>}
                 {files.length > 0 && (
                   <div className={styles.artifacts}>
                     <div className={styles.artifactsTitle}>生成的文件</div>
@@ -673,9 +672,7 @@ export function Timeline({
                 <time className={styles.finalTime}>{formatTime(finalTimestamp)}</time>
               </div>
             )}
-            {!finalAnswer && finalError && run.status !== 'running' && (
-              <div className={styles.finalError}>{finalError}</div>
-            )}
+            {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
           </section>
         ) : (
           // Empty agent section: reserved vertical rhythm so input isn't jumpy.
@@ -736,6 +733,8 @@ function buildStructure(run: HostRun, events: HostEvent[]): BuildOut {
   const runStarted = events.find((e) => e.type === 'run_started');
   const completedEv = events.find((e) => e.type === 'run_completed');
   const failedEv = events.find((e) => e.type === 'run_failed');
+  const interruptedEv = events.find((e) => e.type === 'run_interrupted');
+  const errorEv = [...events].reverse().find((e) => e.type === 'error');
   const finalEv = events.find((e) => e.type === 'final_answer');
 
   let finalAnswer: string | null = null;
@@ -759,9 +758,17 @@ function buildStructure(run: HostRun, events: HostEvent[]): BuildOut {
   }
 
   const finalError: string | null =
-    failedEv && 'error' in failedEv
-      ? (failedEv.error as unknown as string)?.trim?.() || null
-      : run.error?.trim?.() || null;
+    (failedEv && 'error' in failedEv && typeof failedEv.error === 'string'
+      ? failedEv.error.trim()
+      : null) ||
+    (interruptedEv && 'error' in interruptedEv && typeof interruptedEv.error === 'string'
+      ? interruptedEv.error.trim()
+      : null) ||
+    (errorEv && 'message' in errorEv && typeof errorEv.message === 'string'
+      ? errorEv.message.trim()
+      : null) ||
+    run.error?.trim() ||
+    null;
 
   // Group events by step.
   const byStep = new Map<number, HostEvent[]>();

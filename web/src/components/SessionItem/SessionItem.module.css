@@ -47,6 +47,9 @@
 .body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   border: none;
   background: transparent;
   padding: 0;
@@ -62,6 +65,9 @@
 }
 
 .title {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   line-height: 1.4;
   color: var(--text-primary);
@@ -74,9 +80,10 @@
 }
 
 .time {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-muted);
-  margin-left: 6px;
 }
 
 .inlineInput {

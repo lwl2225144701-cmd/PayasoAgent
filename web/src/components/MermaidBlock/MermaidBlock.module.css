@@ -1,16 +1,34 @@
 .wrap {
   width: 100%;
-  overflow-x: auto;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   padding: 12px 4px;
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 6px;
 }
 
+.wrap > div {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .wrap svg {
+  display: block;
+  width: 100%;
   max-width: 100%;
   height: auto;
+  margin: 0 auto;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+.wrap :global(svg .nodeLabel),
+.wrap :global(svg .edgeLabel),
+.wrap :global(svg .cluster-label) {
+  color: var(--text-primary);
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
 }
 
 .error {
@@ -23,8 +41,8 @@
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .note {

@@ -15,12 +15,6 @@
   color: var(--text-primary);
 }
 
-.streamingText {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
 .text > :first-child {
   margin-top: 0;
 }
