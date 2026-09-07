@@ -12,6 +12,7 @@ import {
   normalizeToolResult,
   type ToolContext,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -20,9 +21,11 @@ async function execute(
 ): Promise<string> {
   return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
 import '../src/tools/filesystem.js';
 import '../src/tools/runtime-tools.js';
-import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
+import { createDefaultRunStore, SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
+import { MemorySecretStore } from '../src/host/secrets/secret-store.js';
 import { createHostServer, RunManager } from '../src/host/server.js';
 import {
   clearWorkspace,
@@ -108,42 +111,82 @@ test('Host Workspace API 只返回 name，不常规暴露真实绝对路径', as
   }
 });
 
-test('Host 拒绝超过 20MB 请求体上限的 Run 请求体（Content-Length + chunked）', async () => {
+test('Host 请求体上限分层：附件端点 12MB、常规端点 2MB', async () => {
   const server = createHostServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const address = server.address();
     assert.ok(address && typeof address === 'object');
-    // 上限 20MB（视觉附件场景，见 MAX_BODY_BYTES）：21MB 必须被拒
-    const oversized = 21 * 1024 * 1024;
-    const response = await fetch(`http://127.0.0.1:${address.port}/runs`, {
+    const base = `http://127.0.0.1:${address.port}`;
+    // 附件端点（POST /runs）上限 12MB：13MB 必须拒
+    const oversized = 13 * 1024 * 1024;
+    const rejected = await fetch(`${base}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ task: 'x'.repeat(oversized) }),
     });
-    assert.equal(response.status, 413);
-    assert.equal(((await response.json()) as { error: string }).error, 'payload_too_large');
-
-    const chunkedStatus = await new Promise<number | undefined>((resolve, reject) => {
-      const request = http.request(
-        {
-          hostname: '127.0.0.1',
-          port: address.port,
-          path: '/runs',
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' },
-        },
-        (res) => {
-          res.resume();
-          res.on('end', () => resolve(res.statusCode));
-        },
-      );
-      request.on('error', reject);
-      request.write('{"task":"');
-      request.write('x'.repeat(oversized));
-      request.end('"}');
+    assert.equal(rejected.status, 413);
+    assert.equal(((await rejected.json()) as { error: string }).error, 'payload_too_large');
+    // 附件端点 5MB（无附件）不拒：走处理器逻辑（空 task → 400），证明 12MB 生效
+    const mid = await fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: '', junk: 'x'.repeat(5 * 1024 * 1024) }),
     });
-    assert.equal(chunkedStatus, 413);
+    assert.ok(mid.status !== 413, `5MB 无附件请求不应 413，实际 ${mid.status}`);
+    // 常规端点（workspace rename）2MB 上限：3MB 必须拒
+    const normalRejected = await fetch(`${base}/workspace/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromName: 'a', toName: 'b', junk: 'x'.repeat(3 * 1024 * 1024) }),
+    });
+    assert.equal(normalRejected.status, 413);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('视觉强校验：模型未开启视觉时带图请求 400，且不落库不落盘', async () => {
+  // Keychain 在测试环境不可用：注入 MemorySecretStore（与 settings.test 同款）
+  const manager = new RunManager(createDefaultRunStore(new MemorySecretStore()));
+  const server = createHostServer(manager);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const base = `http://127.0.0.1:${address.port}`;
+    // 1x1 合法 PNG（魔数 + sharp 可解码，通过前置校验直达模型解析）
+    const tinyPngB64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    // 配置一个未声明视觉的 provider
+    const created = (await (
+      await fetch(`${base}/settings/models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'VisionOff',
+          baseUrl: 'https://api.vision-off.test',
+          apiKey: 'sk-vision-off-123456',
+          models: ['m1'],
+        }),
+      })
+    ).json()) as { id: string };
+    assert.ok(created.id, `provider 创建失败: ${JSON.stringify(created)}`);
+    const response = await fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task: '看图',
+        providerId: created.id,
+        model: 'm1',
+        attachments: [{ name: 'a.png', mimeType: 'image/png', dataBase64: tinyPngB64 }],
+      }),
+    });
+    assert.equal(response.status, 400);
+    assert.match(((await response.json()) as { message?: string }).message ?? '', /视觉/);
+    // 会话未被创建（拒绝发生在落库之前）
+    const sessions = (await (await fetch(`${base}/sessions`)).json()) as { sessions: unknown[] };
+    assert.equal(sessions.sessions.length, 0);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

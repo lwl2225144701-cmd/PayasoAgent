@@ -10,6 +10,7 @@ import {
   isPermissionMode,
   type PermissionMode,
 } from '../permission-mode.js';
+import { prepareAttachments } from '../runtime/attachment-normalize.js';
 import { assertInsideRoot, resolveWorkspacePath } from '../sandbox/sandbox-manager.js';
 import {
   getRuntimeToolchainCapabilities,
@@ -20,7 +21,6 @@ import { openFileInDefaultBrowser } from './default-browser.js';
 import type { CreateModelProviderInput, UpdateModelProviderInput } from './persistence/store.js';
 import { listPiAiProviderCatalog } from './pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from './provider-url.js';
-import { prepareAttachments } from '../runtime/attachment-normalize.js';
 import type { CreateRunAttachmentInput, RunManager, SseSink } from './run-manager.js';
 import {
   clearWorkspace,
@@ -33,7 +33,10 @@ const MAX_FILE_BYTES = 1024 * 1024; // 文本文件读取上限
 const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024; // 图片附件/预览上限（与 read 读图一致）
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
 // JSON 请求体上限：消息可携带 base64 图片附件（4 张 × ≤8MB 原始 → base64 膨胀 ~1.33 倍）。
-const MAX_BODY_BYTES = 20 * 1024 * 1024;
+// 常规 JSON 请求体上限；视觉附件端点（/runs 与 /sessions/:id/runs）单独放宽：
+// 客户端已把每张图压到 ≤2MiB（P2），4 张 + base64 膨胀 ≈ ≤12MB。
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_ATTACHMENTS = 4; // 单条消息最多图片数
 const ATTACHMENT_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 // files 端点可直接返回二进制的图片扩展名（<img src> 直接预览）。
@@ -323,9 +326,12 @@ function segs(req: IncomingMessage): string[] {
 
 class RequestBodyTooLargeError extends Error {}
 
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<Record<string, unknown>> {
   const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+  if (Number.isFinite(declared) && declared > maxBytes) {
     // Drain the request so the HTTP connection can still receive the 413.
     req.resume();
     throw new RequestBodyTooLargeError('request body too large');
@@ -337,7 +343,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     bytes += buf.length;
-    if (bytes > MAX_BODY_BYTES) {
+    if (bytes > maxBytes) {
       tooLarge = true;
       continue; // Keep draining, but never retain bytes beyond the limit.
     }
@@ -891,10 +897,13 @@ export async function handleRequest(
         requireAuth(req);
         let body: Record<string, unknown>;
         try {
-          body = await readBody(req);
+          body = await readBody(req, MAX_ATTACHMENT_BODY_BYTES);
         } catch (err) {
           if (err instanceof RequestBodyTooLargeError) {
-            return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+            return sendJson(res, 413, {
+              error: 'payload_too_large',
+              maxBytes: MAX_ATTACHMENT_BODY_BYTES,
+            });
           }
           throw err;
         }
@@ -983,18 +992,24 @@ export async function handleRequest(
     if (method === 'POST') {
       // Content-Length 检查在 auth 之前：超大请求直接 413，减少无谓的鉴权开销
       const declared = Number(req.headers['content-length']);
-      if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BODY_BYTES) {
         req.resume();
-        return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+        return sendJson(res, 413, {
+          error: 'payload_too_large',
+          maxBytes: MAX_ATTACHMENT_BODY_BYTES,
+        });
       }
       checkOrigin(req, port);
       requireAuth(req);
       let body: Record<string, unknown>;
       try {
-        body = await readBody(req);
+        body = await readBody(req, MAX_ATTACHMENT_BODY_BYTES);
       } catch (err) {
         if (err instanceof RequestBodyTooLargeError) {
-          return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+          return sendJson(res, 413, {
+            error: 'payload_too_large',
+            maxBytes: MAX_ATTACHMENT_BODY_BYTES,
+          });
         }
         throw err;
       }

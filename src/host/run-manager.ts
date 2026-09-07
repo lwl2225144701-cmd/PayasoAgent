@@ -622,6 +622,12 @@ export class RunManager {
     // dropdown change from racing the asynchronous default-model save, and it
     // avoids leaving an orphan session when the selection is invalid.
     const resolved = this.resolveModelConfig(opts?.providerId, opts?.model);
+    // 视觉强校验（在 session 落库之前拒绝，不产生孤儿会话）：模型配置已显式
+    // 解析且视觉未开启 → 拒绝带图请求（400）。前端发前已警告；env 兜底模型
+    // 能力未知，保持宽容不拒（物化阶段仍会剥图并注明）。
+    if (opts?.attachments?.length && resolved && resolved.vision !== true) {
+      throw new Error('当前模型已关闭视觉输入，已拒绝图片附件（可在设置中开启该模型的视觉能力）');
+    }
     let session: StoredSession;
     if (requestedSessionId) {
       const persisted = this.store.getSession(requestedSessionId);
@@ -1479,7 +1485,10 @@ export class RunManager {
     model: string,
     explicit?: boolean,
   ): boolean {
+    // 三态：显式 true/false 均优先（false 可关掉注册表声明的视觉），
+    // 缺省才走 pi-ai 注册表推断（非 pi-ai 路径无注册表 → false）。
     if (explicit === true) return true;
+    if (explicit === false) return false;
     if (piProviderId) {
       return getPiAiProviderModel(piProviderId, model)?.model.input.includes('image') ?? false;
     }

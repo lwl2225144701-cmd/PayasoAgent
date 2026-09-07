@@ -14,7 +14,6 @@ import {
   listRuns,
   listSessions,
   openWorkspace,
-  readImageAsBase64,
   resumeRun,
   setDefaultModel,
   stopRun,
@@ -39,6 +38,7 @@ import type {
   PiAiProviderInfo,
   WorkspaceView,
 } from './types';
+import { prepareImageForUpload } from './utils/image-prepare';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
 function sessionTitle(task: string): string {
@@ -247,19 +247,20 @@ export default function App() {
     };
   })();
 
-  // 当前模型是否支持图片输入：用户显式开关 > pi-ai 注册表声明 > false。
-  // 与后端 run-manager.resolveVision 的解析优先级保持一致。
+  // 当前模型是否支持图片输入：设置显式 true/false 均优先，否则 pi-ai 注册表推断。
+  // 三态与后端 run-manager.resolveVision 保持一致——显式 false 可关掉注册表声明。
   const currentModelVision: boolean = (() => {
     if (!currentModelSelection) return false;
     const provider = models.find((m) => m.id === currentModelSelection.providerId);
     if (!provider) return false;
-    if (provider.modelCapabilities?.[currentModelSelection.model]?.vision === true) return true;
+    const explicit = provider.modelCapabilities?.[currentModelSelection.model]?.vision;
+    if (explicit === true) return true;
+    if (explicit === false) return false;
     if (provider.piProviderId) {
       const pi = piProviders.find((p) => p.id === provider.piProviderId);
       return (
-        pi?.models.some(
-          (m) => m.id === currentModelSelection.model && m.input.includes('image'),
-        ) ?? false
+        pi?.models.some((m) => m.id === currentModelSelection.model && m.input.includes('image')) ??
+        false
       );
     }
     return false;
@@ -296,15 +297,19 @@ export default function App() {
       const trimmed = task.trim();
       if (!trimmed) return;
       try {
-        // 图片先转 base64 随 createRun 上报；落盘后 Host 只在工作区保留文件，
-        // base64 不进入任何持久化状态。
+        // 客户端先压像素再转 base64（附件 v2 P2：请求体从 20MB 级降回 ~2MB 级）；
+        // 落盘后 Host 只在工作区保留归一化文件，base64 不进入任何持久化状态。
+        // mimeType 取实际编码产物（浏览器可能回退编码格式，Host 会嗅探校验）。
         const attachmentPayload = attachments?.length
           ? await Promise.all(
-              attachments.map(async (file) => ({
-                name: file.name.replace(/[\\/]/g, '_') || 'image.png',
-                mimeType: file.type || 'application/octet-stream',
-                dataBase64: await readImageAsBase64(file),
-              })),
+              attachments.map(async (file) => {
+                const prepared = await prepareImageForUpload(file);
+                return {
+                  name: file.name.replace(/[\\/]/g, '_') || 'image.png',
+                  mimeType: prepared.mimeType || 'application/octet-stream',
+                  dataBase64: prepared.dataBase64,
+                };
+              }),
             )
           : undefined;
         const resp = await createRun(
