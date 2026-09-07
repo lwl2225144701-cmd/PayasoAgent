@@ -22,8 +22,9 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 function loadImage(image: MessageImage, workspaceRoot: string): MessageImage | null {
   if (typeof image.data === 'string' && image.data.length > 0) return image;
-  // 内容寻址优先（P1 将在此处加 request-images 变体缓存）：sha256 可直接推导
-  // 库内对象路径，workspace 副本只是同一 inode 的别名/历史回退。
+  // 内容寻址优先：sha256 可直接推导库内对象路径（入库对象已按模型预算归一化，
+  // ≤2048²/≤4MiB；按模型差异化预算的 request-images 变体缓存见方案文档，暂缓）。
+  // workspace 副本只是同一 inode 的别名/历史回退。
   if (image.sha256) {
     const storePath = path.join(
       getAttachmentStoreRoot(),

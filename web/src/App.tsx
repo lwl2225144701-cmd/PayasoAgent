@@ -38,7 +38,7 @@ import type {
   PiAiProviderInfo,
   WorkspaceView,
 } from './types';
-import { prepareImageForUpload } from './utils/image-prepare';
+import { alignedAttachmentName, prepareImageForUpload } from './utils/image-prepare';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
 function sessionTitle(task: string): string {
@@ -305,7 +305,11 @@ export default function App() {
               attachments.map(async (file) => {
                 const prepared = await prepareImageForUpload(file);
                 return {
-                  name: file.name.replace(/[\\/]/g, '_') || 'image.png',
+                  // 扩展名对齐实际编码产物（浏览器回退编码时 mime 可能变化）
+                  name: alignedAttachmentName(
+                    file.name.replace(/[\\/]/g, '_') || 'image.png',
+                    prepared.mimeType,
+                  ),
                   mimeType: prepared.mimeType || 'application/octet-stream',
                   dataBase64: prepared.dataBase64,
                 };

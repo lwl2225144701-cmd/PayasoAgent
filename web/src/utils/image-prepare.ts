@@ -47,6 +47,24 @@ async function fileToBase64(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
+const EXT_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+/** 浏览器回退编码（如 webp→png）时，把文件名扩展对齐实际字节类型，避免 .webp 装 PNG */
+export function alignedAttachmentName(name: string, mimeType: string): string {
+  const expectedExt = EXT_BY_MIME[mimeType];
+  if (!expectedExt) return name;
+  const dot = name.lastIndexOf('.');
+  const currentExt = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+  if (currentExt === expectedExt) return name;
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  return `${stem || 'image'}.${expectedExt}`;
+}
+
 export async function prepareImageForUpload(file: File): Promise<PreparedUploadImage> {
   // gif：canvas 重编丢动画，原样上传
   if (file.type === 'image/gif') {

@@ -103,7 +103,7 @@ export function sweepAttachmentTmp(storeRoot: string, now = Date.now()): number 
   return removed;
 }
 
-// 进程级一次性清扫（RunManager ensureOpen 时调用）。
+// 进程级一次性清扫（首次附件写入时触发，每次进程生命周期至多一次）。
 const sweptStores = new Set<string>();
 export function sweepAttachmentTmpOnce(storeRoot: string): void {
   if (sweptStores.has(storeRoot)) return;

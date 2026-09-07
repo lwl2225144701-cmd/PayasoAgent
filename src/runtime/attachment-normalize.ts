@@ -129,7 +129,7 @@ async function prepareAttachment(
   const animated = item.mimeType === 'image/gif' || (meta.pages ?? 1) > 1;
   // EXIF 方向 ≥5（横躺）必须重编应用方向——模型端解码器通常忽略 EXIF，
   // 原样入库会导致模型看到旋转 90° 的图。下采样同理必须重编。
-  const needsOrientationApply = (meta.orientation ?? 1) >= 5;
+  const needsOrientationApply = oriented;
   const needsDownscale = effWidth * effHeight > NORMALIZE_PIXEL_TARGET;
   if (animated || (!needsOrientationApply && !needsDownscale)) {
     return {

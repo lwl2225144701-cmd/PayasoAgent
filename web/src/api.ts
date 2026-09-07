@@ -66,20 +66,6 @@ export function workspaceFileUrl(runId: string, relPath: string): string {
   return `/runs/${runId}/files/${encodeURIComponent(relPath)}`;
 }
 
-/** 读取图片文件为纯 base64（去掉 data: URL 前缀），供 createRun 附件上报 */
-export function readImageAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? '');
-      const comma = dataUrl.indexOf(',');
-      resolve(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export function listSessions(): Promise<{ sessions: HostSession[] }> {
   return jsonFetch('/sessions', { cache: 'no-store' });
 }

@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict';
 import {
+  alignedAttachmentName,
   CLIENT_PIXEL_TARGET,
   CLIENT_QUALITY_LADDER,
   downscaleDims,
@@ -62,6 +63,14 @@ const main = async (): Promise<void> => {
   await test('质量阶梯：png 单次、jpeg/webp 三级', () => {
     assert.equal(CLIENT_QUALITY_LADDER.length, 3);
     assert.deepEqual([...CLIENT_QUALITY_LADDER], [0.8, 0.6, 0.45]);
+  });
+
+  await test('扩展名对齐：回退编码 mime 变化时扩展名跟随，正常时不变', () => {
+    assert.equal(alignedAttachmentName('photo.webp', 'image/png'), 'photo.png');
+    assert.equal(alignedAttachmentName('shot.png', 'image/png'), 'shot.png');
+    assert.equal(alignedAttachmentName('noext', 'image/jpeg'), 'noext.jpg');
+    assert.equal(alignedAttachmentName('weird.bmp', 'image/gif'), 'weird.gif');
+    assert.equal(alignedAttachmentName('.hidden', 'image/png'), '.hidden.png');
   });
 
   console.log(`\n${'='.repeat(56)}`);
