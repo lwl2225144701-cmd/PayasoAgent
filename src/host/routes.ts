@@ -20,6 +20,7 @@ import { openFileInDefaultBrowser } from './default-browser.js';
 import type { CreateModelProviderInput, UpdateModelProviderInput } from './persistence/store.js';
 import { listPiAiProviderCatalog } from './pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from './provider-url.js';
+import { prepareAttachments } from '../runtime/attachment-normalize.js';
 import type { CreateRunAttachmentInput, RunManager, SseSink } from './run-manager.js';
 import {
   clearWorkspace,
@@ -918,6 +919,12 @@ export async function handleRequest(
           return bad(res, (err as Error).message);
         }
         try {
+          // P1 归一化：解码校验 + EXIF + 下采样（失败 = 请求拒绝，与白名单同级）
+          attachments = await prepareAttachments(attachments);
+        } catch (err) {
+          return bad(res, (err as Error).message);
+        }
+        try {
           const created = manager.createInSession(task, sessionId, {
             permissionMode,
             attachments,
@@ -1015,6 +1022,11 @@ export async function handleRequest(
       let attachments: CreateRunAttachmentInput[];
       try {
         attachments = requestAttachments(body);
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+      try {
+        attachments = await prepareAttachments(attachments);
       } catch (err) {
         return bad(res, (err as Error).message);
       }

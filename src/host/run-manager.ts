@@ -57,11 +57,17 @@ import {
 } from './run-events.js';
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from './workspace.js';
 
-// 创建 Run 时随消息上传的图片附件（routes 已做 MIME/大小/数量校验）。
+// 创建 Run 时随消息上传的图片附件（routes 已做 MIME/大小/数量校验；
+// P1 起 routes 还会先经 attachment-normalize 归一化并附带尺寸元数据）。
 export interface CreateRunAttachmentInput {
   name: string;
   mimeType: string;
   dataBase64: string;
+  /** 归一化后尺寸（attachment-normalize 产出；缺省 = 未归一化） */
+  width?: number;
+  height?: number;
+  /** 归一化前原图尺寸，如 "5000x3000" */
+  originalDimensions?: string;
 }
 
 // 附件在工作区内的落盘目录（相对 workspaceRoot）。
@@ -677,7 +683,14 @@ export class RunManager {
         fileName: `${runId.slice(0, 8)}-${attachment.name}`,
         dataBase64: attachment.dataBase64,
       });
-      attachmentImages.push({ mimeType: attachment.mimeType, path: relPath, sha256 });
+      attachmentImages.push({
+        mimeType: attachment.mimeType,
+        path: relPath,
+        sha256,
+        width: attachment.width,
+        height: attachment.height,
+        originalDimensions: attachment.originalDimensions,
+      });
       attachmentViews.push({ name: attachment.name, mimeType: attachment.mimeType, path: relPath });
     }
 

@@ -21,6 +21,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
   { name: 'filesystem-tools', file: 'tests/filesystem-tools.test.ts' },
   { name: 'attachment-store', file: 'tests/attachment-store.test.ts' },
+  { name: 'attachment-normalize', file: 'tests/attachment-normalize.test.ts' },
   { name: 'sandbox-manager', file: 'tests/sandbox-manager.test.ts' },
   { name: 'toolchain-manager', file: 'tests/toolchain-manager.test.ts' },
   { name: 'toolchain-preparation', file: 'tests/toolchain-preparation.test.ts' },
