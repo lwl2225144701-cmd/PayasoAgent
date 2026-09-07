@@ -216,7 +216,7 @@ const scenarios: Record<string, Scenario> = {};
 // ---------- 场景组 1: 长链任务 ----------
 scenarios['longchain-cap'] = {
   group: 'longchain',
-  desc: '12 步纯计算链，单次运行必超 MAX_ITERATIONS=10',
+  desc: '12 步纯计算链，验证 Runtime 不以固定迭代次数截断',
   e2e: true,
   run: async (ctx) => {
     const task =
@@ -226,37 +226,35 @@ scenarios['longchain-cap'] = {
     const out = cap.join('\n');
     const calls = toolCalls(out);
     const cp = loadCheckpoint(ctx.runId);
-    const done = cp?.scratchpad.completedSteps.length ?? 0;
+    const completedSteps = cp?.scratchpad.completedSteps.length ?? 0;
     const noDup = new Set(calls.map((c) => `${c.tool}|${c.args}`)).size === calls.length;
-    const capped = !!error && error.includes('超过最大循环次数限制');
+    const done = answer.includes('6227020800');
     return {
-      pass: false, // 设计 FAIL：任务未完成
-      detail: capped
-        ? `单次运行被 10 轮迭代硬上限截断：完成 ${done}/${calls.length} 步，任务未完成`
-        : `未触发上限，error=${error || '(无)'}，answer=${answer.slice(0, 60)}`,
+      pass: !error && done && noDup && calls.length >= 11,
+      detail: `无固定迭代上限：结果=${done}，工具步数=${completedSteps}/${calls.length}，重复=${!noDup}，error=${error || '(无)'}`,
       metrics: {
         toolCallTotal: calls.length,
-        completedSteps: done,
+        completedSteps,
         noDupSteps: noDup,
         status: cp?.status,
       },
-      gap: 'runtime: MAX_ITERATIONS=10 硬上限，长链任务单次运行必然失败',
-      layer: 'runtime',
+      gap: !error && !done ? 'llm: 长链未按要求完成或未返回最终结果' : undefined,
+      layer: !error && done && noDup ? undefined : 'llm',
     };
   },
 };
 
-// 编排器驱动的 resume 流程（先跑 longchain-cap 制造失败 checkpoint 再续跑）；场景本身不直接运行
+// 保留历史场景名，resume 语义由 Runtime checkpoint 单测覆盖；不再依赖固定迭代上限制造失败。
 scenarios['longchain-resume'] = {
   group: 'longchain',
-  desc: '编排器驱动：longchain-cap 失败 checkpoint → resume 续跑验证无重复/丢步骤',
+  desc: '历史编排占位：长链 resume 由定向确定性测试覆盖',
   e2e: true,
   run: async () => ({ pass: true, detail: '（由编排器驱动，不直接运行）' }),
 };
 
 scenarios['resume-phase2'] = {
   group: 'longchain',
-  desc: 'resume 续跑（由编排器先跑 longchain-cap 后驱动）',
+  desc: '历史编排占位：resume 不依赖固定迭代预算',
   e2e: true,
   run: async (ctx) => {
     const out = cap.join('\n');
@@ -290,7 +288,7 @@ scenarios['resume-phase2'] = {
       },
       gap:
         !done && progressed && dupSteps.length === 0
-          ? 'runtime: resume 沿用 MAX_ITERATIONS 且剩余预算不延长（startIter=iteration-1），长链任务恢复后仍会再次触顶无法完成'
+          ? 'llm: resume 后未返回预期最终结果'
           : undefined,
       layer:
         dupSteps.length || headChanged
@@ -1126,7 +1124,6 @@ async function runScenarioWorker(
 async function runOrchestrator(): Promise<void> {
   const ORDER: [string, string][] = [
     ['longchain', 'longchain-cap'],
-    ['longchain', 'longchain-resume'],
     ['longchain', 'longchain-mixed'],
     ['longchain', 'longchain-batch'],
     ['large', 'large-read-700k'],
@@ -1366,15 +1363,7 @@ async function runOrchestrator(): Promise<void> {
       .filter((r) => r.gap)
       .sort((a, b) => {
         const rank = (g?: string) =>
-          g?.includes('MAX_ITERATIONS')
-            ? 0
-            : g?.includes('撑爆')
-              ? 1
-              : g?.includes('副作用')
-                ? 2
-                : g?.includes('超时')
-                  ? 3
-                  : 4;
+          g?.includes('撑爆') ? 0 : g?.includes('副作用') ? 1 : g?.includes('超时') ? 2 : 3;
         return rank(a.gap) - rank(b.gap);
       })[0]?.gap ?? '（无明显缺口）';
   console.log(`当前最值得优先解决的问题: ${topGap}`);

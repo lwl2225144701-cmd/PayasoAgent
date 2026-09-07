@@ -2,11 +2,13 @@
 // 用法: npm run test:host （需 .env，真实 LLM 触发 tool_call 事件）
 // 覆盖：POST/GET runs、SSE(tool_call+run_completed)、404、workspace 文件隔离、../ 拒绝、并发不串状态
 
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHostServer } from '../src/host/server.js';
+import type { HostEvent } from '../src/host/run-events.js';
+import { createHostServer, RunManager } from '../src/host/server.js';
+import { clearWorkspace, setWorkspace } from '../src/host/workspace.js';
+import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';
 import { createWorkspace, getSandboxRoot } from '../src/sandbox/sandbox-manager.js';
 
 // 用隔离沙箱根，避免污染仓库 sandbox/
@@ -15,7 +17,8 @@ process.env.SANDBOX_ROOT = ROOT;
 process.env.PAYASO_DB_PATH = path.join(ROOT, 'payaso.db');
 fs.mkdirSync(ROOT, { recursive: true });
 
-const server = createHostServer();
+const manager = new RunManager();
+const server = createHostServer(manager);
 await new Promise<void>((r) => server.listen(0, () => r()));
 const port = (server.address() as { port: number }).port;
 const base = `http://127.0.0.1:${port}`;
@@ -28,16 +31,27 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.log(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.log(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
+}
+
+function toolNames(events: readonly HostEvent[] | undefined): string[] {
+  return (events ?? [])
+    .filter(
+      (event): event is Extract<HostEvent, { type: 'tool_call' }> => event.type === 'tool_call',
+    )
+    .map((event) => event.tool);
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function postRun(task: string): Promise<{ status: number; body: any }> {
+async function postRun(
+  task: string,
+  extra: Record<string, unknown> = {},
+): Promise<{ status: number; body: any }> {
   const r = await fetch(`${base}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task }),
+    body: JSON.stringify({ task, ...extra }),
   });
   return { status: r.status, body: await r.json() };
 }
@@ -228,6 +242,59 @@ check(
   'POST /sessions/:id/delete → cleanupErrors 结构化',
   Array.isArray(deleteResp.body?.cleanupErrors),
 );
+
+// 9. 真实 Workspace Agent 链路：Host currentWorkspace → Run 快照 → Runtime 文件工具。
+// Shell 在 macOS 26 等 seatbelt 不可用的机器上必须 fail-closed；在可用机器上继续验证
+// “write 文件 → 下一轮 shell cat” 的真实项目工作流。
+const workspaceE2eRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-host-workspace-e2e-'));
+setWorkspace(workspaceE2eRoot);
+try {
+  const writeRun = await postRun(
+    '请在当前 Workspace 根目录使用 write 工具创建 work-test.txt，并写入 hello。不要使用 shell。',
+  );
+  const writeFinal = await waitTerminal(writeRun.body.runId);
+  const writeRaw = manager.getRaw(writeRun.body.runId);
+  const writeTools = toolNames(writeRaw?.events);
+  const writePath = path.join(workspaceE2eRoot, 'work-test.txt');
+  const written = fs.existsSync(writePath) ? fs.readFileSync(writePath, 'utf8') : '';
+  check(
+    '真实 Workspace Agent write 成功',
+    writeFinal.status === 'completed' &&
+      written === 'hello' &&
+      writeTools?.includes('write') === true,
+    `status=${writeFinal.status}, tools=${JSON.stringify(writeTools)}, written=${JSON.stringify(written)}`,
+  );
+
+  const shellRun = await postRun('必须使用 shell 执行 cat work-test.txt，并把输出原样告诉我。', {
+    sessionId: writeRun.body.sessionId,
+  });
+  const shellFinal = await waitTerminal(shellRun.body.runId);
+  const shellRaw = manager.getRaw(shellRun.body.runId);
+  const shellTools = toolNames(shellRaw?.events);
+  const shellTrace = JSON.stringify(shellRaw?.events ?? []);
+  const shellAvailable = await probeSandboxAvailability();
+  if (shellAvailable) {
+    check(
+      '真实 Workspace Agent shell cat 成功',
+      shellFinal.status === 'completed' &&
+        shellFinal.result?.includes('hello') &&
+        shellTools?.includes('shell') === true,
+      `status=${shellFinal.status}, tools=${JSON.stringify(shellTools)}`,
+    );
+  } else {
+    check(
+      '真实 Workspace Agent shell 不可用时 fail-closed',
+      shellTools?.includes('shell') === true &&
+        !shellFinal.result?.includes('hello') &&
+        (/unavailable|sandbox|沙箱|遏制/i.test(`${shellFinal.result ?? ''}${shellTrace}`) ||
+          shellFinal.status === 'failed'),
+      `status=${shellFinal.status}, tools=${JSON.stringify(shellTools)}, result=${shellFinal.result ?? shellFinal.error ?? ''}`,
+    );
+  }
+} finally {
+  clearWorkspace();
+  fs.rmSync(workspaceE2eRoot, { recursive: true, force: true });
+}
 
 console.log(`\nHost 测试汇总: ${passed} PASS / ${failed} FAIL`);
 // 直接退出，避免 server.close 等待活跃 SSE 连接（心跳连接保持打开）而挂起

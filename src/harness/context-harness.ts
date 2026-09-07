@@ -56,6 +56,13 @@ export interface AgentContextHarness {
   snapshotState(): ContextHarnessState;
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage;
   sanitizeFinalAnswer(text: string): string;
+  // Optional Harness policy hook. Called after a tool turn and before the
+  // Runtime starts the next model turn; returning true requests a graceful
+  // stop without changing tool execution semantics.
+  shouldStopAfterTurn?(input: {
+    iteration: number;
+    usage: ContextUsage;
+  }): boolean | Promise<boolean>;
   // v1.6 工具链闭环：受控安装完成后由 Host 经准备结果通道刷新当前 Run 的
   // 工具链能力快照，下一轮模型视图即反映新的可用工具（不自动重放原命令）。
   refreshToolchain?(capabilities: RuntimeToolchainCapabilities): void;

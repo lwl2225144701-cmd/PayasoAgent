@@ -18,7 +18,7 @@ import {
   storedPermissionMode,
 } from '../permission-mode.js';
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
-import { runAgent } from '../runtime/agent.js';
+import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
@@ -130,6 +130,10 @@ interface InternalRun extends HostRun {
   // True cancellation (v1.6)：每个活跃 Run 独立的 AbortController；
   // startAgent 时创建，stop() 触发 abort，Run 真正退出后由 Host 落 stopped。
   abortController?: AbortController;
+  // Host resource fuse for the unbounded Runtime loop. Keep timeout separate
+  // from an explicit user stop so the terminal reason remains observable.
+  abortReason?: 'user' | 'timeout';
+  runTimeoutTimer?: ReturnType<typeof setTimeout>;
   // v1.6.1：执行链 promise 句柄（fire-and-forget 任务的引用）。
   // close() 用它等待执行链真正结束（而非仅状态变终态），避免 Store 关闭后 agent 仍在写库。
   agentPromise?: Promise<void>;
@@ -142,6 +146,16 @@ export interface SseSink {
 }
 
 const INTERRUPTED_ERROR = 'Host restarted before the Run completed';
+const DEFAULT_RUN_TIMEOUT_MS = 15 * 60_000;
+
+function runTimeoutMs(): number {
+  const raw = process.env.AGENT_RUN_TIMEOUT_MS;
+  if (raw && raw.trim() !== '') {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return DEFAULT_RUN_TIMEOUT_MS;
+}
 
 // 可取消状态：running（执行中）/ stopping（已请求停止、abort 已发出、执行未退出）
 function isCancellable(status: HostRunStatus): boolean {
@@ -974,6 +988,10 @@ export class RunManager {
     // legacy fallback flag：主机制是 abortController.abort()；
     // 覆盖「abort 之后 agent 才 resolve」的完成竞态判定。
     run.cancelled = true;
+    // Do not overwrite a timeout reason if the user clicks Stop while the
+    // Host fuse is already aborting the Run; terminal status should retain
+    // the first abort cause.
+    run.abortReason ??= 'user';
     if (run.status === 'running') {
       if (run.abortController) {
         this.markStopping(run);
@@ -1032,6 +1050,10 @@ export class RunManager {
           `${(err as Error).message} — run stays ${run.status}, terminal event not broadcast`,
       );
       return false;
+    }
+    if (run.runTimeoutTimer) {
+      clearTimeout(run.runTimeoutTimer);
+      run.runTimeoutTimer = undefined;
     }
     // 提交成功后才应用到内存并发布（memory 不会提前显示未持久化的终态）
     run.status = status;
@@ -1216,6 +1238,13 @@ export class RunManager {
     // True cancellation (v1.6)：每次执行一个独立 AbortController（resume 也一样）。
     const abortController = new AbortController();
     run.abortController = abortController;
+    const timeoutMs = runTimeoutMs();
+    run.runTimeoutTimer = setTimeout(() => {
+      if (run.status !== 'running' || run.abortReason) return;
+      run.abortReason = 'timeout';
+      this.markStopping(run);
+    }, timeoutMs);
+    run.runTimeoutTimer.unref?.();
 
     // Run 已经持久化为 running，任何启动失败都必须落为 failed + run_failed，
     // 不允许同步 throw 留下永远 running 的僵尸 Run（模型解析失败也走同一条路）。
@@ -1257,6 +1286,10 @@ export class RunManager {
           },
         });
         flushDelta();
+        if (run.abortReason === 'timeout') {
+          this.failRun(run, `Run exceeded host time limit of ${timeoutMs}ms`);
+          return;
+        }
         // stop() 之后 agent 才正常 resolve 的竞态：用户意图是停止 → stopped
         if (run.cancelled || abortController.signal.aborted) {
           this.finish(run);
@@ -1266,6 +1299,14 @@ export class RunManager {
         this.finalizeRun(run, 'completed', { result });
       } catch (err) {
         flushDelta();
+        if (run.abortReason === 'timeout') {
+          this.failRun(run, `Run exceeded host time limit of ${timeoutMs}ms`);
+          return;
+        }
+        if (err instanceof AgentStopRequestedError) {
+          this.finish(run);
+          return;
+        }
         // 用户主动取消（signal 已 abort）→ stopped，绝不算 failed；
         // 其余 AbortError（非本 Run 的 signal）仍按失败处理。
         if (run.cancelled || (abortController.signal.aborted && isAbortError(err))) {

@@ -29,7 +29,6 @@ import {
   type ToolImage,
   type ToolSandboxEvent,
   toolNotFoundError,
-  toolRequiresNetwork,
   validateToolResult,
 } from '../tools/tools.js';
 import { isAbortError, throwIfAborted } from '../util/abort.js';
@@ -57,10 +56,20 @@ import {
 import { createState, updateState } from './state.js';
 import { addEvent, createTrace, type TraceEvent, type TraceEventInput } from './trace.js';
 
-const MAX_ITERATIONS = 10; // 最大循环次数限制
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
 
-// Agent 核心循环（只新增 State/Trace/Checkpoint 记录，不改 Loop 逻辑）
+// Harness may request a graceful stop after the current tool turn. This is
+// intentionally distinct from an execution error: Host turns it into the
+// normal stopped terminal state and can preserve the checkpoint for resume.
+export class AgentStopRequestedError extends Error {
+  constructor(message = 'Agent turn stopped by Harness policy') {
+    super(message);
+    this.name = 'AgentStopRequestedError';
+  }
+}
+
+// Agent 核心循环：模型持续产生工具调用时继续执行；停止由模型收尾、取消、
+// 工具/请求错误或 Harness 策略决定，不以固定迭代次数截断。
 // resume: 传入 checkpoint 则从中断点恢复执行（State/Scratchpad/Messages 一并恢复）
 // executionContext: 由 Host/bootstrap 授权并注入；Runtime 不创建 Workspace、不升级权限。
 export async function runAgent(
@@ -144,7 +153,7 @@ export async function runAgent(
   };
   // Context Harness：决定模型看到的指令、历史视图、Scratchpad 视图与预算。
   // Runtime 只持有完整 transcript，并消费 prepareTurn() 的临时模型视图。
-  const contextHarness =
+  const contextHarness: AgentContextHarness =
     opts.contextHarness ??
     new DefaultContextHarness({
       permissionMode,
@@ -211,7 +220,10 @@ export async function runAgent(
   };
 
   try {
-    for (let i = startIter; i < MAX_ITERATIONS; i++) {
+    // No fixed iteration cap: a turn continues while the model keeps
+    // producing tool calls. Cancellation, tool safety, and the optional
+    // Harness stop policy are the termination mechanisms.
+    for (let i = startIter; ; i++) {
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
       throwIfAborted(opts.signal);
@@ -777,9 +789,25 @@ export async function runAgent(
           }
         }
       }
+
+      // Harness owns context policy. It may stop cleanly after a completed
+      // tool turn (for example before the next turn would exceed its budget).
+      // The hook is optional and does not alter the Runtime's tool semantics.
+      if (
+        contextHarness.shouldStopAfterTurn &&
+        (await contextHarness.shouldStopAfterTurn({ iteration: i + 1, usage: ctx.usage }))
+      ) {
+        throw new AgentStopRequestedError();
+      }
       // 5. 循环 → LLM 继续判断
     }
   } catch (err) {
+    if (err instanceof AgentStopRequestedError) {
+      // Graceful policy stop: preserve the running checkpoint without
+      // emitting an error event. Host finalizes the Run as stopped.
+      save();
+      throw err;
+    }
     // State: 失败
     updateState(state, { status: 'failed', currentStep: 'error' });
     observeState('summary');
@@ -791,14 +819,4 @@ export async function runAgent(
     observeTrace();
     throw err;
   }
-
-  // 超出最大迭代次数
-  updateState(state, { status: 'failed', currentStep: 'error' });
-  observeState('summary');
-  // Checkpoint: 超限时保存
-  save('failed');
-  observeState('full');
-  emit({ type: 'error', message: '超过最大循环次数限制' });
-  observeTrace();
-  throw new Error('超过最大循环次数限制');
 }

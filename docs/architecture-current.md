@@ -55,7 +55,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
                 │ runAgent(task, checkpoint?, opts)
 ┌───────────────▼─────────────────────────────────────────────┐
 │ Runtime Kernel (src/runtime/ + src/llm/ + src/tools/)        │
-│  agent.ts: Agent Loop（迭代/重试/恢复/防死循环）              │
+│  agent.ts: Agent Loop（连续迭代/重试/恢复/防死循环）           │
 │  state.ts · scratchpad.ts · checkpoint-port.ts · observer-port.ts │
 │  trace.ts · side-effect.ts · output-guard.ts                  │
 │  llm.ts: OpenAI 兼容 chat/completions(fetch,无 SDK)          │
@@ -84,7 +84,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | 文件                                                | 职责                                                                                                                                                                             |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/cli.ts`                                      | CLI 入口：`npm run cli "任务"` / `--resume <runId>` / `--run-id <id>`                                                                                                               |
-| `src/runtime/agent.ts`                            | Agent Loop 主循环：迭代预算、重试/恢复、防死循环、Side-Effect 集成、决定 Checkpoint 提交时机                                                                                                                 |
+| `src/runtime/agent.ts`                            | Agent Loop 主循环：连续迭代、重试/恢复、防死循环、Side-Effect 集成、决定 Checkpoint 提交时机；不设固定迭代上限                                                                                                              |
 | `src/runtime/state.ts`                            | AgentState：status / iteration / currentStep / 工具统计 / pendingAction / lastToolError                                                                                             |
 | `src/runtime/scratchpad.ts`                       | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪                                                                                                    |
 | `src/harness/context-harness.ts`                  | Harness 入口：生成当轮临时模型视图，统一指令、历史、Scratchpad 与响应清理                                                                                                                              |
@@ -114,7 +114,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/macos-toolchain-preparer.ts`         | 用户批准后的 macOS Homebrew 固定 argv 安装器；安装过程只回传检查/安装/验证阶段，成功后刷新未来 Sandbox 快照，失败/取消均为可恢复结果                                                                                               |
 | `src/host/server.ts`                              | node:http 服务器 + 统一错误兜底                                                                                                                                                         |
 | `src/host/routes.ts`                              | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback                                                                                                                            |
-| `src/host/run-manager.ts`                         | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running/stopping→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力；终态统一走 finalizeRun 原子管线（status+event 同一事务，幂等，失败不广播） |
+| `src/host/run-manager.ts`                         | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running/stopping→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力；终态统一走 finalizeRun 原子管线（status+event 同一事务，幂等，失败不广播）；为无界 Runtime 提供默认 15 分钟总运行时限保险丝（`AGENT_RUN_TIMEOUT_MS` 可覆盖） |
 | `src/host/run-events.ts`                          | HostEvent 类型 + SSE 编码                                                                                                                                                          |
 | `src/host/workspace.ts`                           | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM）                                                                                                                           |
 | `src/host/persistence/store.ts`                   | 薄 RunStore 接口（Session/Run CRUD + Event append/list）                                                                                                                            |
@@ -165,7 +165,7 @@ web/src/
 ### 4.1 Agent Loop（`agent.ts`）
 
 ```
-for (i = startIter .. MAX_ITERATIONS=10):
+for (i = startIter; ; i++):
   ├─ 0.    注入有界 Scratchpad + 已有 Conversation Summary 到 system
   ├─ 0.5   超过输入预算 80% → 按完整旧轮增量摘要，压至约 65%
   │         canonical transcript 不删除；Harness state 随 checkpoint 恢复
@@ -182,9 +182,10 @@ for (i = startIter .. MAX_ITERATIONS=10):
         └─ 2d. 执行：read/idempotent 重试 ≤2；non_idempotent 零重试
               ├─ success → validate(raw) → guard(16KB) → 按 valid/invalid 分支
               └─ throw   → non_idempotent markUncertain / 其余 recordFailure+重试
+  └─ 工具轮结束后可由 Harness.shouldStopAfterTurn 请求优雅停止；Host 另有总运行时限保险丝
 ```
 
-常量：`MAX_ITERATIONS=10`、`MAX_RETRY=2`（总尝试 3）。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > fallback 256K（引入模型的已知窗口下限；接更低窗口模型需在模型设置中显式配置）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
+Runtime 不设置固定 `MAX_ITERATIONS`；只保留 `MAX_RETRY=2`（工具总尝试 3 次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。Host 侧默认以 15 分钟总运行时限（可由 `AGENT_RUN_TIMEOUT_MS` 覆盖）作为最后保险丝；超时会 abort Runtime 并将 Run 原子落为 `failed`。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > fallback 256K（引入模型的已知窗口下限；接更低窗口模型需在模型设置中显式配置）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
 
 ### 4.2 三层状态职责
 
@@ -205,7 +206,7 @@ for (i = startIter .. MAX_ITERATIONS=10):
 
 * **Sandbox 两层校验**：字符串级（禁 `..`/绝对路径/盘符）+ realpath 级（禁 symlink 逃逸、根不是 symlink、悬空链接拒绝）。
 
-* **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1`，不延长预算；workspace 沿用不清理。
+* **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1` 重跑可能未完成的当前轮；workspace 沿用不清理。每次 Host 执行（含 resume）独立启动总运行时限，不存在 Runtime 迭代预算。
 
 * **Context Compaction V1**：输入估算超过当前 Run 模型预算的 80% 时，Harness 从最旧完整轮开始选取前缀并增量更新结构化 summary，目标回落到约 65%；模型视图使用 `system + bounded scratchpad + summary + recent complete rounds + current turn`。完整 transcript 永不因 compaction 删除，summary 状态随 checkpoint/resume 恢复；`context_compaction` trace 可审计。
 
@@ -311,7 +312,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 41 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、docs contract） | `npm run test:all` | 41 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 48 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 48 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |
@@ -327,7 +328,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 * 工具执行超时（除 shell 的 10s 上限）；LLM 请求已有总超时 + AbortSignal 取消，shell 已支持进程组级取消（v1.6），其余工具取消语义取决于工具自身
 
-* 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排（单个 Run 的 `MAX_ITERATIONS=10` 仍为硬预算）
+* 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排；Runtime 内部不提供固定迭代计数上限（长任务由 Harness 策略或 Host 总运行时限收口）
 
 * checkpoint 生命周期清理（Trace/Host Event 已由 SQLite 持久化）
 

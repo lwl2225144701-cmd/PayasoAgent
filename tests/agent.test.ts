@@ -2,22 +2,24 @@
 // 用法: npx tsx --env-file=.env tests/agent.test.ts
 // 说明: 每个任务以独立子进程运行（真实调用 LLM + 工具），避免状态互相干扰
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs, { rmSync } from 'node:fs';
 import path from 'node:path';
+import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manager.js';
 
 interface TestCase {
   name: string; // 测试名
   prompt: string; // 用户任务
   expect: string[]; // 最终答案需包含的关键词（任一命中即 PASS）
+  expectAny?: string[]; // 输出需至少包含一个关键词（用于失败/能力缺失等语义）
   expectTools?: string[]; // 期望按顺序出现的工具调用（校验 [Tool 调用] 行）
   expectNoTools?: string[]; // 期望完全不出现在 [Tool 调用] 行中的工具
   expectToolCount?: Record<string, number>; // 期望各工具精确调用次数（校验 [Tool 调用] 行计数）
   expectInvalid?: { tool: string; count: number }; // 期望出现 N 次 tool_result_invalid（指定工具）
   expectState?: Record<string, string | number>; // 期望最终 State JSON 含 key:value
   expectCompletedNotContain?: string[]; // 最终 Scratchpad 的 completedSteps 不得包含这些子串（invalid 结果不应进入）
-  env?: Record<string, string>; // 额外环境变量（如模拟中断）
+  env?: Record<string, string>; // 额外环境变量（如 INVALID_WEATHER）
   resume?: boolean; // 中断恢复任务：先中断运行，再从 checkpoint 恢复
   noTool?: boolean; // 纯对话任务：期望不调用工具
   cliArgs?: string[]; // 额外 CLI 参数（如 --run-id <id>，置于任务串之前）
@@ -55,18 +57,20 @@ const TASKS: TestCase[] = [
     expect: ['755'],
   },
   {
-    name: '6. 工具返回异常（Infinity）',
+    name: '6. 工具返回异常（Infinity → invalid）',
     prompt: '请用 calculator 计算 1/0，然后告诉我结果是什么含义',
     expect: ['Infinity', '无穷'],
+    expectInvalid: { tool: 'calculator', count: 1 },
+    expectState: { invalidToolResults: 1 },
   },
   {
-    name: '7. 死循环检测（同参数禁调）',
+    name: '7. 重复失败工具调用防失控（同参数 Blocked）',
     prompt:
       "请用 calculator 计算 2*3，然后无论失败与否，都用 calculator 参数 'x+1' 再调用 5 次，最后告诉我结果",
     expect: ['Blocked', '禁止再次调用'],
   },
   {
-    name: '8. 长上下文（6步链触发裁剪）',
+    name: '8. 长链计算（不依赖固定迭代上限）',
     prompt:
       '请严格分步计算，禁止合并表达式，每一步只调用一次 calculator：先算 2*3，再用上一步结果乘 4，再用结果乘 5，再用结果乘 6，再用结果乘 7，再用结果乘 8。每步单独调用工具。',
     expect: ['40320'],
@@ -75,7 +79,6 @@ const TASKS: TestCase[] = [
     name: '9. 中断恢复（checkpoint --resume）',
     prompt: '帮我计算 15*37，再把结果加 100',
     expect: ['655'],
-    env: { SIMULATE_INTERRUPT: '1' },
     resume: true,
   },
   {
@@ -135,15 +138,17 @@ const TASKS: TestCase[] = [
     expectState: { invalidToolResults: 1 },
     expectCompletedNotContain: ['NaN'],
   },
-  // ---- v1.3 预研：Loop 正常结束 ≠ 任务成功完成（观察型，不判 FAIL）----
-  // 三个用例只确认"Agent 正常结束 + 不崩溃"，不断言任务完成语义；
-  // 是否 status=completed 但 task 未完成，由人工观察（详见运行输出与汇报）。
+  // ---- Loop 边界：正常结束 ≠ 任务成功完成 ----
+  // 这些用例验证无效结果、工具失败和能力缺失时的停止语义，避免把
+  // status=completed 误认为任务已完成。
   {
-    name: '17. 正常结束但任务未完成：invalid result',
-    prompt: '查询深圳当前温度，再把温度加 10，告诉我最终数值。',
+    name: '17. 无效结果不重复调用同一请求',
+    prompt:
+      '只查询一次深圳当前温度，然后把温度加 10。如果返回的温度为空或无效，停止并明确说明，禁止重新查询深圳或调用 calculator。',
     expect: [],
     env: { INVALID_WEATHER: '1' },
     expectNoTools: ['calculator'],
+    expectToolCount: { getWeather: 1 },
     expectInvalid: { tool: 'getWeather', count: 1 },
     expectState: { invalidToolResults: 1 },
     expectCompletedNotContain: ['temperature'],
@@ -155,17 +160,21 @@ const TASKS: TestCase[] = [
     // 注意：LLM 可能先验拒绝（不真正调用 calculator）或调用后触发 tool_error→Recovery→Blocked，
     // 两条路径都属"正常结束但任务未完成"，故不断言工具调用
     expect: [],
+    expectAny: ['无法', '失败', '不能', '错误'],
   },
   {
     name: '19. 正常结束但任务未完成：missing capability',
     prompt:
       '请查询北京今天的实时股票价格，并告诉我价格。必须通过可用工具获取真实数据，不允许猜测。',
     expect: [],
+    expectAny: ['无法', '没有', '不支持', '不能', '不可用'],
+    expectNoTools: ['calculator', 'getWeather', 'ls', 'read', 'grep', 'write', 'edit', 'shell'],
   },
-  // ---- 只读沙箱文件工具（listDir / readFile）----
-  // 预置 sandbox/workspaces/e2e-demo 工作区（--run-id 固定），Agent 通过只读工具查看/读取
+  // ---- 无 Workspace 时的旧 Sandbox 兼容行为 ----
+  // 预置 sandbox/workspaces/e2e-demo 工作区（--run-id 固定）。真实 Workspace 的
+  // Host→Run→Runtime 链路由 tests/workspace.test.ts 与 Host 集成测试覆盖。
   {
-    name: '20. 只读沙箱 ls（查看 work 目录）',
+    name: '20. 旧 Sandbox 兼容：ls（查看 work 目录）',
     prompt: '请查看 work 目录中有哪些文件',
     expect: ['a.txt'],
     expectTools: ['ls'],
@@ -179,7 +188,7 @@ const TASKS: TestCase[] = [
     teardown: () => cleanupWorkspace('e2e-demo'),
   },
   {
-    name: '21. 只读沙箱 read（读取 input/demo.txt）',
+    name: '21. 旧 Sandbox 兼容：read（读取 input/demo.txt）',
     prompt: '请读取 input/demo.txt，并告诉我里面写了什么',
     expect: ['hello sandbox'],
     expectTools: ['read'],
@@ -207,6 +216,57 @@ function run(cmd: string, args: string[], env?: Record<string, string>): string 
   }
 }
 
+// 真正制造一次可恢复中断：等待第一步工具完成并进入下一轮 LLM 请求后，
+// 由测试进程终止 CLI 子进程。这样不依赖不存在的 SIMULATE_INTERRUPT 环境变量，
+// checkpoint 必须来自真实的中断现场。
+async function runInterrupted(
+  cmd: string,
+  args: string[],
+  env?: Record<string, string>,
+): Promise<{ output: string; interrupted: boolean }> {
+  return await new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    });
+    let output = '';
+    let interrupted = false;
+    const terminate = (): void => {
+      if (!child.pid) return;
+      try {
+        // npx may spawn a separate tsx/node child; terminate the whole test
+        // process group so a killed phase cannot keep writing the checkpoint.
+        if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
+    const deadline = setTimeout(() => {
+      if (!interrupted) terminate();
+    }, 120_000);
+    const onData = (chunk: Buffer | string): void => {
+      output += String(chunk);
+      // 迭代 2 说明第一轮工具结果已经保存，下一轮 LLM 请求已经开始。
+      if (
+        !interrupted &&
+        output.includes('[Tool 调用] calculator') &&
+        output.includes('--- 迭代 2 ---')
+      ) {
+        interrupted = true;
+        terminate();
+      }
+    };
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+    child.on('close', () => {
+      clearTimeout(deadline);
+      resolve({ output, interrupted });
+    });
+  });
+}
+
 // 断言单个任务是否通过
 function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   if (tc.noTool) {
@@ -219,11 +279,14 @@ function assert(tc: TestCase, out: string): { pass: boolean; reason: string } {
   }
   // 基线：非纯对话任务也必须给出最终答案（防止 Agent 崩溃 / 超迭代静默失败）
   if (!out.includes('最终答案')) {
-    return { pass: false, reason: '缺少 [最终答案]，Agent 可能崩溃或超过最大迭代次数' };
+    return { pass: false, reason: '缺少 [最终答案]，Agent 可能崩溃或 Host/LLM 请求超时' };
   }
   const missing = tc.expect.filter((k) => !out.includes(k));
   if (missing.length > 0) {
     return { pass: false, reason: `答案缺少关键词: ${missing.join(', ')}` };
+  }
+  if (tc.expectAny?.length && !tc.expectAny.some((k) => out.includes(k))) {
+    return { pass: false, reason: `输出缺少任一语义关键词: ${tc.expectAny.join(' / ')}` };
   }
   const calls = [...out.matchAll(/\[Tool 调用\] (\w+)/g)].map((m) => m[1]);
   // 工具调用顺序校验（按出现顺序匹配 [Tool 调用] 行）
@@ -315,13 +378,19 @@ async function main(): Promise<void> {
     try {
       tc.setup?.(); // 运行前准备（如预置沙箱工作区文件）
       if (tc.resume) {
-        // 1) 中断运行（第2次 LLM 调用时网络中断）
+        // 1) 在第一步工具完成、第二轮 LLM 请求开始后终止进程
         console.log('  [阶段1] 运行并模拟中断...');
-        out = run(
+        const interrupted = await runInterrupted(
           'npx',
           ['tsx', '--env-file=.env', 'src/cli.ts', ...(tc.cliArgs ?? []), tc.prompt],
           tc.env,
         );
+        out = interrupted.output;
+        if (!interrupted.interrupted) {
+          results.push({ name: tc.name, pass: false, reason: '未在第一轮工具完成后中断 CLI' });
+          console.log('  [FAIL] 未在第一轮工具完成后中断 CLI');
+          continue;
+        }
         // 提取 checkpoint runId（从 saved 路径）
         const m = out.match(/\.checkpoints\/([0-9a-f-]+)\.json/);
         if (!m) {
@@ -330,6 +399,16 @@ async function main(): Promise<void> {
           continue;
         }
         const runId = m[1];
+        const checkpoint = loadCheckpoint(runId);
+        if (!checkpoint || checkpoint.status === 'completed') {
+          results.push({
+            name: tc.name,
+            pass: false,
+            reason: '中断现场没有可恢复的 running checkpoint',
+          });
+          console.log('  [FAIL] 中断现场没有可恢复的 running checkpoint');
+          continue;
+        }
         console.log(`  [阶段2] 从 checkpoint 恢复 (runId=${runId.slice(0, 8)}...)...`);
         out = run('npx', [
           'tsx',
@@ -378,7 +457,7 @@ async function main(): Promise<void> {
 
   // 汇总
   const passed = results.filter((r) => r.pass).length;
-  console.log('\n' + '='.repeat(60));
+  console.log(`\n${'='.repeat(60)}`);
   console.log('汇总');
   console.log('='.repeat(60));
   results.forEach((r) => {
