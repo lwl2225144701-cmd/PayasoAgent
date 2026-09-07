@@ -18,6 +18,9 @@ web/dist/
 # 本地 SQLite 持久化数据（放项目内可绕过 HOME 目录沙箱）
 .data/
 
+# 会话运行期附件落盘（内容寻址存储硬链接进工作区 input/attachments/）
+input/
+
 # JetBrains IDE 产物目录
 .idea/
 docs/archify/*.png
