@@ -68,6 +68,7 @@ interface ComposerFooterProps {
   onSelectModel?: (providerId: string, model: string) => void;
   // v1.6 上下文预算环形指示器：当前 Run 最新 context_usage（无则不显示）
   contextUsage?: ContextUsageEvent;
+  queuedCount?: number;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
 }
@@ -211,28 +212,49 @@ function SubmitButton({
   canSend,
   isRunning,
   isStopping,
+  queuedCount = 0,
   onSend,
   onStop,
 }: Omit<ComposerFooterProps, 'variant'>) {
-  return isRunning ? (
-    <IconButton
-      buttonSize="lg"
-      variant="surface"
-      shape="circle"
-      onClick={onStop}
-      disabled={isStopping}
-      title={isStopping ? '正在停止…' : '停止当前任务'}
-    >
-      <StopIcon size={16} />
-    </IconButton>
-  ) : (
+  if (isRunning) {
+    if (canSend) {
+      return (
+        <IconButton
+          buttonSize="lg"
+          variant="brand"
+          shape="circle"
+          onClick={onSend}
+          title={
+            queuedCount > 0 ? `立即加入发送队列（已有 ${queuedCount} 条）` : '立即加入发送队列'
+          }
+        >
+          <ArrowUpIcon size={20} />
+        </IconButton>
+      );
+    }
+
+    return (
+      <IconButton
+        buttonSize="lg"
+        variant="surface"
+        shape="circle"
+        onClick={onStop}
+        disabled={isStopping}
+        title={isStopping ? '正在停止…' : '停止当前任务'}
+      >
+        <StopIcon size={16} />
+      </IconButton>
+    );
+  }
+
+  return (
     <IconButton
       buttonSize="lg"
       variant="brand"
       shape="circle"
       onClick={onSend}
       disabled={!canSend}
-      title="发送（回车）"
+      title="发送（⌘/Ctrl+Enter）"
     >
       <ArrowUpIcon size={20} />
     </IconButton>

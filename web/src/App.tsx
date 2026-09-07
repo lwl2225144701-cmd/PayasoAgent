@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useConversationScroll } from './hooks/useConversationScroll';
 import styles from './App.module.css';
 import {
   archiveSession as apiArchiveSession,
@@ -26,6 +25,7 @@ import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { TurnNavigator } from './components/TurnNavigator';
+import { useConversationScroll } from './hooks/useConversationScroll';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import { useThemeMode } from './hooks/useThemeMode';
 import type {
@@ -44,6 +44,12 @@ import { alignedAttachmentName, prepareImageForUpload } from './utils/image-prep
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
 function sessionTitle(task: string): string {
   return task.replace(/\s+/g, ' ').trim().slice(0, 80) || '未命名任务';
+}
+
+interface QueuedMessage {
+  id: string;
+  task: string;
+  attachments?: File[];
 }
 
 export default function App() {
@@ -273,6 +279,12 @@ export default function App() {
   // Composer 属于整个会话，其上下文预算应始终取会话最新一轮。
   // currentRunId 只表示当前滚动/导航到的历史回合，不能改变 Composer 预算。
   const latestSessionRunId = currentSessionRuns[currentSessionRuns.length - 1]?.runId ?? null;
+  const latestSessionRun = currentSessionRuns[currentSessionRuns.length - 1] ?? null;
+  const sessionBusy =
+    latestSessionRun?.status === 'running' || latestSessionRun?.status === 'stopping';
+  const [sendQueue, setSendQueue] = useState<QueuedMessage[]>([]);
+  const queueDispatchingRef = useRef(false);
+  const immediateStopRunIdRef = useRef<string | null>(null);
   const [sentRunId, setSentRunId] = useState<string | null>(null);
   const { scrollRef: conversationScrollRef, contentRef: conversationContentRef } =
     useConversationScroll(currentSessionId, sentRunId);
@@ -296,7 +308,7 @@ export default function App() {
     };
   }, [currentRunId]);
 
-  const handleCreateRun = useCallback(
+  const createRunNow = useCallback(
     async (task: string, attachments?: File[]) => {
       const trimmed = task.trim();
       if (!trimmed) return;
@@ -386,6 +398,75 @@ export default function App() {
     ],
   );
 
+  const handleCreateRun = useCallback(
+    (task: string, attachments?: File[]) => {
+      if (sessionBusy || queueDispatchingRef.current || sendQueue.length > 0) {
+        setSendQueue((queue) => [...queue, { id: crypto.randomUUID(), task, attachments }]);
+        return;
+      }
+      void createRunNow(task, attachments);
+    },
+    [createRunNow, sendQueue.length, sessionBusy],
+  );
+
+  const handleSendQueuedNow = useCallback(
+    (messageId: string) => {
+      setSendQueue((queue) => {
+        const index = queue.findIndex((message) => message.id === messageId);
+        if (index < 0) return queue;
+        const message = queue[index];
+        if (!message) return queue;
+        if (index === 0) return queue;
+        return [message, ...queue.slice(0, index), ...queue.slice(index + 1)];
+      });
+
+      // “立即发送”不能与当前会话并发，否则两轮消息会同时竞争同一份上下文。
+      // 先请求当前 Run 停止，Run 真正进入终态后由队列 effect 立即派发队首消息。
+      const activeRun = latestSessionRun;
+      if (!activeRun) return;
+      if (activeRun.status !== 'running' || immediateStopRunIdRef.current === activeRun.runId) {
+        return;
+      }
+      immediateStopRunIdRef.current = activeRun.runId;
+      showToast('正在停止当前任务，准备发送队列消息…');
+      void stopRun(activeRun.runId)
+        .then(() => refreshRuns())
+        .catch((err: unknown) => {
+          immediateStopRunIdRef.current = null;
+          const msg = err instanceof Error ? err.message : String(err);
+          showToast(`立即发送失败：${msg}`);
+        });
+    },
+    [latestSessionRun, refreshRuns, showToast],
+  );
+
+  const handleDeleteQueued = useCallback((messageId: string) => {
+    setSendQueue((queue) => queue.filter((message) => message.id !== messageId));
+  }, []);
+
+  useEffect(() => {
+    if (
+      !currentSessionId ||
+      !latestSessionRun ||
+      sessionBusy ||
+      sendQueue.length === 0 ||
+      queueDispatchingRef.current
+    ) {
+      return;
+    }
+
+    const [next] = sendQueue;
+    if (!next) return;
+    queueDispatchingRef.current = true;
+    setSendQueue((queue) => queue.slice(1));
+    void createRunNow(next.task, next.attachments).finally(() => {
+      queueDispatchingRef.current = false;
+      // A message may have been queued while createRunNow was in flight.
+      // Create a new array so the effect runs again after the ref is cleared.
+      setSendQueue((queue) => [...queue]);
+    });
+  }, [createRunNow, currentSessionId, latestSessionRun, sendQueue, sessionBusy]);
+
   const handleRunTerminal = useCallback(() => {
     // SSE 已携带终态；这里只做一次持久化状态对账，不启动后台轮询。
     void refreshRuns();
@@ -416,6 +497,7 @@ export default function App() {
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
+      setSendQueue([]);
       const sessionRuns = runs
         .filter((run) => run.sessionId === sessionId)
         .sort((a, b) => b.turnIndex - a.turnIndex);
@@ -439,6 +521,7 @@ export default function App() {
   }, []);
 
   const handleNewTask = useCallback(() => {
+    setSendQueue([]);
     setCurrentRunId(null);
     setCurrentSessionId(null);
     setViewingFile(null);
@@ -454,6 +537,7 @@ export default function App() {
     // 切到 landing 并记住目标工作区；用户提交任务时 createRun 会带上 workspaceName，
     // 后端新建会话并继承该工作区根目录（会话创建后清空偏好）。
     setPreferredWorkspaceName(workspaceName);
+    setSendQueue([]);
     // 同步 workspace 显示态：徽标立即显示「pi」而非「选择 Workspace」，
     // 乐观插入的 Run/Session 也带上工作区（否则侧栏先落「未选择工作区」组）
     setWorkspace({ name: workspaceName });
@@ -489,6 +573,7 @@ export default function App() {
         setSessions(remaining);
         // 当前会话所属工作区被删除 → 回到 landing
         if (currentSessionId && !remaining.some((s) => s.sessionId === currentSessionId)) {
+          setSendQueue([]);
           setCurrentSessionId(null);
           setCurrentRunId(null);
           setViewingFile(null);
@@ -526,6 +611,7 @@ export default function App() {
         // 乐观更新：立即从列表移除，避免用户看到“什么都没发生”
         setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
         if (currentSessionId === sessionId) {
+          setSendQueue([]);
           setCurrentSessionId(null);
           setCurrentRunId(null);
           setViewingFile(null);
@@ -653,15 +739,18 @@ export default function App() {
           <InputBar
             onSend={handleCreateRun}
             onStop={handleStopRun}
-            isRunning={currentRun.status === 'running'}
+            isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}
             isStopping={currentRun.status === 'stopping'}
-            placeholder="发消息或做任务... / 调用指令 @ 文件或对话"
-            disabled={currentRun.status === 'running'}
+            placeholder="发消息或做任务... / Enter 换行，⌘/Ctrl+Enter 发送"
             currentModel={currentModelSelection ?? undefined}
             models={models}
             onSelectModel={handleSelectModel}
             visionSupported={currentModelVision}
             contextUsage={contextUsage ?? undefined}
+            queuedCount={sendQueue.length}
+            queuedMessages={sendQueue}
+            onSendQueuedNow={handleSendQueuedNow}
+            onDeleteQueued={handleDeleteQueued}
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}
           />

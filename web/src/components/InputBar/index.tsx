@@ -1,11 +1,10 @@
-import {
-  type ClipboardEvent,
-  type KeyboardEvent,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
-import type { ContextUsageEvent, ModelProviderView, ModelSelection, PermissionMode } from '../../types';
+import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import type {
+  ContextUsageEvent,
+  ModelProviderView,
+  ModelSelection,
+  PermissionMode,
+} from '../../types';
 import { ChevronDownIcon, CloseIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import styles from './InputBar.module.css';
@@ -22,6 +21,12 @@ interface PendingAttachment {
   file: File;
   /** object URL，仅用于发送前的本地预览 */
   url: string;
+}
+
+export interface QueuedComposerMessage {
+  id: string;
+  task: string;
+  attachments?: File[];
 }
 
 interface InputBarProps {
@@ -43,6 +48,11 @@ interface InputBarProps {
   visionSupported?: boolean;
   // 上下文预算环形指示器（当前 Run 最新 context_usage；无则不显示）
   contextUsage?: ContextUsageEvent;
+  // 当前 Run 执行时，新提交的消息会进入会话发送队列
+  queuedCount?: number;
+  queuedMessages?: QueuedComposerMessage[];
+  onSendQueuedNow?: (messageId: string) => void;
+  onDeleteQueued?: (messageId: string) => void;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
 }
@@ -53,7 +63,7 @@ export function InputBar({
   isRunning,
   isStopping,
   disabled,
-  placeholder = '发消息或做任务... / 直接粘贴截图即可附带图片',
+  placeholder = '发消息或做任务... / Enter 换行，⌘/Ctrl+Enter 发送',
   variant = 'compact',
   workspaceName,
   openingWorkspace,
@@ -63,6 +73,10 @@ export function InputBar({
   onSelectModel,
   visionSupported,
   contextUsage,
+  queuedCount = 0,
+  queuedMessages = [],
+  onSendQueuedNow,
+  onDeleteQueued,
   permissionMode,
   onSelectPermission,
 }: InputBarProps) {
@@ -85,7 +99,7 @@ export function InputBar({
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 132) + 'px';
+    ta.style.height = `${Math.min(ta.scrollHeight, 132)}px`;
   }, [text]);
 
   function commitAttachments(next: PendingAttachment[]) {
@@ -135,7 +149,7 @@ export function InputBar({
         continue;
       }
       // 截图剪贴板通常没有文件名，兜底一个带时间戳的名字（后缀与 MIME 对齐）
-      const ext = file.type === 'image/jpeg' ? 'jpg' : file.type.split('/')[1] ?? 'png';
+      const ext = file.type === 'image/jpeg' ? 'jpg' : (file.type.split('/')[1] ?? 'png');
       const name = file.name?.trim() || `pasted-${Date.now()}.${ext}`;
       const blob = new File([file], name, { type: file.type });
       accepted.push({ id: crypto.randomUUID(), file: blob, url: URL.createObjectURL(blob) });
@@ -145,7 +159,7 @@ export function InputBar({
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
@@ -194,7 +208,8 @@ export function InputBar({
   const visionWarning =
     attachments.length > 0 && visionSupported === false ? (
       <div className={styles.visionWarning}>
-        当前模型未开启视觉能力，模型看不到图片。请在「设置 → 模型」中为该模型打开「视觉」开关，或切换到支持图片的模型。
+        当前模型未开启视觉能力，模型看不到图片。请在「设置 →
+        模型」中为该模型打开「视觉」开关，或切换到支持图片的模型。
       </div>
     ) : null;
 
@@ -249,6 +264,43 @@ export function InputBar({
       <div className={styles.conversationComposer}>
         {attachmentStrip}
         {visionWarning}
+        {queuedMessages.length > 0 && (
+          <div className={styles.queuePanel} role="status" aria-label="发送队列">
+            <div className={styles.queueNotice}>
+              已加入发送队列 · {queuedMessages.length} 条消息等待中
+            </div>
+            <div className={styles.queueList}>
+              {queuedMessages.map((message, index) => (
+                <div className={styles.queueItem} key={message.id}>
+                  <div className={styles.queueItemContent}>
+                    <span className={styles.queueItemIndex}>{index + 1}</span>
+                    <span className={styles.queueItemText} title={message.task}>
+                      {message.task}
+                    </span>
+                  </div>
+                  <div className={styles.queueItemActions}>
+                    <button
+                      type="button"
+                      className={styles.queueAction}
+                      onClick={() => onSendQueuedNow?.(message.id)}
+                      title="当前任务结束后优先发送"
+                    >
+                      立即发送
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.queueAction} ${styles.queueDelete}`}
+                      onClick={() => onDeleteQueued?.(message.id)}
+                      title="从发送队列删除"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <ComposerTextarea
           ref={textareaRef}
           variant="conversation"
@@ -270,6 +322,7 @@ export function InputBar({
           models={models}
           onSelectModel={onSelectModel}
           contextUsage={contextUsage}
+          queuedCount={queuedCount}
           permissionMode={permissionMode}
           onSelectPermission={onSelectPermission}
         />
