@@ -108,16 +108,18 @@ test('Host Workspace API 只返回 name，不常规暴露真实绝对路径', as
   }
 });
 
-test('Host 拒绝超过 64KB 的 Run 请求体（Content-Length + chunked）', async () => {
+test('Host 拒绝超过 20MB 请求体上限的 Run 请求体（Content-Length + chunked）', async () => {
   const server = createHostServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const address = server.address();
     assert.ok(address && typeof address === 'object');
+    // 上限 20MB（视觉附件场景，见 MAX_BODY_BYTES）：21MB 必须被拒
+    const oversized = 21 * 1024 * 1024;
     const response = await fetch(`http://127.0.0.1:${address.port}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task: 'x'.repeat(70 * 1024) }),
+      body: JSON.stringify({ task: 'x'.repeat(oversized) }),
     });
     assert.equal(response.status, 413);
     assert.equal(((await response.json()) as { error: string }).error, 'payload_too_large');
@@ -138,7 +140,7 @@ test('Host 拒绝超过 64KB 的 Run 请求体（Content-Length + chunked）', a
       );
       request.on('error', reject);
       request.write('{"task":"');
-      request.write('x'.repeat(70 * 1024));
+      request.write('x'.repeat(oversized));
       request.end('"}');
     });
     assert.equal(chunkedStatus, 413);
