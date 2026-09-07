@@ -100,7 +100,7 @@ export interface ModelProviderView {
 
 export interface CreateModelProviderInput {
   name: string;
-  baseUrl: string;
+  baseUrl?: string;
   piProviderId?: string;
   apiKey?: string;
   models: string[];

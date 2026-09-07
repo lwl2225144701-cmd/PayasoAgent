@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createModel,
   deleteModel,
@@ -7,7 +7,6 @@ import {
   listModels,
   listPiAiProviders,
   previewAvailableModels,
-  setDefaultModel,
   updateModel,
 } from '../../api';
 import type { ConversationFontSize, LanguageMode } from '../../preferences';
@@ -22,6 +21,7 @@ import type {
 } from '../../types';
 import { GeneralSettings } from '../GeneralSettings';
 import {
+  ChevronDownIcon,
   CloseIcon,
   DatabaseIcon,
   PlusIcon,
@@ -70,7 +70,6 @@ interface FormState {
   hadApiKey: boolean;
   tags: ModelTag[];
   newTag: string;
-  detectedCatalog: ProviderModelInfo[];
 }
 
 function statusLabel(status: ModelProviderView['status']): string {
@@ -88,6 +87,80 @@ function statusLabel(status: ModelProviderView['status']): string {
     default:
       return status;
   }
+}
+
+function ProviderPicker({
+  providers,
+  value,
+  loading,
+  onChange,
+}: {
+  providers: PiAiProviderInfo[];
+  value: string;
+  loading: boolean;
+  onChange: (providerId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const selected = providers.find((provider) => provider.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className={styles.providerPicker} ref={pickerRef}>
+      <button
+        type="button"
+        className={styles.providerPickerTrigger}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={loading}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span
+          className={selected ? styles.providerPickerSelected : styles.providerPickerPlaceholder}
+        >
+          {selected?.name ?? (loading ? '加载内置提供方…' : '选择提供方')}
+        </span>
+        <ChevronDownIcon size={15} />
+      </button>
+      {open && (
+        <div className={styles.providerPickerMenu} role="listbox" aria-label="内置提供方">
+          {providers.map((provider) => (
+            <button
+              key={provider.id}
+              type="button"
+              role="option"
+              aria-selected={provider.id === value}
+              className={styles.providerPickerOption}
+              onClick={() => {
+                onChange(provider.id);
+                setOpen(false);
+              }}
+            >
+              <span className={styles.providerPickerName}>{provider.name}</span>
+              <span className={styles.providerPickerMeta}>
+                {provider.id} · {provider.models.length} 个模型
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function catalogFromModelIds(models: string[]): ProviderModelInfo[] {
@@ -148,49 +221,6 @@ function mergeCatalogIntoTags(
   };
 }
 
-function mergeCatalogIntoProvider(
-  provider: ModelProviderView,
-  catalog: ProviderModelInfo[],
-): {
-  models: string[];
-  modelCapabilities?: Record<string, { contextWindow?: number; maxOutputTokens?: number }>;
-  addedCount: number;
-  contextFilledCount: number;
-  chatCount: number;
-} {
-  const chatModels = catalog.filter((model) => model.category === 'chat');
-  const existing = new Set(provider.models);
-  const models = Array.from(
-    new Set([...provider.models, ...chatModels.map((model) => model.id)]),
-  ).slice(0, 50);
-  const selectedChatModels = chatModels.filter((model) => models.includes(model.id));
-  const capabilities: Record<string, { contextWindow?: number; maxOutputTokens?: number }> = {
-    ...(provider.modelCapabilities ?? {}),
-  };
-  let contextFilledCount = 0;
-  for (const model of selectedChatModels) {
-    const discovered = model.contextWindow;
-    if (discovered === undefined || capabilities[model.id]?.contextWindow !== undefined) continue;
-    capabilities[model.id] = {
-      ...(capabilities[model.id] ?? {}),
-      contextWindow: discovered,
-    };
-    contextFilledCount += 1;
-  }
-
-  return {
-    models,
-    ...(Object.keys(capabilities).length > 0 ? { modelCapabilities: capabilities } : {}),
-    addedCount: selectedChatModels.filter((model) => !existing.has(model.id)).length,
-    contextFilledCount,
-    chatCount: chatModels.length,
-  };
-}
-
-function formatTokenCount(value?: number): string {
-  return value === undefined ? '上下文未提供' : `${value.toLocaleString()} tokens`;
-}
-
 const EMPTY_FORM: FormState = {
   name: '',
   baseUrl: '',
@@ -198,7 +228,6 @@ const EMPTY_FORM: FormState = {
   hadApiKey: false,
   tags: [],
   newTag: '',
-  detectedCatalog: [],
 };
 
 export function SettingsModal({
@@ -223,13 +252,10 @@ export function SettingsModal({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [detectingModels, setDetectingModels] = useState(false);
-  const [probingId, setProbingId] = useState<string | null>(null);
-  const [probeCatalogs, setProbeCatalogs] = useState<Record<string, ProviderModelInfo[]>>({});
   const [piAiProviders, setPiAiProviders] = useState<PiAiProviderInfo[]>([]);
   const [loadingPiAiProviders, setLoadingPiAiProviders] = useState(false);
   const [defaultId, setDefaultId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('general');
-  const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -257,19 +283,16 @@ export function SettingsModal({
       setFormMode('list');
       setForm(EMPTY_FORM);
       setError(null);
-      setNotice(null);
       setDeletingId(null);
       setActiveTab('general');
-      setProbeCatalogs({});
     }
   }, [open]);
 
   const startAdd = () => {
-    setForm({ ...EMPTY_FORM, tags: [], detectedCatalog: [] });
+    setForm({ ...EMPTY_FORM, tags: [] });
     setFormMode('add');
     setCustomOpen(false);
     setError(null);
-    setNotice(null);
   };
 
   const loadPiAiProviders = useCallback(async () => {
@@ -280,7 +303,7 @@ export function SettingsModal({
       return resp.providers;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`加载 pi-ai 提供方失败：${msg}`);
+      setError(`加载内置提供方失败：${msg}`);
       return [];
     } finally {
       setLoadingPiAiProviders(false);
@@ -288,11 +311,10 @@ export function SettingsModal({
   }, []);
 
   const startAddPiAi = () => {
-    setForm({ ...EMPTY_FORM, tags: [], detectedCatalog: [] });
+    setForm({ ...EMPTY_FORM, tags: [] });
     setFormMode('add-pi-ai');
-    setCustomOpen(true);
+    setCustomOpen(false);
     setError(null);
-    setNotice(null);
     if (piAiProviders.length === 0) void loadPiAiProviders();
   };
 
@@ -312,12 +334,8 @@ export function SettingsModal({
       name: provider.name,
       baseUrl: provider.baseUrl,
       tags,
-      detectedCatalog: catalog,
     }));
     setError(null);
-    setNotice(
-      `已载入 ${provider.name} 的 pi-ai 静态目录：${catalog.length} 个模型；保存后会按每个模型声明的 API 协议发起请求。`,
-    );
   };
 
   const startEdit = (m: ModelProviderView) => {
@@ -340,81 +358,26 @@ export function SettingsModal({
         };
       }),
       newTag: '',
-      detectedCatalog: [],
     });
     setFormMode('edit');
     setCustomOpen(false);
     setError(null);
-    setNotice(null);
   };
 
   const cancelForm = () => {
     setFormMode('list');
     setForm(EMPTY_FORM);
     setError(null);
-    setNotice(null);
-  };
-
-  const handleProbe = async (provider: ModelProviderView) => {
-    if (!provider.hasApiKey) {
-      setError('请先配置 API 密钥，再检测模型目录。');
-      return;
-    }
-    setError(null);
-    setNotice(null);
-    setProbingId(provider.id);
-    setModels((prev) =>
-      prev.map((item) => (item.id === provider.id ? { ...item, status: 'checking' } : item)),
-    );
-    try {
-      let catalog: ProviderModelInfo[];
-      if (provider.piProviderId) {
-        const providers = piAiProviders.length > 0 ? piAiProviders : await loadPiAiProviders();
-        const piProvider = providers.find((item) => item.id === provider.piProviderId);
-        if (!piProvider) throw new Error(`pi-ai provider not found: ${provider.piProviderId}`);
-        catalog = catalogFromPiAiProvider(piProvider);
-      } else {
-        const resp = await fetchAvailableModels({ providerId: provider.id });
-        catalog = resp.catalog ?? catalogFromModelIds(resp.models);
-      }
-      setProbeCatalogs((prev) => ({ ...prev, [provider.id]: catalog }));
-      const merged = mergeCatalogIntoProvider(provider, catalog);
-      if (merged.chatCount > 0) {
-        await updateModel(provider.id, {
-          models: merged.models,
-          ...(merged.modelCapabilities ? { modelCapabilities: merged.modelCapabilities } : {}),
-        });
-      }
-      await refresh();
-      const chatCount = catalog.filter((model) => model.category === 'chat').length;
-      setNotice(
-        provider.piProviderId
-          ? `${provider.name} 的 pi-ai 目录已刷新：共 ${catalog.length} 个模型，其中 ${chatCount} 个对话模型；已同步新增 ${merged.addedCount} 个并填充 ${merged.contextFilledCount} 个上下文。`
-          : `${provider.name} 检测成功：发现 ${catalog.length} 个模型，其中 ${chatCount} 个对话模型；已同步新增 ${merged.addedCount} 个并填充 ${merged.contextFilledCount} 个上下文。`,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setProbeCatalogs((prev) => {
-        const next = { ...prev };
-        delete next[provider.id];
-        return next;
-      });
-      await refresh().catch(() => undefined);
-      setError(`检测失败：${msg}`);
-    } finally {
-      setProbingId(null);
-      // 检测会持久化目录/状态，首页模型选择器也必须读取最新配置。
-      onSaved?.();
-    }
   };
 
   const handleSave = async () => {
     setError(null);
     const name = form.name.trim();
     const baseUrl = form.baseUrl.trim();
+    const isBuiltIn = Boolean(form.piProviderId);
     const modelsList = modelsFromTags();
-    if (!name || !baseUrl) {
-      setError('名称和 Base URL 不能为空。');
+    if (!name || (!isBuiltIn && !baseUrl)) {
+      setError(isBuiltIn ? '名称不能为空。' : '名称和 Base URL 不能为空。');
       return;
     }
     if (modelsList.length === 0) {
@@ -422,11 +385,11 @@ export function SettingsModal({
       return;
     }
     if (formMode === 'add-pi-ai' && !form.piProviderId) {
-      setError('请选择一个 pi-ai 提供方。');
+      setError('请选择一个内置提供方。');
       return;
     }
     if (formMode === 'add-pi-ai' && !form.apiKey.trim()) {
-      setError('请填写 API 密钥后再保存 pi-ai 提供方。');
+      setError('请填写 API 密钥后再保存内置提供方。');
       return;
     }
     // 按模型能力覆盖：收集填写了上下文窗口或开启了视觉能力的模型；窗口数值必须为正整数
@@ -455,7 +418,7 @@ export function SettingsModal({
       if (formMode === 'add' || formMode === 'add-pi-ai') {
         const input: CreateModelProviderInput = {
           name,
-          baseUrl,
+          ...(isBuiltIn ? {} : { baseUrl }),
           models: modelsList,
           ...(form.piProviderId ? { piProviderId: form.piProviderId } : {}),
           ...(modelCapabilities ? { modelCapabilities } : {}),
@@ -467,7 +430,7 @@ export function SettingsModal({
       } else if (formMode === 'edit' && form.id) {
         const input: UpdateModelProviderInput = {
           name,
-          baseUrl,
+          ...(isBuiltIn ? {} : { baseUrl }),
           models: modelsList,
           modelCapabilities,
         };
@@ -546,23 +509,19 @@ export function SettingsModal({
   // 新增 Provider 时通过 baseUrl + apiKey 临时预检（不落盘）。
   const handleDetectModels = async () => {
     setError(null);
-    setNotice(null);
     if (form.piProviderId) {
       setDetectingModels(true);
       try {
         const providers = piAiProviders.length > 0 ? piAiProviders : await loadPiAiProviders();
         const provider = providers.find((item) => item.id === form.piProviderId);
-        if (!provider) throw new Error(`pi-ai provider not found: ${form.piProviderId}`);
+        if (!provider) throw new Error('内置提供方未找到');
         const catalog = catalogFromPiAiProvider(provider);
         const merged = mergeCatalogIntoTags(form.tags, catalog);
         const tags = merged.tags.slice(0, 50);
-        setForm((prev) => ({ ...prev, tags, detectedCatalog: catalog }));
-        setNotice(
-          `pi-ai 目录已刷新：发现 ${catalog.length} 个模型，自动加入 ${merged.addedCount} 个模型，并填充 ${merged.contextFilledCount} 个上下文窗口。请点击保存。`,
-        );
+        setForm((prev) => ({ ...prev, tags }));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setError(`pi-ai 模型目录刷新失败：${msg}`);
+        setError(`内置模型目录刷新失败：${msg}`);
       } finally {
         setDetectingModels(false);
       }
@@ -579,10 +538,7 @@ export function SettingsModal({
           tags = tags.slice(0, 50);
           setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
         }
-        setForm((prev) => ({ ...prev, tags, detectedCatalog: catalog }));
-        setNotice(
-          `检测完成：发现 ${catalog.length} 个模型，自动加入 ${merged.addedCount} 个对话模型，并填充 ${merged.contextFilledCount} 个模型的上下文窗口。请点击保存。`,
-        );
+        setForm((prev) => ({ ...prev, tags }));
         if (merged.chatCount === 0) {
           setError('检测到模型目录，但没有识别到可用于 Agent 的对话模型；请手动添加模型标识。');
         }
@@ -607,10 +563,7 @@ export function SettingsModal({
           tags = tags.slice(0, 50);
           setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
         }
-        setForm((prev) => ({ ...prev, tags, detectedCatalog: catalog }));
-        setNotice(
-          `检测完成：发现 ${catalog.length} 个模型，自动加入 ${merged.addedCount} 个对话模型，并填充 ${merged.contextFilledCount} 个模型的上下文窗口。请点击保存。`,
-        );
+        setForm((prev) => ({ ...prev, tags }));
         if (merged.chatCount === 0) {
           setError('检测到模型目录，但没有识别到可用于 Agent 的对话模型；请手动添加模型标识。');
         }
@@ -630,7 +583,7 @@ export function SettingsModal({
       const hasApiKey = formMode === 'edit' && (form.hadApiKey || form.apiKey.length > 0);
       const isPiAiForm = formMode === 'add-pi-ai';
       const title = isPiAiForm
-        ? '添加 pi-ai 提供方'
+        ? '添加内置提供方'
         : formMode === 'add'
           ? '添加自定义提供方'
           : '编辑提供方';
@@ -640,30 +593,19 @@ export function SettingsModal({
             <h3 className={styles.formTitle}>{title}</h3>
           </div>
           {error && <div className={styles.error}>{error}</div>}
-          {notice && <div className={styles.success}>{notice}</div>}
           {isPiAiForm && (
             <div className={styles.field}>
               <label className={styles.label} htmlFor="pi-ai-provider">
-                pi-ai 提供方
+                内置提供方
               </label>
-              <select
-                id="pi-ai-provider"
-                className={styles.selectInput}
+              <ProviderPicker
+                providers={piAiProviders}
                 value={form.piProviderId ?? ''}
-                onChange={(e) => handlePiAiProviderChange(e.target.value)}
-                disabled={loadingPiAiProviders}
-              >
-                <option value="">
-                  {loadingPiAiProviders ? '加载 pi-ai 提供方…' : '选择提供方'}
-                </option>
-                {piAiProviders.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.name} · {provider.id}
-                  </option>
-                ))}
-              </select>
+                loading={loadingPiAiProviders}
+                onChange={handlePiAiProviderChange}
+              />
               <div className={styles.tagHint}>
-                目录来自 pi-ai 内置 Provider；保存后会按模型的真实 API 协议流式调用。
+                目录来自内置模型库；保存后会按模型的真实 API 协议流式调用。
               </div>
             </div>
           )}
@@ -718,19 +660,20 @@ export function SettingsModal({
             </button>
             {customOpen && (
               <div className={styles.collapseBody}>
-                <div className={styles.field}>
-                  <label className={styles.label} htmlFor="provider-base-url">
-                    API 地址
-                  </label>
-                  <input
-                    id="provider-base-url"
-                    className={styles.input}
-                    value={form.baseUrl}
-                    onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
-                    placeholder="https://api.deepseek.com"
-                    readOnly={isPiAiForm && Boolean(form.piProviderId)}
-                  />
-                </div>
+                {!isPiAiForm && !form.piProviderId && (
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor="provider-base-url">
+                      API 地址
+                    </label>
+                    <input
+                      id="provider-base-url"
+                      className={styles.input}
+                      value={form.baseUrl}
+                      onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                      placeholder="https://api.deepseek.com"
+                    />
+                  </div>
+                )}
                 <div className={styles.field}>
                   <div className={styles.tagHeader}>
                     <label className={styles.label} htmlFor="provider-new-tag">
@@ -742,19 +685,23 @@ export function SettingsModal({
                       onClick={handleDetectModels}
                       disabled={
                         detectingModels ||
-                        (formMode === 'edit' ? !form.id : !form.baseUrl || !form.apiKey)
+                        (formMode === 'edit'
+                          ? !form.id
+                          : form.piProviderId
+                            ? false
+                            : !form.baseUrl || !form.apiKey)
                       }
                     >
                       {detectingModels
                         ? '刷新中…'
                         : isPiAiForm || form.piProviderId
-                          ? '刷新 pi-ai 模型'
+                          ? '刷新内置模型'
                           : '检测并同步模型'}
                     </button>
                   </div>
                   <div className={styles.tagHint}>
                     {isPiAiForm || form.piProviderId
-                      ? '使用 pi-ai 内置模型目录；模型上下文和协议由库提供。'
+                      ? '使用内置模型目录；模型上下文和协议由模型库提供。'
                       : '检测后自动同步对话模型和上下文窗口；已手动填写的上下文不会覆盖。'}
                   </div>
                   <div className={styles.tagList}>
@@ -782,7 +729,7 @@ export function SettingsModal({
                           role="switch"
                           aria-checked={tag.vision ?? false}
                           className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
-                          title="该模型支持图片输入（视觉能力）；pi-ai 目录已按模型声明预选"
+                          title="该模型支持图片输入（视觉能力）；已按模型声明预选"
                           onClick={() =>
                             setForm((prev) => ({
                               ...prev,
@@ -822,26 +769,6 @@ export function SettingsModal({
                       + 添加模型
                     </button>
                   </div>
-                  {form.detectedCatalog.length > 0 && (
-                    <div className={styles.detectedPanel}>
-                      <div className={styles.detectedTitle}>检测结果</div>
-                      <div className={styles.detectedSummary}>
-                        共 {form.detectedCatalog.length} 个模型，推荐优先尝试{' '}
-                        {form.detectedCatalog.filter((model) => model.category === 'chat').length}{' '}
-                        个对话模型。
-                      </div>
-                      <div className={styles.detectedList}>
-                        {form.detectedCatalog
-                          .filter((model) => model.category === 'chat')
-                          .slice(0, 12)
-                          .map((model) => (
-                            <span key={model.id} className={styles.detectedModel} title={model.id}>
-                              {model.id} · {formatTokenCount(model.contextWindow)}
-                            </span>
-                          ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -873,7 +800,7 @@ export function SettingsModal({
         <div className={styles.toolbar}>
           <button type="button" className={styles.secondaryButton} onClick={startAddPiAi}>
             <PlusIcon size={14} />
-            <span>添加 pi-ai 提供方</span>
+            <span>添加内置提供方</span>
           </button>
           <button type="button" className={styles.primaryButton} onClick={startAdd}>
             <PlusIcon size={14} />
@@ -881,7 +808,6 @@ export function SettingsModal({
           </button>
         </div>
         {error && <div className={styles.error}>{error}</div>}
-        {notice && <div className={styles.success}>{notice}</div>}
         {loading ? (
           <div className={styles.placeholder}>加载中…</div>
         ) : models.length === 0 ? (
@@ -889,20 +815,17 @@ export function SettingsModal({
         ) : (
           <div className={styles.list}>
             {models.map((m) => {
-              const probeCatalog = probeCatalogs[m.id];
-              const chatModels = probeCatalog?.filter((model) => model.category === 'chat') ?? [];
               return (
-                <div key={m.id} className={styles.card}>
+                <div
+                  key={m.id}
+                  className={styles.card}
+                  title={`${m.name} · ${m.baseUrl} · ${m.hasApiKey ? 'API Key 已配置' : 'API Key 未设置'} · ${statusLabel(m.status)}`}
+                >
                   <div className={styles.cardMain}>
                     <div className={styles.cardTitleRow}>
                       <span className={styles.cardTitle}>{m.name}</span>
-                      {m.piProviderId && (
-                        <span
-                          className={styles.sourceBadge}
-                          title={`pi-ai Provider: ${m.piProviderId}`}
-                        >
-                          pi-ai
-                        </span>
+                      {!m.piProviderId && m.kind === 'custom' && (
+                        <span className={styles.sourceBadge}>自定义</span>
                       )}
                       {m.id === defaultId && <span className={styles.defaultBadge}>默认</span>}
                       <span
@@ -911,95 +834,14 @@ export function SettingsModal({
                         title={statusLabel(m.status)}
                       />
                     </div>
-                    <div className={styles.cardMeta}>{m.baseUrl}</div>
-                    <div className={styles.cardMeta}>
-                      API Key：{m.hasApiKey ? '已配置' : '未设置'}
-                    </div>
-                    <div className={styles.cardMeta}>
-                      状态：
-                      <span className={styles.statusText} data-status={m.status}>
-                        {m.piProviderId ? '已配置（pi-ai 目录）' : statusLabel(m.status)}
-                      </span>
-                    </div>
-                    {m.probeError && (
-                      <div className={styles.cardMeta}>检测信息：{m.probeError}</div>
-                    )}
-                    {probeCatalog && (
-                      <div className={styles.probeCatalog}>
-                        <div className={styles.probeCatalogTitle}>
-                          可作为 Agent 使用的模型（{chatModels.length}）
-                        </div>
-                        <div className={styles.detectedList}>
-                          {chatModels.slice(0, 8).map((model) => (
-                            <span key={model.id} className={styles.detectedModel} title={model.id}>
-                              {model.id}
-                            </span>
-                          ))}
-                          {chatModels.length > 8 && (
-                            <span className={styles.probeCatalogMore}>
-                              另有 {chatModels.length - 8} 个
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                   <div className={styles.cardActions}>
                     <button
                       type="button"
-                      className={styles.textButton}
-                      disabled={!m.hasApiKey || probingId !== null}
-                      title={
-                        !m.hasApiKey
-                          ? '请先配置 API 密钥'
-                          : m.piProviderId
-                            ? '刷新 pi-ai 内置模型目录与上下文，不请求 /models'
-                            : '调用 Provider 的 /models 接口并同步模型目录与上下文'
-                      }
-                      onClick={() => void handleProbe(m)}
-                    >
-                      {probingId === m.id
-                        ? '刷新中…'
-                        : m.piProviderId
-                          ? '刷新 pi-ai 目录'
-                          : '检测并同步'}
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.textButton}
+                      className={`${styles.textButton} ${styles.cardEditButton}`}
                       onClick={() => startEdit(m)}
                     >
                       编辑
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.textButton}
-                      disabled={!m.hasApiKey || m.id === defaultId}
-                      title={
-                        !m.hasApiKey
-                          ? '请先配置 API 密钥'
-                          : m.id === defaultId
-                            ? '当前默认提供方'
-                            : undefined
-                      }
-                      onClick={async () => {
-                        setError(null);
-                        try {
-                          await setDefaultModel(m.id, m.models[0] ?? '');
-                          // 立即在卡片上显示"当前默认"，并通知 App 刷新底部下拉
-                          setDefaultId(m.id);
-                          window.dispatchEvent(
-                            new CustomEvent('settings:defaultChanged', {
-                              detail: { providerId: m.id },
-                            }),
-                          );
-                        } catch (err) {
-                          const msg = err instanceof Error ? err.message : String(err);
-                          setError(`设为默认失败：${msg}`);
-                        }
-                      }}
-                    >
-                      {m.id === defaultId ? '当前默认' : '设为默认'}
                     </button>
                     {m.kind === 'custom' && (
                       <button

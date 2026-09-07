@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  max-height: calc(100vh - 48px);
+  min-height: 0;
 }
 
 .header {
@@ -114,8 +114,10 @@
 .content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   padding: 28px 32px 32px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: transparent;
 }
 
@@ -213,8 +215,17 @@
   background-position: right 10px center;
 }
 
-.selectInput {
+.providerPicker {
+  position: relative;
   width: 100%;
+}
+
+.providerPickerTrigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 9px 10px;
   border-radius: 9px;
   border: 1px solid var(--border-color);
@@ -222,11 +233,81 @@
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
+  cursor: pointer;
+  text-align: left;
 }
 
-.selectInput:focus {
+.providerPickerTrigger:hover,
+.providerPickerTrigger[aria-expanded="true"] {
   border-color: var(--color-brand-border);
   box-shadow: 0 0 0 2px var(--color-brand-soft);
+}
+
+.providerPickerTrigger:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.providerPickerSelected,
+.providerPickerPlaceholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerPickerPlaceholder {
+  color: var(--text-secondary);
+}
+
+.providerPickerMenu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 11px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.providerPickerOption {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.providerPickerOption:hover,
+.providerPickerOption[aria-selected="true"] {
+  border-color: var(--color-brand-border);
+  background: var(--color-brand-soft);
+}
+
+.providerPickerName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.providerPickerMeta {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .buttonGroup {
@@ -570,45 +651,6 @@
   color: var(--text-primary);
 }
 
-.detectedPanel {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 9px 10px;
-  border-radius: 9px;
-  border: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--border-color));
-  background: color-mix(in srgb, var(--color-success) 8%, transparent);
-}
-
-.detectedTitle {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.detectedSummary {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.detectedList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.detectedModel {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 3px 6px;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 11px;
-}
-
 .error {
   padding: 8px 10px;
   border-radius: 8px;
@@ -616,15 +658,6 @@
   color: var(--color-danger-text);
   font-size: 12.5px;
   border: 1px solid var(--color-danger-border);
-}
-
-.success {
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
-  color: var(--color-success);
-  font-size: 12.5px;
-  border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 
 .list {
@@ -637,9 +670,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 12px;
+  gap: 20px;
+  min-height: 68px;
+  padding: 14px 18px;
+  border-radius: 16px;
   border: 1px solid var(--border-color);
   background: var(--color-surface);
 }
@@ -656,9 +690,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .cardTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
@@ -684,25 +723,6 @@
   color: var(--color-brand-text);
   font-size: 10px;
   font-weight: 600;
-}
-
-.cardMeta {
-  font-size: 12px;
-  color: var(--text-secondary);
-  word-break: break-all;
-}
-
-.probeCatalog {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 2px;
-}
-
-.probeCatalogTitle,
-.probeCatalogMore {
-  color: var(--text-secondary);
-  font-size: 11px;
 }
 
 .statusDot {
@@ -739,7 +759,7 @@
 
 .cardActions {
   display: flex;
-  gap: 14px;
+  gap: 18px;
   flex-shrink: 0;
   align-items: center;
 }
@@ -759,12 +779,35 @@
   color: var(--text-primary);
 }
 
+.cardEditButton {
+  padding: 7px 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-primary);
+}
+
+.cardEditButton:hover {
+  border-color: var(--color-border-strong);
+  background: var(--bg-hover);
+}
+
 .textButtonDanger {
   color: var(--color-danger-text);
 }
 
 .textButtonDanger:hover {
   color: var(--color-danger-text);
+}
+
+@media (max-width: 520px) {
+  .card {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .cardActions {
+    gap: 10px;
+  }
 }
 
 .confirmBackdrop {
@@ -858,4 +901,80 @@
 
 .tagVisionOn:hover {
   color: #fff;
+}
+
+@media (max-width: 760px) {
+  .content {
+    padding: 22px 20px 26px;
+  }
+
+  .settingItem {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settingControl,
+  .select {
+    width: 100%;
+  }
+
+  .select {
+    min-width: 0;
+  }
+
+  .buttonGroup {
+    flex-wrap: wrap;
+  }
+
+  .buttonGroupItem {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+
+  .toolbar {
+    justify-content: stretch;
+    flex-wrap: wrap;
+  }
+
+  .toolbar > * {
+    flex: 1 1 160px;
+  }
+
+  .tagAddRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tagAddButton {
+    width: 100%;
+  }
+
+  .card {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .cardActions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 641px) {
+  .header {
+    padding: 14px 18px;
+  }
+
+  .nav {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .content {
+    padding-top: 20px;
+    padding-bottom: 24px;
+  }
 }
