@@ -23,6 +23,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'attachment-store', file: 'tests/attachment-store.test.ts' },
   { name: 'attachment-normalize', file: 'tests/attachment-normalize.test.ts' },
   { name: 'frontend-image-prepare', file: 'tests/frontend-image-prepare.test.ts' },
+  { name: 'platform-shell-host', file: 'tests/platform-shell-host.test.ts' },
   { name: 'sandbox-manager', file: 'tests/sandbox-manager.test.ts' },
   { name: 'toolchain-manager', file: 'tests/toolchain-manager.test.ts' },
   { name: 'toolchain-preparation', file: 'tests/toolchain-preparation.test.ts' },

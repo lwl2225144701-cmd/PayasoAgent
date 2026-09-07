@@ -40,11 +40,16 @@ try {
   );
   console.log('  [PASS] 指向 Workspace 外的 symlink 被拒绝');
 
+  await openFileInDefaultBrowser(workspace, 'site/index.html', { opener, platform: 'win32' });
+  assert.match(openedUrl, /^file:\/\//);
+  assert.ok(openedUrl.endsWith('/site/index.html'));
+  console.log('  [PASS] win32 平台同样打开（平台分支注入，不 spawn 真实命令）');
+
   await assert.rejects(
-    () => openFileInDefaultBrowser(workspace, 'site/index.html', { opener, platform: 'linux' }),
-    /only available on macOS/,
+    () => openFileInDefaultBrowser(workspace, 'site/index.html', { opener, platform: 'freebsd' }),
+    /not supported on this platform/,
   );
-  console.log('  [PASS] 非 macOS 平台 fail-closed');
+  console.log('  [PASS] 不支持平台 fail-closed');
 } finally {
   fs.rmSync(base, { recursive: true, force: true });
 }

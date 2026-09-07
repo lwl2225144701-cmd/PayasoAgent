@@ -15,6 +15,7 @@ import {
   type MacOSSandboxResult,
   probeSandboxAvailability,
 } from '../sandbox/macos-sandbox.js';
+import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
 import {
   assertWritableZone,
   canonicalPathKey,
@@ -22,12 +23,7 @@ import {
   MAX_READ_BYTES,
   resolveAuthorizedPath,
 } from './filesystem.js';
-import {
-  RequiredRuntimeToolUnavailableError,
-  register,
-  registerAlias,
-  type ToolContext,
-} from './tools.js';
+import { RequiredRuntimeToolUnavailableError, register, registerAlias } from './tools.js';
 
 // ---- ① grep（原 searchText，目录递归搜索）----
 register({
@@ -66,8 +62,6 @@ register({
 
     const matches: Array<{ file: string; line: number; content: string }> = [];
     let filesVisited = 0;
-    const tooBig = false;
-    const binary = false;
     const MAX_DEPTH = 32;
     const MAX_FILES = 5000;
 
@@ -139,7 +133,6 @@ register({
       const relPath = path.relative(context.workspaceRoot, m.file);
       lines.push(`${relPath}:${m.line}:${m.content}`);
     }
-    const fileCount = new Set(matches.map((m) => m.file)).size;
     const summary = `找到 ${matches.length} 处匹配（共扫描 ${filesVisited} 个文件）`;
     return [...lines, summary].join('\n');
   },
@@ -314,7 +307,7 @@ register({
 register({
   name: 'shell',
   description:
-    '执行一条 shell 命令（macOS OS Sandbox，cwd=Workspace，非交互，timeout 10s，输出限64KB）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。',
+    '执行一条 shell 命令（cwd=Workspace，非交互，timeout 10s，输出限64KB；macOS 走 OS Sandbox，其他平台需审批模式）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。',
   effect: 'non_idempotent',
   // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
   // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
@@ -331,23 +324,11 @@ register({
     const cmd = String(args.command ?? '').trim();
     if (!cmd) throw new Error('缺少参数 command');
 
-    // Fail-closed gate: never run an unsandboxed shell. sandbox-exec is
-    // deprecated; on some macOS releases (e.g. macOS 26) it cannot apply any
-    // profile ("Operation not permitted"). When the primitive is unavailable
-    // the shell tool refuses, so containment is never silently dropped.
-    if (!(await probeSandboxAvailability())) {
-      throw new Error(
-        'Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
-          '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve ' +
-          'filesystem containment.',
-      );
-    }
-
     const workspaceRoot = context.workspaceRoot;
     const permissionMode = storedPermissionMode(context.permissionMode);
     const workDir = workspaceRoot;
     // v2.0 Network Control：shell 的网络能力跟随全局 network.mode ——
-    // on → sandbox 允许 network*；off → execute() 已在执行前拒绝，绝不会走到这里。
+    // on → 允许网络；off → execute() 已在执行前拒绝，绝不会走到这里。
     const networkAccess = getNetworkMode() === 'on';
     // HOME/TMPDIR must stay under the same authorized root. Use an ephemeral
     // per-call directory so npm/tsx caches never become project artifacts.
@@ -358,26 +339,65 @@ register({
     const home = runtimeDir ?? workspaceRoot;
     const tmpdir = runtimeDir ?? workspaceRoot;
 
+    // 双通道（docs/windows-mac-compat.md §3）：
+    // - macOS：Seatbelt 沙箱，fail-closed——sandbox-exec 不可用即拒绝，绝不静默降级
+    // - 其他平台：无 OS 沙箱原语，默认同样拒绝（延续"绝不静默降低遏制"原则），
+    //   仅当用户显式选择审批模式或设置 PAYASO_SHELL_UNSANDBOXED=1 才放行
     let result: MacOSSandboxResult;
     try {
-      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess);
-      result = await sandbox.run(cmd, {
-        cwd: workDir,
-        home,
-        tmpdir,
-        signal: context.signal,
-        onEvent: (event) => {
-          if (event === 'started') {
-            context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
-          } else {
-            context.onSandboxEvent?.({
-              type: 'shell_sandbox_denied',
-              platform: 'macos',
-              reason: 'workspace_policy',
-            });
-          }
-        },
-      });
+      if (process.platform === 'darwin') {
+        // Fail-closed gate（darwin 原语义，保持不变）：sandbox-exec 不可用即拒绝。
+        // probeSandboxAvailability 单进程缓存；macOS 26 等无法应用 profile 的
+        // 版本会在这里返回 false，绝不静默降级为无沙箱执行。
+        if (!(await probeSandboxAvailability())) {
+          throw new Error(
+            'Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
+              '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve ' +
+              'filesystem containment.',
+          );
+        }
+        const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess);
+        result = await sandbox.run(cmd, {
+          cwd: workDir,
+          home,
+          tmpdir,
+          signal: context.signal,
+          onEvent: (event) => {
+            if (event === 'started') {
+              context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
+            } else {
+              context.onSandboxEvent?.({
+                type: 'shell_sandbox_denied',
+                platform: 'macos',
+                reason: 'workspace_policy',
+              });
+            }
+          },
+        });
+      } else {
+        // 非 darwin：fail-closed，放行需显式同意（仅环境开关；full-access 只放宽
+        // 文件边界，不隐含允许无沙箱命令执行）
+        if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
+          throw new Error(
+            'Shell unavailable on this platform: 当前平台无 macOS OS Sandbox，' +
+              '为保持文件系统遏制默认拒绝。请设置 PAYASO_SHELL_UNSANDBOXED=1 ' +
+              '显式允许无沙箱 shell 后重试（默认关闭）。',
+          );
+        }
+        const host = await discoverShellHost();
+        if (!host) {
+          throw new Error(
+            'Shell unavailable: 未找到 bash 解释器。Windows 请安装 Git for Windows ' +
+              '(https://git-scm.com) 后重试。',
+          );
+        }
+        result = await runUncontainedShell(host, cmd, {
+          cwd: workDir,
+          home,
+          tmpdir,
+          signal: context.signal,
+        });
+      }
     } finally {
       if (runtimeDir) fs.rmSync(runtimeDir, { recursive: true, force: true });
     }

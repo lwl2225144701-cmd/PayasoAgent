@@ -64,7 +64,8 @@ export function putAttachmentObject(storeRoot: string, bytes: Buffer): StoredAtt
   try {
     // hardlink 在同目录内原子：并发写同 sha 时只有一个 link 成功，其余 EEXIST。
     fs.linkSync(tmpPath, finalPath);
-    fs.chmodSync(finalPath, OBJECT_MODE);
+    // win32 跳过只读位：chmod 0444 在 Windows 映射为只读属性，会锁死后续删除
+    if (process.platform !== 'win32') fs.chmodSync(finalPath, OBJECT_MODE);
   } catch {
     existed = fs.existsSync(finalPath);
   } finally {
@@ -148,7 +149,7 @@ export function publishAttachmentIntoWorkspace(
       // 跨卷 / 受限文件系统 → 拷贝回退（COPYFILE_EXCL：同样不覆盖既有目标）
       try {
         fs.copyFileSync(storePath, target, fs.constants.COPYFILE_EXCL);
-        fs.chmodSync(target, OBJECT_MODE);
+        if (process.platform !== 'win32') fs.chmodSync(target, OBJECT_MODE);
         return { relPath: toWorkspaceRel(workspaceRoot, target), copied: true };
       } catch (copyErr) {
         const copyCode = (copyErr as NodeJS.ErrnoException | null)?.code;

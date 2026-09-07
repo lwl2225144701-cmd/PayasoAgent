@@ -98,7 +98,7 @@ Git Bash 查找顺序（对齐 pi）：`%ProgramFiles%\Git\bin\bash.exe` → `%P
 Windows/Linux 无 sandbox-exec，不能静默降级。双通道：
 
 - 默认：**仍拒绝**（延续「绝不静默降低遏制」原则）；
-- 放行条件：`permissionMode=approve` 或显式环境开关（如 `PAYASO_SHELL_UNSANDBOXED=1`），错误消息引导用户到设置里打开。
+- 放行条件：显式环境开关 `PAYASO_SHELL_UNSANDBOXED=1`（本项目权限模型无 approve 档；`full-access` 只放宽文件边界，不隐含命令执行放行）。
 
 ### 3.3 进程树终止（配套必需）
 
