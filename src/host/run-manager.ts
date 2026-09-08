@@ -20,7 +20,11 @@ import {
   type PermissionMode,
   storedPermissionMode,
 } from '../permission-mode.js';
-import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
+import {
+  checkpointPath,
+  loadCheckpoint,
+  saveCheckpoint,
+} from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
@@ -38,6 +42,7 @@ import type {
   ToolchainPreparationRunner,
 } from '../sandbox/toolchain-preparation.js';
 import { getToolchainPreparationPlan } from '../sandbox/toolchain-preparation.js';
+import { getSchemas } from '../tools/tools.js';
 import { isAbortError } from '../util/abort.js';
 import { aggregateSessionStats, deriveRunStats, type SessionStats } from './run-stats.js';
 import { createZip, type ZipEntry } from './zip.js';
@@ -858,13 +863,6 @@ export class RunManager {
     const expandedTask = expandPromptCommand(task, promptCommands) ?? task;
     // Agent 实际收到的任务：plan 指令前缀 + 展开后的任务（run.task 仅作展示）。
     const agentTask = planMode ? `${RunManager.PLAN_DIRECTIVE}\n\n${expandedTask}` : expandedTask;
-    // /compact 一次性标记：注入下一轮 Harness 状态并立刻消费（防重复触发）。
-    let harnessForRun = previousHarnessState;
-    if (this.store.getSessionMeta(session.sessionId, RunManager.META_FORCE_COMPACT) === '1') {
-      this.store.deleteSessionMeta(session.sessionId, RunManager.META_FORCE_COMPACT);
-      harnessForRun = normalizeContextHarnessState(previousHarnessState);
-      harnessForRun.forceCompact = true;
-    }
     const run: InternalRun = {
       runId,
       sessionId: session.sessionId,
@@ -921,7 +919,7 @@ export class RunManager {
         agentTask,
         undefined,
         conversationHistory,
-        harnessForRun,
+        previousHarnessState,
         attachmentImages,
       );
     }
@@ -1331,7 +1329,6 @@ export class RunManager {
   // ---- 内置会话命令（/compact /export /feedback /goal /plan）----
   // 全部落在 session_meta KV 上：一次建表支撑多个命令，键由本类统一管理。
 
-  private static readonly META_FORCE_COMPACT = 'force_compact';
   private static readonly META_PLAN_MODE = 'plan_mode';
   private static readonly META_GOAL = 'goal';
   private static readonly META_FEEDBACK_PREFIX = 'feedback:';
@@ -1341,11 +1338,42 @@ export class RunManager {
     '[Plan 模式] 当前会话处于计划模式：只做调研、分析与方案设计，不要执行任何写入或修改类操作。' +
     '最终输出一份可执行计划（步骤、涉及文件、风险与验证方式），等待用户确认后再实施。';
 
-  /** /compact：标记一次性强制压缩，下一轮 prepareTurn 消费（无视阈值直接摘要）。 */
-  requestCompact(sessionId: string): boolean {
-    if (!this.store.getSession(sessionId)) return false;
-    this.store.setSessionMeta(sessionId, RunManager.META_FORCE_COMPACT, '1');
-    return true;
+  /**
+   * /compact：立即对会话执行一次轮边界压缩（不走「下一轮生效」的延迟路径）。
+   * 读取最后一轮 checkpoint 的 canonical transcript 与 Harness 状态，摘要最旧
+   * 历史后把新 Harness 状态写回同一 checkpoint——下一个 Run 即以压缩后视图启动。
+   * 有运行中 Run 时拒绝（避免 checkpoint 写入竞争）。
+   */
+  async compactSession(sessionId: string): Promise<{
+    summarizedMessages: number;
+    totalSummarizedMessages: number;
+    compactedTokens: number;
+  } | null> {
+    if (!this.store.getSession(sessionId)) return null;
+    if (this.store.listRunsBySession(sessionId).some((run) => isCancellable(run.status))) {
+      throw new Error('会话有正在执行的 Run，请先停止再压缩');
+    }
+    const runs = this.store.listRunsBySession(sessionId);
+    const latest = runs.length > 0 ? runs[runs.length - 1] : undefined;
+    const checkpoint = latest ? loadCheckpoint(latest.runId) : null;
+    if (!latest || !checkpoint || checkpoint.messages.length === 0) {
+      return { summarizedMessages: 0, totalSummarizedMessages: 0, compactedTokens: 0 };
+    }
+    const harness = new DefaultContextHarness({
+      permissionMode: storedPermissionMode(latest.permissionMode),
+      modelConfig: this.resolveModelConfig(latest.providerId, latest.model),
+    });
+    harness.restoreState(normalizeContextHarnessState(checkpoint.harnessState));
+    const compacted = await harness.compactConversation(checkpoint.messages, getSchemas());
+    if (!compacted) {
+      return { summarizedMessages: 0, totalSummarizedMessages: 0, compactedTokens: 0 };
+    }
+    saveCheckpoint({ ...checkpoint, harnessState: harness.snapshotState() });
+    return {
+      summarizedMessages: compacted.summarizedMessages,
+      totalSummarizedMessages: compacted.totalSummarizedMessages,
+      compactedTokens: compacted.compactedTokens,
+    };
   }
 
   getSessionGoal(sessionId: string): string | null {

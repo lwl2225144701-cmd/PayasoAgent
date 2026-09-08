@@ -79,6 +79,12 @@ export default function App() {
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   // /plan 计划模式（会话级元数据；进入后下一轮强制只读 + 仅产出方案）
   const [planMode, setPlanModeState] = useState(false);
+  // /compact 状态行（DSH 式：进行中 → 量化结果），随会话切换/新消息清除
+  const [compactStatus, setCompactStatus] = useState<
+    | { phase: 'running' }
+    | { phase: 'done'; summarizedMessages: number; compactedTokens: number }
+    | null
+  >(null);
   // 上下文预算环形指示器数据：Timeline 从 context_usage 事件上抛，输入栏展示
   const [contextUsage, setContextUsage] = useState<ContextUsageEvent | null>(null);
   const [online, setOnline] = useState(false);
@@ -178,6 +184,7 @@ export default function App() {
     void refreshSessionStats(currentSessionId);
     if (!currentSessionId) {
       setPlanModeState(false);
+      setCompactStatus(null);
       return;
     }
     getSessionPlanMode(currentSessionId)
@@ -365,6 +372,7 @@ export default function App() {
     async (task: string, attachments?: File[]) => {
       const trimmed = task.trim();
       if (!trimmed) return;
+      setCompactStatus(null);
       try {
         // 客户端先压像素再转 base64（附件 v2 P2：请求体从 20MB 级降回 ~2MB 级）；
         // 落盘后 Host 只在工作区保留归一化文件，base64 不进入任何持久化状态。
@@ -536,8 +544,18 @@ export default function App() {
       try {
         if (name === 'compact') {
           const sessionId = requireSession();
-          const resp = await requestSessionCompact(sessionId);
-          showToast(resp.message ?? '已标记压缩，下一条消息发送时执行');
+          setCompactStatus({ phase: 'running' });
+          try {
+            const resp = await requestSessionCompact(sessionId);
+            setCompactStatus({
+              phase: 'done',
+              summarizedMessages: resp.summarizedMessages,
+              compactedTokens: resp.compactedTokens,
+            });
+          } catch (err) {
+            setCompactStatus(null);
+            throw err;
+          }
           return;
         }
         if (name === 'export') {
@@ -945,6 +963,7 @@ export default function App() {
             onDeleteQueued={handleDeleteQueued}
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}
+            compactStatus={compactStatus}
             onBuiltinCommand={handleBuiltinCommand}
           />
         )}

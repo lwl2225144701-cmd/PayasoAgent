@@ -311,50 +311,28 @@ export class DefaultContextHarness implements AgentContextHarness {
 
     const triggerTokens = Math.floor(this.modelContext.maxInputTokens * 0.8);
     const targetTokens = Math.floor(this.modelContext.maxInputTokens * 0.65);
-    // /compact 一次性标记：本轮无视阈值强制走压缩，消费后立即清除。
-    const forceCompact = this.state.forceCompact === true;
-    if (forceCompact) this.state.forceCompact = false;
     // 触发判断必须用修剪前的原始估值：修剪本身会把估值压到阈值附近，
     // system 消息变大一点点就会让修剪后估值恰好落到触发线下，摘要永不发生。
     const preTrimEstimated = processed.usage.beforeMessageTokens + processed.usage.toolSchemaTokens;
-    if (forceCompact || preTrimEstimated > triggerTokens) {
-      const compacted = this.contextManager.process(modelView, tools, targetTokens);
-      const removedCount = compacted.usage.trimmedMessages;
-      if (removedCount > 0) {
-        const systemIndex = transcript.findIndex((message) => message.role === 'system');
-        const start = (systemIndex >= 0 ? systemIndex + 1 : 0) + this.state.summarizedMessageCount;
-        const removedMessages = transcript.slice(start, start + removedCount);
-        const maxSummaryTokens = Math.max(
-          128,
-          Math.min(4_096, Math.floor(this.modelContext.maxInputTokens * 0.08)),
-        );
-        try {
-          const nextSummary = await this.summarizer.summarize({
-            previousSummary: this.state.conversationSummary,
-            messages: removedMessages,
-            maxSummaryTokens,
-            signal,
-          });
-          if (nextSummary.trim()) {
-            this.state.conversationSummary = this.truncateToTokens(
-              nextSummary.trim(),
-              maxSummaryTokens,
-            );
-            this.state.summarizedMessageCount += removedCount;
-            modelView = this.buildModelView(transcript, scratchpadText);
-            processed = this.contextManager.process(modelView, tools);
-            compaction = {
-              summarizedMessages: removedCount,
-              totalSummarizedMessages: this.state.summarizedMessageCount,
-              summaryTokens: estimateTextTokens(this.state.conversationSummary),
-            };
-          }
-        } catch {
-          // Summary is an optimization. Fall back to deterministic complete-turn
-          // trimming; mandatory context still fails closed through overBudget.
-          processed = this.contextManager.process(modelView, tools);
-        }
+    if (preTrimEstimated > triggerTokens) {
+      const compacted = await this.compactConversation(
+        transcript,
+        tools,
+        targetTokens,
+        signal,
+        scratchpadText,
+      );
+      if (compacted) {
+        compaction = {
+          summarizedMessages: compacted.summarizedMessages,
+          totalSummarizedMessages: compacted.totalSummarizedMessages,
+          summaryTokens: compacted.summaryTokens,
+        };
+        modelView = this.buildModelView(transcript, scratchpadText);
+        processed = this.contextManager.process(modelView, tools);
       }
+      // 摘要失败或无可压缩历史 → 保留确定性轮边界裁剪结果（fail-soft）；
+      // 强制上下文仍通过 overBudget fail-closed。
 
       // v1.6 紧急兜底：轮边界压缩处理不了"单任务长执行"——全部工具交互都在
       // 当前任务轮内，历史轮裁剪触不到。仍超预算时进入紧急确定性裁剪：
@@ -376,6 +354,60 @@ export class DefaultContextHarness implements AgentContextHarness {
       scratchpadTruncated: boundedScratchpad.truncated || scratchpadText !== boundedScratchpad.text,
       compaction,
     };
+  }
+
+  /**
+   * 对 transcript 立即执行一次轮边界压缩（/compact 命令的同步路径，与
+   * prepareTurn 的阈值路径共用同一套逻辑）：把最旧的完整历史轮摘要进
+   * conversationSummary 并推进 summarizedMessageCount。canonical transcript
+   * 不改写——视图裁剪发生在 buildModelView，摘要即"逻辑删除"。
+   * @param scratchpadText - 模型视图的 Scratchpad 文本；独立压缩传空串（仅影响 sizing）。
+   * @returns 压缩明细；无可压缩历史或摘要失败返回 null（状态不被改写）。
+   */
+  async compactConversation(
+    transcript: ChatMessage[],
+    tools: ToolSchema[],
+    targetTokens?: number,
+    signal?: AbortSignal,
+    scratchpadText = '',
+  ): Promise<{
+    summarizedMessages: number;
+    totalSummarizedMessages: number;
+    summaryTokens: number;
+    compactedTokens: number;
+  } | null> {
+    const effectiveTarget = targetTokens ?? Math.floor(this.modelContext.maxInputTokens * 0.65);
+    const modelView = this.buildModelView(transcript, scratchpadText);
+    const compacted = this.contextManager.process(modelView, tools, effectiveTarget);
+    const removedCount = compacted.usage.trimmedMessages;
+    if (removedCount <= 0) return null;
+    const systemIndex = transcript.findIndex((message) => message.role === 'system');
+    const start = (systemIndex >= 0 ? systemIndex + 1 : 0) + this.state.summarizedMessageCount;
+    const removedMessages = transcript.slice(start, start + removedCount);
+    const maxSummaryTokens = Math.max(
+      128,
+      Math.min(4_096, Math.floor(this.modelContext.maxInputTokens * 0.08)),
+    );
+    try {
+      const nextSummary = await this.summarizer.summarize({
+        previousSummary: this.state.conversationSummary,
+        messages: removedMessages,
+        maxSummaryTokens,
+        signal,
+      });
+      if (!nextSummary.trim()) return null;
+      this.state.conversationSummary = this.truncateToTokens(nextSummary.trim(), maxSummaryTokens);
+      this.state.summarizedMessageCount += removedCount;
+      return {
+        summarizedMessages: removedCount,
+        totalSummarizedMessages: this.state.summarizedMessageCount,
+        summaryTokens: estimateTextTokens(this.state.conversationSummary),
+        compactedTokens: this.contextManager.estimateTokens(removedMessages),
+      };
+    } catch {
+      // Summary is an optimization：摘要失败不改写状态，调用方保持现状。
+      return null;
+    }
   }
 
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage {

@@ -83,9 +83,12 @@ export function fetchSessionStats(sessionId: string): Promise<SessionStats> {
 
 // ---- 内置斜杠命令（/compact /export /goal /plan /feedback）----
 
-export function requestSessionCompact(
-  sessionId: string,
-): Promise<{ ok: boolean; message?: string }> {
+export function requestSessionCompact(sessionId: string): Promise<{
+  ok: boolean;
+  summarizedMessages: number;
+  totalSummarizedMessages: number;
+  compactedTokens: number;
+}> {
   return jsonFetch(`/sessions/${sessionId}/compact`, { method: 'POST' });
 }
 

@@ -15,29 +15,29 @@ assert.deepEqual(
   ['compact', 'export', 'feedback', 'goal', 'permission', 'plan', 'model'],
 );
 
-// ---- matchBuiltinCommand ----
+// ---- matchBuiltinCommand：仅启用中的命令被拦截（当前只有 compact）----
 assert.deepEqual(matchBuiltinCommand('/compact'), { name: 'compact', args: '' });
-assert.deepEqual(matchBuiltinCommand('/goal  100 万行内完成 '), {
-  name: 'goal',
-  args: '100 万行内完成',
-});
-assert.deepEqual(matchBuiltinCommand('/PLAN'), { name: 'plan', args: '' }, '大小写不敏感');
+assert.deepEqual(matchBuiltinCommand('/COMPACT 旧对话'), { name: 'compact', args: '旧对话' });
 assert.equal(matchBuiltinCommand('hello'), null, '普通消息不拦截');
 assert.equal(matchBuiltinCommand('/'), null);
 assert.equal(matchBuiltinCommand('/unknown x'), null, '未注册命令走原链路');
 assert.equal(matchBuiltinCommand('/compactx'), null, '前缀重叠不误匹配');
+assert.equal(matchBuiltinCommand('/export'), null, '未启用的内置命令不拦截（先不下发）');
+assert.equal(matchBuiltinCommand('/plan'), null, '未启用的内置命令不拦截（先不下发）');
 
-// ---- mergeCommandCandidates：内置优先，工作区模板去重在后 ----
+// ---- mergeCommandCandidates：只展示启用的内置命令，工作区模板跟随 ----
 {
   const merged = mergeCommandCandidates('m', [{ name: 'model-doc', description: '工作区模板' }]);
   assert.deepEqual(
     merged.map((cmd) => cmd.name),
-    ['model', 'model-doc'],
+    ['model-doc'],
+    'model 未启用 → 不展示，只剩工作区模板',
   );
-  assert.equal(merged[0]?.builtin, true);
-  assert.equal(merged[1]?.builtin, false);
+  assert.equal(merged[0]?.builtin, false);
   const all = mergeCommandCandidates('', [{ name: 'compact-helper', description: '' }]);
-  assert.ok(all[0]?.name === 'compact' && all.some((cmd) => cmd.name === 'compact-helper'));
+  assert.ok(all[0]?.name === 'compact' && all[0]?.builtin === true);
+  assert.ok(all.some((cmd) => cmd.name === 'compact-helper'));
+  assert.ok(!all.some((cmd) => cmd.builtin && cmd.name !== 'compact'), '其余内置命令不下发');
 }
 
 // ---- matchPermissionMode ----

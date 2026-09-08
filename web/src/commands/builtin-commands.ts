@@ -11,6 +11,16 @@ export interface BuiltinCommand {
   usage: string;
 }
 
+/**
+ * 当前启用的内置命令。其余命令保留实现（端点/执行器均在），先不下发展示、
+ * 也不拦截发送——重新启用只需把名字加回集合。
+ */
+const ENABLED_COMMAND_NAMES: ReadonlySet<string> = new Set(['compact']);
+
+export function isEnabledCommand(name: string): boolean {
+  return ENABLED_COMMAND_NAMES.has(name);
+}
+
 export const BUILTIN_COMMANDS: BuiltinCommand[] = [
   { name: 'compact', description: '压缩更早的对话历史（下一条消息发送时执行）', usage: '/compact' },
   { name: 'export', description: '下载本会话完整日志归档（ZIP）', usage: '/export' },
@@ -39,7 +49,7 @@ export function matchBuiltinCommand(text: string): BuiltinCommandMatch | null {
   if (!trimmed.startsWith('/')) return null;
   const spaceIndex = trimmed.search(/\s/);
   const name = (spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex)).slice(1).toLowerCase();
-  if (!name || !BUILTIN_COMMANDS.some((cmd) => cmd.name === name)) return null;
+  if (!name || !isEnabledCommand(name)) return null;
   const args = spaceIndex === -1 ? '' : trimmed.slice(spaceIndex + 1).trim();
   return { name, args };
 }
@@ -50,7 +60,9 @@ export function mergeCommandCandidates(
   workspacePrompts: Array<{ name: string; description: string }>,
 ): Array<{ name: string; description: string; builtin: boolean }> {
   const q = query.toLowerCase();
-  const builtins = BUILTIN_COMMANDS.filter((cmd) => cmd.name.startsWith(q)).map((cmd) => ({
+  const builtins = BUILTIN_COMMANDS.filter(
+    (cmd) => cmd.name.startsWith(q) && isEnabledCommand(cmd.name),
+  ).map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
     builtin: true,

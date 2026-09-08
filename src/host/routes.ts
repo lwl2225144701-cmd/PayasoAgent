@@ -973,9 +973,12 @@ export async function handleRequest(
     if (s.length === 3 && s[2] === 'compact' && method === 'POST') {
       checkOrigin(req, port);
       requireAuth(req);
-      return manager.requestCompact(sessionId)
-        ? sendJson(res, 200, { ok: true, message: '已标记压缩，下一条消息发送时执行' })
-        : notFound(res);
+      try {
+        const result = await manager.compactSession(sessionId);
+        return result ? sendJson(res, 200, { ok: true, ...result }) : notFound(res);
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
     }
     if (s.length === 3 && s[2] === 'goal') {
       if (method === 'GET') {

@@ -89,14 +89,17 @@ try {
     await (await fetch(`http://127.0.0.1:${port}/sessions/${sessionId}/plan`)).json(),
     { planMode: true },
   );
-  // compact 标记确实写入了 session_meta（下一轮 createRun 消费）
-  assert.equal(runtimeStore.getSessionMeta(sessionId, 'force_compact'), null);
+  // /compact 立即执行：种子 Run 无 checkpoint → 无可压缩历史，返回零计数
   const compact = await fetch(`http://127.0.0.1:${port}/sessions/${sessionId}/compact`, {
     method: 'POST',
     headers: auth,
   });
-  assert.equal((await compact.json()).ok, true);
-  assert.equal(runtimeStore.getSessionMeta(sessionId, 'force_compact'), '1');
+  assert.deepEqual(await compact.json(), {
+    ok: true,
+    summarizedMessages: 0,
+    totalSummarizedMessages: 0,
+    compactedTokens: 0,
+  });
   const planOff = await fetch(`http://127.0.0.1:${port}/sessions/${sessionId}/plan`, {
     method: 'POST',
     headers: auth,

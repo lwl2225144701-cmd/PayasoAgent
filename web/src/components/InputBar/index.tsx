@@ -9,6 +9,7 @@ import type {
   PromptCommand,
 } from '../../types';
 import { ChevronDownIcon, CloseIcon, FolderIcon } from '../icons';
+import { formatContextTokens } from '../Timeline/context-gauge';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import styles from './InputBar.module.css';
 
@@ -60,6 +61,11 @@ interface InputBarProps {
   onSelectPermission: (mode: PermissionMode) => void;
   // 内置斜杠命令执行器：发送 /cmd 时被拦截调用（不作为任务发给模型）
   onBuiltinCommand?: (name: string, args: string) => void;
+  // /compact 状态行（进行中 → 量化结果）；空则不渲染
+  compactStatus?:
+    | { phase: 'running' }
+    | { phase: 'done'; summarizedMessages: number; compactedTokens: number }
+    | null;
 }
 
 export function InputBar({
@@ -85,6 +91,7 @@ export function InputBar({
   permissionMode,
   onSelectPermission,
   onBuiltinCommand,
+  compactStatus,
 }: InputBarProps) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -386,6 +393,17 @@ export function InputBar({
       <div className={styles.conversationComposer}>
         {attachmentStrip}
         {visionWarning}
+        {compactStatus && (
+          <div className={styles.compactStatus} role="status">
+            <span className={styles.compactCmd}>compact</span>
+            <span className={styles.compactSep}>·</span>
+            {compactStatus.phase === 'running'
+              ? '正在压缩…'
+              : compactStatus.summarizedMessages > 0
+                ? `已压缩 ${compactStatus.summarizedMessages} 条历史记录（约 ${formatContextTokens(compactStatus.compactedTokens)} tokens）`
+                : '没有可压缩的历史记录'}
+          </div>
+        )}
         {queuedMessages.length > 0 && (
           <div className={styles.queuePanel} role="status" aria-label="发送队列">
             <div className={styles.queueNotice}>
