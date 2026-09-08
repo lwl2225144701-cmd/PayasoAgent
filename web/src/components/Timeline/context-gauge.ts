@@ -279,6 +279,38 @@ export function compactStatusText(status: CompactStatusState): string {
 }
 
 /**
+ * 把 /compact 返回的压缩后视图占用合并进最近一条 context_usage：
+ * 保留 model/配置等来自上一轮的字段，仅替换占用相关数值，并清掉真实压力
+ * 锚点（压缩后的新视图还没有 provider 上报）。prev 为空则无法合成，返回 null。
+ */
+export function applyCompactUsage(
+  prev: ContextUsageEvent | null | undefined,
+  usage: {
+    messageTokens: number;
+    systemTokens?: number;
+    toolSchemaTokens: number;
+    estimatedInputTokens: number;
+    inputBudgetTokens: number;
+    usageRatio: number;
+  },
+): ContextUsageEvent | null {
+  if (!prev) return null;
+  return {
+    ...prev,
+    messageTokens: usage.messageTokens,
+    systemTokens: usage.systemTokens,
+    toolSchemaTokens: usage.toolSchemaTokens,
+    estimatedInputTokens: usage.estimatedInputTokens,
+    inputBudgetTokens: usage.inputBudgetTokens,
+    usageRatio: usage.usageRatio,
+    pressureTokens: undefined,
+    emergencyTrim: false,
+    trimmedMessages: 0,
+    overBudget: usage.estimatedInputTokens > usage.inputBudgetTokens,
+  };
+}
+
+/**
  * 预算推导说明：窗口 = 输入预算 + 输出预留 + 安全余量。
  * 解释分母为何小于用户配置的上下文窗口（如 1M 窗口显示 976K 预算）。
  */

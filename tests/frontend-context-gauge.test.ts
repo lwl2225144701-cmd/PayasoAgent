@@ -2,6 +2,7 @@
 // 环形 SVG 渲染为 React 组件，由 tsc + build:web 保证；此处锁定数据逻辑。
 
 import {
+  applyCompactUsage,
   compactStatusText,
   contextGaugeTitle,
   deriveRunStreamMetrics,
@@ -283,6 +284,43 @@ check(
   'compact: 无可压缩历史',
   compactStatusText({ phase: 'done', summarizedMessages: 0, compactedTokens: 0 }) ===
     '没有可压缩的历史记录',
+);
+
+// ---- /compact 后即时刷新占用环（合成 context_usage）----
+check(
+  'applyCompactUsage: 替换占用字段并清掉压力锚点/紧急裁剪',
+  (() => {
+    const prev = usageEvent({ pressureTokens: 100_000, emergencyTrim: true, usageRatio: 0.9 });
+    const next = applyCompactUsage(prev, {
+      messageTokens: 6_000,
+      systemTokens: 1_300,
+      toolSchemaTokens: 1_400,
+      estimatedInputTokens: 7_400,
+      inputBudgetTokens: 26_624,
+      usageRatio: 0.28,
+    });
+    return (
+      next !== null &&
+        next.estimatedInputTokens === 7_400 &&
+        next.messageTokens === 6_000 &&
+        next.usageRatio === 0.28 &&
+        next.pressureTokens === undefined &&
+        next.emergencyTrim === false &&
+        next.model === 'step-3.7-flash' &&
+        next.configSource === 'fallback',
+      '保留 model/config 等上一轮字段'
+    );
+  })(),
+);
+check(
+  'applyCompactUsage: 无上一轮事件时返回 null',
+  applyCompactUsage(null, {
+    messageTokens: 1,
+    toolSchemaTokens: 1,
+    estimatedInputTokens: 2,
+    inputBudgetTokens: 10,
+    usageRatio: 0.2,
+  }) === null,
 );
 
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);

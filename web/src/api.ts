@@ -83,12 +83,23 @@ export function fetchSessionStats(sessionId: string): Promise<SessionStats> {
 
 // ---- 内置斜杠命令（/compact /export /goal /plan /feedback）----
 
+/** 压缩后模型视图的输入占用（即时刷新上下文占用环）。 */
+export interface CompactViewUsage {
+  messageTokens: number;
+  systemTokens?: number;
+  toolSchemaTokens: number;
+  estimatedInputTokens: number;
+  inputBudgetTokens: number;
+  usageRatio: number;
+}
+
 export function requestSessionCompact(sessionId: string): Promise<{
   ok: boolean;
   summarizedMessages: number;
   totalSummarizedMessages: number;
   compactedTokens: number;
   reason?: 'no_checkpoint' | 'nothing_compactable';
+  usage?: CompactViewUsage;
 }> {
   return jsonFetch(`/sessions/${sessionId}/compact`, { method: 'POST' });
 }

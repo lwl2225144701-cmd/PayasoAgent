@@ -35,7 +35,11 @@ import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
-import { type CompactStatusState, compactStatusText } from './components/Timeline/context-gauge';
+import {
+  applyCompactUsage,
+  type CompactStatusState,
+  compactStatusText,
+} from './components/Timeline/context-gauge';
 import { TurnNavigator } from './components/TurnNavigator';
 import { WorkspacePickerModal } from './components/WorkspacePickerModal';
 import { useConversationScroll } from './hooks/useConversationScroll';
@@ -550,6 +554,12 @@ export default function App() {
               compactedTokens: resp.compactedTokens,
               reason: resp.reason,
             });
+            // 压缩后视图占用合成进最近一条 context_usage：占用环立即下降，
+            // 下一轮真实的 context_usage 事件会再次覆盖。
+            if (resp.usage) {
+              const synthesized = applyCompactUsage(contextUsage, resp.usage);
+              if (synthesized) setContextUsage(synthesized);
+            }
           } catch (err) {
             setCompactStatus(null);
             throw err;
@@ -643,6 +653,7 @@ export default function App() {
       }
     },
     [
+      contextUsage,
       currentSessionId,
       defaultModel,
       handleSelectModel,

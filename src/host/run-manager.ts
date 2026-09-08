@@ -1351,6 +1351,15 @@ export class RunManager {
     totalSummarizedMessages: number;
     compactedTokens: number;
     reason?: 'no_checkpoint' | 'nothing_compactable';
+    /** 压缩后模型视图的输入占用（供前端立即刷新上下文占用环）。 */
+    usage?: {
+      messageTokens: number;
+      systemTokens?: number;
+      toolSchemaTokens: number;
+      estimatedInputTokens: number;
+      inputBudgetTokens: number;
+      usageRatio: number;
+    };
   } | null> {
     if (!this.store.getSession(sessionId)) return null;
     if (this.store.listRunsBySession(sessionId).some((run) => isCancellable(run.status))) {
@@ -1395,6 +1404,7 @@ export class RunManager {
       summarizedMessages: compacted.summarizedMessages,
       totalSummarizedMessages: compacted.totalSummarizedMessages,
       compactedTokens: compacted.compactedTokens,
+      usage: harness.estimateViewUsage(checkpoint.messages, getSchemas()),
     };
   }
 

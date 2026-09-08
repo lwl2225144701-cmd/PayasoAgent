@@ -410,6 +410,11 @@ export class DefaultContextHarness implements AgentContextHarness {
     }
   }
 
+  /** 估算当前 transcript 的模型视图输入占用（/compact 完成后即时刷新占用率用）。 */
+  estimateViewUsage(transcript: ChatMessage[], tools: ToolSchema[]) {
+    return this.contextManager.process(this.buildModelView(transcript, '')).usage;
+  }
+
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage {
     const { reasoning_content: _reasoning, ...historyMessage } = message;
     return { ...historyMessage, content: stripThink(historyMessage.content) };
