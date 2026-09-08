@@ -252,12 +252,18 @@ export function Timeline({
     run?.status === 'running' ? onRunTerminal : undefined,
   );
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
+  // 产出文件默认收起，只在用户需要时展开，避免长文件列表遮挡对话内容。
+  const [filesOpen, setFilesOpen] = useState(false);
   const [openedInBrowser, setOpenedInBrowser] = useState<string | null>(null);
   const [fileActionError, setFileActionError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const [, setForceTick] = useState(0);
   const getScrollContainer = useCallback(() => findScrollContainer(scrollRef.current), []);
+
+  useEffect(() => {
+    setFilesOpen(false);
+  }, [run?.runId]);
 
   // Light tick while running so status line / duration updates.
   useEffect(() => {
@@ -630,40 +636,59 @@ export function Timeline({
                 {finalError && <div className={styles.finalError}>{finalError}</div>}
                 {files.length > 0 && (
                   <div className={styles.artifacts}>
-                    <div className={styles.artifactsTitle}>生成的文件</div>
-                    <ul className={styles.attachList}>
-                      {files.map((f) => (
-                        <li key={f.name}>
-                          <div className={styles.attachCard}>
-                            <span className={styles.attachIcon}>
-                              <FileIcon />
-                            </span>
-                            <span className={styles.attachInfo}>
-                              <span className={styles.attachName}>{f.name}</span>
-                              {typeof f.size === 'number' && (
-                                <span className={styles.attachSize}>{formatBytes(f.size)}</span>
-                              )}
-                            </span>
-                            <span className={styles.attachActions}>
-                              <button
-                                type="button"
-                                className={styles.attachAction}
-                                onClick={() => setOpenFile(f)}
-                              >
-                                查看
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.attachBrowserAction}
-                                onClick={() => void openInBrowser(f)}
-                              >
-                                {openedInBrowser === f.name ? '已打开' : '打开'}
-                              </button>
-                            </span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+                    <button
+                      type="button"
+                      className={styles.artifactsSummary}
+                      onClick={() => setFilesOpen((value) => !value)}
+                      aria-expanded={filesOpen}
+                    >
+                      <span className={styles.artifactsSummaryIcon}>
+                        <FileIcon />
+                      </span>
+                      <span>{`已修改 ${files.length} 个文件`}</span>
+                      <span className={styles.artifactsSummaryPreview}>
+                        {files.length === 1 ? files[0].name : `${files[0].name} 等`}
+                      </span>
+                      <ChevronRightIcon
+                        size={14}
+                        className={`${styles.artifactsChevron} ${filesOpen ? styles.artifactsChevronOpen : ''}`}
+                      />
+                    </button>
+                    {filesOpen && (
+                      <ul className={styles.attachList}>
+                        {files.map((f) => (
+                          <li key={f.name}>
+                            <div className={styles.attachCard}>
+                              <span className={styles.attachIcon}>
+                                <FileIcon />
+                              </span>
+                              <span className={styles.attachInfo}>
+                                <span className={styles.attachName}>{f.name}</span>
+                                {typeof f.size === 'number' && (
+                                  <span className={styles.attachSize}>{formatBytes(f.size)}</span>
+                                )}
+                              </span>
+                              <span className={styles.attachActions}>
+                                <button
+                                  type="button"
+                                  className={styles.attachAction}
+                                  onClick={() => setOpenFile(f)}
+                                >
+                                  查看
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.attachBrowserAction}
+                                  onClick={() => void openInBrowser(f)}
+                                >
+                                  {openedInBrowser === f.name ? '已打开' : '打开'}
+                                </button>
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     {fileActionError && (
                       <div className={styles.fileActionError}>{fileActionError}</div>
                     )}

@@ -23,6 +23,7 @@ async function execute(
 }
 
 import '../src/tools/filesystem.js'; // 副作用：注册 listDir / readFile / writeFile
+import { missingShellToolName } from '../src/tools/runtime-tools.js';
 import '../src/tools/runtime-tools.js'; // 副作用：注册 searchText / createDir / moveFile / deleteFile / shell
 import {
   createSideEffectGuard,
@@ -30,6 +31,7 @@ import {
   markExecuted,
   operationIdentity,
 } from '../src/runtime/side-effect.js';
+import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';
 import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manager.js';
 
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-runtime-tools-'));
@@ -139,6 +141,15 @@ test('writeFile / readFile / listDir / searchText hidden 别名仍可执行', as
 
 test('缺失 shell 工具返回受控运行时错误，不泄露宿主细节', async () => {
   if (process.platform !== 'darwin') return;
+  // 环境守卫：本机 sandbox-exec 不可用（probe=false）时，shell 工具在命令
+  // 检测之前就 fail-closed 拒绝（安全设计），"命令缺失"路径根本到不了——
+  // 该用例只断言能跑到命令检测的环境（见下方纯函数单测覆盖核心逻辑）。
+  if (!(await probeSandboxAvailability())) {
+    console.log(
+      '  [SKIP] 本机 sandbox-exec 不可用，跳过沙箱集成断言（纯函数单测覆盖缺失命令检测）',
+    );
+    return;
+  }
   try {
     await execute('shell', { command: 'payaso-toolchain-command-is-missing' }, ctx);
     assert.fail('缺失 shell 工具应失败');
@@ -149,6 +160,23 @@ test('缺失 shell 工具返回受控运行时错误，不泄露宿主细节', a
     );
     assert.ok(!(err as Error).message.includes(TEST_ROOT));
   }
+});
+
+// ---- 纯函数：缺失命令检测（不依赖真实沙箱，任何环境可测）----
+test('missingShellToolName 从 stderr 识别缺失命令', () => {
+  assert.equal(missingShellToolName('/bin/sh: 1: git: not found\n'), 'git');
+  assert.equal(missingShellToolName('/bin/sh: node: command not found\n'), 'node');
+});
+
+test('missingShellToolName 不误报程序自身错误', () => {
+  // 程序输出里的 "not found" 不属于 shell 命令查找失败，不应识别
+  assert.equal(
+    missingShellToolName("npm error code MODULE_NOT_FOUND\nCannot find module 'x'\n"),
+    undefined,
+  );
+  // 成功执行（无 stderr 或不匹配）→ undefined
+  assert.equal(missingShellToolName(''), undefined);
+  assert.equal(missingShellToolName('some normal output\n'), undefined);
 });
 
 // ---- 汇总 ----

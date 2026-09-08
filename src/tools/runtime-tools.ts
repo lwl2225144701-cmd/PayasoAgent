@@ -145,10 +145,11 @@ register({
 });
 registerAlias('grep', 'searchText');
 
-function missingShellToolName(stderr: string): string | undefined {
-  // Only normalize the shell's own command lookup failure. Do not inspect or
-  // rewrite the model command, and do not mistake an arbitrary program's
-  // "package not found"/similar diagnostic for a missing executable.
+// 从 shell stderr 识别"命令缺失"（导出供测试纯函数直接验证，不依赖真实沙箱）。
+// Only normalize the shell's own command lookup failure. Do not inspect or
+// rewrite the model command, and do not mistake an arbitrary program's
+// "package not found"/similar diagnostic for a missing executable.
+export function missingShellToolName(stderr: string): string | undefined {
   const match = stderr.match(
     /(?:^|\n)\/bin\/sh:\s+(?:\d+:\s+)?([A-Za-z0-9][A-Za-z0-9._+-]*):\s+(?:command not found|not found)\s*$/m,
   );
