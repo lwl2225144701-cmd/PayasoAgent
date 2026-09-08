@@ -25,16 +25,20 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
   const parts =
     usage.systemTokens == null
       ? [
-          { label: '消息（含系统提示词）', tokens: usage.messageTokens, color: '#6094ee' },
-          { label: '工具', tokens: usage.toolSchemaTokens, color: '#a78bef' },
+          {
+            label: '消息（含系统提示词）',
+            tokens: usage.messageTokens,
+            swatch: styles.swatchMessages,
+          },
+          { label: '工具', tokens: usage.toolSchemaTokens, swatch: styles.swatchTools },
         ]
       : [
-          { label: '系统提示词', tokens: usage.systemTokens, color: '#a7adb7' },
-          { label: '工具', tokens: usage.toolSchemaTokens, color: '#a78bef' },
+          { label: '系统提示词', tokens: usage.systemTokens, swatch: styles.swatchSystem },
+          { label: '工具', tokens: usage.toolSchemaTokens, swatch: styles.swatchTools },
           {
             label: '对话消息',
             tokens: Math.max(0, usage.messageTokens - usage.systemTokens),
-            color: '#6094ee',
+            swatch: styles.swatchMessages,
           },
         ];
   const level = gaugeLevel(ratio);
@@ -85,7 +89,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
           </span>
         </span>
         {anchored && (
-          <span className={styles.gaugeTooltipNotice} role="note">
+          <span className={styles.gaugeTooltipDetail} role="note">
             真实上报 {formatContextTokens(pressure)} · 本次请求预估{' '}
             {formatContextTokens(usage.estimatedInputTokens)}
           </span>
@@ -94,8 +98,8 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
           {parts.map((part) => (
             <span
               key={part.label}
+              className={part.swatch}
               style={{
-                background: part.color,
                 width: `${(part.tokens / Math.max(usage.inputBudgetTokens, usage.estimatedInputTokens, 1)) * 100}%`,
               }}
             />
@@ -103,14 +107,11 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
         </span>
         {parts.map((part) => (
           <span className={styles.contextRow} key={part.label}>
-            <i style={{ background: part.color }} />
+            <i className={part.swatch} />
             <span>{part.label}</span>
             <span>~{formatContextTokens(part.tokens)}</span>
           </span>
         ))}
-        {!anchored && (
-          <span className={styles.gaugeTooltipNotice}>启发式估算 · 尚未有 provider 上报锚点</span>
-        )}
         {usage.configSource === 'fallback' && (
           <span className={styles.gaugeTooltipNotice}>模型能力未知，当前使用保守预算</span>
         )}

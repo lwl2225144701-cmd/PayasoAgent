@@ -213,12 +213,12 @@
   align-items: stretch;
   gap: 12px;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--surface-raised, #20242d) 88%, transparent);
+  background: var(--color-surface-raised, #20242d);
   border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
   border-radius: 14px;
   box-shadow:
     0 14px 38px rgb(0 0 0 / 32%),
-    inset 0 1px 0 rgb(255 255 255 / 5%);
+    inset 0 1px 0 var(--color-glass-highlight, rgb(255 255 255 / 5%));
   backdrop-filter: blur(18px) saturate(130%);
   -webkit-backdrop-filter: blur(18px) saturate(130%);
   opacity: 0;
@@ -230,6 +230,14 @@
     opacity 140ms ease,
     transform 140ms ease,
     visibility 140ms ease;
+}
+
+/* 浅色主题：亮面板 + 柔和投影（深色保持默认的暗玻璃投影） */
+:root[data-theme='light'] .gaugeTooltip {
+  border-color: var(--border-color);
+  box-shadow:
+    0 18px 40px rgb(49 66 97 / 16%),
+    inset 0 1px 0 rgb(255 255 255 / 85%);
 }
 
 .gaugeTooltip::after {
@@ -285,6 +293,32 @@
 .contextBar > span {
   flex-shrink: 0;
 }
+
+/* 分项色块：明暗主题各自取色（系统提示词 / 工具 / 对话消息） */
+.swatchSystem {
+  background: #a7adb7;
+}
+
+.swatchTools {
+  background: #a78bef;
+}
+
+.swatchMessages {
+  background: #6094ee;
+}
+
+:root[data-theme='light'] .swatchSystem {
+  background: #64748b;
+}
+
+:root[data-theme='light'] .swatchTools {
+  background: #7c5cd6;
+}
+
+:root[data-theme='light'] .swatchMessages {
+  background: #3b66d8;
+}
+
 .contextRow i {
   width: 9px;
   height: 9px;
