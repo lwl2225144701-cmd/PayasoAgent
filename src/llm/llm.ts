@@ -16,6 +16,7 @@ import {
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { resolveModelContextConfig } from '../harness/model-context.js';
 import { asProviderStreams, getPiAiProviderModel } from '../host/pi-ai-providers.js';
+import { normalizeTokenUsage, type TokenUsage } from './token-usage.js';
 
 const BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const API_KEY = process.env.OPENAI_API_KEY || '';
@@ -813,7 +814,7 @@ export async function chat(
   onDelta?: (delta: ChatStreamDelta) => void,
   modelConfig?: ModelConfig,
   signal?: AbortSignal,
-): Promise<ChatMessage & { usage?: { totalTokens: number } }> {
+): Promise<ChatMessage & { usage?: TokenUsage }> {
   const config = resolveEndpointConfig(modelConfig);
   const { models, model } = createConfiguredModel(config);
   const context = toPiContext(messages, tools, config.providerId, config.model, model.api);
@@ -862,13 +863,10 @@ export async function chat(
         diagnostics.toolNamesById,
         diagnostics.toolArgumentsById,
       );
-      // 类型上 usage 必填，但第三方 OpenAI 兼容端点运行时可能省略 —— 缺失时
-      // 走 NaN → 下方守卫直接不携带 usage，绝不因统计字段让整次调用失败。
-      const totalTokens = result.usage?.totalTokens ?? Number.NaN;
-      return Object.assign(
-        message,
-        Number.isFinite(totalTokens) && totalTokens > 0 ? { usage: { totalTokens } } : {},
-      );
+      // 运行时 usage 可能缺失/损坏（第三方兼容端点）。normalizeTokenUsage
+      // 宁缺勿错：任一桶异常即整体拒绝，绝不因统计字段让整次调用失败。
+      const usage = normalizeTokenUsage(result.usage);
+      return Object.assign(message, usage === undefined ? {} : { usage });
     }
     if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
       await retryDelay(attempt);

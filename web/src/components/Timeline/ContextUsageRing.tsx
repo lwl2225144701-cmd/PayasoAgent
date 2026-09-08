@@ -14,9 +14,14 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
   const tooltipId = useId();
-  const level = gaugeLevel(usage.usageRatio);
-  const ratio = Math.max(0, Math.min(1, usage.usageRatio));
-  const percent = Math.round(usage.usageRatio * 100);
+  // 锚点优先：有 provider 实际上报的 prompt 侧压力时用它当占用口径，
+  // 否则回落启发式估算（与 DSH token-meter 的 pressure 优先一致）。
+  const pressure = usage.pressureTokens;
+  const anchored = pressure !== undefined && pressure > 0;
+  const displayTokens = anchored ? pressure : usage.estimatedInputTokens;
+  const budget = usage.inputBudgetTokens || 1;
+  const ratio = Math.max(0, Math.min(1, displayTokens / budget));
+  const percent = Math.round(ratio * 100);
   const parts =
     usage.systemTokens == null
       ? [
@@ -32,6 +37,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             color: '#6094ee',
           },
         ];
+  const level = gaugeLevel(ratio);
   const levelClass =
     level === 'danger'
       ? styles.gaugeDanger
@@ -75,10 +81,15 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             上下文已用 <strong>{percent}%</strong>
           </span>
           <span>
-            ~{formatContextTokens(usage.estimatedInputTokens)} /{' '}
-            {formatContextTokens(usage.inputBudgetTokens)}
+            ~{formatContextTokens(displayTokens)} / {formatContextTokens(usage.inputBudgetTokens)}
           </span>
         </span>
+        {anchored && (
+          <span className={styles.gaugeTooltipNotice} role="note">
+            真实上报 {formatContextTokens(pressure)} · 本次请求预估{' '}
+            {formatContextTokens(usage.estimatedInputTokens)}
+          </span>
+        )}
         <span className={styles.contextBar} aria-hidden="true">
           {parts.map((part) => (
             <span
@@ -97,6 +108,9 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             <span>~{formatContextTokens(part.tokens)}</span>
           </span>
         ))}
+        {!anchored && (
+          <span className={styles.gaugeTooltipNotice}>启发式估算 · 尚未有 provider 上报锚点</span>
+        )}
         {usage.configSource === 'fallback' && (
           <span className={styles.gaugeTooltipNotice}>模型能力未知，当前使用保守预算</span>
         )}

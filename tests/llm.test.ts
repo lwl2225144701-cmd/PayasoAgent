@@ -35,7 +35,48 @@ try {
     assert.equal(message.content, 'done');
     assert.equal(message.reasoning_content, 'private');
     assert.equal(message.usage?.totalTokens, 150);
+    // DISJOINT 分桶透传：input 为未缓存输入，cache 命中单独计桶（此处为 0 → 省略）。
+    assert.equal(message.usage?.inputTokens, 120);
+    assert.equal(message.usage?.outputTokens, 30);
+    assert.equal(message.usage?.cacheReadTokens, undefined);
     assert.ok(typeof requestBodies[0]?.max_tokens === 'number' && requestBodies[0].max_tokens > 0);
+  });
+
+  await test('usage buckets with cache and reasoning are passed through disjointly', async () => {
+    let requestUrl = '';
+    globalThis.fetch = async (input) => {
+      requestUrl = String(input);
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n' +
+          'data: {"usage":{"prompt_tokens":500,"completion_tokens":120,' +
+          '"prompt_tokens_details":{"cached_tokens":200},' +
+          '"completion_tokens_details":{"reasoning_tokens":50}},"choices":[]}\n\n' +
+          'data: [DONE]\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    const message = await chat([{ role: 'user', content: 'hello' }]);
+    // pi-ai 归一化：input = 500 - 200 = 300（未缓存），cacheRead = 200，reasoning = 50。
+    assert.equal(message.usage?.inputTokens, 300);
+    assert.equal(message.usage?.outputTokens, 120);
+    assert.equal(message.usage?.cacheReadTokens, 200);
+    assert.equal(message.usage?.reasoningTokens, 50);
+    // total = input + output + cacheRead + cacheWrite = 300 + 120 + 200 = 620。
+    assert.equal(message.usage?.totalTokens, 620);
+    assert.ok(requestUrl.endsWith('/chat/completions'));
+  });
+
+  await test('malformed usage never fails the call (宁缺勿错)', async () => {
+    globalThis.fetch = async () =>
+      new Response(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n' +
+          'data: {"usage":{"prompt_tokens":120,"completion_tokens":-5},"choices":[]}\n\n' +
+          'data: [DONE]\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    const message = await chat([{ role: 'user', content: 'hello' }]);
+    assert.equal(message.content, 'ok');
+    assert.equal(message.usage, undefined);
   });
 
   await test('streaming content/reasoning and fragmented tool calls are assembled', async () => {

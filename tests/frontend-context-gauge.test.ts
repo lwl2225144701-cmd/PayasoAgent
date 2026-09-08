@@ -3,12 +3,15 @@
 
 import {
   contextGaugeTitle,
+  deriveRunStreamMetrics,
+  deriveRunTokenUsage,
   findLatestContextUsage,
   formatContextTokens,
+  formatTokenBreakdown,
   gaugeLevel,
   summarizeRunUsage,
 } from '../web/src/components/Timeline/context-gauge.js';
-import type { ContextUsageEvent, HostEvent } from '../web/src/types.js';
+import type { ContextUsageEvent, HostEvent, TokenUsage } from '../web/src/types.js';
 
 let passed = 0;
 let failed = 0;
@@ -104,8 +107,9 @@ const calls = [100, 200].map((totalTokens, step) => ({
   iteration: step + 1,
   response: '',
   hasToolCalls: false,
+  // 旧持久化记录只有 totalTokens（无分桶）；类型上以 unknown 桥接（运行期合法）。
   usage: { totalTokens },
-})) as HostEvent[];
+})) as unknown as HostEvent[];
 check(
   '累计所有请求，不累计上下文或流式事件',
   summarizeRunUsage([...calls, usageEvent(), other('assistant_delta')]).tokens === 300,
@@ -113,5 +117,136 @@ check(
 check('完整记录不标部分', !summarizeRunUsage(calls).partial);
 check('旧记录不伪造零用量', !summarizeRunUsage([other('llm_call')]).available);
 check('混合记录标记部分', summarizeRunUsage([...calls, other('llm_call')]).partial);
+
+// ---- 新分桶记录（v1.7）：分桶求和 / 校验 / last-wins ----
+const bucketCall = (
+  iteration: number,
+  usage: TokenUsage,
+  timestamp = '2026-09-06T00:00:00.000Z',
+): HostEvent =>
+  ({
+    ...base,
+    type: 'llm_call',
+    messageCount: 2,
+    iteration,
+    response: '',
+    hasToolCalls: false,
+    usage,
+    timestamp,
+  }) as HostEvent;
+
+check(
+  '分桶记录按桶求和（input 未缓存 / output / cache / reasoning）',
+  (() => {
+    const r = deriveRunTokenUsage([
+      bucketCall(1, { inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
+      bucketCall(2, {
+        inputTokens: 300,
+        outputTokens: 120,
+        totalTokens: 620,
+        cacheReadTokens: 200,
+        reasoningTokens: 50,
+      }),
+    ]);
+    return (
+      r.inputTokens === 400 &&
+      r.outputTokens === 170 &&
+      r.cacheReadTokens === 200 &&
+      r.reasoningTokens === 50 &&
+      r.tokens === 770 &&
+      r.hasBuckets &&
+      !r.partial
+    );
+  })(),
+);
+
+check(
+  '同一迭代 last-wins：重复 usage 替换而非累加',
+  (() => {
+    const r = deriveRunTokenUsage([
+      bucketCall(1, { inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
+      bucketCall(1, { inputTokens: 200, outputTokens: 80, totalTokens: 280 }),
+    ]);
+    return r.tokens === 280 && r.inputTokens === 200 && r.outputTokens === 80;
+  })(),
+);
+
+check(
+  '校验失败的分桶视为缺失（宁缺勿错）→ 标部分',
+  (() => {
+    const r = deriveRunTokenUsage([
+      bucketCall(1, { inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
+      bucketCall(2, { inputTokens: 10, outputTokens: 5, reasoningTokens: 999, totalTokens: 15 }),
+    ]);
+    return r.tokens === 150 && r.available && r.partial;
+  })(),
+);
+
+check(
+  '分桶展示：有 cache/推理时输出分项',
+  formatTokenBreakdown(
+    deriveRunTokenUsage([
+      bucketCall(1, {
+        inputTokens: 300,
+        outputTokens: 120,
+        totalTokens: 620,
+        cacheReadTokens: 200,
+        reasoningTokens: 50,
+      }),
+    ]),
+  ).includes('输入 300') && formatTokenBreakdown(summarizeRunUsage([])) === '',
+);
+
+// ---- 流式指标：首 token 延迟 / 解码速度 ----
+const streamEvents: HostEvent[] = [
+  { ...base, type: 'run_started', runId: 'r', timestamp: '2026-09-06T00:00:00.000Z' },
+  bucketCall(
+    1,
+    { inputTokens: 300, outputTokens: 200, totalTokens: 500 },
+    '2026-09-06T00:00:01.000Z',
+  ),
+  {
+    ...base,
+    type: 'assistant_delta',
+    runId: 'r',
+    messageId: 'm',
+    delta: 'a',
+    timestamp: '2026-09-06T00:00:01.500Z',
+  },
+  {
+    ...base,
+    type: 'reasoning_delta',
+    runId: 'r',
+    messageId: 'm',
+    delta: 'b',
+    timestamp: '2026-09-06T00:00:02.000Z',
+  },
+  {
+    ...base,
+    type: 'assistant_delta',
+    runId: 'r',
+    messageId: 'm',
+    delta: 'c',
+    timestamp: '2026-09-06T00:00:02.500Z',
+  },
+];
+check(
+  '流式指标：ttft = 首 delta − run 开始；tps = 真实 output ÷ 首末差',
+  (() => {
+    const m = deriveRunStreamMetrics(streamEvents);
+    return m.ttftMs === 1500 && m.tokensPerSecond === 200 && m.decodeMs === 1000;
+  })(),
+);
+check(
+  '无 run_started 时不产出 ttft',
+  deriveRunStreamMetrics(streamEvents.slice(1)).ttftMs === undefined,
+);
+
+// ---- 锚点标题 ----
+check(
+  'tooltip: 有真实压力锚点时标注上次上报',
+  contextGaugeTitle(usageEvent({ pressureTokens: 6_000 })).includes('上次上报真实 6K'),
+);
+
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);

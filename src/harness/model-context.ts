@@ -169,3 +169,30 @@ export function estimateTextTokens(text: string): number {
 export function estimateJsonTokens(value: unknown): number {
   return estimateTextTokens(JSON.stringify(value) ?? '');
 }
+
+// ---- 消息结构开销与图片视觉定价 ----
+// 与 pi-ai/DSH 对齐：每条消息额外计 ROLE_OVERHEAD（角色/JSON 框架）。
+export const ROLE_OVERHEAD = 4;
+
+// 视觉 token 定价（Strategy：按像素 tile 计价的默认策略，缺尺寸退回固定启发式）。
+// OpenAI 高细节口径：85 基准 + 170/tile，tile = ⌈w/512⌉×⌈h/512⌉，上限 10 tile（≈1105）。
+const IMAGE_BASE_TOKENS = 85;
+const IMAGE_TILE_TOKENS = 170;
+const IMAGE_MAX_TILES = 10;
+// 无尺寸信息（旧记录/路径引用未带 width/height）时的保守固定预算。
+const IMAGE_FALLBACK_TOKENS = 1000;
+
+/**
+ * 估算一张图片的 token 成本。有归一化后像素尺寸时按 tile 计价；
+ * 缺尺寸时退回固定启发式（保守，保证图片轮不超支）。
+ * @param image - 仅消费 width/height 两个叶子字段，与 MessageImage 解耦。
+ */
+export function estimateImageTokens(image: { width?: number; height?: number }): number {
+  const width = image.width;
+  const height = image.height;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width! <= 0 || height! <= 0) {
+    return IMAGE_FALLBACK_TOKENS;
+  }
+  const tiles = Math.min(IMAGE_MAX_TILES, Math.ceil(width! / 512) * Math.ceil(height! / 512));
+  return IMAGE_BASE_TOKENS + IMAGE_TILE_TOKENS * tiles;
+}

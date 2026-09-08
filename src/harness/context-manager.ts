@@ -1,11 +1,7 @@
 import type { ChatMessage, ToolSchema } from '../llm/llm.js';
-import { estimateJsonTokens } from './model-context.js';
+import { estimateImageTokens, estimateJsonTokens, ROLE_OVERHEAD } from './model-context.js';
 
 const DEFAULT_MAX_INPUT_TOKENS = 24_000;
-
-// 单张图片的预算 token 数。主流多模态 API 按 tile 计费（低分辨率约 85，
-// 高分辨率单图可达 ~1500）；取 1000 作为保守固定预算，保证图片轮不超支。
-const IMAGE_BUDGET_TOKENS = 1000;
 
 export interface ContextUsage {
   beforeMessages: number;
@@ -42,17 +38,21 @@ function groupConversationTurns(messages: ChatMessage[]): ChatMessage[][] {
 export class ContextManager {
   constructor(private readonly maxInputTokens: number = DEFAULT_MAX_INPUT_TOKENS) {}
 
+  /** 估算一条消息的 token：JSON 结构 + 角色开销 + 图片按尺寸 tile 定价。 */
+  estimateMessageTokens(message: ChatMessage): number {
+    const images = message.images ?? [];
+    // 估算时剔除 base64 data（物化后的模型视图万一进入估算也不会被超大字符串
+    // 撑爆）；图片按尺寸/固定预算计费，路径引用本身的 JSON 开销可忽略。
+    const estimateTarget =
+      images.length > 0
+        ? { ...message, images: images.map(() => ({ mimeType: 'image', path: '' })) }
+        : message;
+    const imageTokens = images.reduce((total, image) => total + estimateImageTokens(image), 0);
+    return estimateJsonTokens(estimateTarget) + ROLE_OVERHEAD + imageTokens;
+  }
+
   estimateTokens(messages: ChatMessage[]): number {
-    return messages.reduce((sum, message) => {
-      const imageCount = message.images?.length ?? 0;
-      // 估算时剔除 base64 data（物化后的模型视图万一进入估算也不会被超大字符串
-      // 撑爆）；图片按固定预算计费，路径引用本身的 JSON 开销可忽略。
-      const estimateTarget =
-        imageCount > 0
-          ? { ...message, images: message.images!.map(() => ({ mimeType: 'image', path: '' })) }
-          : message;
-      return sum + estimateJsonTokens(estimateTarget) + 4 + imageCount * IMAGE_BUDGET_TOKENS;
-    }, 0);
+    return messages.reduce((sum, message) => sum + this.estimateMessageTokens(message), 0);
   }
 
   // Preserve the system message and the entire current turn. Only complete

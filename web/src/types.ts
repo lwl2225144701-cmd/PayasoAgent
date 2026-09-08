@@ -167,6 +167,17 @@ export interface TraceEventBase {
   timestamp: string;
 }
 
+// DISJOINT 桶语义（与 host 侧 src/llm/token-usage.ts 一致）：
+// inputTokens = 未缓存输入；cache 命中/写入单独计桶；reasoningTokens ⊆ outputTokens。
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
 export interface LlmCallEvent extends TraceEventBase {
   type: 'llm_call';
   messageCount: number;
@@ -174,7 +185,7 @@ export interface LlmCallEvent extends TraceEventBase {
   response: string;
   reasoning?: string;
   hasToolCalls: boolean;
-  usage?: { totalTokens: number };
+  usage?: TokenUsage;
 }
 
 export interface ToolCallEvent extends TraceEventBase {
@@ -249,6 +260,9 @@ export interface ContextUsageEvent extends TraceEventBase {
   toolSchemaTokens: number;
   scratchpadTokens: number;
   estimatedInputTokens: number;
+  // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
+  // 环形指示器的真实压力锚点；首轮或 provider 未上报时缺省。
+  pressureTokens?: number;
   usageRatio: number;
   trimmedMessages: number;
   overBudget: boolean;

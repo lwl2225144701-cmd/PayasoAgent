@@ -9,6 +9,7 @@ import {
   type MessageImage,
   type ModelConfig,
 } from '../llm/llm.js';
+import { promptSideTokens, type TokenUsage } from '../llm/token-usage.js';
 import { getNetworkMode } from '../network-mode.js';
 import { storedPermissionMode } from '../permission-mode.js';
 import {
@@ -171,6 +172,10 @@ export async function runAgent(
   // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
   const startIter = resume ? Math.max(0, resume.iteration - 1) : 0;
 
+  // 真实用量锚点（Adapter/投影思想）：记录最近一次 provider 上报的用量，
+  // 供下一轮 context_usage 携带 prompt 侧真实压力（pressureTokens）校准估算。
+  let lastRequestUsage: TokenUsage | undefined;
+
   // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
   const save = (status?: string) => {
     const file = opts.checkpointWriter.save({
@@ -257,6 +262,9 @@ export async function runAgent(
         toolSchemaTokens: ctx.usage.toolSchemaTokens,
         scratchpadTokens: ctx.scratchpadTokens,
         estimatedInputTokens: ctx.usage.estimatedInputTokens,
+        ...(lastRequestUsage === undefined
+          ? {}
+          : { pressureTokens: promptSideTokens(lastRequestUsage) }),
         usageRatio: ctx.usage.usageRatio,
         trimmedMessages: ctx.usage.trimmedMessages,
         overBudget: ctx.usage.overBudget,
@@ -300,6 +308,8 @@ export async function runAgent(
       const { usage: requestUsage, ...messageForHistory } = assistantMsg;
       const assistantHistoryMessage = contextHarness.sanitizeAssistantMessage(messageForHistory);
       messages.push(assistantHistoryMessage);
+      // 记录本次真实用量，供下一轮 context_usage 的 pressureTokens 锚点使用。
+      if (requestUsage !== undefined) lastRequestUsage = requestUsage;
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
       emit({

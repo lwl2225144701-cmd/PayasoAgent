@@ -2,6 +2,8 @@
 
 // 工具结果附带的图片引用（工作区相对路径 + MIME），与 tools.js 的 ToolImage 同构。
 // trace 只存路径引用，不存 base64（事件持久化进 checkpoint，须保持轻量）。
+import type { TokenUsage } from '../llm/token-usage.js';
+
 export interface TraceImage {
   mimeType: string;
   path: string;
@@ -19,7 +21,7 @@ export type TraceEvent =
       response: string; // LLM 返回内容
       reasoning?: string; // 部分推理模型单独返回的思考内容
       hasToolCalls: boolean; // 是否产生 tool_call
-      usage?: { totalTokens: number };
+      usage?: TokenUsage;
     }
   | {
       type: 'tool_call';
@@ -104,6 +106,9 @@ export type TraceEvent =
       toolSchemaTokens: number;
       scratchpadTokens: number;
       estimatedInputTokens: number;
+      // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
+      // 用于环形/压力的真实锚点；无上报（如首轮）时缺省走估算。
+      pressureTokens?: number;
       usageRatio: number;
       trimmedMessages: number;
       overBudget: boolean;
@@ -183,7 +188,7 @@ export type TraceEventInput =
       response: string;
       reasoning?: string;
       hasToolCalls: boolean;
-      usage?: { totalTokens: number };
+      usage?: TokenUsage;
     }
   | {
       type: 'tool_call';
@@ -244,6 +249,9 @@ export type TraceEventInput =
       toolSchemaTokens: number;
       scratchpadTokens: number;
       estimatedInputTokens: number;
+      // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
+      // 用于环形/压力的真实锚点；无上报（如首轮）时缺省走估算。
+      pressureTokens?: number;
       usageRatio: number;
       trimmedMessages: number;
       overBudget: boolean;
