@@ -44,6 +44,18 @@
   gap: 6px;
 }
 
+.planTag {
+  flex: 0 0 auto;
+  margin-right: 10px;
+  padding: 4px 9px;
+  border: 1px solid var(--color-warning-soft, transparent);
+  border-radius: 999px;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 550;
+}
+
 .statsStrip {
   display: inline-flex;
   align-items: center;

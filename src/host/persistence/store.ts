@@ -92,6 +92,11 @@ export interface RunStore {
   // seq 由事务内既有逻辑分配；事件构造是 RunManager 的职责，Store 只负责持久化。
   finalizeRun(run: StoredRun, event: HostEvent): number;
   listEvents(runId: string): StoredEvent[];
+  // 会话元数据 KV（goal / plan_mode / force_compact / feedback 共用）
+  getSessionMeta(sessionId: string, key: string): string | null;
+  setSessionMeta(sessionId: string, key: string, value: string): void;
+  deleteSessionMeta(sessionId: string, key: string): void;
+  listSessionMeta(sessionId: string, prefix?: string): Array<{ key: string; value: string }>;
   renameSession(sessionId: string, title: string): void;
   archiveSession(sessionId: string, now: string): number;
   restoreSession(sessionId: string, now: string): number;

@@ -7,9 +7,12 @@ import {
   selectWorkspace as apiSelectWorkspace,
   createRun,
   deleteWorkspaceGroup,
+  downloadSessionExport,
   fetchSessionStats,
   getDefaultModel,
   getDirectoryPickerCapability,
+  getSessionGoal,
+  getSessionPlanMode,
   getWorkspace,
   listFiles,
   listModels,
@@ -17,10 +20,15 @@ import {
   listRuns,
   listSessions,
   openWorkspace,
+  requestSessionCompact,
   resumeRun,
+  sendSessionFeedback,
   setDefaultModel,
+  setSessionGoal,
+  setSessionPlanMode,
   stopRun,
 } from './api';
+import { matchModelByQuery, matchPermissionMode } from './commands/builtin-commands';
 import { FileModal } from './components/FileModal';
 import { InputBar } from './components/InputBar';
 import { SettingsModal } from './components/SettingsModal';
@@ -69,6 +77,8 @@ export default function App() {
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   // 会话级统计投影（顶栏 stats strip；会话切换/回合终态时刷新）
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  // /plan 计划模式（会话级元数据；进入后下一轮强制只读 + 仅产出方案）
+  const [planMode, setPlanModeState] = useState(false);
   // 上下文预算环形指示器数据：Timeline 从 context_usage 事件上抛，输入栏展示
   const [contextUsage, setContextUsage] = useState<ContextUsageEvent | null>(null);
   const [online, setOnline] = useState(false);
@@ -163,9 +173,16 @@ export default function App() {
     }
   }, []);
 
-  // 会话切换 / 打开时拉取统计
+  // 会话切换 / 打开时拉取统计与计划模式状态
   useEffect(() => {
     void refreshSessionStats(currentSessionId);
+    if (!currentSessionId) {
+      setPlanModeState(false);
+      return;
+    }
+    getSessionPlanMode(currentSessionId)
+      .then((resp) => setPlanModeState(resp.planMode))
+      .catch(() => {});
   }, [currentSessionId, refreshSessionStats]);
 
   const refreshDefaultModel = useCallback(async () => {
@@ -509,6 +526,118 @@ export default function App() {
     void refreshSessionStats(currentSessionId);
   }, [refreshRuns, refreshSessionStats, currentSessionId]);
 
+  // 内置斜杠命令执行器（命令模式：name → handler 映射，InputBar 发送时拦截调用）
+  const handleBuiltinCommand = useCallback(
+    async (name: string, args: string) => {
+      const requireSession = (): string => {
+        if (!currentSessionId) throw new Error('请先打开一个会话再使用该命令');
+        return currentSessionId;
+      };
+      try {
+        if (name === 'compact') {
+          const sessionId = requireSession();
+          const resp = await requestSessionCompact(sessionId);
+          showToast(resp.message ?? '已标记压缩，下一条消息发送时执行');
+          return;
+        }
+        if (name === 'export') {
+          const sessionId = requireSession();
+          downloadSessionExport(sessionId);
+          showToast('会话日志归档已开始下载');
+          return;
+        }
+        if (name === 'feedback') {
+          if (!args) {
+            showToast('用法：/feedback <意见>');
+            return;
+          }
+          const sessionId = requireSession();
+          await sendSessionFeedback(sessionId, args);
+          showToast('反馈已记录，谢谢！');
+          return;
+        }
+        if (name === 'goal') {
+          if (!args) {
+            const sessionId = requireSession();
+            const resp = await getSessionGoal(sessionId);
+            showToast(resp.goal ? `当前目标：${resp.goal}` : '未设置目标；用法 /goal <目标内容>');
+            return;
+          }
+          await setSessionGoal(requireSession(), args);
+          showToast('会话目标已更新');
+          return;
+        }
+        if (name === 'permission') {
+          if (!args) {
+            showToast(
+              `当前权限：${permissionMode}；用法 /permission read-only | workspace-write | full-access`,
+            );
+            return;
+          }
+          const mode = matchPermissionMode(args);
+          if (!mode) {
+            showToast('无法识别的权限档；可用 read-only / workspace-write / full-access');
+            return;
+          }
+          setPermissionMode(mode);
+          showToast(`权限已切换：${mode}（对下一轮生效）`);
+          return;
+        }
+        if (name === 'plan') {
+          const sessionId = requireSession();
+          const next = !planMode;
+          await setSessionPlanMode(sessionId, next);
+          setPlanModeState(next);
+          showToast(
+            next
+              ? '已进入计划模式：只读 + 仅产出方案（对下一轮生效）；再次 /plan 退出'
+              : '已退出计划模式',
+          );
+          return;
+        }
+        if (name === 'model') {
+          if (!args) {
+            showToast(
+              defaultModel
+                ? `当前模型：${defaultModel.defaultProviderId}/${defaultModel.defaultModelId}；用法 /model <关键词>`
+                : '用法：/model <provider/模型关键词>',
+            );
+            return;
+          }
+          const { match, candidates } = matchModelByQuery(models, args);
+          if (match) {
+            handleSelectModel(match.providerId, match.model);
+            showToast(`模型已切换：${match.providerId}/${match.model}`);
+            return;
+          }
+          if (candidates.length > 1) {
+            const listed = candidates
+              .slice(0, 5)
+              .map((candidate) => `${candidate.providerId}/${candidate.model}`)
+              .join('、');
+            showToast(`匹配到 ${candidates.length} 个模型，请更精确：${listed}`);
+            return;
+          }
+          showToast('没有匹配的模型；用 /model <provider/模型关键词> 重试');
+          return;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        showToast(`/${name} 执行失败：${message}`);
+      }
+    },
+    [
+      currentSessionId,
+      defaultModel,
+      handleSelectModel,
+      models,
+      permissionMode,
+      planMode,
+      setPermissionMode,
+      showToast,
+    ],
+  );
+
   const handleStopRun = useCallback(async () => {
     if (!currentRunId) return;
     try {
@@ -739,6 +868,7 @@ export default function App() {
           onResume={handleResumeRun}
           resuming={resumingRun}
           stats={sessionStats}
+          planMode={planMode}
         />
 
         {currentSessionId ? (
@@ -792,6 +922,7 @@ export default function App() {
               visionSupported={currentModelVision}
               permissionMode={permissionMode}
               onSelectPermission={setPermissionMode}
+              onBuiltinCommand={handleBuiltinCommand}
             />
           </div>
         )}
@@ -814,6 +945,7 @@ export default function App() {
             onDeleteQueued={handleDeleteQueued}
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}
+            onBuiltinCommand={handleBuiltinCommand}
           />
         )}
       </div>

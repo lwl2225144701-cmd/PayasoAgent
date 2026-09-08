@@ -1,0 +1,72 @@
+// 确定性测试：内置斜杠命令注册表 —— 解析 / 权限匹配 / 模型模糊匹配 / 补全合并。
+
+import assert from 'node:assert/strict';
+import {
+  BUILTIN_COMMANDS,
+  matchBuiltinCommand,
+  matchModelByQuery,
+  matchPermissionMode,
+  mergeCommandCandidates,
+} from '../web/src/commands/builtin-commands.js';
+
+// DSH 对标的 7 个命令齐全
+assert.deepEqual(
+  BUILTIN_COMMANDS.map((cmd) => cmd.name),
+  ['compact', 'export', 'feedback', 'goal', 'permission', 'plan', 'model'],
+);
+
+// ---- matchBuiltinCommand ----
+assert.deepEqual(matchBuiltinCommand('/compact'), { name: 'compact', args: '' });
+assert.deepEqual(matchBuiltinCommand('/goal  100 万行内完成 '), {
+  name: 'goal',
+  args: '100 万行内完成',
+});
+assert.deepEqual(matchBuiltinCommand('/PLAN'), { name: 'plan', args: '' }, '大小写不敏感');
+assert.equal(matchBuiltinCommand('hello'), null, '普通消息不拦截');
+assert.equal(matchBuiltinCommand('/'), null);
+assert.equal(matchBuiltinCommand('/unknown x'), null, '未注册命令走原链路');
+assert.equal(matchBuiltinCommand('/compactx'), null, '前缀重叠不误匹配');
+
+// ---- mergeCommandCandidates：内置优先，工作区模板去重在后 ----
+{
+  const merged = mergeCommandCandidates('m', [{ name: 'model-doc', description: '工作区模板' }]);
+  assert.deepEqual(
+    merged.map((cmd) => cmd.name),
+    ['model', 'model-doc'],
+  );
+  assert.equal(merged[0]?.builtin, true);
+  assert.equal(merged[1]?.builtin, false);
+  const all = mergeCommandCandidates('', [{ name: 'compact-helper', description: '' }]);
+  assert.ok(all[0]?.name === 'compact' && all.some((cmd) => cmd.name === 'compact-helper'));
+}
+
+// ---- matchPermissionMode ----
+assert.equal(matchPermissionMode('read-only'), 'read-only');
+assert.equal(matchPermissionMode('READ'), 'read-only', '前缀大小写不敏感');
+assert.equal(matchPermissionMode('只读'), 'read-only');
+assert.equal(matchPermissionMode('workspace'), 'workspace-write');
+assert.equal(matchPermissionMode('full'), 'full-access');
+assert.equal(matchPermissionMode('nope'), null);
+assert.equal(matchPermissionMode(''), null);
+
+// ---- matchModelByQuery ----
+{
+  const providers = [
+    { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner'] },
+    { id: 'minimax', name: 'MiniMax', models: ['MiniMax-M3'] },
+  ];
+  assert.deepEqual(matchModelByQuery(providers, 'minimax/MiniMax-M3').match, {
+    providerId: 'minimax',
+    model: 'MiniMax-M3',
+  });
+  assert.deepEqual(matchModelByQuery(providers, 'reasoner').match, {
+    providerId: 'deepseek',
+    model: 'deepseek-reasoner',
+  });
+  const multi = matchModelByQuery(providers, 'deepseek');
+  assert.equal(multi.match, null);
+  assert.equal(multi.candidates.length, 2, '多命中带回候选');
+  assert.equal(matchModelByQuery(providers, 'nope').candidates.length, 0);
+}
+
+console.log('\nbuiltin-commands tests: all PASS');

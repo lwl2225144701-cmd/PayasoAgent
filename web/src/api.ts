@@ -81,6 +81,56 @@ export function fetchSessionStats(sessionId: string): Promise<SessionStats> {
   return jsonFetch(`/sessions/${sessionId}/stats`, { cache: 'no-store' });
 }
 
+// ---- 内置斜杠命令（/compact /export /goal /plan /feedback）----
+
+export function requestSessionCompact(
+  sessionId: string,
+): Promise<{ ok: boolean; message?: string }> {
+  return jsonFetch(`/sessions/${sessionId}/compact`, { method: 'POST' });
+}
+
+export function getSessionGoal(sessionId: string): Promise<{ goal: string | null }> {
+  return jsonFetch(`/sessions/${sessionId}/goal`, { cache: 'no-store' });
+}
+
+export function setSessionGoal(sessionId: string, goal: string): Promise<{ ok: boolean }> {
+  return jsonFetch(`/sessions/${sessionId}/goal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ goal }),
+  });
+}
+
+export function getSessionPlanMode(sessionId: string): Promise<{ planMode: boolean }> {
+  return jsonFetch(`/sessions/${sessionId}/plan`, { cache: 'no-store' });
+}
+
+export function setSessionPlanMode(sessionId: string, enabled: boolean): Promise<{ ok: boolean }> {
+  return jsonFetch(`/sessions/${sessionId}/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function sendSessionFeedback(sessionId: string, comment: string): Promise<{ ok: boolean }> {
+  return jsonFetch(`/sessions/${sessionId}/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment }),
+  });
+}
+
+/** 触发浏览器下载会话日志 ZIP（端点带 Content-Disposition，免鉴权 GET）。 */
+export function downloadSessionExport(sessionId: string): void {
+  const anchor = document.createElement('a');
+  anchor.href = `/sessions/${sessionId}/export`;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 export function getWorkspace(): Promise<{ workspace: WorkspaceView | null }> {
   return jsonFetch('/workspace', { cache: 'no-store' });
 }

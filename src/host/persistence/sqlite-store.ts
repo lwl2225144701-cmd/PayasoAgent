@@ -195,6 +195,14 @@ export class SqliteRunStore implements RunStore {
           );
 
           CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, seq);
+
+          CREATE TABLE IF NOT EXISTS session_meta (
+            session_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, key)
+          );
         `);
         this.migrateDeletedAt();
         this.migrateLegacyRuns();
@@ -414,6 +422,45 @@ export class SqliteRunStore implements RunStore {
       .prepare(`SELECT * FROM sessions WHERE session_id = ?${this.deletedFilter(opts)}`)
       .get(sessionId) as SessionRow | undefined;
     return row ? mapSession(row) : null;
+  }
+
+  /** 读取会话元数据（goal / plan_mode / force_compact / feedback 共用一张 KV 表）。 */
+  getSessionMeta(sessionId: string, key: string): string | null {
+    const row = this.db
+      .prepare('SELECT value FROM session_meta WHERE session_id = ? AND key = ?')
+      .get(sessionId, key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setSessionMeta(sessionId: string, key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_meta (session_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(sessionId, key, value, new Date().toISOString());
+  }
+
+  deleteSessionMeta(sessionId: string, key: string): void {
+    this.db
+      .prepare('DELETE FROM session_meta WHERE session_id = ? AND key = ?')
+      .run(sessionId, key);
+  }
+
+  /** 按前缀列出会话元数据（key 升序，供 feedback 列表/导出汇总）。 */
+  listSessionMeta(sessionId: string, prefix?: string): Array<{ key: string; value: string }> {
+    const rows = (
+      prefix
+        ? this.db
+            .prepare(
+              'SELECT key, value FROM session_meta WHERE session_id = ? AND key LIKE ? ORDER BY key ASC',
+            )
+            .all(sessionId, `${prefix}%`)
+        : this.db
+            .prepare('SELECT key, value FROM session_meta WHERE session_id = ? ORDER BY key ASC')
+            .all(sessionId)
+    ) as Array<{ key: string; value: string }>;
+    return rows;
   }
 
   listSessions(opts?: { includeDeleted?: boolean }): StoredSession[] {

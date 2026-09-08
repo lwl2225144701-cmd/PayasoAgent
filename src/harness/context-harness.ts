@@ -311,10 +311,13 @@ export class DefaultContextHarness implements AgentContextHarness {
 
     const triggerTokens = Math.floor(this.modelContext.maxInputTokens * 0.8);
     const targetTokens = Math.floor(this.modelContext.maxInputTokens * 0.65);
+    // /compact 一次性标记：本轮无视阈值强制走压缩，消费后立即清除。
+    const forceCompact = this.state.forceCompact === true;
+    if (forceCompact) this.state.forceCompact = false;
     // 触发判断必须用修剪前的原始估值：修剪本身会把估值压到阈值附近，
     // system 消息变大一点点就会让修剪后估值恰好落到触发线下，摘要永不发生。
     const preTrimEstimated = processed.usage.beforeMessageTokens + processed.usage.toolSchemaTokens;
-    if (preTrimEstimated > triggerTokens) {
+    if (forceCompact || preTrimEstimated > triggerTokens) {
       const compacted = this.contextManager.process(modelView, tools, targetTokens);
       const removedCount = compacted.usage.trimmedMessages;
       if (removedCount > 0) {

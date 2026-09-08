@@ -12,6 +12,8 @@ interface ShellBarProps {
   resuming?: boolean;
   /** 会话级统计投影（顶栏 stats strip）；无则整条不渲染。 */
   stats?: SessionStats | null;
+  /** /plan 计划模式开启时显示标记（下一轮强制只读 + 仅产出方案）。 */
+  planMode?: boolean;
 }
 
 const RUN_STATUS_TEXT: Record<HostRun['status'], string | null> = {
@@ -42,7 +44,7 @@ export function sessionStatsSegments(stats: SessionStats): string[] {
   return segments;
 }
 
-export function ShellBar({ run, title, onResume, resuming, stats }: ShellBarProps) {
+export function ShellBar({ run, title, onResume, resuming, stats, planMode }: ShellBarProps) {
   const label = run ? RUN_STATUS_TEXT[run.status] : null;
   const displayTitle = title ?? run?.task ?? null;
   const segments = stats ? sessionStatsSegments(stats) : [];
@@ -70,6 +72,11 @@ export function ShellBar({ run, title, onResume, resuming, stats }: ShellBarProp
       </div>
 
       <div className={styles.right}>
+        {planMode && (
+          <span className={styles.planTag} title="计划模式：只读 + 仅产出方案（/plan 退出）">
+            Plan
+          </span>
+        )}
         {segments.length > 0 && (
           <span className={styles.statsStrip} title="会话统计（回合/步/调用/用量/耗时）">
             {segments.map((segment) => (

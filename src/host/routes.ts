@@ -958,6 +958,89 @@ export async function handleRequest(
         return stats ? sendJson(res, 200, stats) : notFound(res);
       }
     }
+    // ---- 内置会话命令端点（/compact /export /goal /plan /feedback）----
+    if (s.length === 3 && s[2] === 'export' && method === 'GET') {
+      const exportView = manager.buildSessionExport(sessionId);
+      if (!exportView) return notFound(res);
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Length': exportView.bytes.length,
+        'Content-Disposition': `attachment; filename="${exportView.fileName}"`,
+      });
+      res.end(Buffer.from(exportView.bytes));
+      return;
+    }
+    if (s.length === 3 && s[2] === 'compact' && method === 'POST') {
+      checkOrigin(req, port);
+      requireAuth(req);
+      return manager.requestCompact(sessionId)
+        ? sendJson(res, 200, { ok: true, message: '已标记压缩，下一条消息发送时执行' })
+        : notFound(res);
+    }
+    if (s.length === 3 && s[2] === 'goal') {
+      if (method === 'GET') {
+        if (!manager.getSession(sessionId)) return notFound(res);
+        return sendJson(res, 200, { goal: manager.getSessionGoal(sessionId) });
+      }
+      if (method === 'POST') {
+        checkOrigin(req, port);
+        requireAuth(req);
+        let body: Record<string, unknown>;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (err instanceof RequestBodyTooLargeError) {
+            return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+          }
+          throw err;
+        }
+        if (typeof body.goal !== 'string') return bad(res, '缺少 goal');
+        return manager.setSessionGoal(sessionId, body.goal)
+          ? sendJson(res, 200, { ok: true, goal: manager.getSessionGoal(sessionId) })
+          : notFound(res);
+      }
+    }
+    if (s.length === 3 && s[2] === 'plan') {
+      if (method === 'GET') {
+        if (!manager.getSession(sessionId)) return notFound(res);
+        return sendJson(res, 200, { planMode: manager.getSessionPlanMode(sessionId) });
+      }
+      if (method === 'POST') {
+        checkOrigin(req, port);
+        requireAuth(req);
+        let body: Record<string, unknown>;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (err instanceof RequestBodyTooLargeError) {
+            return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+          }
+          throw err;
+        }
+        if (typeof body.enabled !== 'boolean') return bad(res, '缺少 enabled');
+        return manager.setSessionPlanMode(sessionId, body.enabled)
+          ? sendJson(res, 200, { ok: true, planMode: body.enabled })
+          : notFound(res);
+      }
+    }
+    if (s.length === 3 && s[2] === 'feedback' && method === 'POST') {
+      checkOrigin(req, port);
+      requireAuth(req);
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const comment = typeof body.comment === 'string' ? body.comment.trim() : '';
+      if (!comment) return bad(res, '缺少 comment');
+      return manager.addSessionFeedback(sessionId, comment)
+        ? sendJson(res, 200, { ok: true })
+        : notFound(res);
+    }
     if (s.length === 3 && s[2] === 'runs') {
       if (method === 'GET') {
         const runs = manager.listSessionRuns(sessionId);

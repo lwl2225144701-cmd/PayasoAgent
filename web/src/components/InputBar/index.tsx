@@ -1,5 +1,6 @@
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { listPromptCommands } from '../../api';
+import { matchBuiltinCommand, mergeCommandCandidates } from '../../commands/builtin-commands';
 import type {
   ContextUsageEvent,
   ModelProviderView,
@@ -57,6 +58,8 @@ interface InputBarProps {
   onDeleteQueued?: (messageId: string) => void;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
+  // 内置斜杠命令执行器：发送 /cmd 时被拦截调用（不作为任务发给模型）
+  onBuiltinCommand?: (name: string, args: string) => void;
 }
 
 export function InputBar({
@@ -81,6 +84,7 @@ export function InputBar({
   onDeleteQueued,
   permissionMode,
   onSelectPermission,
+  onBuiltinCommand,
 }: InputBarProps) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -105,11 +109,11 @@ export function InputBar({
   }, []);
 
   // 当前输入匹配的命令：第一个词以 / 开头且没有空格 → 进入补全模式
+  // 内置命令优先，其后是工作区提示词模板
   const firstWord = text.split(/\s/)[0] ?? '';
   const isPromptPrefix = firstWord.startsWith('/') && firstWord.length > 1;
-  const filteredPrompts = isPromptPrefix
-    ? promptCommands.filter((c) => c.name.startsWith(firstWord.slice(1).toLowerCase()))
-    : [];
+  const filteredPrompts: Array<{ name: string; description: string; builtin?: boolean }> =
+    isPromptPrefix ? mergeCommandCandidates(firstWord.slice(1), promptCommands) : [];
 
   // 输入变化时同步 open / 重置高亮
   useEffect(() => {
@@ -133,8 +137,9 @@ export function InputBar({
     return () => document.removeEventListener('mousedown', onClick);
   }, [promptOpen]);
 
-  function applyPromptSelection(cmd: PromptCommand) {
-    // 把当前输入的第一个词替换为 /cmd + 空格，光标移到末尾
+  function applyPromptSelection(cmd: { name: string }) {
+    // 把当前输入的第一个词替换为 /cmd + 空格，光标移到末尾。
+    // 内置命令也在补全里展示：插入后由用户补参数，发送时被 onBuiltinCommand 拦截执行。
     const rest = text.slice(firstWord.length);
     setText(`/${cmd.name} ${rest.replace(/^\s/, '')}`);
     setPromptOpen(false);
@@ -253,6 +258,14 @@ export function InputBar({
   function handleSend() {
     const trimmed = text.trim();
     if (disabled) return;
+    // 内置斜杠命令拦截：/cmd 由客户端执行，不作为任务发给模型
+    const builtin = matchBuiltinCommand(trimmed);
+    if (builtin) {
+      onBuiltinCommand?.(builtin.name, builtin.args);
+      setText('');
+      setPromptOpen(false);
+      return;
+    }
     if (!trimmed && attachmentsRef.current.length === 0) return;
     const files = attachmentsRef.current.map((item) => item.file);
     onSend(
@@ -342,6 +355,7 @@ export function InputBar({
                   onClick={() => applyPromptSelection(cmd)}
                 >
                   <span className={styles.promptSuggestName}>/{cmd.name}</span>
+                  {cmd.builtin && <span className={styles.promptSuggestBadge}>内置</span>}
                   {cmd.description && (
                     <span className={styles.promptSuggestDesc}>{cmd.description}</span>
                   )}
@@ -429,6 +443,7 @@ export function InputBar({
                 onClick={() => applyPromptSelection(cmd)}
               >
                 <span className={styles.promptSuggestName}>/{cmd.name}</span>
+                {cmd.builtin && <span className={styles.promptSuggestBadge}>内置</span>}
                 {cmd.description && (
                   <span className={styles.promptSuggestDesc}>{cmd.description}</span>
                 )}

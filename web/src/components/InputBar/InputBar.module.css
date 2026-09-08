@@ -564,6 +564,18 @@
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
+.promptSuggestBadge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--color-brand-border);
+  border-radius: 5px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-hover);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .promptSuggestDesc {
   overflow: hidden;
   text-overflow: ellipsis;

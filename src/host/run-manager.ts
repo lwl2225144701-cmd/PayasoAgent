@@ -9,7 +9,10 @@ import {
   createDefaultRuntimeServices,
 } from '../bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../harness/context-harness.js';
-import type { ContextHarnessState } from '../harness/context-state.js';
+import {
+  type ContextHarnessState,
+  normalizeContextHarnessState,
+} from '../harness/context-state.js';
 import type { ChatMessage, ChatStreamDelta, MessageImage, ModelConfig } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import {
@@ -37,6 +40,7 @@ import type {
 import { getToolchainPreparationPlan } from '../sandbox/toolchain-preparation.js';
 import { isAbortError } from '../util/abort.js';
 import { aggregateSessionStats, deriveRunStats, type SessionStats } from './run-stats.js';
+import { createZip, type ZipEntry } from './zip.js';
 
 // Skill manifest: name + description only; full content loaded on demand via loadSkill tool.
 function scanWorkspaceSkills(
@@ -844,10 +848,23 @@ export class RunManager {
     const previousRuns = this.store.listRunsBySession(session.sessionId);
     const { messages: conversationHistory, harnessState: previousHarnessState } =
       this.conversationHistory(previousRuns);
-    const permissionMode = opts?.permissionMode ?? DEFAULT_PERMISSION_MODE;
+    // /plan 模式：会话级标记 → 本轮强制只读 + 任务注入方案指令（覆盖用户所选档）。
+    const planMode =
+      this.store.getSessionMeta(session.sessionId, RunManager.META_PLAN_MODE) === '1';
+    let permissionMode: PermissionMode = opts?.permissionMode ?? DEFAULT_PERMISSION_MODE;
+    if (planMode) permissionMode = 'read-only';
     // Prompt 命令展开：/cmd ... → 完整用户消息。未匹配则原样使用。
     const promptCommands = scanPromptCommands(session.workspaceRoot, permissionMode);
     const expandedTask = expandPromptCommand(task, promptCommands) ?? task;
+    // Agent 实际收到的任务：plan 指令前缀 + 展开后的任务（run.task 仅作展示）。
+    const agentTask = planMode ? `${RunManager.PLAN_DIRECTIVE}\n\n${expandedTask}` : expandedTask;
+    // /compact 一次性标记：注入下一轮 Harness 状态并立刻消费（防重复触发）。
+    let harnessForRun = previousHarnessState;
+    if (this.store.getSessionMeta(session.sessionId, RunManager.META_FORCE_COMPACT) === '1') {
+      this.store.deleteSessionMeta(session.sessionId, RunManager.META_FORCE_COMPACT);
+      harnessForRun = normalizeContextHarnessState(previousHarnessState);
+      harnessForRun.forceCompact = true;
+    }
     const run: InternalRun = {
       runId,
       sessionId: session.sessionId,
@@ -901,10 +918,10 @@ export class RunManager {
     if (opts?.startAgent !== false) {
       this.startAgent(
         run,
-        task,
+        agentTask,
         undefined,
         conversationHistory,
-        previousHarnessState,
+        harnessForRun,
         attachmentImages,
       );
     }
@@ -1309,6 +1326,115 @@ export class RunManager {
       return deriveRunStats(events, run.createdAt, run.updatedAt);
     });
     return aggregateSessionStats(stats, runs.length);
+  }
+
+  // ---- 内置会话命令（/compact /export /feedback /goal /plan）----
+  // 全部落在 session_meta KV 上：一次建表支撑多个命令，键由本类统一管理。
+
+  private static readonly META_FORCE_COMPACT = 'force_compact';
+  private static readonly META_PLAN_MODE = 'plan_mode';
+  private static readonly META_GOAL = 'goal';
+  private static readonly META_FEEDBACK_PREFIX = 'feedback:';
+
+  /** /plan 模式注入的任务前缀：只读权限 + 仅产出方案，等用户确认后再实施。 */
+  private static readonly PLAN_DIRECTIVE =
+    '[Plan 模式] 当前会话处于计划模式：只做调研、分析与方案设计，不要执行任何写入或修改类操作。' +
+    '最终输出一份可执行计划（步骤、涉及文件、风险与验证方式），等待用户确认后再实施。';
+
+  /** /compact：标记一次性强制压缩，下一轮 prepareTurn 消费（无视阈值直接摘要）。 */
+  requestCompact(sessionId: string): boolean {
+    if (!this.store.getSession(sessionId)) return false;
+    this.store.setSessionMeta(sessionId, RunManager.META_FORCE_COMPACT, '1');
+    return true;
+  }
+
+  getSessionGoal(sessionId: string): string | null {
+    return this.store.getSessionMeta(sessionId, RunManager.META_GOAL);
+  }
+
+  setSessionGoal(sessionId: string, goal: string): boolean {
+    if (!this.store.getSession(sessionId)) return false;
+    const trimmed = goal.trim();
+    if (!trimmed) this.store.deleteSessionMeta(sessionId, RunManager.META_GOAL);
+    else this.store.setSessionMeta(sessionId, RunManager.META_GOAL, trimmed);
+    return true;
+  }
+
+  getSessionPlanMode(sessionId: string): boolean {
+    return this.store.getSessionMeta(sessionId, RunManager.META_PLAN_MODE) === '1';
+  }
+
+  setSessionPlanMode(sessionId: string, enabled: boolean): boolean {
+    if (!this.store.getSession(sessionId)) return false;
+    this.store.setSessionMeta(sessionId, RunManager.META_PLAN_MODE, enabled ? '1' : '0');
+    return true;
+  }
+
+  addSessionFeedback(sessionId: string, comment: string): boolean {
+    if (!this.store.getSession(sessionId)) return false;
+    const key = `${RunManager.META_FEEDBACK_PREFIX}${Date.now()}`;
+    this.store.setSessionMeta(sessionId, key, comment.trim());
+    return true;
+  }
+
+  /** /export：把会话（元数据 + Runs + 每轮事件 + 命令元数据）打成 ZIP 字节。 */
+  buildSessionExport(sessionId: string): { fileName: string; bytes: Uint8Array } | null {
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    const runs = this.store.listRunsBySession(sessionId);
+
+    const entries: ZipEntry[] = [
+      {
+        name: 'session.json',
+        data: JSON.stringify(
+          {
+            sessionId: session.sessionId,
+            title: session.title,
+            workspaceName: session.workspaceName,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            exportedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+      },
+      {
+        name: 'runs.jsonl',
+        data: runs.map((run) => JSON.stringify(this.publicStoredView(run))).join('\n'),
+      },
+      {
+        name: 'meta.json',
+        data: JSON.stringify(
+          {
+            goal: this.store.getSessionMeta(sessionId, RunManager.META_GOAL),
+            planMode: this.getSessionPlanMode(sessionId),
+            feedback: this.store
+              .listSessionMeta(sessionId, RunManager.META_FEEDBACK_PREFIX)
+              .map((item) => ({
+                at: item.key.slice(RunManager.META_FEEDBACK_PREFIX.length),
+                comment: item.value,
+              })),
+          },
+          null,
+          2,
+        ),
+      },
+    ];
+    for (const run of runs) {
+      const lines = this.store
+        .listEvents(run.runId)
+        .map((item) => JSON.stringify(item.event))
+        .join('\n');
+      entries.push({
+        name: `events/${String(run.turnIndex).padStart(3, '0')}-${run.runId}.jsonl`,
+        data: lines,
+      });
+    }
+    return {
+      fileName: `payaso-session-${sessionId.slice(0, 8)}.zip`,
+      bytes: createZip(entries),
+    };
   }
 
   get(runId: string): HostRun | null {
