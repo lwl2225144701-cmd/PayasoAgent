@@ -62,6 +62,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'keychain-command', file: 'tests/keychain-command.test.ts' },
   { name: 'shutdown', file: 'tests/shutdown.test.ts' },
   { name: 'toolchain-refresh', file: 'tests/toolchain-refresh.test.ts' },
+  { name: 'prompt-commands', file: 'tests/prompt-commands.test.ts' },
   { name: 'frontend-toolchain-retry', file: 'tests/frontend-toolchain-retry.test.ts' },
   { name: 'frontend-context-gauge', file: 'tests/frontend-context-gauge.test.ts' },
   { name: 'pi-ai-provider', file: 'tests/pi-ai-provider.test.ts' },
@@ -88,7 +89,7 @@ for (const s of SUITES) {
   }
 }
 
-console.log('\n' + '='.repeat(70));
+console.log(`\n${'='.repeat(70)}`);
 console.log('测试集合汇总');
 console.log('='.repeat(70));
 const passed = results.filter((r) => r.pass).length;

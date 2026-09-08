@@ -1,9 +1,11 @@
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { listPromptCommands } from '../../api';
 import type {
   ContextUsageEvent,
   ModelProviderView,
   ModelSelection,
   PermissionMode,
+  PromptCommand,
 } from '../../types';
 import { ChevronDownIcon, CloseIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
@@ -86,6 +88,87 @@ export function InputBar({
   // 附件状态用 ref 镜像一份，粘贴事件回调里始终读到最新值
   const attachmentsRef = useRef<PendingAttachment[]>([]);
 
+  // ===== Prompt 命令补全（/cmd 前缀） =====
+  const [promptCommands, setPromptCommands] = useState<PromptCommand[]>([]);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptIndex, setPromptIndex] = useState(0);
+  const promptLoadedRef = useRef(false);
+  const suggestRef = useRef<HTMLDivElement>(null);
+
+  // 命令列表懒加载一次（工作区级元数据，量小）
+  useEffect(() => {
+    if (promptLoadedRef.current) return;
+    promptLoadedRef.current = true;
+    listPromptCommands()
+      .then(({ prompts }) => setPromptCommands(prompts))
+      .catch(() => setPromptCommands([]));
+  }, []);
+
+  // 当前输入匹配的命令：第一个词以 / 开头且没有空格 → 进入补全模式
+  const firstWord = text.split(/\s/)[0] ?? '';
+  const isPromptPrefix = firstWord.startsWith('/') && firstWord.length > 1;
+  const filteredPrompts = isPromptPrefix
+    ? promptCommands.filter((c) => c.name.startsWith(firstWord.slice(1).toLowerCase()))
+    : [];
+
+  // 输入变化时同步 open / 重置高亮
+  useEffect(() => {
+    if (isPromptPrefix && filteredPrompts.length > 0) {
+      setPromptOpen(true);
+      setPromptIndex((i) => Math.min(i, filteredPrompts.length - 1));
+    } else {
+      setPromptOpen(false);
+    }
+  }, [isPromptPrefix, filteredPrompts.length]);
+
+  // 点击外部关闭补全
+  useEffect(() => {
+    if (!promptOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (suggestRef.current && !suggestRef.current.contains(e.target as Node)) {
+        setPromptOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [promptOpen]);
+
+  function applyPromptSelection(cmd: PromptCommand) {
+    // 把当前输入的第一个词替换为 /cmd + 空格，光标移到末尾
+    const rest = text.slice(firstWord.length);
+    setText(`/${cmd.name} ${rest.replace(/^\s/, '')}`);
+    setPromptOpen(false);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) ta.focus();
+    });
+  }
+
+  // 在 handleSend 之前拦截：补全打开时 Enter 选中命令；↑↓ 导航；Esc 关闭
+  function handlePromptKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!promptOpen || filteredPrompts.length === 0) return false;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setPromptIndex((i) => (i + 1) % filteredPrompts.length);
+      return true;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setPromptIndex((i) => (i - 1 + filteredPrompts.length) % filteredPrompts.length);
+      return true;
+    }
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      applyPromptSelection(filteredPrompts[promptIndex] ?? filteredPrompts[0]);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      setPromptOpen(false);
+      return true;
+    }
+    return false;
+  }
+
   // 卸载时释放全部 object URL，避免内存泄漏
   useEffect(() => {
     return () => {
@@ -159,6 +242,8 @@ export function InputBar({
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // 补全下拉优先：打开时 Enter/↑↓/Esc 属于命令选择，不触发发送
+    if (handlePromptKeyDown(e)) return;
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
@@ -244,6 +329,26 @@ export function InputBar({
             disabled={disabled}
             autoFocus
           />
+          {promptOpen && filteredPrompts.length > 0 && (
+            <div ref={suggestRef} className={styles.promptSuggestMenu} role="listbox">
+              {filteredPrompts.map((cmd, i) => (
+                <button
+                  key={cmd.name}
+                  type="button"
+                  className={styles.promptSuggestItem}
+                  role="option"
+                  aria-selected={i === promptIndex}
+                  onMouseEnter={() => setPromptIndex(i)}
+                  onClick={() => applyPromptSelection(cmd)}
+                >
+                  <span className={styles.promptSuggestName}>/{cmd.name}</span>
+                  {cmd.description && (
+                    <span className={styles.promptSuggestDesc}>{cmd.description}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           <ComposerFooter
             variant="hero"
             canSend={canSend}
@@ -311,6 +416,26 @@ export function InputBar({
           placeholder={placeholder}
           disabled={disabled}
         />
+        {promptOpen && filteredPrompts.length > 0 && (
+          <div ref={suggestRef} className={styles.promptSuggestMenu} role="listbox">
+            {filteredPrompts.map((cmd, i) => (
+              <button
+                key={cmd.name}
+                type="button"
+                className={styles.promptSuggestItem}
+                role="option"
+                aria-selected={i === promptIndex}
+                onMouseEnter={() => setPromptIndex(i)}
+                onClick={() => applyPromptSelection(cmd)}
+              >
+                <span className={styles.promptSuggestName}>/{cmd.name}</span>
+                {cmd.description && (
+                  <span className={styles.promptSuggestDesc}>{cmd.description}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
         <ComposerFooter
           variant="conversation"
           canSend={canSend}

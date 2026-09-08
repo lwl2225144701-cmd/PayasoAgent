@@ -478,6 +478,12 @@ export async function handleRequest(
   if (s.length === 2 && s[0] === 'runtime' && s[1] === 'capabilities' && method === 'GET') {
     return sendJson(res, 200, { capabilities: getRuntimeToolchainCapabilities() });
   }
+
+  // 当前工作区的 Prompt 命令注册表（只读元数据：name + description，无模板正文）。
+  // 供前端在输入框 / 前缀下做命令补全；read-only 权限 / 无工作区返回空列表。
+  if (s.length === 1 && s[0] === 'prompts' && method === 'GET') {
+    return sendJson(res, 200, { prompts: manager.listPromptCommands() });
+  }
   if (
     s.length === 3 &&
     s[0] === 'runtime' &&

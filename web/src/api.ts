@@ -9,6 +9,7 @@ import type {
   ModelSelection,
   PermissionMode,
   PiAiProviderInfo,
+  PromptCommand,
   ProviderModelInfo,
   UpdateModelProviderInput,
   WorkspaceView,
@@ -76,6 +77,11 @@ export function listSessionRuns(sessionId: string): Promise<{ runs: HostRun[] }>
 
 export function getWorkspace(): Promise<{ workspace: WorkspaceView | null }> {
   return jsonFetch('/workspace', { cache: 'no-store' });
+}
+
+/** 当前工作区的 Prompt 命令列表（输入框 / 补全用；无工作区返回空数组） */
+export function listPromptCommands(): Promise<{ prompts: PromptCommand[] }> {
+  return jsonFetch('/prompts', { cache: 'no-store' });
 }
 
 export function openWorkspace(): Promise<{ workspace: WorkspaceView | null; cancelled: boolean }> {

@@ -20,6 +20,7 @@
 }
 
 .conversationComposer {
+  position: relative;
   width: min(860px, 100%);
   min-height: 104px;
   margin: 0 auto;
@@ -243,6 +244,7 @@
 }
 
 .heroInputWrapper {
+  position: relative;
   width: 100%;
   min-height: 136px;
   display: flex;
@@ -501,4 +503,71 @@
   color: #f0b04a;
   font-size: 12px;
   line-height: 1.55;
+}
+
+/* ===== Prompt 命令补全（/cmd 前缀触发） ===== */
+.promptSuggestWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.promptSuggestMenu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 12px;
+  right: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--color-brand) 7%, transparent), transparent 42%),
+    color-mix(in srgb, var(--color-surface-raised) 96%, transparent);
+  border: 1px solid var(--color-border-default);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: var(--shadow-overlay);
+  backdrop-filter: blur(22px) saturate(125%);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  z-index: 50;
+}
+
+.promptSuggestEmpty {
+  padding: 10px 12px;
+  color: var(--text-secondary, #888);
+  font-size: 12px;
+  text-align: center;
+}
+
+.promptSuggestItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 9px;
+}
+
+.promptSuggestItem:hover,
+.promptSuggestItem[aria-selected="true"] {
+  background: var(--color-surface-hover);
+}
+
+.promptSuggestName {
+  font-weight: 600;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.promptSuggestDesc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary, #888);
+  font-size: 12px;
 }

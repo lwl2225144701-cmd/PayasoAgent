@@ -63,6 +63,12 @@ export interface WorkspacePickerState {
   error: string | null;
 }
 
+/** 当前工作区可用的 Prompt 命令（/cmd 补全元数据，不含模板正文） */
+export interface PromptCommand {
+  name: string;
+  description: string;
+}
+
 export interface FileEntry {
   name: string;
   /** 事件派生的文件（write/edit 产物）没有 stat 大小；工作区列出的文件才有。 */
