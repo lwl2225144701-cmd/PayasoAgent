@@ -108,22 +108,25 @@ export function InputBar({
       .catch(() => setPromptCommands([]));
   }, []);
 
-  // 当前输入匹配的命令：第一个词以 / 开头且没有空格 → 进入补全模式
+  // 当前输入匹配的命令：第一个词以 / 开头 → 进入补全模式（裸 / 即展示全量列表）
   // 内置命令优先，其后是工作区提示词模板
   const firstWord = text.split(/\s/)[0] ?? '';
-  const isPromptPrefix = firstWord.startsWith('/') && firstWord.length > 1;
+  const isPromptPrefix = firstWord.startsWith('/');
   const filteredPrompts: Array<{ name: string; description: string; builtin?: boolean }> =
     isPromptPrefix ? mergeCommandCandidates(firstWord.slice(1), promptCommands) : [];
+  // 输入已与唯一候选完全一致 → 收起菜单（否则选中后菜单会一直挂在原命令上）
+  const exactCommandTyped =
+    filteredPrompts.length === 1 && filteredPrompts[0].name === firstWord.slice(1);
 
   // 输入变化时同步 open / 重置高亮
   useEffect(() => {
-    if (isPromptPrefix && filteredPrompts.length > 0) {
+    if (isPromptPrefix && filteredPrompts.length > 0 && !exactCommandTyped) {
       setPromptOpen(true);
       setPromptIndex((i) => Math.min(i, filteredPrompts.length - 1));
     } else {
       setPromptOpen(false);
     }
-  }, [isPromptPrefix, filteredPrompts.length]);
+  }, [isPromptPrefix, exactCommandTyped, filteredPrompts.length]);
 
   // 点击外部关闭补全
   useEffect(() => {
