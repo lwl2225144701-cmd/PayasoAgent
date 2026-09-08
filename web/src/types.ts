@@ -174,6 +174,7 @@ export interface LlmCallEvent extends TraceEventBase {
   response: string;
   reasoning?: string;
   hasToolCalls: boolean;
+  usage?: { totalTokens: number };
 }
 
 export interface ToolCallEvent extends TraceEventBase {
@@ -244,6 +245,7 @@ export interface ContextUsageEvent extends TraceEventBase {
   safetyTokens: number;
   inputBudgetTokens: number;
   messageTokens: number;
+  systemTokens?: number;
   toolSchemaTokens: number;
   scratchpadTokens: number;
   estimatedInputTokens: number;

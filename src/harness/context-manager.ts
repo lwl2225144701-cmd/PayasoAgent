@@ -12,6 +12,7 @@ export interface ContextUsage {
   afterMessages: number;
   beforeMessageTokens: number;
   messageTokens: number;
+  systemTokens?: number;
   toolSchemaTokens: number;
   estimatedInputTokens: number;
   inputBudgetTokens: number;
@@ -86,14 +87,17 @@ export class ContextManager {
     ];
 
     let keepFrom = 0;
-    while (this.estimateTokens(assemble(keepFrom, 0)) > maxTokens && keepFrom < historicalTurns.length) {
+    while (
+      this.estimateTokens(assemble(keepFrom, 0)) > maxTokens &&
+      keepFrom < historicalTurns.length
+    ) {
       keepFrom++;
     }
     let currentTurnFrom = 0;
     if (
-      options.trimCurrentTurn
-      && this.estimateTokens(assemble(keepFrom, 0)) > maxTokens
-      && currentTurn.length > 0
+      options.trimCurrentTurn &&
+      this.estimateTokens(assemble(keepFrom, 0)) > maxTokens &&
+      currentTurn.length > 0
     ) {
       // 分级兜底：先保留最近 2 条交互；仍超 → 保留最近 1 条 → 仍超则仅保留
       // system + summary（保证视图必然有界；任务背景由 summary 承载）。
@@ -101,8 +105,8 @@ export class ContextManager {
         currentTurnFrom = 0;
         const maxFrom = currentTurn.length - keepLast;
         while (
-          this.estimateTokens(assemble(keepFrom, currentTurnFrom)) > maxTokens
-          && currentTurnFrom < maxFrom
+          this.estimateTokens(assemble(keepFrom, currentTurnFrom)) > maxTokens &&
+          currentTurnFrom < maxFrom
         ) {
           currentTurnFrom++;
         }
@@ -136,6 +140,7 @@ export class ContextManager {
         afterMessages: trimmed.length,
         beforeMessageTokens,
         messageTokens,
+        systemTokens: this.estimateTokens(trimmed.filter((message) => message.role === 'system')),
         toolSchemaTokens,
         estimatedInputTokens,
         inputBudgetTokens: this.maxInputTokens,

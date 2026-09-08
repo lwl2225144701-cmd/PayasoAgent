@@ -6,6 +6,7 @@ import {
   findLatestContextUsage,
   formatContextTokens,
   gaugeLevel,
+  summarizeRunUsage,
 } from '../web/src/components/Timeline/context-gauge.js';
 import type { ContextUsageEvent, HostEvent } from '../web/src/types.js';
 
@@ -94,5 +95,23 @@ check(
   contextGaugeTitle(usageEvent({ emergencyTrim: true })).includes('紧急裁剪'),
 );
 
+check('百万 token 保留一位小数', formatContextTokens(2_500_000) === '2.5M');
+const calls = [100, 200].map((totalTokens, step) => ({
+  ...base,
+  step,
+  type: 'llm_call',
+  messageCount: 2,
+  iteration: step + 1,
+  response: '',
+  hasToolCalls: false,
+  usage: { totalTokens },
+})) as HostEvent[];
+check(
+  '累计所有请求，不累计上下文或流式事件',
+  summarizeRunUsage([...calls, usageEvent(), other('assistant_delta')]).tokens === 300,
+);
+check('完整记录不标部分', !summarizeRunUsage(calls).partial);
+check('旧记录不伪造零用量', !summarizeRunUsage([other('llm_call')]).available);
+check('混合记录标记部分', summarizeRunUsage([...calls, other('llm_call')]).partial);
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);

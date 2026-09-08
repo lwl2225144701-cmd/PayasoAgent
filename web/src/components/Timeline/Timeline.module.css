@@ -205,18 +205,20 @@
   bottom: calc(100% + 10px);
   z-index: 80;
   display: flex;
-  width: max-content;
+  width: 320px;
   min-width: 218px;
-  max-width: min(280px, calc(100vw - 32px));
-  padding: 12px 14px;
+  max-width: calc(100vw - 32px);
+  padding: 18px;
   flex-direction: column;
-  align-items: center;
-  gap: 3px;
+  align-items: stretch;
+  gap: 12px;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--surface-raised, #20242d) 88%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
   border-radius: 14px;
-  box-shadow: 0 14px 38px rgb(0 0 0 / 32%), inset 0 1px 0 rgb(255 255 255 / 5%);
+  box-shadow:
+    0 14px 38px rgb(0 0 0 / 32%),
+    inset 0 1px 0 rgb(255 255 255 / 5%);
   backdrop-filter: blur(18px) saturate(130%);
   -webkit-backdrop-filter: blur(18px) saturate(130%);
   opacity: 0;
@@ -224,7 +226,10 @@
   pointer-events: none;
   transform: translate(-50%, 5px) scale(0.98);
   transform-origin: 50% 100%;
-  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 140ms ease;
 }
 
 .gaugeTooltip::after {
@@ -233,7 +238,7 @@
   bottom: -5px;
   width: 9px;
   height: 9px;
-  content: '';
+  content: "";
   background: inherit;
   border-right: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
@@ -251,6 +256,60 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.contextHeading,
+.contextRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.contextHeading {
+  justify-content: space-between;
+}
+.contextHeading strong {
+  margin-left: 4px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.contextBar {
+  display: flex;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--border-color);
+  margin: 3px 0;
+}
+.contextBar > span {
+  flex-shrink: 0;
+}
+.contextRow i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.contextRow > span:last-child {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.runUsage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 18px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.runUsage > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .gaugeTooltipPercent {
@@ -298,7 +357,9 @@
 }
 
 .gaugeArc {
-  transition: stroke-dashoffset 0.4s ease, stroke 0.2s ease;
+  transition:
+    stroke-dashoffset 0.4s ease,
+    stroke 0.2s ease;
 }
 
 .gaugeNormal {

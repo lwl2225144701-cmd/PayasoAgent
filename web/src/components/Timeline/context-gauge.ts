@@ -2,7 +2,18 @@
 // 的状态投影到前端 —— 环的填充比例 = 当前上下文占用，颜色随占用率分级，
 // 悬停可查看模型 / 估算 / 预算明细。纯函数与组件分离，便于 node 测试。
 
-import type { HostEvent, ContextUsageEvent } from '../../types';
+import type { ContextUsageEvent, HostEvent } from '../../types';
+
+/** Sum request usage once per persisted llm_call, never per streaming delta. */
+export function summarizeRunUsage(events: HostEvent[]) {
+  const calls = events.filter((event) => event.type === 'llm_call');
+  const recorded = calls.filter((event) => event.usage && Number.isFinite(event.usage.totalTokens));
+  return {
+    tokens: recorded.reduce((sum, event) => sum + Math.max(0, event.usage!.totalTokens), 0),
+    available: recorded.length > 0,
+    partial: recorded.length < calls.length,
+  };
+}
 
 /** 取事件流中最新一条 context_usage（无则 null）。 */
 export function findLatestContextUsage(events: HostEvent[]): ContextUsageEvent | null {
@@ -22,7 +33,7 @@ export function gaugeLevel(ratio: number): 'normal' | 'warning' | 'danger' {
 
 /** token 数 → 紧凑展示（8549 → "8.5K"，512000 → "512K"）。 */
 export function formatContextTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${Math.round(tokens / 1_000_000)}M`;
+  if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`;
   if (tokens >= 1_000) {
     const k = tokens / 1_000;
     return `${k >= 100 ? Math.round(k) : Math.round(k * 10) / 10}K`;

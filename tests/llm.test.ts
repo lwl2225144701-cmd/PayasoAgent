@@ -26,6 +26,7 @@ try {
       return new Response(
         JSON.stringify({
           choices: [{ message: { content: 'done', reasoning_content: 'private' } }],
+          usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
@@ -33,6 +34,7 @@ try {
     const message = await chat([{ role: 'user', content: 'hello' }]);
     assert.equal(message.content, 'done');
     assert.equal(message.reasoning_content, 'private');
+    assert.equal(message.usage?.totalTokens, 150);
     assert.ok(typeof requestBodies[0]?.max_tokens === 'number' && requestBodies[0].max_tokens > 0);
   });
 

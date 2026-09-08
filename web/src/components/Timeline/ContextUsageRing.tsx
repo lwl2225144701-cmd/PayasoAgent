@@ -17,6 +17,21 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
   const level = gaugeLevel(usage.usageRatio);
   const ratio = Math.max(0, Math.min(1, usage.usageRatio));
   const percent = Math.round(usage.usageRatio * 100);
+  const parts =
+    usage.systemTokens == null
+      ? [
+          { label: '消息（含系统提示词）', tokens: usage.messageTokens, color: '#6094ee' },
+          { label: '工具', tokens: usage.toolSchemaTokens, color: '#a78bef' },
+        ]
+      : [
+          { label: '系统提示词', tokens: usage.systemTokens, color: '#a7adb7' },
+          { label: '工具', tokens: usage.toolSchemaTokens, color: '#a78bef' },
+          {
+            label: '对话消息',
+            tokens: Math.max(0, usage.messageTokens - usage.systemTokens),
+            color: '#6094ee',
+          },
+        ];
   const levelClass =
     level === 'danger'
       ? styles.gaugeDanger
@@ -55,12 +70,34 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
         />
       </svg>
       <span id={tooltipId} role="tooltip" className={styles.gaugeTooltip}>
-        <span className={styles.gaugeTooltipLabel}>上下文窗口</span>
-        <strong className={styles.gaugeTooltipPercent}>{percent}% 已用</strong>
-        <span className={styles.gaugeTooltipDetail}>
-          已用 {formatContextTokens(usage.estimatedInputTokens)} Token，共{' '}
-          {formatContextTokens(usage.inputBudgetTokens)}
+        <span className={styles.contextHeading}>
+          <span>
+            上下文已用 <strong>{percent}%</strong>
+          </span>
+          <span>
+            ~{formatContextTokens(usage.estimatedInputTokens)} /{' '}
+            {formatContextTokens(usage.inputBudgetTokens)}
+          </span>
         </span>
+        <span className={styles.contextBar} aria-hidden="true">
+          {parts.map((part) => (
+            <span
+              key={part.label}
+              style={{
+                background: part.color,
+                width: `${(part.tokens / Math.max(usage.inputBudgetTokens, usage.estimatedInputTokens, 1)) * 100}%`,
+              }}
+            />
+          ))}
+        </span>
+        {parts.map((part) => (
+          <span className={styles.contextRow} key={part.label}>
+            <i style={{ background: part.color }} />
+            <span>{part.label}</span>
+            <span>~{formatContextTokens(part.tokens)}</span>
+          </span>
+        ))}
+        <span className={styles.gaugeTooltipNotice}>估算值 · 按可用输入预算计算</span>
         <span className={styles.gaugeTooltipModel}>{usage.model}</span>
         {usage.configSource === 'fallback' && (
           <span className={styles.gaugeTooltipNotice}>模型能力未知，当前使用保守预算</span>

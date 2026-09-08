@@ -35,6 +35,7 @@ import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { findLatestContextUsage } from './context-gauge';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
+import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
 import styles from './Timeline.module.css';
 import { ToolActionRow } from './ToolActionRow';
@@ -456,7 +457,7 @@ export function Timeline({
     !!finalAnswer ||
     !!globalThinking ||
     !!finalError ||
-    run.status === 'running';
+    run.status !== 'stopping';
 
   return (
     <div
@@ -694,10 +695,10 @@ export function Timeline({
                     )}
                   </div>
                 )}
-                <time className={styles.finalTime}>{formatTime(finalTimestamp)}</time>
               </div>
             )}
             {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
+            <RunUsage run={run} events={events} />
           </section>
         ) : (
           // Empty agent section: reserved vertical rhythm so input isn't jumpy.

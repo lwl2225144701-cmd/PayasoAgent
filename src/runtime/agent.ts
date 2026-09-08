@@ -253,6 +253,7 @@ export async function runAgent(
         safetyTokens: modelContext.safetyTokens,
         inputBudgetTokens: ctx.usage.inputBudgetTokens,
         messageTokens: ctx.usage.messageTokens,
+        systemTokens: ctx.usage.systemTokens,
         toolSchemaTokens: ctx.usage.toolSchemaTokens,
         scratchpadTokens: ctx.scratchpadTokens,
         estimatedInputTokens: ctx.usage.estimatedInputTokens,
@@ -296,7 +297,8 @@ export async function runAgent(
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content } = assistantMsg;
-      const assistantHistoryMessage = contextHarness.sanitizeAssistantMessage(assistantMsg);
+      const { usage: requestUsage, ...messageForHistory } = assistantMsg;
+      const assistantHistoryMessage = contextHarness.sanitizeAssistantMessage(messageForHistory);
       messages.push(assistantHistoryMessage);
 
       // Trace: LLM 调用（输入消息数 / 迭代次数 / 返回内容 / 是否产生 tool_call）
@@ -306,6 +308,7 @@ export async function runAgent(
         iteration: i + 1,
         response: assistantMsg.content,
         reasoning: reasoning_content,
+        usage: requestUsage,
         hasToolCalls: !!assistantMsg.tool_calls?.length,
       });
 

@@ -19,6 +19,7 @@ export type TraceEvent =
       response: string; // LLM 返回内容
       reasoning?: string; // 部分推理模型单独返回的思考内容
       hasToolCalls: boolean; // 是否产生 tool_call
+      usage?: { totalTokens: number };
     }
   | {
       type: 'tool_call';
@@ -99,6 +100,7 @@ export type TraceEvent =
       safetyTokens: number;
       inputBudgetTokens: number;
       messageTokens: number;
+      systemTokens?: number;
       toolSchemaTokens: number;
       scratchpadTokens: number;
       estimatedInputTokens: number;
@@ -181,6 +183,7 @@ export type TraceEventInput =
       response: string;
       reasoning?: string;
       hasToolCalls: boolean;
+      usage?: { totalTokens: number };
     }
   | {
       type: 'tool_call';
@@ -237,6 +240,7 @@ export type TraceEventInput =
       safetyTokens: number;
       inputBudgetTokens: number;
       messageTokens: number;
+      systemTokens?: number;
       toolSchemaTokens: number;
       scratchpadTokens: number;
       estimatedInputTokens: number;

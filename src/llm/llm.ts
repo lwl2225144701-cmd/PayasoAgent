@@ -813,7 +813,7 @@ export async function chat(
   onDelta?: (delta: ChatStreamDelta) => void,
   modelConfig?: ModelConfig,
   signal?: AbortSignal,
-): Promise<ChatMessage> {
+): Promise<ChatMessage & { usage?: { totalTokens: number } }> {
   const config = resolveEndpointConfig(modelConfig);
   const { models, model } = createConfiguredModel(config);
   const context = toPiContext(messages, tools, config.providerId, config.model, model.api);
@@ -857,7 +857,18 @@ export async function chat(
       throw new DOMException('Aborted', 'AbortError');
     }
     if (result.stopReason !== 'error') {
-      return toLegacyMessage(result, diagnostics.toolNamesById, diagnostics.toolArgumentsById);
+      const message = toLegacyMessage(
+        result,
+        diagnostics.toolNamesById,
+        diagnostics.toolArgumentsById,
+      );
+      // 类型上 usage 必填，但第三方 OpenAI 兼容端点运行时可能省略 —— 缺失时
+      // 走 NaN → 下方守卫直接不携带 usage，绝不因统计字段让整次调用失败。
+      const totalTokens = result.usage?.totalTokens ?? Number.NaN;
+      return Object.assign(
+        message,
+        Number.isFinite(totalTokens) && totalTokens > 0 ? { usage: { totalTokens } } : {},
+      );
     }
     if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
       await retryDelay(attempt);
