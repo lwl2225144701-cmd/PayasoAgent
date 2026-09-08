@@ -26,6 +26,8 @@ interface ModelCapability {
   pattern: RegExp;
   contextWindowTokens: number;
   maxOutputTokens: number;
+  /** Model-specific behavior notes injected into system prompt (model.adaptation segment). */
+  promptNotes?: string;
 }
 
 // 未知模型（不在注册表）的 fallback = 引入模型的已知窗口下限 256K。
@@ -40,17 +42,22 @@ const MODEL_CAPABILITIES: ModelCapability[] = [
     pattern: /^MiniMax-M3$/i,
     contextWindowTokens: 512_000,
     maxOutputTokens: 16_384,
+    promptNotes:
+      'The final answer MUST be written to the content field. ' +
+      'Reasoning is for thinking only. ' +
+      'Empty content = task failure.',
   },
 ];
 
 export function getKnownModelCapability(
   model: string,
-): { contextWindowTokens: number; maxOutputTokens: number } | undefined {
+): { contextWindowTokens: number; maxOutputTokens: number; promptNotes?: string } | undefined {
   const capability = MODEL_CAPABILITIES.find((item) => item.pattern.test(model.trim()));
   return capability
     ? {
         contextWindowTokens: capability.contextWindowTokens,
         maxOutputTokens: capability.maxOutputTokens,
+        promptNotes: capability.promptNotes,
       }
     : undefined;
 }

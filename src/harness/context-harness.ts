@@ -12,14 +12,17 @@ import {
   type ConversationSummarizer,
   LlmConversationSummarizer,
 } from './conversation-summarizer.js';
+import { InstructionComposer } from './instruction-composer.js';
 import {
-  BASE_SYSTEM_PROMPT,
+  buildBaseSegments,
+  envContextPrompt,
   networkSystemPrompt,
-  permissionSystemPrompt,
+  projectInstructionsPrompt,
   toolchainSystemPrompt,
 } from './instructions.js';
 import {
   estimateTextTokens,
+  getKnownModelCapability,
   type ModelContextConfig,
   resolveModelContextConfig,
 } from './model-context.js';
@@ -77,7 +80,7 @@ function stripThink(text: string): string {
 export class DefaultContextHarness implements AgentContextHarness {
   readonly modelContext: ModelContextConfig;
   private readonly contextManager: ContextManager;
-  private readonly systemInstructions: string;
+  private readonly composer: InstructionComposer;
   private toolchain: RuntimeToolchainCapabilities | undefined;
   private readonly summarizer: ConversationSummarizer;
   private state = createContextHarnessState();
@@ -90,8 +93,10 @@ export class DefaultContextHarness implements AgentContextHarness {
     state?: ContextHarnessState;
     modelContext?: ModelContextConfig;
     toolchain?: RuntimeToolchainCapabilities;
+    workspaceName?: string;
+    projectInstructions?: string;
   }) {
-    this.modelContext =
+    const resolvedContext =
       options.modelContext ??
       resolveModelContextConfig({
         model: options.modelConfig?.model ?? options.model,
@@ -99,17 +104,86 @@ export class DefaultContextHarness implements AgentContextHarness {
         contextWindowTokens: options.modelConfig?.contextWindow,
         maxOutputTokens: options.modelConfig?.maxOutputTokens,
       });
+    this.modelContext = resolvedContext;
     this.contextManager = new ContextManager(this.modelContext.maxInputTokens);
-    this.systemInstructions = `${BASE_SYSTEM_PROMPT}\n${permissionSystemPrompt(options.permissionMode)}`;
     this.toolchain = options.toolchain;
+    this.composer = new InstructionComposer();
+
+    // Resolve model-specific prompt notes from the known model capability registry.
+    const known = getKnownModelCapability(resolvedContext.model);
+
+    // Build all base segments and register with the composer.
+    // Dynamic segments (network, toolchain, env) are refreshed each turn via
+    // systemPromptText() so that runtime state changes stay accurate.
+    const projectInstructions = options.projectInstructions ?? '';
+    const baseSegments = buildBaseSegments({
+      permissionMode: options.permissionMode,
+      modelPromptNotes: known?.promptNotes,
+      toolchainCapabilities: options.toolchain,
+      networkMode: getNetworkMode(),
+      workspaceName: options.workspaceName,
+      projectInstructions,
+    });
+    for (const seg of baseSegments) {
+      this.composer.addSegment(seg);
+    }
+
     this.summarizer = options.summarizer ?? new LlmConversationSummarizer(options.modelConfig);
     this.restoreState(options.state);
   }
 
   // 工具链段每轮动态拼装（与 network 段同模式）：受控安装完成后 Host 经
-  // refreshToolchain 更新快照，下一轮模型视图即反映新的可用工具。
+  // refreshToolchain 更新快照，下一轮模型视图即反映新的可用工具（不自动重放原命令）。
   refreshToolchain(capabilities: RuntimeToolchainCapabilities): void {
     this.toolchain = capabilities;
+    this.composer.updateContent('platform.toolchain', toolchainSystemPrompt(capabilities));
+  }
+
+  // Skills 索引段动态更新（workspace 级 skills 在 Run 启动时扫描注入，运行中不变）。
+  setSkills(skills: Array<{ name: string; description: string }>): void {
+    const has = this.composer.has('skills.index');
+    if (skills.length === 0) {
+      if (has) this.composer.removeSegment('skills.index');
+      return;
+    }
+    const lines = skills
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((s) => `- ${s.name}: ${s.description.slice(0, 200)}`)
+      .join('\n');
+    const content = `## Available Skills\n\nUse the \`loadSkill\` tool to load the full skill content.\n\n${lines}`;
+    if (has) {
+      this.composer.updateContent('skills.index', content);
+    } else {
+      this.composer.addSegment({
+        id: 'skills.index',
+        priority: 40,
+        content,
+        budgetTokens: 2048,
+        mutability: 'per_run',
+      });
+    }
+  }
+
+  // 项目级指令动态更新（一般 per-run 不变，这里保留接口备 Host 侧运行时按需刷新）。
+  // 空字符串视为无项目指令：若 composer 里有就移除，没有就不动。
+  setProjectInstructions(content: string): void {
+    const trimmed = content.trim();
+    const has = this.composer.has('project.instructions');
+    if (!trimmed) {
+      if (has) this.composer.removeSegment('project.instructions');
+      return;
+    }
+    if (has) {
+      this.composer.updateContent('project.instructions', projectInstructionsPrompt(trimmed));
+    } else {
+      this.composer.addSegment({
+        id: 'project.instructions',
+        priority: 30,
+        content: projectInstructionsPrompt(trimmed),
+        budgetTokens: 8192,
+        mutability: 'per_run',
+      });
+    }
   }
 
   createTranscript(
@@ -163,10 +237,16 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.state = normalizeContextHarnessState(state);
   }
 
-  // 网络段与工具链段均按当前状态动态拼装：运行中全局开关切换 / 受控安装
-  // 完成（refreshToolchain）后，下一轮 system 消息即准确。
+  // 动态段每轮刷新：网络模式、工具链能力、环境信息在下一轮 system 消息
+  // 中保持准确。scratchpad 和 summary 通过 buildModelView 追加到 system 末尾。
   private systemPromptText(): string {
-    return `${this.systemInstructions}\n${toolchainSystemPrompt(this.toolchain)}\n${networkSystemPrompt(getNetworkMode())}`;
+    // Refresh dynamic segment contents before composing.
+    this.composer.updateContent('platform.toolchain', toolchainSystemPrompt(this.toolchain));
+    this.composer.updateContent('platform.network', networkSystemPrompt(getNetworkMode()));
+    this.composer.updateContent('env.context', envContextPrompt());
+    // Budget target: 15% of maxInputTokens for system prompt overhead.
+    const systemBudget = Math.max(512, Math.floor(this.modelContext.maxInputTokens * 0.15));
+    return this.composer.compose(systemBudget).content;
   }
 
   snapshotState(): ContextHarnessState {

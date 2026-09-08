@@ -22,6 +22,7 @@ export interface AgentExecutionContextInput {
   runId: string;
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
+  projectInstructions?: string;
 }
 
 export interface DefaultRuntimeServices {
@@ -55,5 +56,6 @@ export function createAgentExecutionContext(
     workspaceRoot,
     permissionMode: input.permissionMode ?? DEFAULT_PERMISSION_MODE,
     toolchain: getRuntimeToolchainCapabilities(),
+    projectInstructions: input.projectInstructions ?? '',
   };
 }

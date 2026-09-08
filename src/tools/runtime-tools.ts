@@ -420,3 +420,49 @@ register({
     return (head + result.stdout + result.stderr).trim();
   },
 });
+
+// ---- ⑥ loadSkill ----
+// 只读工具：加载工作区内 .payaso/skills/<name>/SKILL.md 的完整内容。
+// Skill 正文作为 tool 消息进入 transcript，复用裁剪 / 摘要 / checkpoint 全套机制。
+// 安全：name 必须是 kebab-case，解析后路径必须落在 .payaso/skills/ 下。
+register({
+  name: 'loadSkill',
+  description:
+    'Load a skill definition file from the workspace skill registry. Returns the full SKILL.md content as a tool message. Use this when you need the step-by-step workflow for a specific task type.',
+  effect: 'read',
+  parameters: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        description: 'kebab-case skill name (from the Available Skills list in system prompt)',
+      },
+    },
+    required: ['name'],
+  },
+  execute: async (args, context) => {
+    const rawName = String(args.name ?? '').trim();
+    if (!rawName) throw new Error('缺少参数 name');
+    // 严格限定字符集，避免路径逃逸
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(rawName)) {
+      throw new Error('skill 名称格式不合法（小写字母 + 连字符，最长 64 字符）');
+    }
+    const relPath = path.join('.payaso', 'skills', rawName, 'SKILL.md');
+    const fullPath = resolveAuthorizedPath(context, relPath);
+    try {
+      const stat = fs.statSync(fullPath);
+      if (!stat.isFile()) throw new Error('skill 文件不存在');
+      // 上限 32KB，超过的截断（transcript 还有输出卫士二次保险）
+      const content = fs.readFileSync(fullPath, 'utf8');
+      if (content.length > 32 * 1024) {
+        return content.slice(0, 32 * 1024) + '\n...[skill content truncated]';
+      }
+      return content;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(`skill 不存在: ${rawName}`);
+      }
+      throw err;
+    }
+  },
+});

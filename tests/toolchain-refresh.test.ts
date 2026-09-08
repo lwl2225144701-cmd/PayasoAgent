@@ -65,13 +65,13 @@ try {
     const before = harness.createTranscript('t')[0].content;
     check(
       'harness: 默认（无快照）不含可用清单',
-      before.includes('一次性确定') && !before.includes('当前可用工具：git'),
+      before.includes('determined once by Host') && !before.includes('Available tools: git'),
     );
     harness.refreshToolchain(REFRESHED);
     const after = harness.createTranscript('t')[0].content;
     check(
       'harness: refreshToolchain 后模型视图含 git 可用',
-      after.includes('当前可用工具：git, node, npm') && !after.includes('当前缺失工具：git'),
+      after.includes('Available tools: git, node, npm') && !after.includes('Missing tools: git'),
     );
   }
 
@@ -152,11 +152,11 @@ try {
     check('agent: preparation port requested exactly once', portRequests === 1);
     check(
       'refresh: turn-1 model view had git missing',
-      bodies[0]?.messages[0]?.content.includes('当前缺失工具：git') === true,
+      bodies[0]?.messages[0]?.content.includes('Missing tools: git') === true,
     );
     check(
       'refresh: turn-2 model view has git available (current Run感知)',
-      bodies[1]?.messages[0]?.content.includes('当前可用工具：git') === true,
+      bodies[1]?.messages[0]?.content.includes('Available tools: git') === true,
       bodies[1]?.messages[0]?.content.slice(0, 200),
     );
     const toolResult = bodies[1]?.messages.find((m) => m.role === 'tool');

@@ -87,14 +87,14 @@ fi
   assert.ok(!JSON.stringify(capabilities).includes(ROOT));
   const prompt = toolchainSystemPrompt(capabilities);
   assert.match(prompt, /git/);
-  assert.match(prompt, /一次性发现/);
+  assert.match(prompt, /discovered once/);
   assert.ok(!prompt.includes(ROOT));
   const transcript = new DefaultContextHarness({
     permissionMode: 'workspace-write',
     model: 'gpt-4o-mini',
     toolchain: capabilities,
   }).createTranscript('toolchain probe');
-  assert.match(String(transcript[0]?.content), /当前可用工具：git, node, npm/);
+  assert.match(String(transcript[0]?.content), /Available tools: git, node, npm/);
   assert.ok(!String(transcript[0]?.content).includes(ROOT));
 
   const missing = discoverMacOSToolchain({

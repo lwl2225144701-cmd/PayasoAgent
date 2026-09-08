@@ -9,4 +9,7 @@ export interface AgentExecutionContext {
   permissionMode: PermissionMode;
   // Host/bootstrap-owned startup snapshot; contains no host paths.
   toolchain?: RuntimeToolchainCapabilities;
+  // Project-level instructions from PAYASO.md (only loaded when permission >= workspace-write).
+  // Empty string / undefined = no project instructions.
+  projectInstructions?: string;
 }
