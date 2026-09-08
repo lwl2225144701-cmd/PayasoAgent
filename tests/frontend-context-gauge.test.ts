@@ -6,6 +6,7 @@ import {
   deriveRunStreamMetrics,
   deriveRunTokenUsage,
   findLatestContextUsage,
+  formatBudgetDerivation,
   formatContextTokens,
   formatTokenBreakdown,
   gaugeLevel,
@@ -246,6 +247,14 @@ check(
 check(
   'tooltip: 有真实压力锚点时标注上次上报',
   contextGaugeTitle(usageEvent({ pressureTokens: 6_000 })).includes('上次上报真实 6K'),
+);
+
+// ---- 预算推导说明（解释分母为何小于窗口，如 1M 窗口 → 976K 预算）----
+check(
+  '预算推导: 1M 窗口 = 976K 预算 + 4.1K 输出 + 20K 安全',
+  formatBudgetDerivation(
+    usageEvent({ contextWindowTokens: 1_000_000, inputBudgetTokens: 975_904, maxOutputTokens: 4_096, safetyTokens: 20_000 }),
+  ) === '窗口 1M = 预算 976K + 输出预留 4.1K + 安全 20K',
 );
 
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);

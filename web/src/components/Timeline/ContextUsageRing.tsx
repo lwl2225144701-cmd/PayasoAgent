@@ -4,7 +4,7 @@
 
 import { useId } from 'react';
 import type { ContextUsageEvent } from '../../types';
-import { contextGaugeTitle, formatContextTokens, gaugeLevel } from './context-gauge';
+import { contextGaugeTitle, formatBudgetDerivation, formatContextTokens, gaugeLevel } from './context-gauge';
 import styles from './Timeline.module.css';
 
 const SIZE = 18;
@@ -112,6 +112,11 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             <span>~{formatContextTokens(part.tokens)}</span>
           </span>
         ))}
+        {usage.contextWindowTokens > 0 && (
+          <span className={styles.gaugeTooltipDetail} role="note">
+            {formatBudgetDerivation(usage)}
+          </span>
+        )}
         {usage.configSource === 'fallback' && (
           <span className={styles.gaugeTooltipNotice}>模型能力未知，当前使用保守预算</span>
         )}

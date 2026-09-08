@@ -255,3 +255,14 @@ export function contextGaugeTitle(usage: ContextUsageEvent): string {
   if (usage.configSource === 'fallback') parts.push('模型能力未知，按保守预算估计');
   return parts.join(' · ');
 }
+
+/**
+ * 预算推导说明：窗口 = 输入预算 + 输出预留 + 安全余量。
+ * 解释分母为何小于用户配置的上下文窗口（如 1M 窗口显示 976K 预算）。
+ */
+export function formatBudgetDerivation(usage: ContextUsageEvent): string {
+  return (
+    `窗口 ${formatContextTokens(usage.contextWindowTokens)} = 预算 ${formatContextTokens(usage.inputBudgetTokens)}` +
+    ` + 输出预留 ${formatContextTokens(usage.maxOutputTokens)} + 安全 ${formatContextTokens(usage.safetyTokens)}`
+  );
+}
