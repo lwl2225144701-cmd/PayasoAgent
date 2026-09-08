@@ -401,7 +401,7 @@ test('Tool Schema 不泄露 workspaceRoot/runId/宿主绝对路径', () => {
 
 test('真实 Workspace 内：write/read/list/search/create/move/delete 正常（向后兼容别名）', async () => {
   await execute('writeFile', { path: 'work-test.txt', content: 'hello' }, ctxA);
-  assert.equal(await execute('readFile', { path: 'work-test.txt' }, ctxA), 'hello');
+  assert.equal(await execute('readFile', { path: 'work-test.txt' }, ctxA), '1→hello');
   assert.match(await execute('listDir', { path: '.' }, ctxA), /work-test\.txt/);
   assert.match(
     await execute('searchText', { path: 'work-test.txt', pattern: 'hello' }, ctxA),
@@ -417,7 +417,7 @@ test('真实 Workspace 内：write/read/list/search/create/move/delete 正常（
 test('新核心工具集：write 自动创建父目录 + read/ls/grep 正常', async () => {
   await execute('write', { path: 'nested/dir/file.txt', content: 'hello' }, ctxA);
   assert.equal(fs.readFileSync(path.join(rootA, 'nested', 'dir', 'file.txt'), 'utf8'), 'hello');
-  assert.equal(await execute('read', { path: 'nested/dir/file.txt' }, ctxA), 'hello');
+  assert.equal(await execute('read', { path: 'nested/dir/file.txt' }, ctxA), '1→hello');
   assert.match(await execute('ls', { path: 'nested' }, ctxA), /dir/);
   assert.match(
     await execute('grep', { path: 'nested/dir/file.txt', pattern: 'hello' }, ctxA),

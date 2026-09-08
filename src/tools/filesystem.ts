@@ -23,6 +23,39 @@ import { register, registerAlias, type ToolContext } from './tools.js';
 // 足够多的有效头部；offset 参数支持模型继续阅读，不丢失文件内容。
 export const MAX_READ_BYTES = 64 * 1024; // 64KB
 
+// v1.9 read 双限截断：按行号读取时，行数与字节数双限，取先到者。
+const MAX_READ_LINES = 500; // 单次最多返回 500 行
+const MAX_LINE_NUMBER_WIDTH = 6; // 行号列宽上限（999999 行）
+// 整文件读入内存（用于按行切片）的上限；超过则退化为字节窗口读取（老路径）。
+const FULL_READ_TEXT_BYTES = 2 * 1024 * 1024; // 2MB
+
+// 读文件 [offset, offset+length) 字节范围（UTF-8 安全由调用方保证边界）。
+function readFileRange(real: string, offset: number, length: number): Buffer {
+  const fd = fs.openSync(real, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const n = fs.readSync(fd, buf, 0, length, offset);
+    return buf.subarray(0, n);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// 超大文本（≥FULL_READ_TEXT_BYTES）的降级读取：字节窗口 + 字节 offset 续读。
+// 与行号路径互斥——这种文件通常是无换行的压缩/数据文件，行号无意义。
+function readTextByByteWindow(real: string, total: number, rel: string, byteOffset = 0): string {
+  const remaining = Math.max(0, total - byteOffset);
+  const buf = readFileRange(real, byteOffset, Math.min(MAX_READ_BYTES, remaining));
+  const body = buf.toString('utf8');
+  const endOffset = byteOffset + buf.length;
+  if (endOffset >= total) return body;
+  return (
+    `${body}\n[READ TRUNCATED]\n` +
+    `[READ 提示] 文件共 ${total} 字节（超大文本，按字节窗口读取）。` +
+    `已读至 offset=${endOffset}，剩余可用 offset=${endOffset}（字节偏移）续读。`
+  ).trim();
+}
+
 // 拒绝路径的统一脱敏消息：只回显相对路径，不泄露宿主机绝对路径
 function rejectPath(rel: string): never {
   throw new Error(`路径被拒绝（仅允许工作区内相对路径，禁止穿越/绝对路径/symlink 逃逸）: ${rel}`);
@@ -239,13 +272,14 @@ const MAX_IMAGE_READ_BYTES = 8 * 1024 * 1024;
 register({
   name: 'read',
   description:
-    '读取文件内容。文本自动截断（超 64KB 时返回前部+尾部与续读提示，可用 offset 字节偏移续读剩余部分）；图片文件：当前模型支持视觉时直接返回图片供查看分析（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示；其他二进制按文本截断返回。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
+    '读取文件内容，返回时每行带行号前缀（格式"行号→内容"，行号仅为定位用，不是文件内容；用 edit 复制 oldText 时请勿包含行号前缀）。默认返回前 500 行；用 offset 从指定行号续读、limit 限定本次行数。文本超过 500 行或 64KB 会截断并在末尾给出续读行号。图片文件：当前模型支持视觉时直接返回图片供查看分析（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
   effect: 'read',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '').trim();
     const key = context ? canonicalPathKey(context, rel) : null;
     const offset = Number(args.offset ?? 0);
-    return `path:${key ?? JSON.stringify(rel)}:offset:${offset}`;
+    const limit = Number(args.limit ?? 0);
+    return `path:${key ?? JSON.stringify(rel)}:line:${offset}:${limit}`;
   },
   parameters: {
     type: 'object',
@@ -253,7 +287,11 @@ register({
       path: { type: 'string', description: '工作区内相对文件路径，如 input/demo.txt' },
       offset: {
         type: 'number',
-        description: '字节偏移,续读剩余内容时使用(从提示中的 offset 值开始),默认 0',
+        description: '起始行号（1-based，含该行），默认 1。续读时用上一次返回末尾提示的行号。',
+      },
+      limit: {
+        type: 'number',
+        description: '本次最多读取的行数，默认 500。',
       },
     },
     required: ['path'],
@@ -261,8 +299,10 @@ register({
   execute: async (args, context) => {
     const rel = String(args.path ?? '').trim();
     if (!rel) throw new Error('缺少参数 path');
-    let offset = Number(args.offset ?? 0);
-    if (!Number.isFinite(offset) || offset < 0) offset = 0;
+    let startLine = Number(args.offset ?? 1);
+    if (!Number.isFinite(startLine) || startLine < 1) startLine = 1;
+    let limit = Number(args.limit ?? MAX_READ_LINES);
+    if (!Number.isFinite(limit) || limit < 1) limit = MAX_READ_LINES;
 
     const real = resolveAuthorizedPath(context, rel);
     let st: fs.Stats;
@@ -272,23 +312,12 @@ register({
       throw new Error(`文件不存在: ${rel}`);
     }
     if (st.isDirectory()) throw new Error(`是目录，无法读取: ${rel}`);
-    if (offset > st.size) offset = st.size;
+    if (st.size === 0) return '[READ 提示] 文件为空。';
 
-    // 分块读取：只读 [offset, offset+MAX_READ_BYTES)，避免大文件整体进内存
-    const length = Math.min(MAX_READ_BYTES, st.size - offset);
-    const chunk = fs.openSync(real, 'r');
-    let buf: Buffer;
-    try {
-      buf = Buffer.alloc(length);
-      const readBytes = fs.readSync(chunk, buf, 0, length, offset);
-      buf = buf.subarray(0, readBytes);
-    } finally {
-      fs.closeSync(chunk);
-    }
-
-    // 图片 → 视觉模型：返回图片引用（Runtime 在调用模型前物化为 base64）；
-    // 非视觉模型 / 工作区外文件 / 超大图 → 文本占位（不把二进制喂给模型，也不判 invalid）。
-    const image = sniffImage(buf);
+    // 读头部用于图片嗅探（图片无论大小都只需头部 magic）
+    const headLen = Math.min(MAX_READ_BYTES, st.size);
+    const headBuf = readFileRange(real, 0, headLen);
+    const image = sniffImage(headBuf);
     if (image) {
       if (context.vision !== true) {
         return (
@@ -317,21 +346,101 @@ register({
       };
     }
 
-    const total = st.size;
-    const start = offset;
-    const end = start + buf.length;
-    const hasMore = end < total;
-
-    // 文本/二进制统一：窗口内容完整可见（UTF-8 安全）。
-    // 若文件还有剩余 → 截断 + continuation hint，提示模型用 offset 续读；
-    // 否则完整返回（二进制文件此时也按文本返回，不判 invalid）。
-    const body = buf.toString('utf8');
-    if (hasMore) {
-      const nextOffset = start + buf.length;
-      return `${body}\n[READ TRUNCATED]\n[READ 提示] 文件共 ${total} 字节，已读至 offset=${end}，剩余可用 offset=${nextOffset} 续读。`.trim();
+    // ---- 文本路径 ----
+    // 超大文件（≥2MB）退化为字节窗口读取（老路径），避免整文件进内存；
+    // 此时无法给行号，按字节 offset 续读。这种文件通常是无换行的压缩/数据文件。
+    if (st.size >= FULL_READ_TEXT_BYTES) {
+      const byteOffset = Number(args.offset ?? 0);
+      const safeByte =
+        Number.isFinite(byteOffset) && byteOffset >= 0 ? Math.min(byteOffset, st.size) : 0;
+      return readTextByByteWindow(real, st.size, rel, safeByte);
     }
-    if (total === 0) return '[READ 提示] 文件为空。';
-    return body;
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(real, 'utf8');
+    } catch {
+      throw new Error(`读取失败: ${rel}`);
+    }
+    // 剥离 BOM（仅显示用，edit 写回时自行保留）
+    const hadBom = raw.charCodeAt(0) === 0xfeff;
+    const text = hadBom ? raw.slice(1) : raw;
+
+    // split 保留语义：末尾换行不产生多余空行
+    const lines = text.split('\n');
+    const totalLines = lines.length;
+
+    if (startLine > totalLines) {
+      throw new Error(
+        `Offset ${startLine} 超出文件末尾（共 ${totalLines} 行）。请用 1..${totalLines} 之间的行号。`,
+      );
+    }
+
+    const startIdx = startLine - 1;
+    const endIdx = Math.min(startIdx + limit, totalLines);
+    const windowLines = lines.slice(startIdx, endIdx);
+
+    // 行号列宽（不超过 6 位）
+    const width = Math.min(MAX_LINE_NUMBER_WIDTH, String(totalLines).length);
+    const numbered = windowLines
+      .map((line, i) => {
+        const ln = startLine + i;
+        return `${String(ln).padStart(width, ' ')}→${line}`;
+      })
+      .join('\n');
+
+    // 字节估算（窗口内容 + 行号前缀）
+    const windowBytes = Buffer.byteLength(numbered, 'utf8');
+    const lastShownLine = startLine + windowLines.length - 1;
+    const hasMoreLines = endIdx < totalLines;
+
+    const hints: string[] = [];
+    if (hadBom) hints.push('[READ 提示] 文件含 UTF-8 BOM（已在显示中剥离）。');
+
+    // 超长单行：窗口内若某行本身超 64KB，提示用字节窗口/shell
+    const hugeLine = windowLines.find((l) => Buffer.byteLength(l, 'utf8') > MAX_READ_BYTES);
+    if (hugeLine) {
+      const hugeLineNo = startLine + windowLines.indexOf(hugeLine);
+      hints.push(
+        `[READ 提示] 第 ${hugeLineNo} 行单行超过 ${MAX_READ_BYTES} 字节（疑似压缩/无换行文件）。` +
+          `可用 shell: sed -n '${hugeLineNo}p' ${rel} | head -c 128K 查看片段。`,
+      );
+    }
+
+    if (windowBytes > MAX_READ_BYTES) {
+      // 字节超限：行数还没到 limit 就被字节卡住，按字节截断 + 续读行号
+      // 逐行累加，找到字节预算内能放的行数
+      let acc = 0;
+      let fit = 0;
+      for (let i = 0; i < windowLines.length; i++) {
+        const lineBytes = Buffer.byteLength(
+          `${String(startLine + i).padStart(width, ' ')}→${windowLines[i]}\n`,
+          'utf8',
+        );
+        if (acc + lineBytes > MAX_READ_BYTES && fit > 0) break;
+        acc += lineBytes;
+        fit++;
+      }
+      const fitLines = windowLines
+        .slice(0, fit)
+        .map((line, i) => `${String(startLine + i).padStart(width, ' ')}→${line}`)
+        .join('\n');
+      const nextLine = startLine + fit;
+      hints.push(
+        `[READ TRUNCATED]\n[READ 提示] 显示第 ${startLine}-${nextLine - 1} 行（共 ${totalLines} 行，` +
+          `受 ${MAX_READ_BYTES} 字节上限截断）。用 offset=${nextLine} 续读。`,
+      );
+      return [fitLines, ...hints].join('\n');
+    }
+
+    if (hasMoreLines) {
+      hints.push(
+        `[READ 提示] 显示第 ${startLine}-${lastShownLine} 行，共 ${totalLines} 行。` +
+          `用 offset=${lastShownLine + 1} 续读剩余 ${totalLines - lastShownLine} 行。`,
+      );
+    }
+
+    return [numbered, ...hints].filter(Boolean).join('\n');
   },
   validateResult: (result) => {
     // read 不再产生 invalid 结果（截断/图片省略/二进制都有效返回），
@@ -422,13 +531,13 @@ function escapeRegex(s: string): string {
 function buildEditPatch(
   rel: string,
   original: string,
-  ranges: Array<{ index: number; oldText: string; newText: string }>,
+  ranges: Array<{ index: number; matched: string; newText: string }>,
 ): string {
   const lines = (s: string) => s.split('\n');
   const out: string[] = [`编辑成功: ${rel} (${ranges.length} 处修改)`, `--- ${rel}`, `+++ ${rel}`];
   for (const r of ranges) {
     const startLine = original.slice(0, r.index).split('\n').length;
-    const oldLines = lines(r.oldText);
+    const oldLines = lines(r.matched);
     const newLines = lines(r.newText);
     out.push(`@@ -${startLine},${oldLines.length} +${startLine},${newLines.length} @@`);
     for (const l of oldLines) out.push(`-${l}`);
@@ -547,6 +656,90 @@ function editMultipleError(
   );
 }
 
+// edit 参数容错：兼容三种模型输出变体
+//  1) edits 是 JSON 字符串（部分模型会把数组序列化成字符串）
+//  2) edits 是单个 edit 对象（漏包数组）
+//  3) legacy：顶层 oldText/newText
+function normalizeEditArgs(args: Record<string, unknown>): Array<{
+  oldText: string;
+  newText: string;
+}> {
+  if (typeof args.oldText === 'string' && typeof args.newText === 'string' && args.edits == null) {
+    return [{ oldText: args.oldText, newText: args.newText }];
+  }
+  let edits: unknown = args.edits;
+  if (typeof edits === 'string') {
+    try {
+      edits = JSON.parse(edits);
+    } catch {
+      throw new Error('edits 参数是无效的 JSON 字符串，请直接传数组');
+    }
+  }
+  if (edits && typeof edits === 'object' && !Array.isArray(edits)) {
+    edits = [edits];
+  }
+  return Array.isArray(edits) ? (edits as Array<{ oldText: string; newText: string }>) : [];
+}
+
+// 返回首个非空行的前导缩进（空格/tab）
+function firstNonEmptyLine(s: string): string {
+  const l = s.split('\n').find((x) => x.trim() !== '');
+  return l ?? '';
+}
+function leadingIndent(line: string): string {
+  return line.match(/^[ \t]*/)?.[0] ?? '';
+}
+
+// 保守 fuzzy 匹配：仅当 oldText 作为"整行块"在文件中唯一出现、
+// 且与文件的差异只在行首/行尾空白（缩进/尾部空格）时才命中。
+// 返回命中的真实字符区间（用文件里的实际文本作为替换目标，非空白字符原样保留）。
+// 不满足"唯一整行块"一律返回 null（调用方走报错诊断，绝不猜测）。
+function fuzzyApplyMatch(
+  text: string,
+  oldText: string,
+): { index: number; matchedText: string } | null {
+  if (oldText.length < 8) return null; // 过短的 oldText 不做 fuzzy，防误命中
+  const srcLines = text.split('\n');
+  const oldLines = oldText.split('\n');
+  // 去掉 oldText 首尾的空行（模型常多带换行），但保留中间行结构
+  let first = 0;
+  let last = oldLines.length - 1;
+  while (first <= last && oldLines[first].trim() === '') first++;
+  while (last >= first && oldLines[last].trim() === '') last--;
+  if (first > last) return null;
+  const oldBlock = oldLines.slice(first, last + 1);
+  // 每行 trim（行首缩进 + 行尾空白都视为可容错差异），但行内字符必须逐字一致
+  const oldCmp = oldBlock.map((l) => l.trim());
+  const srcCmp = srcLines.map((l) => l.trim());
+  if (oldCmp.some((l) => l.length < 2)) return null; // 块内不接受近空行，防误匹配
+
+  const hitStartLines: number[] = [];
+  for (let s = 0; s + oldCmp.length <= srcCmp.length; s++) {
+    let ok = true;
+    for (let k = 0; k < oldCmp.length; k++) {
+      if (srcCmp[s + k] !== oldCmp[k]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) hitStartLines.push(s);
+  }
+  if (hitStartLines.length !== 1) return null; // 必须唯一
+
+  const startLine = hitStartLines[0];
+  const endLine = startLine + oldCmp.length - 1;
+  // 计算字符偏移：行起始
+  const lineStarts: number[] = [];
+  let acc = 0;
+  for (const l of srcLines) {
+    lineStarts.push(acc);
+    acc += l.length + 1; // +1 for '\n'
+  }
+  const startIndex = lineStarts[startLine];
+  const endIndex = endLine + 1 < srcLines.length ? lineStarts[endLine + 1] - 1 : text.length;
+  return { index: startIndex, matchedText: text.slice(startIndex, endIndex) };
+}
+
 register({
   name: 'edit',
   description:
@@ -581,7 +774,8 @@ register({
     const rel = String(args.path ?? '').trim();
     if (!rel) throw new Error('缺少参数 path');
 
-    const edits = Array.isArray(args.edits) ? args.edits : [];
+    // 参数容错：edits 数组 / JSON 字符串 / 单对象 / legacy 顶层 oldText+newText
+    const edits = normalizeEditArgs(args as Record<string, unknown>);
     if (edits.length === 0) throw new Error('edits 不能为空');
     for (const e of edits) {
       if (typeof e.oldText !== 'string' || typeof e.newText !== 'string') {
@@ -604,29 +798,78 @@ register({
       return `[sandbox-tool-invalid] 文件过大，无法编辑（限制 ${MAX_READ_BYTES} 字节）: ${rel}`;
     }
 
-    let content: string;
+    let rawContent: string;
     try {
-      content = fs.readFileSync(real, 'utf8');
+      rawContent = fs.readFileSync(real, 'utf8');
     } catch {
       throw new Error(`读取失败: ${rel}`);
     }
 
-    const hasCRLF = content.includes('\r\n');
-    const normalized = hasCRLF ? content.replace(/\r\n/g, '\n') : content;
+    // BOM：剥离后匹配/替换，写回时还原（UTF-8 BOM \uFEFF）
+    const hadBom = rawContent.charCodeAt(0) === 0xfeff;
+    const contentNoBom = hadBom ? rawContent.slice(1) : rawContent;
+    // CRLF：归一到 LF 匹配，写回时还原
+    const hasCRLF = contentNoBom.includes('\r\n');
+    const normalized = hasCRLF ? contentNoBom.replace(/\r\n/g, '\n') : contentNoBom;
 
-    // 在原始归一化内容中定位每一次 oldText，确保恰好出现一次
-    const ranges: Array<{ index: number; oldText: string; newText: string }> = [];
+    interface AppliedRange {
+      index: number;
+      matched: string; // 实际被替换的文本（exact=oldText；fuzzy=文件真实行块）
+      newText: string;
+      fuzzy: boolean;
+    }
+
+    // 定位每一次 edit：exact 优先；不中则保守 fuzzy（整行块、唯一、仅空白差异）
+    const ranges: AppliedRange[] = [];
+    const fuzzyEdits = new Set<number>();
     for (let ei = 0; ei < edits.length; ei++) {
       const e = edits[ei];
       const idx = normalized.indexOf(e.oldText);
-      if (idx === -1) {
-        throw new Error(editNotFoundError(normalized, e.oldText, ei, edits.length));
+      if (idx !== -1) {
+        // exact 命中但落在行内（oldText 起点不是行首），说明它实际是某行
+        // 去掉缩进后的子串——此时仍按整行 fuzzy 处理，保证替换目标包含真实缩进。
+        const atLineStart = idx === 0 || normalized[idx - 1] === '\n';
+        const isStandalone =
+          idx + e.oldText.length === normalized.length ||
+          normalized[idx + e.oldText.length] === '\n';
+        if (atLineStart && isStandalone) {
+          ranges.push({ index: idx, matched: e.oldText, newText: e.newText, fuzzy: false });
+          continue;
+        }
+        // 行内命中 → 尝试整行 fuzzy（唯一才应用）
+        const hit = fuzzyApplyMatch(normalized, e.oldText);
+        if (hit) {
+          ranges.push({
+            index: hit.index,
+            matched: hit.matchedText,
+            newText: e.newText,
+            fuzzy: true,
+          });
+          fuzzyEdits.add(ei);
+          continue;
+        }
+        // fuzzy 也不中，退回 exact 行内替换（保持旧行为）
+        ranges.push({ index: idx, matched: e.oldText, newText: e.newText, fuzzy: false });
+        continue;
       }
-      ranges.push({ index: idx, oldText: e.oldText, newText: e.newText });
+      // exact 不中 → 保守 fuzzy
+      const hit = fuzzyApplyMatch(normalized, e.oldText);
+      if (hit) {
+        ranges.push({
+          index: hit.index,
+          matched: hit.matchedText,
+          newText: e.newText,
+          fuzzy: true,
+        });
+        fuzzyEdits.add(ei);
+        continue;
+      }
+      throw new Error(editNotFoundError(normalized, e.oldText, ei, edits.length));
     }
 
-    // 严格检查：每个 oldText 在内容中必须恰好出现一次
+    // 严格检查：exact edit 必须恰好出现一次（fuzzy 已保证唯一整行块）
     for (let ei = 0; ei < edits.length; ei++) {
+      if (fuzzyEdits.has(ei)) continue;
       const e = edits[ei];
       const count = (normalized.match(new RegExp(escapeRegex(e.oldText), 'g')) || []).length;
       if (count !== 1) {
@@ -634,34 +877,56 @@ register({
       }
     }
 
-    // 检查重叠
+    // 检查重叠（用实际替换区间）
     ranges.sort((a, b) => a.index - b.index);
     for (let i = 1; i < ranges.length; i++) {
       const prev = ranges[i - 1];
       const curr = ranges[i];
-      if (prev.index + prev.oldText.length > curr.index) {
+      if (prev.index + prev.matched.length > curr.index) {
         throw new Error('edits 存在重叠修改，拒绝执行');
       }
     }
 
-    // 逆序应用（避免索引偏移）
+    // 逆序应用（用 matched 作为被替换文本，fuzzy 时即文件真实内容）
+    // fuzzy 整行替换：newText 通常不带源文件缩进，自动补回源行块的基线缩进，
+    // 避免"改一行丢缩进"破坏代码格式。
     let result = normalized;
     for (let i = ranges.length - 1; i >= 0; i--) {
-      const { index, oldText, newText } = ranges[i];
-      result = result.slice(0, index) + newText + result.slice(index + oldText.length);
+      const r = ranges[i];
+      let replacement = r.newText;
+      if (r.fuzzy) {
+        const srcIndent = leadingIndent(firstNonEmptyLine(r.matched));
+        const newFirstLine = firstNonEmptyLine(r.newText);
+        if (srcIndent && newFirstLine) {
+          const newIndent = leadingIndent(newFirstLine);
+          if (srcIndent.length > newIndent.length) {
+            const pad = srcIndent.slice(newIndent.length);
+            replacement = r.newText
+              .split('\n')
+              .map((line) => (line.trim() === '' ? line : pad + line))
+              .join('\n');
+          }
+        }
+      }
+      result = result.slice(0, r.index) + replacement + result.slice(r.index + r.matched.length);
     }
 
     if (hasCRLF) {
       result = result.replace(/\n/g, '\r\n');
     }
+    if (hadBom) {
+      result = '\uFEFF' + result;
+    }
 
-    if (result === content) {
+    if (result === rawContent) {
       return `无修改: ${rel}`;
     }
 
     const patch = buildEditPatch(rel, normalized, ranges);
     atomicWriteContent(real, result, rel);
-    return patch;
+    const fuzzyNote =
+      fuzzyEdits.size > 0 ? `（其中 ${fuzzyEdits.size} 处按缩进/空白容错匹配）` : '';
+    return `${patch}${fuzzyNote}`;
   },
   validateResult: (result) => {
     if (typeof result === 'string' && result.startsWith('[sandbox-tool-invalid]')) {

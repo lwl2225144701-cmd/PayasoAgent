@@ -71,9 +71,9 @@ test("listDir('input') 列出 demo.txt", async () => {
   assert.ok(res.includes('demo.txt'));
 });
 
-test("readFile('input/demo.txt') 返回 UTF-8 内容", async () => {
+test("readFile('input/demo.txt') 返回带行号前缀的 UTF-8 内容", async () => {
   const res = await execute('readFile', { path: 'input/demo.txt' }, ctx);
-  assert.equal(res, 'hello sandbox');
+  assert.equal(res, '1→hello sandbox');
 });
 
 // ---- 2. 不存在 ----
@@ -186,6 +186,42 @@ test('read 文件为空 → 空文件提示（valid）', async () => {
   assert.ok(res.includes('文件为空'), `结果: ${res}`);
 });
 
+// ---- 6b. 行号 / offset / limit / 截断 ----
+test('read 多行文件带行号前缀', async () => {
+  fs.writeFileSync(path.join(root, 'work', 'nums.txt'), 'one\ntwo\nthree\n');
+  const res = await execute('read', { path: 'work/nums.txt' }, ctx);
+  assert.ok(res.includes('1→one'), `缺行号: ${res}`);
+  assert.ok(res.includes('2→two'), `缺行号: ${res}`);
+  assert.ok(res.includes('3→three'), `缺行号: ${res}`);
+});
+
+test('read offset+limit 按行切片并给续读行号', async () => {
+  fs.writeFileSync(path.join(root, 'work', 'nums2.txt'), ['a', 'b', 'c', 'd', 'e'].join('\n'));
+  const res = await execute('read', { path: 'work/nums2.txt', offset: 2, limit: 2 }, ctx);
+  assert.ok(res.includes('2→b'), `应从第2行: ${res}`);
+  assert.ok(res.includes('3→c'), `应含第3行: ${res}`);
+  assert.ok(!res.includes('4→d'), 'limit=2 不应含第4行');
+  assert.ok(res.includes('offset=4'), `应提示 offset=4 续读: ${res}`);
+});
+
+test('read offset 超出行数 → 报错', async () => {
+  fs.writeFileSync(path.join(root, 'work', 'small.txt'), 'x\ny\n');
+  await assert.rejects(
+    () => execute('read', { path: 'work/small.txt', offset: 99 }, ctx),
+    /超出文件末尾/,
+  );
+});
+
+test('read 行数超 500 → 截断并给 offset 续读', async () => {
+  fs.writeFileSync(
+    path.join(root, 'work', 'many.txt'),
+    Array.from({ length: 600 }, (_, i) => `line ${i + 1}`).join('\n'),
+  );
+  const res = await execute('read', { path: 'work/many.txt' }, ctx);
+  assert.ok(res.includes('READ 提示'), `应有续读提示: ${res.slice(-200)}`);
+  assert.ok(res.includes('500'), `应显示到约500行: ${res.slice(-200)}`);
+});
+
 // ---- 7. Schema 无泄露 ----
 test('LLM Schema 无 runId、无宿主机绝对路径', () => {
   const json = JSON.stringify(getSchemas());
@@ -206,7 +242,7 @@ test('向后兼容别名不在 Schema 中但仍可通过 execute 调用', async 
   assert.ok(!names.includes('listDir'), 'listDir 应从 Schema 中移除');
   assert.ok(!names.includes('readFile'), 'readFile 应从 Schema 中移除');
   assert.ok(!names.includes('writeFile'), 'writeFile 应从 Schema 中移除');
-  assert.equal(await execute('readFile', { path: 'input/demo.txt' }, ctx), 'hello sandbox');
+  assert.equal(await execute('readFile', { path: 'input/demo.txt' }, ctx), '1→hello sandbox');
   assert.match(await execute('listDir', { path: 'work' }, ctx), /a\.txt/);
 });
 

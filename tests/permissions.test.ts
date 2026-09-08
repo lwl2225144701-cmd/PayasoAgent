@@ -41,7 +41,7 @@ try {
   });
 
   await test('Read Only can read inside Workspace', async () => {
-    assert.equal(await execute('read', { path: 'inside.txt' }, context('read-only')), 'inside');
+    assert.equal(await execute('read', { path: 'inside.txt' }, context('read-only')), '1→inside');
   });
 
   await test('Read Only rejects write/create/move/delete', async () => {
@@ -79,7 +79,7 @@ try {
   await test('Full access reads and writes absolute host paths', async () => {
     const ctx = context('full-access');
     const existing = path.join(outside, 'outside.txt');
-    assert.equal(await execute('read', { path: existing }, ctx), 'outside');
+    assert.equal(await execute('read', { path: existing }, ctx), '1→outside');
     const created = path.join(outside, 'created.txt');
     await execute('write', { path: created, content: 'full' }, ctx);
     assert.equal(fs.readFileSync(created, 'utf8'), 'full');

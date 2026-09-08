@@ -12,6 +12,7 @@ import {
   normalizeToolResult,
   type ToolContext,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -20,6 +21,7 @@ async function execute(
 ): Promise<string> {
   return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
 import '../src/tools/filesystem.js'; // 副作用：注册 listDir / readFile / writeFile
 import '../src/tools/runtime-tools.js'; // 副作用：注册 searchText / createDir / moveFile / deleteFile / shell
 import {
@@ -62,7 +64,7 @@ test('write 往返：写入 work/note.txt 后可 read 读回', async () => {
   const w = await execute('write', { path: 'work/note.txt', content: 'hello' }, ctx);
   assert.ok(w.includes('写入成功'), `写入结果: ${w}`);
   const r = await execute('read', { path: 'work/note.txt' }, ctx);
-  assert.equal(r, 'hello');
+  assert.equal(r, '1→hello');
 });
 
 test('write 禁止写入 input/（只读白名单）', async () => {
@@ -127,7 +129,7 @@ test('moveFile 防重放：成功执行后同 identity 请求回放（idle），
 // ---- 5. 向后兼容别名仍可执行 ----
 test('writeFile / readFile / listDir / searchText hidden 别名仍可执行', async () => {
   assert.ok(await execute('writeFile', { path: 'work/compat.txt', content: 'x' }, ctx), '写入成功');
-  assert.equal(await execute('readFile', { path: 'work/compat.txt' }, ctx), 'x');
+  assert.equal(await execute('readFile', { path: 'work/compat.txt' }, ctx), '1→x');
   assert.match(await execute('listDir', { path: 'work' }, ctx), /compat\.txt/);
   assert.match(
     await execute('searchText', { path: 'work/compat.txt', pattern: 'x' }, ctx),

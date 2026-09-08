@@ -12,6 +12,7 @@ import {
   type ToolContext,
   validateToolResult,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -20,6 +21,7 @@ async function execute(
 ): Promise<string> {
   return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
 import '../src/tools/filesystem.js'; // 副作用：注册 read / write / edit / ls
 
 const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-edit-test-'));
@@ -220,6 +222,71 @@ test('edit 超大文件（>1MB）→ tool_result_invalid', async () => {
 test('edit 在 Schema 中注册', () => {
   const names = getSchemas().map((s) => s.function.name);
   assert.ok(names.includes('edit'));
+});
+
+// ---- 12. BOM 剥离 + 还原（Windows 记事本类文件）----
+test('edit 含 BOM 文件：匹配成功且 BOM/CRLF 还原', async () => {
+  const p = path.join(root, 'work', 'bom.ts');
+  fs.writeFileSync(p, '﻿line one\r\nline two\r\n', 'utf8');
+  const res = await execute(
+    'edit',
+    { path: 'work/bom.ts', edits: [{ oldText: 'line two', newText: 'line TWO' }] },
+    ctx,
+  );
+  assert.ok(res.includes('编辑成功'), res);
+  const after = fs.readFileSync(p, 'utf8');
+  assert.equal(after.charCodeAt(0), 0xfeff, 'BOM 应保留');
+  assert.ok(after.includes('line TWO\r\n'), 'CRLF 应保留');
+});
+
+// ---- 13. 参数容错：edits 是 JSON 字符串 / legacy 顶层参数 ----
+test('edit edits 为 JSON 字符串 → 容错解析', async () => {
+  const p = path.join(root, 'work', 'arg1.ts');
+  fs.writeFileSync(p, 'alpha beta gamma', 'utf8');
+  const res = await execute(
+    'edit',
+    { path: 'work/arg1.ts', edits: JSON.stringify([{ oldText: 'beta', newText: 'BETA' }]) },
+    ctx,
+  );
+  assert.ok(res.includes('编辑成功'), res);
+  assert.equal(fs.readFileSync(p, 'utf8'), 'alpha BETA gamma');
+});
+
+test('edit legacy 顶层 oldText/newText → 容错解析', async () => {
+  const p = path.join(root, 'work', 'arg2.ts');
+  fs.writeFileSync(p, 'foo bar baz', 'utf8');
+  const res = await execute('edit', { path: 'work/arg2.ts', oldText: 'bar', newText: 'BAR' }, ctx);
+  assert.ok(res.includes('编辑成功'), res);
+  assert.equal(fs.readFileSync(p, 'utf8'), 'foo BAR baz');
+});
+
+// ---- 14. 保守 fuzzy：缩进差异（唯一整行块）自动应用并保留缩进 ----
+test('edit oldText 缩进不一致（唯一）→ fuzzy 自动应用且保留原缩进', async () => {
+  const p = path.join(root, 'work', 'fz.ts');
+  fs.writeFileSync(p, 'function f() {\n  const x = 1;\n  return x;\n}\n', 'utf8');
+  const res = await execute(
+    'edit',
+    { path: 'work/fz.ts', edits: [{ oldText: 'const x = 1;', newText: 'const x = 99;' }] },
+    ctx,
+  );
+  assert.ok(res.includes('编辑成功'), res);
+  const after = fs.readFileSync(p, 'utf8');
+  assert.ok(after.includes('  const x = 99;'), `缩进应保留: ${JSON.stringify(after)}`);
+  assert.ok(!after.includes('const x = 1;'), '旧内容应被替换');
+});
+
+test('edit fuzzy 真歧义（两处相同行）→ 仍拒绝', async () => {
+  const p = path.join(root, 'work', 'fzamb.ts');
+  fs.writeFileSync(p, 'function a() {\n  return 1;\n}\nfunction b() {\n  return 1;\n}\n', 'utf8');
+  await assert.rejects(
+    () =>
+      execute(
+        'edit',
+        { path: 'work/fzamb.ts', edits: [{ oldText: 'return 1;', newText: 'return 99;' }] },
+        ctx,
+      ),
+    /出现 2 次/,
+  );
 });
 
 // ---- 汇总 ----

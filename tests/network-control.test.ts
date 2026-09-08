@@ -34,6 +34,7 @@ import {
   type ToolContext,
   toolRequiresNetwork,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -42,6 +43,7 @@ async function execute(
 ): Promise<string> {
   return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
 import '../src/tools/filesystem.js'; // read/write/ls
 import '../src/tools/runtime-tools.js'; // shell（capabilities.network=true）
 import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';
@@ -156,7 +158,7 @@ test('network=off 时 read/write 正常执行（无网络能力不受开关影�
   setNetworkMode('off');
   await execute('write', { path: 'work/net-off.txt', content: 'hello' }, ctx);
   const res = await execute('read', { path: 'work/net-off.txt' }, ctx);
-  assert.equal(res, 'hello');
+  assert.equal(res, '1→hello');
   setNetworkMode('on');
 });
 
