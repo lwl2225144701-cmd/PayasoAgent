@@ -82,6 +82,51 @@ export function openWorkspace(): Promise<{ workspace: WorkspaceView | null; canc
   return jsonFetch('/workspace/open', { method: 'POST', cache: 'no-store' });
 }
 
+/** 网页内目录选择后采纳该目录为当前 Workspace（等价 native picker 的宿主切换） */
+export function selectWorkspace(path: string): Promise<{ workspace: WorkspaceView | null }> {
+  return jsonFetch('/workspace/select', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+    cache: 'no-store',
+  });
+}
+
+export interface DirectoryPickerCapability {
+  kind: 'native' | 'browse';
+}
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  hidden: boolean;
+}
+
+export interface DirectoryListing {
+  path: string;
+  home: string;
+  crumbs: DirectoryEntry[];
+  entries: DirectoryEntry[];
+  truncated: boolean;
+}
+
+export function getDirectoryPickerCapability(): Promise<{ capability: DirectoryPickerCapability }> {
+  return jsonFetch('/workspace/capability', { cache: 'no-store' });
+}
+
+export function browseDirectory(path?: string): Promise<DirectoryListing> {
+  return jsonFetch('/workspace/browse', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  });
+}
+
+export function createWorkspaceDirectory(path: string, name: string): Promise<{ path: string }> {
+  return jsonFetch('/workspace/create-directory', {
+    method: 'POST',
+    body: JSON.stringify({ path, name }),
+  });
+}
+
 export function renameWorkspace(fromName: string, toName: string): Promise<{ updated: number }> {
   return jsonFetch('/workspace/rename', {
     method: 'POST',

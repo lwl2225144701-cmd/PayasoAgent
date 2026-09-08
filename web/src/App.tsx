@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './App.module.css';
 import {
   archiveSession as apiArchiveSession,
+  getDirectoryPickerCapability,
   renameSession as apiRenameSession,
   renameWorkspace as apiRenameWorkspace,
   createRun,
@@ -15,6 +16,7 @@ import {
   listSessions,
   openWorkspace,
   resumeRun,
+  selectWorkspace as apiSelectWorkspace,
   setDefaultModel,
   stopRun,
 } from './api';
@@ -25,12 +27,15 @@ import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { TurnNavigator } from './components/TurnNavigator';
+import { WorkspacePickerModal } from './components/WorkspacePickerModal';
 import { useConversationScroll } from './hooks/useConversationScroll';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import { useThemeMode } from './hooks/useThemeMode';
 import type {
   ContextUsageEvent,
   DefaultModelView,
+  DirectoryListing,
+  DirectoryPickerCapability,
   FileEntry,
   HostRun,
   HostSession,
@@ -70,6 +75,12 @@ export default function App() {
   const sidebarUserOverrideRef = useRef(false);
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCapability, setPickerCapability] = useState<DirectoryPickerCapability | null>(null);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerCreating, setPickerCreating] = useState(false);
+  const [pickerListing, setPickerListing] = useState<DirectoryListing | null>(null);
   const [resumingRun, setResumingRun] = useState(false);
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -200,6 +211,9 @@ export default function App() {
     getWorkspace()
       .then((resp) => setWorkspace(resp.workspace))
       .catch(() => {});
+    getDirectoryPickerCapability()
+      .then((resp) => setPickerCapability(resp.capability))
+      .catch(() => setPickerCapability({ kind: 'browse' as const }));
     void refreshModels();
     void refreshPiProviders();
     void refreshDefaultModel();
@@ -632,15 +646,38 @@ export default function App() {
   const handleOpenWorkspace = useCallback(async () => {
     if (openingWorkspace) return;
     setOpeningWorkspace(true);
+    setPickerError(null);
     try {
-      const resp = await openWorkspace();
-      if (!resp.cancelled) setWorkspace(resp.workspace);
+      if (pickerCapability?.kind === 'browse') {
+        setPickerOpen(true);
+      } else {
+        const resp = await openWorkspace();
+        if (!resp.cancelled) setWorkspace(resp.workspace);
+      }
     } catch (err) {
       console.error('Failed to open workspace:', err);
+      setPickerError(err instanceof Error ? err.message : '打开工作区失败');
     } finally {
       setOpeningWorkspace(false);
     }
-  }, [openingWorkspace]);
+  }, [openingWorkspace, pickerCapability]);
+
+  // 网页内目录选择器确认后采纳：与 native picker 等价地切换 Host 当前
+  // Workspace（Host 侧走 canonicalizeWorkspaceRoot 校验，不弹系统窗口）。
+  const handlePickerSelect = useCallback(
+    async (path: string) => {
+      try {
+        const resp = await apiSelectWorkspace(path);
+        setWorkspace(resp.workspace);
+        setPickerOpen(false);
+      } catch (err) {
+        console.error('Failed to select workspace:', err);
+        setPickerError(err instanceof Error ? err.message : '选择工作区失败');
+        showToast(err instanceof Error ? err.message : '选择工作区失败');
+      }
+    },
+    [showToast],
+  );
 
   void online;
   void loading;
@@ -759,6 +796,16 @@ export default function App() {
 
       {viewingFile && currentRunId && (
         <FileModal runId={currentRunId} file={viewingFile} onClose={() => setViewingFile(null)} />
+      )}
+
+      {pickerOpen && (
+        <WorkspacePickerModal
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onSelect={(path) => {
+            void handlePickerSelect(path);
+          }}
+        />
       )}
 
       {settingsOpen && (

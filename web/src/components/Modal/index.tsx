@@ -7,9 +7,11 @@ interface ModalProps {
   children: ReactNode;
   onClose: () => void;
   ariaLabel?: string;
+  width?: string;
+  height?: string;
 }
 
-export function Modal({ children, onClose, ariaLabel }: ModalProps) {
+export function Modal({ children, onClose, ariaLabel, width, height }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
   useEscapeKey(true, onClose);
   useClickOutside(ref, true, onClose);
@@ -20,6 +22,7 @@ export function Modal({ children, onClose, ariaLabel }: ModalProps) {
       <div
         ref={ref}
         className={styles.modal}
+        style={width || height ? { width, height } : undefined}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label={ariaLabel}

@@ -38,6 +38,31 @@ export interface WorkspaceView {
   name: string;
 }
 
+export interface DirectoryPickerCapability {
+  kind: 'native' | 'browse';
+}
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  hidden: boolean;
+}
+
+export interface DirectoryListing {
+  path: string;
+  home: string;
+  crumbs: DirectoryEntry[];
+  entries: DirectoryEntry[];
+  truncated: boolean;
+}
+
+export interface WorkspacePickerState {
+  capability: DirectoryPickerCapability | null;
+  listing: DirectoryListing | null;
+  loading: boolean;
+  error: string | null;
+}
+
 export interface FileEntry {
   name: string;
   /** 事件派生的文件（write/edit 产物）没有 stat 大小；工作区列出的文件才有。 */

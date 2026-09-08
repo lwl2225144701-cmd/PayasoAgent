@@ -26,8 +26,10 @@ import {
   clearWorkspace,
   getWorkspace,
   openWorkspacePicker,
+  setWorkspace,
   workspacePublicView,
 } from './workspace.js';
+import { browseDirectory, createDirectoryInside } from './workspace-browser.js';
 
 const MAX_FILE_BYTES = 1024 * 1024; // 文本文件读取上限
 const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024; // 图片附件/预览上限（与 read 读图一致）
@@ -836,6 +838,78 @@ export async function handleRequest(
       if (!sessionId || !SAFE_SESSION_ID.test(sessionId)) return bad(res, '缺少 sessionId');
       try {
         return sendJson(res, 200, manager.purgeWorkspace(sessionId));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    // In-page directory browsing (no native window): the Host enumerates
+    // directories so the UI can render a folder tree inside the page. This
+    // avoids the Windows FolderBrowserDialog being hidden behind the browser.
+    // Adopting a directory still runs canonicalizeWorkspaceRoot (same
+    // authorization as the native picker: the user explicitly chose it).
+    if (s.length === 2 && s[1] === 'capability' && method === 'GET') {
+      return sendJson(res, 200, { capability: { kind: 'browse' } });
+    }
+    if (s.length === 2 && s[1] === 'browse' && method === 'POST') {
+      checkOrigin(req, port);
+      requireAuth(req);
+      let body: Record<string, unknown> = {};
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const requestedPath =
+        typeof body.path === 'string' ? body.path.trim() : undefined;
+      try {
+        const listing = await browseDirectory(requestedPath);
+        return sendJson(res, 200, listing);
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && s[1] === 'create-directory' && method === 'POST') {
+      checkOrigin(req, port);
+      requireAuth(req);
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const parentPath = typeof body.path === 'string' ? body.path : '';
+      const name = typeof body.name === 'string' ? body.name : '';
+      try {
+        return sendJson(res, 200, await createDirectoryInside(parentPath, name));
+      } catch (err) {
+        return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 2 && s[1] === 'select' && method === 'POST') {
+      checkOrigin(req, port);
+      requireAuth(req);
+      let body: Record<string, unknown>;
+      try {
+        body = await readBody(req);
+      } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+          return sendJson(res, 413, { error: 'payload_too_large', maxBytes: MAX_BODY_BYTES });
+        }
+        throw err;
+      }
+      const selectPath = typeof body.path === 'string' ? body.path.trim() : '';
+      if (!selectPath) return bad(res, '缺少 path');
+      try {
+        // canonicalizeWorkspaceRoot inside setWorkspace: absolute + exists + isDirectory + realpath
+        return sendJson(res, 200, {
+          workspace: workspacePublicView(setWorkspace(selectPath)),
+        });
       } catch (err) {
         return bad(res, (err as Error).message);
       }
