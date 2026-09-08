@@ -77,33 +77,6 @@
   line-height: 1.4;
 }
 
-/* /compact 状态行（DSH 式）：进行中 → 量化结果 */
-.compactStatus {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 8px 14px 0;
-  padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--color-brand-border) 62%, transparent);
-  border-radius: 10px;
-  background: var(--color-brand-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.compactCmd {
-  flex: 0 0 auto;
-  color: var(--text-primary);
-  font-weight: 600;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-}
-
-.compactSep {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-}
-
 .queuePanel {
   margin: 8px 14px 0;
   overflow: hidden;

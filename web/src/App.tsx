@@ -35,6 +35,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
+import { type CompactStatusState, compactStatusText } from './components/Timeline/context-gauge';
 import { TurnNavigator } from './components/TurnNavigator';
 import { WorkspacePickerModal } from './components/WorkspacePickerModal';
 import { useConversationScroll } from './hooks/useConversationScroll';
@@ -80,11 +81,7 @@ export default function App() {
   // /plan 计划模式（会话级元数据；进入后下一轮强制只读 + 仅产出方案）
   const [planMode, setPlanModeState] = useState(false);
   // /compact 状态行（DSH 式：进行中 → 量化结果），随会话切换/新消息清除
-  const [compactStatus, setCompactStatus] = useState<
-    | { phase: 'running' }
-    | { phase: 'done'; summarizedMessages: number; compactedTokens: number }
-    | null
-  >(null);
+  const [compactStatus, setCompactStatus] = useState<CompactStatusState | null>(null);
   // 上下文预算环形指示器数据：Timeline 从 context_usage 事件上抛，输入栏展示
   const [contextUsage, setContextUsage] = useState<ContextUsageEvent | null>(null);
   const [online, setOnline] = useState(false);
@@ -551,6 +548,7 @@ export default function App() {
               phase: 'done',
               summarizedMessages: resp.summarizedMessages,
               compactedTokens: resp.compactedTokens,
+              reason: resp.reason,
             });
           } catch (err) {
             setCompactStatus(null);
@@ -918,6 +916,13 @@ export default function App() {
                     <p>正在准备工作区…</p>
                   </div>
                 )}
+                {compactStatus && (
+                  <div className={styles.compactStatus} role="status">
+                    <span className={styles.compactCmd}>compact</span>
+                    <span className={styles.compactSep}>·</span>
+                    {compactStatusText(compactStatus)}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -963,7 +968,6 @@ export default function App() {
             onDeleteQueued={handleDeleteQueued}
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}
-            compactStatus={compactStatus}
             onBuiltinCommand={handleBuiltinCommand}
           />
         )}

@@ -256,6 +256,28 @@ export function contextGaugeTitle(usage: ContextUsageEvent): string {
   return parts.join(' · ');
 }
 
+/** /compact 状态（App 持有；会话流内渲染）。 */
+export type CompactStatusState =
+  | { phase: 'running' }
+  | {
+      phase: 'done';
+      summarizedMessages: number;
+      compactedTokens: number;
+      reason?: 'no_checkpoint' | 'nothing_compactable';
+    };
+
+/** /compact 状态行文案：进行中 / 量化结果 / 两类零结果原因。 */
+export function compactStatusText(status: CompactStatusState): string {
+  if (status.phase === 'running') return '正在压缩…';
+  if (status.summarizedMessages > 0) {
+    return `已压缩 ${status.summarizedMessages} 条历史记录（约 ${formatContextTokens(status.compactedTokens)} tokens）`;
+  }
+  if (status.reason === 'no_checkpoint') {
+    return '该会话没有可用的运行记录（checkpoint），无法压缩';
+  }
+  return '没有可压缩的历史记录';
+}
+
 /**
  * 预算推导说明：窗口 = 输入预算 + 输出预留 + 安全余量。
  * 解释分母为何小于用户配置的上下文窗口（如 1M 窗口显示 976K 预算）。

@@ -2,6 +2,7 @@
 // 环形 SVG 渲染为 React 组件，由 tsc + build:web 保证；此处锁定数据逻辑。
 
 import {
+  compactStatusText,
   contextGaugeTitle,
   deriveRunStreamMetrics,
   deriveRunTokenUsage,
@@ -253,8 +254,35 @@ check(
 check(
   '预算推导: 1M 窗口 = 976K 预算 + 4.1K 输出 + 20K 安全',
   formatBudgetDerivation(
-    usageEvent({ contextWindowTokens: 1_000_000, inputBudgetTokens: 975_904, maxOutputTokens: 4_096, safetyTokens: 20_000 }),
+    usageEvent({
+      contextWindowTokens: 1_000_000,
+      inputBudgetTokens: 975_904,
+      maxOutputTokens: 4_096,
+      safetyTokens: 20_000,
+    }),
   ) === '窗口 1M = 预算 976K + 输出预留 4.1K + 安全 20K',
+);
+
+// ---- /compact 状态行文案 ----
+check('compact: 进行中文案', compactStatusText({ phase: 'running' }) === '正在压缩…');
+check(
+  'compact: 量化结果',
+  compactStatusText({ phase: 'done', summarizedMessages: 70, compactedTokens: 67_825 }) ===
+    '已压缩 70 条历史记录（约 67.8K tokens）',
+);
+check(
+  'compact: 缺 checkpoint 提示',
+  compactStatusText({
+    phase: 'done',
+    summarizedMessages: 0,
+    compactedTokens: 0,
+    reason: 'no_checkpoint',
+  }) === '该会话没有可用的运行记录（checkpoint），无法压缩',
+);
+check(
+  'compact: 无可压缩历史',
+  compactStatusText({ phase: 'done', summarizedMessages: 0, compactedTokens: 0 }) ===
+    '没有可压缩的历史记录',
 );
 
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);

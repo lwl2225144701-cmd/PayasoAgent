@@ -236,3 +236,28 @@
     height: 38px;
   }
 }
+
+/* /compact 状态行（会话流内，DSH 式）：消息末尾的轻量状态 */
+.compactStatus {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 14px auto 6px;
+  max-width: var(--content-width);
+  padding: 0 28px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.compactCmd {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.compactSep {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
