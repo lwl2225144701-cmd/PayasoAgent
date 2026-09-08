@@ -3,7 +3,6 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +13,6 @@ import { RunManager } from '../src/host/run-manager.js';
 import { MemorySecretStore, providerSecretKey } from '../src/host/secrets/secret-store.js';
 import { createHostServer } from '../src/host/server.js';
 import { checkpointPath } from '../src/persistence/file-checkpoint-store.js';
-import { createWorkspace, getSandboxRoot } from '../src/sandbox/sandbox-manager.js';
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-settings-test-'));
 process.env.SANDBOX_ROOT = ROOT;
@@ -125,7 +123,6 @@ async function postJSONWithOrigin(
   url: string,
   body: any,
   origin: string,
-  expectedStatus = 200,
 ): Promise<{ status: number }> {
   const u = new URL(url);
   const payload = JSON.stringify(body);
@@ -576,7 +573,9 @@ async function postJSONWithOrigin(
       check(
         'available-models returns catalog',
         Array.isArray(viaProvider.catalog) &&
-          viaProvider.catalog.some((model: any) => model.id === 'touch-pro' && model.category === 'chat'),
+          viaProvider.catalog.some(
+            (model: any) => model.id === 'touch-pro' && model.category === 'chat',
+          ),
       );
       const touchAfterProbe = (await getJSON(`${base}/settings/models`)).models.find(
         (m: any) => m.id === touch.id,
@@ -1022,7 +1021,6 @@ async function postJSONWithOrigin(
         `${base}/settings/available-models`,
         { providerId: testProv.id },
         'https://evil.com',
-        400,
       );
       check('SSRF: bad Origin rejected', badOriginRes.status === 400);
     } finally {
@@ -1118,7 +1116,6 @@ async function postJSONWithOrigin(
         `${base}/settings/available-models/preview`,
         { baseUrl: 'https://preview-target.example.com/v1', apiKey: 'sk-x' },
         'https://evil.com',
-        400,
       );
       check('preview: bad Origin rejected 400', badOrigin.status === 400);
     } finally {
@@ -1486,7 +1483,6 @@ async function postJSONWithOrigin(
   // 32. Host 关闭：停止接受新 Run，取消活跃 Run，原子终态
   {
     const originalFetch = globalThis.fetch;
-    const cancelled = false;
     try {
       globalThis.fetch = (async (input, init) => {
         if (String(input).includes('api.slow-echo.com')) {
@@ -1549,28 +1545,48 @@ async function postJSONWithOrigin(
 // ---- v1.6 闭环：按模型能力配置 → 预算解析（metadata 回环 + 凭证携带 + Run 联动）----
 {
   // 1. CRUD 回环：创建带能力覆盖的 provider → 视图回显 → PATCH 整表替换 → 引用目录外模型拒绝
-  const created = await postJSON(`${base}/settings/models`, {
-    name: 'CapProvider',
-    baseUrl: 'https://api.cap.com',
-    apiKey: 'sk-cap-0001',
-    models: ['cap-chat', 'cap-mini'],
-    modelCapabilities: { 'cap-chat': { contextWindow: 131_072, maxOutputTokens: 8_192 } },
-  }, 201);
-  check('cap: 创建回显能力覆盖', created.modelCapabilities?.['cap-chat']?.contextWindow === 131_072);
+  const created = await postJSON(
+    `${base}/settings/models`,
+    {
+      name: 'CapProvider',
+      baseUrl: 'https://api.cap.com',
+      apiKey: 'sk-cap-0001',
+      models: ['cap-chat', 'cap-mini'],
+      modelCapabilities: { 'cap-chat': { contextWindow: 131_072, maxOutputTokens: 8_192 } },
+    },
+    201,
+  );
+  check(
+    'cap: 创建回显能力覆盖',
+    created.modelCapabilities?.['cap-chat']?.contextWindow === 131_072,
+  );
 
   const listed = await getJSON(`${base}/settings/models`);
-  check('cap: GET 列表回显', listed.models.some((m: any) => m.id === created.id && m.modelCapabilities?.['cap-chat']?.contextWindow === 131_072));
+  check(
+    'cap: GET 列表回显',
+    listed.models.some(
+      (m: any) =>
+        m.id === created.id && m.modelCapabilities?.['cap-chat']?.contextWindow === 131_072,
+    ),
+  );
 
-  let badCap = await patchJSON(`${base}/settings/models/${created.id}`, {
-    modelCapabilities: { 'ghost-model': { contextWindow: 1000 } },
-  }, 400);
+  let badCap = await patchJSON(
+    `${base}/settings/models/${created.id}`,
+    {
+      modelCapabilities: { 'ghost-model': { contextWindow: 1000 } },
+    },
+    400,
+  );
   check('cap: 引用目录外模型 400', badCap.message.includes('outside catalog'));
 
   // 2. 凭证读取按 model 携带能力（Run 解析链路使用）
   const secretViaStore = store.getModelProviderSecret(created.id, 'cap-chat');
   check('cap: 凭证携带 contextWindow', secretViaStore?.contextWindow === 131_072);
   check('cap: 凭证携带 maxOutputTokens', secretViaStore?.maxOutputTokens === 8_192);
-  check('cap: 未配置的模型不带能力字段', store.getModelProviderSecret(created.id, 'cap-mini')?.contextWindow === undefined);
+  check(
+    'cap: 未配置的模型不带能力字段',
+    store.getModelProviderSecret(created.id, 'cap-mini')?.contextWindow === undefined,
+  );
 
   // 3. 目录收缩：PATCH models 移除带覆盖的模型 → 覆盖被清理
   await patchJSON(`${base}/settings/models/${created.id}`, { models: ['cap-mini'] });
@@ -1580,7 +1596,10 @@ async function postJSONWithOrigin(
   // 4. Run 预算联动：默认模型配置 32K 窗口 → context_usage.inputBudgetTokens 反映之
   await patchJSON(`${base}/settings/models/${created.id}`, {
     models: ['cap-chat', 'cap-mini'],
-    modelCapabilities: { 'cap-chat': { contextWindow: 131_072 }, 'cap-mini': { contextWindow: 32_768 } },
+    modelCapabilities: {
+      'cap-chat': { contextWindow: 131_072 },
+      'cap-mini': { contextWindow: 32_768 },
+    },
   });
   await postJSON(`${base}/settings/default`, { providerId: created.id, model: 'cap-chat' }, 200);
 
@@ -1588,7 +1607,10 @@ async function postJSONWithOrigin(
   try {
     globalThis.fetch = async (input, init) => {
       if (String(input).includes('api.cap.com')) {
-        return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'cap ok' } }] }), { status: 200 });
+        return new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'cap ok' } }] }),
+          { status: 200 },
+        );
       }
       return originalFetch(input, init);
     };
@@ -1602,8 +1624,14 @@ async function postJSONWithOrigin(
     }
     check('cap: Run 在配置窗口下完成', status9 === 'completed', `status=${status9}`);
     // 预算 = 窗口(131072) - 输出预留(未配置 → fallback 4096) - 安全余量(2622) = 124354
-    const usageEvents = (await (await fetch(`${base}/runs/${created9.runId}/events?live=0`)).text()).includes('"inputBudgetTokens":124354');
-    check('cap: context_usage 预算 = 窗口-输出预留-安全余量（124354）', usageEvents, 'budget mismatch');
+    const usageEvents = (
+      await (await fetch(`${base}/runs/${created9.runId}/events?live=0`)).text()
+    ).includes('"inputBudgetTokens":124354');
+    check(
+      'cap: context_usage 预算 = 窗口-输出预留-安全余量（124354）',
+      usageEvents,
+      'budget mismatch',
+    );
     cleanupCheckpoint(created9.runId);
   } finally {
     globalThis.fetch = originalFetch;

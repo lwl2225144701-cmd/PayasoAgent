@@ -80,10 +80,9 @@ console.log = (...a: unknown[]) => {
   logs.push(a.map((x) => String(x)).join(' '));
 };
 
-let answer = '';
 let agentErr = '';
 try {
-  answer = await runAgent(
+  await runAgent(
     '请读取 input/big.txt，然后告诉我这个文件有多大（字节数或行数）以及开头的一句话是什么。',
     undefined,
     {

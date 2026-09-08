@@ -18,12 +18,6 @@ function clip(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 16))}…[truncated]`;
 }
 
-// This is the model-facing projection of Runtime scratchpad state. Keeping the
-// renderer in Harness prevents execution state from deciding its own prompt.
-export function renderScratchpadView(pad: ScratchpadView): string {
-  return renderBoundedScratchpadView(pad).text;
-}
-
 export function renderBoundedScratchpadView(
   pad: ScratchpadView,
   options: { maxCompletedSteps?: number; maxFieldChars?: number } = {},

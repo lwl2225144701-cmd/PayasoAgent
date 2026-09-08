@@ -1,15 +1,7 @@
 // Default local checkpoint adapter. File paths, JSON encoding and atomic writes
 // stay outside the Agent Runtime kernel.
 
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type {
   Checkpoint,
@@ -50,11 +42,4 @@ export function loadCheckpoint(runId: string): Checkpoint | null {
   } catch {
     return null;
   }
-}
-
-export function listCheckpoints(): string[] {
-  if (!existsSync(CHECKPOINT_DIR)) return [];
-  return readdirSync(CHECKPOINT_DIR)
-    .filter((file) => file.endsWith('.json'))
-    .map((file) => file.replace(/\.json$/, ''));
 }

@@ -607,7 +607,11 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
       );
     }
     return {
-      baseUrl: resolveKnownProviderBaseUrl(modelConfig.baseUrl, modelConfig.model),
+      // 自定义 Provider 的 baseUrl 是用户配置的权威值；只有内置 pi-ai Provider
+      // 继续沿用其已有的厂商路由兼容逻辑。
+      baseUrl: modelConfig.piProviderId
+        ? resolveKnownProviderBaseUrl(modelConfig.baseUrl, modelConfig.model)
+        : modelConfig.baseUrl,
       apiKey: modelConfig.apiKey,
       model: modelConfig.model,
       providerId: modelConfig.providerId || 'payaso-configured',

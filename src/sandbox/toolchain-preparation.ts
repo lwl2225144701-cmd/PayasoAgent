@@ -97,9 +97,3 @@ export const denyAllToolchainPreparationPort: ToolchainPreparationPort = {
     };
   },
 };
-
-export function resolveToolchainPreparationPort(
-  port?: ToolchainPreparationPort,
-): ToolchainPreparationPort {
-  return port ?? denyAllToolchainPreparationPort;
-}

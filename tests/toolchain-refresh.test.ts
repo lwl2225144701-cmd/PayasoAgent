@@ -3,7 +3,6 @@
 // 下一轮模型视图即感知新工具；原命令不自动重试（Side-Effect Safety）。
 // shell 工具以确定性 stub 覆盖（子进程内注册），不依赖本机 git 状态。
 
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

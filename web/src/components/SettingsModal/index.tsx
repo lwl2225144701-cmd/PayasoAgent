@@ -31,6 +31,7 @@ import {
   UserIcon,
 } from '../icons';
 import { Modal } from '../Modal';
+import { ModelSyncDialog } from '../ModelSyncDialog';
 import styles from './SettingsModal.module.css';
 
 type Tab = 'general' | 'models';
@@ -256,6 +257,10 @@ export function SettingsModal({
   const [loadingPiAiProviders, setLoadingPiAiProviders] = useState(false);
   const [defaultId, setDefaultId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('general');
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncCatalog, setSyncCatalog] = useState<ProviderModelInfo[]>([]);
+  const [syncSelectedIds, setSyncSelectedIds] = useState<string[]>([]);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -285,6 +290,10 @@ export function SettingsModal({
       setError(null);
       setDeletingId(null);
       setActiveTab('general');
+      setSyncDialogOpen(false);
+      setSyncCatalog([]);
+      setSyncSelectedIds([]);
+      setSyncError(null);
     }
   }, [open]);
 
@@ -368,6 +377,8 @@ export function SettingsModal({
     setFormMode('list');
     setForm(EMPTY_FORM);
     setError(null);
+    setSyncDialogOpen(false);
+    setSyncError(null);
   };
 
   const handleSave = async () => {
@@ -504,6 +515,49 @@ export function SettingsModal({
 
   const modelsFromTags = () => form.tags.map((t) => t.value);
 
+  const openSyncDialog = (catalog: ProviderModelInfo[]) => {
+    const chatCatalog = Array.from(
+      new Map(
+        catalog.filter((model) => model.category === 'chat').map((model) => [model.id, model]),
+      ).values(),
+    );
+    if (chatCatalog.length === 0) {
+      setError('检测到模型目录，但没有识别到可用于 Agent 的对话模型；请手动添加模型标识。');
+      return;
+    }
+    setSyncError(null);
+    setSyncCatalog(chatCatalog);
+    setSyncSelectedIds(chatCatalog.map((model) => model.id));
+    setSyncDialogOpen(true);
+  };
+
+  const syncResultModelCount = (() => {
+    if (!syncDialogOpen) return form.tags.length;
+    const syncedIds = new Set(syncCatalog.map((model) => model.id));
+    const existingManualCount = form.tags.filter((tag) => !syncedIds.has(tag.value)).length;
+    return existingManualCount + syncSelectedIds.length;
+  })();
+
+  const applySyncSelection = () => {
+    const selectedIds = new Set(syncSelectedIds);
+    const syncedIds = new Set(syncCatalog.map((model) => model.id));
+    const preservedTags = form.tags.filter(
+      (tag) => !syncedIds.has(tag.value) || selectedIds.has(tag.value),
+    );
+    const selectedCatalog = syncCatalog.filter((model) => selectedIds.has(model.id));
+    const merged = mergeCatalogIntoTags(preservedTags, selectedCatalog);
+    if (merged.tags.length > 50) {
+      setSyncError(
+        `当前选择 ${merged.tags.length} 个模型，最多只能保存 50 个，请将选择调整到 50 个以内。`,
+      );
+      return;
+    }
+    setForm((prev) => ({ ...prev, tags: merged.tags }));
+    setSyncDialogOpen(false);
+    setSyncError(null);
+    setError(null);
+  };
+
   // 检测 OpenAI 兼容端点的模型目录，自动合并对话模型与上下文能力（点保存才落库）。
   // 编辑已有 Provider 时通过 providerId 读取服务端配置；
   // 新增 Provider 时通过 baseUrl + apiKey 临时预检（不落盘）。
@@ -516,9 +570,7 @@ export function SettingsModal({
         const provider = providers.find((item) => item.id === form.piProviderId);
         if (!provider) throw new Error('内置提供方未找到');
         const catalog = catalogFromPiAiProvider(provider);
-        const merged = mergeCatalogIntoTags(form.tags, catalog);
-        const tags = merged.tags.slice(0, 50);
-        setForm((prev) => ({ ...prev, tags }));
+        openSyncDialog(catalog);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(`内置模型目录刷新失败：${msg}`);
@@ -532,16 +584,7 @@ export function SettingsModal({
       try {
         const resp = await fetchAvailableModels({ providerId: form.id });
         const catalog = resp.catalog ?? catalogFromModelIds(resp.models);
-        const merged = mergeCatalogIntoTags(form.tags, catalog);
-        let tags = merged.tags;
-        if (tags.length > 50) {
-          tags = tags.slice(0, 50);
-          setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
-        }
-        setForm((prev) => ({ ...prev, tags }));
-        if (merged.chatCount === 0) {
-          setError('检测到模型目录，但没有识别到可用于 Agent 的对话模型；请手动添加模型标识。');
-        }
+        openSyncDialog(catalog);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(`模型检测失败：${msg}`);
@@ -557,16 +600,7 @@ export function SettingsModal({
       try {
         const resp = await previewAvailableModels({ baseUrl: form.baseUrl, apiKey: form.apiKey });
         const catalog = resp.catalog ?? catalogFromModelIds(resp.models);
-        const merged = mergeCatalogIntoTags(form.tags, catalog);
-        let tags = merged.tags;
-        if (tags.length > 50) {
-          tags = tags.slice(0, 50);
-          setError('模型目录超过 50 个上限，已截取前 50 个，可手动调整后再保存。');
-        }
-        setForm((prev) => ({ ...prev, tags }));
-        if (merged.chatCount === 0) {
-          setError('检测到模型目录，但没有识别到可用于 Agent 的对话模型；请手动添加模型标识。');
-        }
+        openSyncDialog(catalog);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(`模型检测失败：${msg}`);
@@ -877,92 +911,138 @@ export function SettingsModal({
     </div>
   );
 
-  return (
-    <Modal onClose={onClose} ariaLabel="设置">
-      <div className={styles.container}>
-        <div className={styles.header}>
-          <h2 className={styles.title}>设置</h2>
-          <button type="button" className={styles.closeButton} onClick={onClose} aria-label="关闭">
-            <CloseIcon size={16} />
-          </button>
-        </div>
-        <div className={styles.body}>
-          <nav className={styles.nav}>
-            <button
-              type="button"
-              className={`${styles.navItem} ${activeTab === 'general' ? styles.navItemActive : ''}`}
-              onClick={() => setActiveTab('general')}
-            >
-              <SettingsIcon size={16} />
-              <span>通用设置</span>
-            </button>
-            <button
-              type="button"
-              className={`${styles.navItem} ${activeTab === 'models' ? styles.navItemActive : ''}`}
-              onClick={() => setActiveTab('models')}
-            >
-              <DatabaseIcon size={16} />
-              <span>模型</span>
-            </button>
-            <button
-              type="button"
-              className={`${styles.navItem} ${styles.navItemDisabled}`}
-              disabled
-            >
-              <SlidersIcon size={16} />
-              <span>插件</span>
-            </button>
-            <button
-              type="button"
-              className={`${styles.navItem} ${styles.navItemDisabled}`}
-              disabled
-            >
-              <UserIcon size={16} />
-              <span>Agent 预设</span>
-            </button>
-          </nav>
-          <div className={styles.content}>
-            {activeTab === 'general' ? renderGeneralTab() : renderModelsTab()}
-          </div>
-        </div>
-      </div>
+  const handleModalClose = () => {
+    if (syncDialogOpen) {
+      setSyncDialogOpen(false);
+      return;
+    }
+    onClose();
+  };
 
-      {deletingId && (
-        <button
-          type="button"
-          className={styles.confirmBackdrop}
-          aria-label="取消删除"
-          onClick={() => setDeletingId(null)}
-        >
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: 确认容器仅用于阻止遮罩冒泡，键盘操作由内部"取消"按钮提供 */}
-          <div
-            className={styles.confirm}
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="删除提供方确认"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className={styles.confirmTitle}>删除提供方</h3>
-            <p className={styles.confirmText}>确定要删除这个模型提供方吗？此操作不可恢复。</p>
-            <div className={styles.confirmActions}>
+  return (
+    <>
+      <Modal onClose={handleModalClose} ariaLabel="设置">
+        <div className={styles.container}>
+          <div className={styles.header}>
+            <h2 className={styles.title}>设置</h2>
+            <button
+              type="button"
+              className={styles.closeButton}
+              onClick={handleModalClose}
+              aria-label="关闭"
+            >
+              <CloseIcon size={16} />
+            </button>
+          </div>
+          <div className={styles.body}>
+            <nav className={styles.nav}>
               <button
                 type="button"
-                className={`${styles.primaryButton} ${styles.dangerButton}`}
-                onClick={confirmDelete}
+                className={`${styles.navItem} ${activeTab === 'general' ? styles.navItemActive : ''}`}
+                onClick={() => setActiveTab('general')}
               >
-                删除
+                <SettingsIcon size={16} />
+                <span>通用设置</span>
               </button>
               <button
                 type="button"
-                className={styles.secondaryButton}
-                onClick={() => setDeletingId(null)}
+                className={`${styles.navItem} ${activeTab === 'models' ? styles.navItemActive : ''}`}
+                onClick={() => setActiveTab('models')}
               >
-                取消
+                <DatabaseIcon size={16} />
+                <span>模型</span>
               </button>
+              <button
+                type="button"
+                className={`${styles.navItem} ${styles.navItemDisabled}`}
+                disabled
+              >
+                <SlidersIcon size={16} />
+                <span>插件</span>
+              </button>
+              <button
+                type="button"
+                className={`${styles.navItem} ${styles.navItemDisabled}`}
+                disabled
+              >
+                <UserIcon size={16} />
+                <span>Agent 预设</span>
+              </button>
+            </nav>
+            <div className={styles.content}>
+              {activeTab === 'general' ? renderGeneralTab() : renderModelsTab()}
             </div>
           </div>
-        </button>
-      )}
-    </Modal>
+        </div>
+
+        {deletingId && (
+          <button
+            type="button"
+            className={styles.confirmBackdrop}
+            aria-label="取消删除"
+            onClick={() => setDeletingId(null)}
+          >
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: 确认容器仅用于阻止遮罩冒泡，键盘操作由内部"取消"按钮提供 */}
+            <div
+              className={styles.confirm}
+              role="alertdialog"
+              aria-modal="true"
+              aria-label="删除提供方确认"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className={styles.confirmTitle}>删除提供方</h3>
+              <p className={styles.confirmText}>确定要删除这个模型提供方吗？此操作不可恢复。</p>
+              <div className={styles.confirmActions}>
+                <button
+                  type="button"
+                  className={`${styles.primaryButton} ${styles.dangerButton}`}
+                  onClick={confirmDelete}
+                >
+                  删除
+                </button>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={() => setDeletingId(null)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          </button>
+        )}
+      </Modal>
+      <ModelSyncDialog
+        open={syncDialogOpen}
+        models={syncCatalog}
+        selectedIds={syncSelectedIds}
+        resultModelCount={syncResultModelCount}
+        maxModels={50}
+        error={syncError}
+        onToggle={(modelId, checked) => {
+          setSyncError(null);
+          setSyncSelectedIds((current) =>
+            checked
+              ? current.includes(modelId)
+                ? current
+                : [...current, modelId]
+              : current.filter((id) => id !== modelId),
+          );
+        }}
+        onSelectAll={() => {
+          setSyncError(null);
+          setSyncSelectedIds(syncCatalog.map((model) => model.id));
+        }}
+        onClearAll={() => {
+          setSyncError(null);
+          setSyncSelectedIds([]);
+        }}
+        onCancel={() => {
+          setSyncError(null);
+          setSyncDialogOpen(false);
+        }}
+        onConfirm={applySyncSelection}
+      />
+    </>
   );
 }

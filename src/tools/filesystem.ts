@@ -422,7 +422,6 @@ function escapeRegex(s: string): string {
 function buildEditPatch(
   rel: string,
   original: string,
-  edited: string,
   ranges: Array<{ index: number; oldText: string; newText: string }>,
 ): string {
   const lines = (s: string) => s.split('\n');
@@ -550,7 +549,7 @@ register({
       return `无修改: ${rel}`;
     }
 
-    const patch = buildEditPatch(rel, normalized, result, ranges);
+    const patch = buildEditPatch(rel, normalized, ranges);
     atomicWriteContent(real, result, rel);
     return patch;
   },

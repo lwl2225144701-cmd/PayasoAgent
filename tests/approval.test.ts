@@ -9,7 +9,6 @@
 // - 超时未裁决 → 自动拒绝（frail: 用短超时实现不易，改验证 deny 路径经恶意不 resolve 的 fork；
 //   超时行为由 APPROVAL_TIMEOUT_MS 常量保证，此处验证 resolve 幂等）
 
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

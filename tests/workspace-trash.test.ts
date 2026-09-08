@@ -22,7 +22,6 @@ import { createState } from '../src/runtime/state.js';
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-workspace-trash-'));
 process.env.SANDBOX_ROOT = path.join(ROOT, 'sandbox');
-const DB_PATH = path.join(ROOT, 'payaso.db');
 
 const workspaceA = path.join(ROOT, 'workspace-A');
 const workspaceB = path.join(ROOT, 'workspace-B');
@@ -578,7 +577,7 @@ test('删除其他 Workspace 时不得清空当前 Workspace', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   setWorkspace(workspaceA);
-  const sessionA = createStoppedSession(manager, 'keep-current').sessionId;
+  createStoppedSession(manager, 'keep-current');
   setWorkspace(workspaceB);
   const sessionB = createStoppedSession(manager, 'delete-other').sessionId;
   const runB = manager.listSessionRuns(sessionB)![0].runId;

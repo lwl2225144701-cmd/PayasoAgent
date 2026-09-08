@@ -100,7 +100,7 @@ register({
     properties: { name: { type: 'string' } },
     required: ['name'],
   },
-  execute: async (args) => {
+  execute: async () => {
     const ms = Number(process.env.SLOW_MS ?? '2500');
     await new Promise((r) => setTimeout(r, ms));
     throw new Error(`timeout（模拟，耗时 ${ms}ms 后未返回结果）`);

@@ -1,7 +1,6 @@
 // 确定性测试：工具链准备成功后的显式重试入口（纯函数部分）。
 // 失败命令提取 + 重试消息组装；真实交互在 Timeline 组件中走既有续轮路径。
 
-import assert from 'node:assert/strict';
 import {
   composeToolchainRetryMessage,
   findLastFailedShellCommand,

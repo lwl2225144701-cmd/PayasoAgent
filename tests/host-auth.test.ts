@@ -79,8 +79,6 @@ async function runTests() {
     }
   }
 
-  const base = `http://127.0.0.1:${host.port}`;
-
   try {
     // 先创建一个 provider 用于后续测试
     const createRes = await httpRequest(host.port, {

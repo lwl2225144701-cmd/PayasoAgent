@@ -110,18 +110,6 @@ export type HostEvent =
   | ToolchainPreparationStartedEvent
   | ToolchainPreparationProgressEvent;
 
-// 是否为 Host 生命周期事件
-export function isLifecycle(ev: HostEvent): ev is LifecycleEvent {
-  return (
-    ev.type === 'run_started' ||
-    ev.type === 'run_stopping' ||
-    ev.type === 'run_completed' ||
-    ev.type === 'run_failed' ||
-    ev.type === 'run_stopped' ||
-    ev.type === 'run_interrupted'
-  );
-}
-
 // 编码为一条 SSE 消息（event 字段 = 事件类型，data = JSON；浏览器端无需解析 Runtime stdout）
 export function sseEncode(id: number, event: HostEvent): string {
   return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify({ runId: (event as { runId?: string }).runId, ...event })}\n\n`;

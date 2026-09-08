@@ -127,10 +127,10 @@ try {
     );
 
     // ---- Case 2: perl socket（与 curl 不同的运行时）同样被拒 ----
-    const perlProbe = (mode: 'deny' | 'allow') =>
+    const perlProbe = () =>
       `perl -e 'use IO::Socket::INET; my $s = IO::Socket::INET->new(PeerAddr=>"127.0.0.1", PeerPort=>${port}, Proto=>"tcp", Timeout=>3); if ($s) { print "CONNECTED"; exit 0 } else { print "CONNECTFAIL"; exit 1 }'`;
     const beforePerl = serverConnections;
-    const perlDeny = await sandbox.run(perlProbe('deny'), shellOptions);
+    const perlDeny = await sandbox.run(perlProbe(), shellOptions);
     check(
       'Case2: perl socket to localhost fails (different runtime than curl)',
       perlDeny.exitCode !== 0 && !perlDeny.stdout.includes('CONNECTED'),
@@ -185,7 +185,7 @@ try {
       }),
     );
     const beforeAllow = serverConnections;
-    const perlAllow = await allowSandbox.run(perlProbe('allow'), shellOptions);
+    const perlAllow = await allowSandbox.run(perlProbe(), shellOptions);
     check(
       'control: same perl socket SUCCEEDS with explicit networkAccess=true',
       perlAllow.exitCode === 0 &&
@@ -210,7 +210,6 @@ try {
     //   off 时由 tools.execute() 统一拒绝 NetworkDeniedError，不再靠 sandbox deny。）
     const toolCtx: ToolContext = { runId, workspaceRoot };
     setNetworkMode('on');
-    let deniedByPolicy = false;
     try {
       await execute(
         'shell',
@@ -220,7 +219,7 @@ try {
       // sandbox 可用时，curl 应真正连上 localhost（默认联网）
     } catch (err) {
       // 环境不支持 sandbox 时 shell 本身不可用 → 不代表 policy 拒绝
-      deniedByPolicy = err instanceof NetworkDeniedError;
+      if (err instanceof NetworkDeniedError) throw err;
     }
     setNetworkMode('off');
     await assert.rejects(

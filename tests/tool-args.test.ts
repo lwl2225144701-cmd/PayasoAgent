@@ -14,7 +14,7 @@ import {
 import { checkpointPath, loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { runAgent } from '../src/runtime/agent.js';
 import { canonicalizeWorkspaceRoot, createWorkspace } from '../src/sandbox/sandbox-manager.js';
-import { parseToolArguments, register, type ToolContext } from '../src/tools/tools.js';
+import { parseToolArguments, register } from '../src/tools/tools.js';
 import { isAbortError } from '../src/util/abort.js';
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-tool-args-'));

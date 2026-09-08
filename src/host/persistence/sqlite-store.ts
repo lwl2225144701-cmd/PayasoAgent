@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import url from 'node:url';
@@ -14,7 +13,6 @@ import type {
   ModelProviderView,
   RunStore,
   StoredEvent,
-  StoredModelProvider,
   StoredRun,
   StoredRunStatus,
   StoredSession,
@@ -723,7 +721,10 @@ export class SqliteRunStore implements RunStore {
     return this.settings.getModelView(id);
   }
 
-  getModelProviderSecret(id: string, model?: string): {
+  getModelProviderSecret(
+    id: string,
+    model?: string,
+  ): {
     apiKey: string;
     baseUrl: string;
     models: string[];

@@ -2,7 +2,6 @@
 // drives the Runtime context budget, the context_usage trace, and the LLM
 // request's max_tokens. No real network: fetch is mocked.
 
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

@@ -57,8 +57,3 @@ export function updateState(
   Object.assign(state, patch);
   return state;
 }
-
-// ---- 读取快照（返回拷贝，防止外部直接改动）----
-export function getState(state: AgentState): AgentState {
-  return { ...state };
-}

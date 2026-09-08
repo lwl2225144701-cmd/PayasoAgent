@@ -291,7 +291,7 @@ try {
     assert.equal(sessionHeader, 'payaso-session-123');
   });
 
-  await test('StepFun standard models use the standard chat endpoint', async () => {
+  await test('custom Provider keeps the configured StepFun endpoint', async () => {
     let requestUrl = '';
     globalThis.fetch = async (input) => {
       requestUrl = String(input);
@@ -305,7 +305,7 @@ try {
       apiKey: 'sk-test',
       model: 'step-3.7-flash',
     });
-    assert.equal(requestUrl, 'https://api.stepfun.com/v1/chat/completions');
+    assert.equal(requestUrl, 'https://api.stepfun.com/step_plan/v1/chat/completions');
   });
   await test('max_tokens follows the requested run model, not the env model (Case 2/3)', async () => {
     const originalModel = process.env.OPENAI_MODEL;

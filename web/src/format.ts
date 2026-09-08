@@ -1,5 +1,3 @@
-import type { HostEvent } from './types';
-
 export function formatTime(iso: string | undefined | null): string {
   if (!iso) return '';
   try {
