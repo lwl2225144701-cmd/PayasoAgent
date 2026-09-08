@@ -321,7 +321,6 @@
 }
 
 .gaugeTooltipDetail,
-.gaugeTooltipModel,
 .gaugeTooltipNotice,
 .gaugeTooltipDanger {
   font-size: 12px;
@@ -331,14 +330,6 @@
 
 .gaugeTooltipDetail {
   color: var(--text-secondary);
-}
-
-.gaugeTooltipModel {
-  overflow: hidden;
-  max-width: 248px;
-  color: var(--text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .gaugeTooltipNotice {

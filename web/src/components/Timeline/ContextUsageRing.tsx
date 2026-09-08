@@ -97,8 +97,6 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             <span>~{formatContextTokens(part.tokens)}</span>
           </span>
         ))}
-        <span className={styles.gaugeTooltipNotice}>估算值 · 按可用输入预算计算</span>
-        <span className={styles.gaugeTooltipModel}>{usage.model}</span>
         {usage.configSource === 'fallback' && (
           <span className={styles.gaugeTooltipNotice}>模型能力未知，当前使用保守预算</span>
         )}
