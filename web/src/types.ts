@@ -34,6 +34,22 @@ export interface HostSession {
   workspace?: WorkspaceView;
 }
 
+// 会话级统计投影（host GET /sessions/:id/stats）——顶栏 stats strip 数据源。
+export interface SessionStats {
+  turns: number;
+  steps: number;
+  llmCalls: number;
+  toolCalls: number;
+  toolMs: number;
+  /** 各 Run 首 token 延迟之和；配合 ttftCount 取平均。 */
+  ttftMs: number;
+  ttftCount: number;
+  decodeMs: number;
+  decodeCount: number;
+  tokens: number;
+  durationMs: number;
+}
+
 export interface WorkspaceView {
   name: string;
 }

@@ -44,6 +44,34 @@
   gap: 6px;
 }
 
+.statsStrip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 46vw;
+  overflow: hidden;
+  margin-right: 10px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-surface) 62%, transparent);
+  white-space: nowrap;
+}
+
+.statsItem {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.statsItem + .statsItem::before {
+  content: "·";
+  margin-right: 4px;
+  color: var(--text-muted);
+}
+
 .statusTag {
   display: inline-flex;
   align-items: center;

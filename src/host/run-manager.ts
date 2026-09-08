@@ -36,6 +36,7 @@ import type {
 } from '../sandbox/toolchain-preparation.js';
 import { getToolchainPreparationPlan } from '../sandbox/toolchain-preparation.js';
 import { isAbortError } from '../util/abort.js';
+import { aggregateSessionStats, deriveRunStats, type SessionStats } from './run-stats.js';
 
 // Skill manifest: name + description only; full content loaded on demand via loadSkill tool.
 function scanWorkspaceSkills(
@@ -1297,6 +1298,17 @@ export class RunManager {
   listSessionRuns(sessionId: string): HostRun[] | null {
     if (!this.store.getSession(sessionId)) return null;
     return this.store.listRunsBySession(sessionId).map((run) => this.publicStoredView(run));
+  }
+
+  /** 会话级统计投影：折叠每个 Run 的持久化事件并聚合（顶栏 stats strip 数据源）。 */
+  sessionStats(sessionId: string): SessionStats | null {
+    if (!this.store.getSession(sessionId)) return null;
+    const runs = this.store.listRunsBySession(sessionId);
+    const stats = runs.map((run) => {
+      const events = this.store.listEvents(run.runId).map((item) => item.event);
+      return deriveRunStats(events, run.createdAt, run.updatedAt);
+    });
+    return aggregateSessionStats(stats, runs.length);
   }
 
   get(runId: string): HostRun | null {

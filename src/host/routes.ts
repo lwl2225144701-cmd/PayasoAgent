@@ -868,8 +868,7 @@ export async function handleRequest(
         }
         throw err;
       }
-      const requestedPath =
-        typeof body.path === 'string' ? body.path.trim() : undefined;
+      const requestedPath = typeof body.path === 'string' ? body.path.trim() : undefined;
       try {
         const listing = await browseDirectory(requestedPath);
         return sendJson(res, 200, listing);
@@ -951,6 +950,12 @@ export async function handleRequest(
         return sendJson(res, 200, manager.renameSession(sessionId, title));
       } catch (err) {
         return bad(res, (err as Error).message);
+      }
+    }
+    if (s.length === 3 && s[2] === 'stats') {
+      if (method === 'GET') {
+        const stats = manager.sessionStats(sessionId);
+        return stats ? sendJson(res, 200, stats) : notFound(res);
       }
     }
     if (s.length === 3 && s[2] === 'runs') {

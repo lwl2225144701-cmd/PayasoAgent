@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './App.module.css';
 import {
   archiveSession as apiArchiveSession,
-  getDirectoryPickerCapability,
   renameSession as apiRenameSession,
   renameWorkspace as apiRenameWorkspace,
+  selectWorkspace as apiSelectWorkspace,
   createRun,
   deleteWorkspaceGroup,
+  fetchSessionStats,
   getDefaultModel,
+  getDirectoryPickerCapability,
   getWorkspace,
   listFiles,
   listModels,
@@ -16,7 +18,6 @@ import {
   listSessions,
   openWorkspace,
   resumeRun,
-  selectWorkspace as apiSelectWorkspace,
   setDefaultModel,
   stopRun,
 } from './api';
@@ -42,6 +43,7 @@ import type {
   ModelProviderView,
   ModelSelection,
   PiAiProviderInfo,
+  SessionStats,
   WorkspaceView,
 } from './types';
 import { alignedAttachmentName, prepareImageForUpload } from './utils/image-prepare';
@@ -65,6 +67,8 @@ export default function App() {
   const [sessions, setSessions] = useState<HostSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  // 会话级统计投影（顶栏 stats strip；会话切换/回合终态时刷新）
+  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   // 上下文预算环形指示器数据：Timeline 从 context_usage 事件上抛，输入栏展示
   const [contextUsage, setContextUsage] = useState<ContextUsageEvent | null>(null);
   const [online, setOnline] = useState(false);
@@ -145,6 +149,24 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  const refreshSessionStats = useCallback(async (sessionId: string | null) => {
+    if (!sessionId) {
+      setSessionStats(null);
+      return;
+    }
+    try {
+      const stats = await fetchSessionStats(sessionId);
+      setSessionStats(stats);
+    } catch {
+      // 统计是展示增强，失败静默降级（顶栏不显示条）
+    }
+  }, []);
+
+  // 会话切换 / 打开时拉取统计
+  useEffect(() => {
+    void refreshSessionStats(currentSessionId);
+  }, [currentSessionId, refreshSessionStats]);
 
   const refreshDefaultModel = useCallback(async () => {
     // 本地保存请求在途时跳过：避免用旧服务端快照覆盖乐观更新
@@ -484,7 +506,8 @@ export default function App() {
   const handleRunTerminal = useCallback(() => {
     // SSE 已携带终态；这里只做一次持久化状态对账，不启动后台轮询。
     void refreshRuns();
-  }, [refreshRuns]);
+    void refreshSessionStats(currentSessionId);
+  }, [refreshRuns, refreshSessionStats, currentSessionId]);
 
   const handleStopRun = useCallback(async () => {
     if (!currentRunId) return;
@@ -715,6 +738,7 @@ export default function App() {
           title={currentSession?.title}
           onResume={handleResumeRun}
           resuming={resumingRun}
+          stats={sessionStats}
         />
 
         {currentSessionId ? (
