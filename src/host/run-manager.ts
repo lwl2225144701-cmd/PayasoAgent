@@ -27,6 +27,7 @@ import {
 } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
+import type { Checkpoint } from '../runtime/checkpoint-port.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
 import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
@@ -1340,33 +1341,54 @@ export class RunManager {
 
   /**
    * /compact：立即对会话执行一次轮边界压缩（不走「下一轮生效」的延迟路径）。
-   * 读取最后一轮 checkpoint 的 canonical transcript 与 Harness 状态，摘要最旧
-   * 历史后把新 Harness 状态写回同一 checkpoint——下一个 Run 即以压缩后视图启动。
+   * 从最新 Run 往前找第一个带 checkpoint 的（与 conversationHistory 的回退一致），
+   * 以 target=0 压缩**全部**可压缩历史（不按预算只裁一部分）——摘要后把新
+   * Harness 状态写回同一 checkpoint，下一个 Run 即以压缩后视图启动。
    * 有运行中 Run 时拒绝（避免 checkpoint 写入竞争）。
    */
   async compactSession(sessionId: string): Promise<{
     summarizedMessages: number;
     totalSummarizedMessages: number;
     compactedTokens: number;
+    reason?: 'no_checkpoint' | 'nothing_compactable';
   } | null> {
     if (!this.store.getSession(sessionId)) return null;
     if (this.store.listRunsBySession(sessionId).some((run) => isCancellable(run.status))) {
       throw new Error('会话有正在执行的 Run，请先停止再压缩');
     }
     const runs = this.store.listRunsBySession(sessionId);
-    const latest = runs.length > 0 ? runs[runs.length - 1] : undefined;
-    const checkpoint = latest ? loadCheckpoint(latest.runId) : null;
-    if (!latest || !checkpoint || checkpoint.messages.length === 0) {
-      return { summarizedMessages: 0, totalSummarizedMessages: 0, compactedTokens: 0 };
+    let checkpointSource: StoredRun | undefined;
+    let checkpoint: Checkpoint | null = null;
+    for (const run of [...runs].reverse()) {
+      const candidate = loadCheckpoint(run.runId);
+      if (candidate && candidate.messages.length > 0) {
+        checkpointSource = run;
+        checkpoint = candidate;
+        break;
+      }
+    }
+    if (!checkpointSource || !checkpoint) {
+      return {
+        summarizedMessages: 0,
+        totalSummarizedMessages: 0,
+        compactedTokens: 0,
+        reason: 'no_checkpoint' as const,
+      };
     }
     const harness = new DefaultContextHarness({
-      permissionMode: storedPermissionMode(latest.permissionMode),
-      modelConfig: this.resolveModelConfig(latest.providerId, latest.model),
+      permissionMode: storedPermissionMode(checkpointSource.permissionMode),
+      modelConfig: this.resolveModelConfig(checkpointSource.providerId, checkpointSource.model),
     });
     harness.restoreState(normalizeContextHarnessState(checkpoint.harnessState));
-    const compacted = await harness.compactConversation(checkpoint.messages, getSchemas());
+    // target=0：立即压缩不按预算裁一部分，而是压缩全部可压缩历史轮
+    const compacted = await harness.compactConversation(checkpoint.messages, getSchemas(), 0);
     if (!compacted) {
-      return { summarizedMessages: 0, totalSummarizedMessages: 0, compactedTokens: 0 };
+      return {
+        summarizedMessages: 0,
+        totalSummarizedMessages: 0,
+        compactedTokens: 0,
+        reason: 'nothing_compactable' as const,
+      };
     }
     saveCheckpoint({ ...checkpoint, harnessState: harness.snapshotState() });
     return {

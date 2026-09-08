@@ -88,6 +88,7 @@ export function requestSessionCompact(sessionId: string): Promise<{
   summarizedMessages: number;
   totalSummarizedMessages: number;
   compactedTokens: number;
+  reason?: 'no_checkpoint' | 'nothing_compactable';
 }> {
   return jsonFetch(`/sessions/${sessionId}/compact`, { method: 'POST' });
 }

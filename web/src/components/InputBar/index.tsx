@@ -64,7 +64,12 @@ interface InputBarProps {
   // /compact 状态行（进行中 → 量化结果）；空则不渲染
   compactStatus?:
     | { phase: 'running' }
-    | { phase: 'done'; summarizedMessages: number; compactedTokens: number }
+    | {
+        phase: 'done';
+        summarizedMessages: number;
+        compactedTokens: number;
+        reason?: 'no_checkpoint' | 'nothing_compactable';
+      }
     | null;
 }
 
@@ -401,7 +406,9 @@ export function InputBar({
               ? '正在压缩…'
               : compactStatus.summarizedMessages > 0
                 ? `已压缩 ${compactStatus.summarizedMessages} 条历史记录（约 ${formatContextTokens(compactStatus.compactedTokens)} tokens）`
-                : '没有可压缩的历史记录'}
+                : compactStatus.reason === 'no_checkpoint'
+                  ? '该会话没有可用的运行记录（checkpoint），无法压缩'
+                  : '没有可压缩的历史记录'}
           </div>
         )}
         {queuedMessages.length > 0 && (

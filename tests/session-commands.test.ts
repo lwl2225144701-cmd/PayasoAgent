@@ -99,6 +99,7 @@ try {
     summarizedMessages: 0,
     totalSummarizedMessages: 0,
     compactedTokens: 0,
+    reason: 'no_checkpoint',
   });
   const planOff = await fetch(`http://127.0.0.1:${port}/sessions/${sessionId}/plan`, {
     method: 'POST',
