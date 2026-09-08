@@ -348,7 +348,7 @@ registerAlias('read', 'readFile');
 register({
   name: 'write',
   description:
-    '写入文本文件（UTF-8，单次≤1MB，原子写入）。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录不存在时自动创建。',
+    '新建文件或整体覆盖写入文本文件（UTF-8，单次≤1MB，原子写入）。修改已存在的文件时优先用 edit（精确替换，更快更省）；仅当新建文件、或改动覆盖文件大部分内容、或多次 edit 仍失败时才用 write 整体写入。Read Only 禁止；Workspace Write 仅限 Workspace；Full access 可用绝对路径。父目录不存在时自动创建。',
   parameters: {
     type: 'object',
     properties: {
@@ -437,10 +437,120 @@ function buildEditPatch(
   return out.join('\n');
 }
 
+// 字符偏移 → { 行号(1-based), 列号(1-based) }
+function lineColAt(text: string, index: number): { line: number; col: number } {
+  const before = text.slice(0, index);
+  const line = before.split('\n').length;
+  const lastNl = before.lastIndexOf('\n');
+  const col = (lastNl === -1 ? index : index - lastNl - 1) + 1;
+  return { line, col };
+}
+
+// 取指定偏移所在行的实际内容（裁掉行尾，限长）
+function lineContentAt(text: string, index: number, maxLen = 120): string {
+  const lineStart = text.lastIndexOf('\n', index - 1) + 1;
+  let lineEnd = text.indexOf('\n', index);
+  if (lineEnd === -1) lineEnd = text.length;
+  const raw = text.slice(lineStart, lineEnd);
+  const trimmed = raw.length > maxLen ? `${raw.slice(0, maxLen)}…` : raw;
+  return JSON.stringify(trimmed);
+}
+
+// 列出 oldText 在归一化内容中的所有匹配起始偏移
+function allMatches(text: string, needle: string): number[] {
+  const hits: number[] = [];
+  let from = 0;
+  for (;;) {
+    const i = text.indexOf(needle, from);
+    if (i === -1) break;
+    hits.push(i);
+    from = i + Math.max(1, needle.length);
+  }
+  return hits;
+}
+
+// 折叠空白后定位：找出"忽略空格差异"后最接近 oldText 的位置。
+// 返回首个能按"去空白"匹配上的行号 + 该位置实际内容，用于提示模型"缩进/空白抄错了"。
+function fuzzyLocate(normalized: string, oldText: string): { line: number; actual: string } | null {
+  const srcLines = normalized.split('\n');
+  // 用 oldText 首行（去首尾空白）作为锚点
+  const anchor = oldText.split('\n')[0]?.trim();
+  if (!anchor) return null;
+  const srcStripped = srcLines.map((l) => l.replace(/\s+/g, ' ').trim());
+  const anchorStripped = anchor.replace(/\s+/g, ' ').trim();
+  const hitLine = srcStripped.findIndex((l) => l && l.includes(anchorStripped));
+  if (hitLine === -1) return null;
+  return { line: hitLine + 1, actual: JSON.stringify(srcLines[hitLine].slice(0, 120)) };
+}
+
+// 构造 edit 失败时可操作的诊断信息（帮助模型一次修复，避免回退到整文件 write）。
+function editNotFoundError(
+  normalized: string,
+  oldText: string,
+  editIndex: number,
+  totalEdits: number,
+): string {
+  const which = totalEdits > 1 ? `第 ${editIndex + 1}/${totalEdits} 处 edit 的` : '';
+  const parts: string[] = [
+    `${which}oldText 在文件中未精确匹配（前80字符）: ${JSON.stringify(oldText.slice(0, 80))}`,
+  ];
+
+  // ① 忽略空白能找到 → 几乎肯定是缩进/空格抄错
+  const fuzzy = fuzzyLocate(normalized, oldText);
+  if (fuzzy) {
+    parts.push(
+      `提示: 忽略空白差异后，最接近的内容在第 ${fuzzy.line} 行，实际内容为 ${fuzzy.actual} —— 你的 oldText 缩进/空格与文件不一致。请用 read 重新读取该行，逐字符复制（含缩进），不要凭记忆补空白。`,
+    );
+    return parts.join('\n');
+  }
+
+  // ② oldText 的某个子行能找到 → 定位到大致行号
+  const probe = oldText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length >= 8)
+    .sort((a, b) => b.length - a.length)[0];
+  if (probe) {
+    const idx = normalized.indexOf(probe);
+    if (idx !== -1) {
+      const { line } = lineColAt(normalized, idx);
+      parts.push(
+        `提示: oldText 中的某片段在第 ${line} 行附近，但整段未完整匹配。可能原因: 相邻行内容/缩进不符，或 oldText 跨越的边界不对。请 read offset 覆盖该区域后重新复制完整 oldText。`,
+      );
+      return parts.join('\n');
+    }
+  }
+
+  parts.push(
+    '提示: 文件中找不到任何相关片段，oldText 可能已被之前的编辑改动或来自错误文件。请先 read 该文件确认当前内容，再重新构造 edit；若改动范围确实很大，可改用 write 整文件写入。',
+  );
+  return parts.join('\n');
+}
+
+function editMultipleError(
+  normalized: string,
+  oldText: string,
+  count: number,
+  editIndex: number,
+  totalEdits: number,
+): string {
+  const which = totalEdits > 1 ? `第 ${editIndex + 1}/${totalEdits} 处 edit 的` : '';
+  const positions = allMatches(normalized, oldText)
+    .map((i) => {
+      const { line } = lineColAt(normalized, i);
+      return `第 ${line} 行(${lineContentAt(normalized, i, 60)})`;
+    })
+    .join('、');
+  return (
+    `${which}oldText 在文件中出现 ${count} 次（必须恰好 1 次），拒绝编辑: ${JSON.stringify(oldText.slice(0, 60))}\n` +
+    `提示: 分别出现在 ${positions}。请在 oldText 中包含更多前后相邻行（上一行/下一行）使其唯一，但不要扩大到无关代码。`
+  );
+}
+
 register({
   name: 'edit',
   description:
-    '在文件中精确替换文本（oldText→newText），支持多次编辑。oldText 必须恰好匹配一次，多次匹配或找不到均拒绝；edits 不能重叠。自动保留原文件换行风格（LF/CRLF）。',
+    '在文件中精确替换文本（oldText→newText），支持多次编辑。改已有文件时优先用 edit 而非 write 整文件重写。oldText 必须与文件内容逐字符完全一致（含缩进/空格/换行，建议先用 read 取得原文再复制）且在文件中恰好出现一次；若出现多次，请把相邻的上一行/下一行也纳入 oldText 使其唯一。多次匹配或找不到均拒绝并返回最接近位置提示；edits 不能重叠。自动保留原文件换行风格（LF/CRLF）。',
   effect: 'non_idempotent',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '').trim();
@@ -506,21 +616,21 @@ register({
 
     // 在原始归一化内容中定位每一次 oldText，确保恰好出现一次
     const ranges: Array<{ index: number; oldText: string; newText: string }> = [];
-    for (const e of edits) {
+    for (let ei = 0; ei < edits.length; ei++) {
+      const e = edits[ei];
       const idx = normalized.indexOf(e.oldText);
       if (idx === -1) {
-        throw new Error(`oldText 未找到: ${JSON.stringify(e.oldText.slice(0, 80))}`);
+        throw new Error(editNotFoundError(normalized, e.oldText, ei, edits.length));
       }
       ranges.push({ index: idx, oldText: e.oldText, newText: e.newText });
     }
 
     // 严格检查：每个 oldText 在内容中必须恰好出现一次
-    for (const e of edits) {
+    for (let ei = 0; ei < edits.length; ei++) {
+      const e = edits[ei];
       const count = (normalized.match(new RegExp(escapeRegex(e.oldText), 'g')) || []).length;
       if (count !== 1) {
-        throw new Error(
-          `oldText 出现 ${count} 次（必须恰好 1 次），拒绝编辑: ${JSON.stringify(e.oldText.slice(0, 80))}`,
-        );
+        throw new Error(editMultipleError(normalized, e.oldText, count, ei, edits.length));
       }
     }
 
