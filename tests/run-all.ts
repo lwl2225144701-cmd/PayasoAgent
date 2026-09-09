@@ -1,10 +1,11 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
 // 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: 48 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
+// 覆盖: 53 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
 //   Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、
 //   Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、
 //   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、工具链能力刷新与显式重试、docs contract、
-//   Host Auth、Provider URL 校验、Keychain 契约、幂等关闭（v1.6 Release Closure 基线）
+//   Host Auth、Provider URL 校验、Keychain 契约、幂等关闭（v1.6 Release Closure 基线）、
+//   v1.8 内核不变量（空回合 / 工具参数契约 / 错误分类 / 输出预算 / shell 执行环境）
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
 //   2. 以子进程退出码判定套件通过与否（各套件内部已实现 失败 → 非 0 退出）
@@ -68,6 +69,12 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-enter-key', file: 'tests/frontend-enter-key.test.ts' },
   { name: 'frontend-sse-contract', file: 'tests/frontend-sse-contract.test.ts' },
   { name: 'pi-ai-provider', file: 'tests/pi-ai-provider.test.ts' },
+  // v1.8 内核不变量（空回合 / 参数契约 / 错误分类 / 输出预算 / shell 执行环境）
+  { name: 'tool-output-budget', file: 'tests/tool-output-budget.test.ts' },
+  { name: 'shell-execution', file: 'tests/shell-execution.test.ts' },
+  { name: 'tool-argument-validation', file: 'tests/tool-argument-validation.test.ts' },
+  { name: 'tool-error-classifier', file: 'tests/tool-error-classifier.test.ts' },
+  { name: 'empty-turn', file: 'tests/empty-turn.test.ts' },
 ];
 
 console.log('='.repeat(70));

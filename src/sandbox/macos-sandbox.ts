@@ -14,10 +14,12 @@ import {
   type SandboxPolicy,
 } from './sandbox-policy.js';
 import { getMacOSToolchain } from './toolchain-manager.js';
+import { SHELL_TIMEOUT_DEFAULT_MS } from './shell-timeout.js';
 
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const SHELL = '/bin/sh';
-const SHELL_TIMEOUT_MS = 10_000;
+// Backward-compatible constant; the authoritative policy lives in shell-timeout.ts.
+const SHELL_TIMEOUT_MS = SHELL_TIMEOUT_DEFAULT_MS;
 const MAX_SHELL_OUTPUT = 64 * 1024;
 
 // ---- Capability probe (fail-closed gate) ----
@@ -211,6 +213,7 @@ export class MacOSSandbox {
     workspaceRoot: string,
     permissionMode: PermissionMode = 'workspace-write',
     networkAccess = false,
+    options: { scratchRoots?: string[] } = {},
   ): MacOSSandbox {
     const toolchain = getMacOSToolchain();
     const policy = createSandboxPolicy(workspaceRoot, {
@@ -218,6 +221,7 @@ export class MacOSSandbox {
       readablePathAliases: toolchain.readablePathAliases,
       executableRoots: toolchain.executableRoots,
       writableRoots: permissionMode === 'workspace-write' ? [workspaceRoot] : [],
+      scratchRoots: options.scratchRoots ?? [],
       permissionMode,
       // v2.0 Network Control：网络策略由调用方（Runtime tool pipeline）根据全局
       // network.mode 显式传入；缺省（仅直接底层调用时）保持 fail-closed deny。
@@ -228,6 +232,16 @@ export class MacOSSandbox {
     return new MacOSSandbox(policy, toolchain.safePath);
   }
 
+  /**
+   * Paths a child process may use as HOME/TMPDIR: the Workspace, or one of the
+   * managed scratch roots (writable in every permission mode, always outside
+   * the Workspace). Anything else is rejected fail-closed.
+   */
+  private isAllowedRuntimePath(target: string): boolean {
+    if (isSandboxPathInside(this.policy.workspaceRoot, target)) return true;
+    return this.policy.scratchRoots.some((root) => isSandboxPathInside(root, target));
+  }
+
   async run(command: string, options: MacOSSandboxRunOptions): Promise<MacOSSandboxResult> {
     const cwd = canonicalizeSandboxPath(options.cwd);
     const home = canonicalizeSandboxPath(options.home);
@@ -235,11 +249,15 @@ export class MacOSSandbox {
     if (!isSandboxPathInside(this.policy.workspaceRoot, cwd)) {
       throw new Error('shell cwd must be inside the sandbox workspace');
     }
-    if (!isSandboxPathInside(this.policy.workspaceRoot, home)) {
-      throw new Error('shell HOME must be inside the sandbox workspace');
+    // HOME/TMPDIR 允许落在工作区或受管 scratch 根内（read-only 模式下命令仍需
+    // 可写的缓存目录；工作区本身保持只读）。
+    if (!this.isAllowedRuntimePath(home)) {
+      throw new Error('shell HOME must be inside the sandbox workspace or a managed scratch root');
     }
-    if (!isSandboxPathInside(this.policy.workspaceRoot, tmpdir)) {
-      throw new Error('shell TMPDIR must be inside the sandbox workspace');
+    if (!this.isAllowedRuntimePath(tmpdir)) {
+      throw new Error(
+        'shell TMPDIR must be inside the sandbox workspace or a managed scratch root',
+      );
     }
 
     options.onEvent?.('started');

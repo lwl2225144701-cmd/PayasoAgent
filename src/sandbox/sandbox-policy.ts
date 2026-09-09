@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '../permission-mode.js';
+import { isShellScratchPath } from './shell-scratch.js';
 
 export type SandboxPolicy = {
   workspaceRoot: string;
@@ -13,6 +14,12 @@ export type SandboxPolicy = {
   /** Roots from which descendants may execute files; read roots alone do not imply exec. */
   executableRoots: string[];
   writableRoots: string[];
+  /**
+   * Managed, ephemeral scratch roots (HOME/TMPDIR for Shell) that are writable
+   * in every permission mode, including Read Only, and always live outside the
+   * Workspace. Never derived from LLM input.
+   */
+  scratchRoots: string[];
   permissionMode: PermissionMode;
   // v1.6 Network Capability Separation：网络是与文件系统严格分离的独立能力。
   // fail-closed 默认 false；shell 永远显式 false。未来 Browser/Network 类
@@ -61,14 +68,32 @@ export function createSandboxPolicy(
     readablePathAliases?: string[];
     executableRoots?: string[];
     writableRoots?: string[];
+    /** Managed ephemeral roots (Shell HOME/TMPDIR). Validated against shellScratchRoot(). */
+    scratchRoots?: string[];
     permissionMode?: PermissionMode;
     networkAccess?: boolean;
   } = {},
 ): SandboxPolicy {
   const root = canonicalizeExisting(workspaceRoot);
   const permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
-  const readableRoots = unique([root, ...(options.readableRoots ?? []).map(canonicalizeExisting)]);
-  const executableRoots = unique([...(options.executableRoots ?? []).map(canonicalizeExisting)]);
+  const scratchRoots = unique((options.scratchRoots ?? []).map(canonicalizeExisting));
+  for (const scratch of scratchRoots) {
+    // fail-closed：只有 shell-scratch 模块自己创建的受管根目录可以被写成"工作区外可写"。
+    if (!isShellScratchPath(scratch)) {
+      throw new Error(
+        'sandbox policy scratch roots must live under the managed shell scratch root',
+      );
+    }
+  }
+  const readableRoots = unique([
+    root,
+    ...(options.readableRoots ?? []).map(canonicalizeExisting),
+    ...scratchRoots,
+  ]);
+  const executableRoots = unique([
+    ...(options.executableRoots ?? []).map(canonicalizeExisting),
+    ...scratchRoots,
+  ]);
   for (const executableRoot of executableRoots) {
     if (!readableRoots.includes(executableRoot)) readableRoots.push(executableRoot);
   }
@@ -77,12 +102,14 @@ export function createSandboxPolicy(
     ...(options.writableRoots ?? (permissionMode === 'workspace-write' ? [root] : [])).map(
       canonicalizeExisting,
     ),
+    ...scratchRoots,
   ]);
 
   for (const writable of writableRoots) {
-    if (!isInside(root, writable)) {
-      throw new Error('sandbox policy writable roots must be inside workspace root');
-    }
+    if (isInside(root, writable)) continue;
+    // 工作区外唯一允许的可写根：受管 scratch（read-only 模式下命令仍需要缓存目录）。
+    if (isShellScratchPath(writable)) continue;
+    throw new Error('sandbox policy writable roots must be inside workspace root');
   }
 
   return {
@@ -91,6 +118,7 @@ export function createSandboxPolicy(
     readablePathAliases,
     executableRoots,
     writableRoots,
+    scratchRoots,
     permissionMode,
     networkAccess: options.networkAccess ?? false,
   };

@@ -74,7 +74,8 @@ async function expectDenied(
     () => shell(command, events, permissionMode),
     (err: unknown) =>
       err instanceof Error &&
-      err.message === 'Shell operation denied by workspace sandbox.' &&
+      // v1.8：拒绝消息带上可行动的原因（模型能据此调整），但仍不得泄露宿主路径
+      err.message.startsWith('Shell operation denied by the workspace sandbox') &&
       !err.message.includes(TEST_ROOT) &&
       !err.message.includes(os.homedir()),
   );

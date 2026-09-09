@@ -10,11 +10,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getNetworkMode } from '../network-mode.js';
 import { storedPermissionMode } from '../permission-mode.js';
+import { MacOSSandbox, type MacOSSandboxResult, probeSandboxAvailability } from '../sandbox/macos-sandbox.js';
+import { createShellScratch } from '../sandbox/shell-scratch.js';
 import {
-  MacOSSandbox,
-  type MacOSSandboxResult,
-  probeSandboxAvailability,
-} from '../sandbox/macos-sandbox.js';
+  resolveShellTimeout,
+  SHELL_TIMEOUT_DEFAULT_MS,
+  SHELL_TIMEOUT_MAX_MS,
+  SHELL_TIMEOUT_MIN_MS,
+  shellTimeoutPolicy,
+} from '../sandbox/shell-timeout.js';
 import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
 import {
   assertWritableZone,
@@ -308,7 +312,10 @@ register({
 register({
   name: 'shell',
   description:
-    '执行一条 shell 命令（cwd=Workspace，非交互，timeout 10s，输出限64KB；macOS 走 OS Sandbox，其他平台需审批模式）。文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。',
+    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 64KB；macOS 走 OS Sandbox，其他平台需审批模式）。` +
+    `默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s，可用 timeoutMs 延长（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）；` +
+    `超时会整树终止并返回 [shell-timeout]。命令的 HOME/TMPDIR 指向运行时的临时 scratch 目录（可写，不污染 Workspace），因此 npm/npx/git 等需要缓存目录的命令在 Read Only 模式下同样可用。` +
+    `文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。`,
   effect: 'non_idempotent',
   // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
   // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
@@ -318,6 +325,12 @@ register({
     type: 'object',
     properties: {
       command: { type: 'string', description: '要在当前 Workspace 根目录执行的 shell 命令' },
+      timeoutMs: {
+        type: 'number',
+        description:
+          `可选：本次命令的超时毫秒数（${SHELL_TIMEOUT_MIN_MS}-${SHELL_TIMEOUT_MAX_MS}，超出范围会被收敛）。` +
+          `不传则用运行时默认值。长任务（测试、构建）请显式传入。`,
+      },
     },
     required: ['command'],
   },
@@ -328,17 +341,16 @@ register({
     const workspaceRoot = context.workspaceRoot;
     const permissionMode = storedPermissionMode(context.permissionMode);
     const workDir = workspaceRoot;
+    const timeoutMs = resolveShellTimeout(args.timeoutMs, shellTimeoutPolicy());
     // v2.0 Network Control：shell 的网络能力跟随全局 network.mode ——
     // on → 允许网络；off → execute() 已在执行前拒绝，绝不会走到这里。
     const networkAccess = getNetworkMode() === 'on';
-    // HOME/TMPDIR must stay under the same authorized root. Use an ephemeral
-    // per-call directory so npm/tsx caches never become project artifacts.
-    const runtimeDir =
-      permissionMode === 'read-only'
-        ? null
-        : fs.mkdtempSync(path.join(workspaceRoot, '.payaso-shell-'));
-    const home = runtimeDir ?? workspaceRoot;
-    const tmpdir = runtimeDir ?? workspaceRoot;
+    // Scratch（HOME/TMPDIR）：所有权限模式下都放在受管临时根目录，而不是
+    // Workspace 内。Read Only 下命令仍需要可写的缓存目录（npm/npx/git/tsx），
+    // 而 Workspace 必须保持只读；Workspace Write 下也避免污染用户项目。
+    const scratch = createShellScratch(context.runId);
+    const home = scratch.path;
+    const tmpdir = scratch.path;
 
     // 双通道（docs/windows-mac-compat.md §3）：
     // - macOS：Seatbelt 沙箱，fail-closed——sandbox-exec 不可用即拒绝，绝不静默降级
@@ -357,11 +369,14 @@ register({
               'filesystem containment.',
           );
         }
-        const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess);
+        const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess, {
+          scratchRoots: [scratch.path],
+        });
         result = await sandbox.run(cmd, {
           cwd: workDir,
           home,
           tmpdir,
+          timeoutMs,
           signal: context.signal,
           onEvent: (event) => {
             if (event === 'started') {
@@ -396,16 +411,20 @@ register({
           cwd: workDir,
           home,
           tmpdir,
+          timeoutMs,
           signal: context.signal,
         });
       }
     } finally {
-      if (runtimeDir) fs.rmSync(runtimeDir, { recursive: true, force: true });
+      scratch.dispose();
     }
 
     if (result.denied) {
       // Do not expose stderr or host paths to the LLM/context.
-      throw new Error('Shell operation denied by workspace sandbox.');
+      throw new Error(
+        'Shell operation denied by the workspace sandbox (filesystem policy). ' +
+          'The command attempted to write outside the allowed roots.',
+      );
     }
 
     const missingTool = result.exitCode !== 0 ? missingShellToolName(result.stderr) : undefined;
@@ -416,7 +435,7 @@ register({
     }
 
     const head = result.timedOut
-      ? '[shell-timeout] 命令超时(10000ms)或强制终止\n'
+      ? `[shell-timeout] 命令超时(${timeoutMs}ms)或强制终止\n`
       : `[shell-exit-${result.exitCode ?? -1}]\n`;
     return (head + result.stdout + result.stderr).trim();
   },
