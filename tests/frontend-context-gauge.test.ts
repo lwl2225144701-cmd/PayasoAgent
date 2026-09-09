@@ -307,10 +307,10 @@ check(
         next.pressureTokens === undefined &&
         next.emergencyTrim === false &&
         next.model === 'step-3.7-flash' &&
-        next.configSource === 'fallback',
-      '保留 model/config 等上一轮字段'
+        next.configSource === 'fallback'
     );
   })(),
+  '保留 model/config 等上一轮字段',
 );
 check(
   'applyCompactUsage: 无上一轮事件时返回 null',
