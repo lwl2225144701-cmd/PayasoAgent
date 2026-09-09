@@ -17,6 +17,11 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { resolveModelContextConfig } from '../harness/model-context.js';
 import { asProviderStreams, getPiAiProviderModel } from '../host/pi-ai-providers.js';
 import { normalizeTokenUsage, type TokenUsage } from './token-usage.js';
+import {
+  mergeRawArguments,
+  rawArgumentsByToolCallId,
+  ToolArgumentAccumulator,
+} from './tool-call-arguments.js';
 
 const BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const API_KEY = process.env.OPENAI_API_KEY || '';
@@ -841,11 +846,15 @@ export async function chat(
       maxTokens: model.maxTokens,
     });
 
+    // v1.10：原生适配器（Anthropic/Google…）只暴露已解析的参数对象，畸形 JSON
+    // 会被解成 {}；这里累积 toolcall_delta 的原始片段，交给 Runtime 统一解析器。
+    const rawArguments = new ToolArgumentAccumulator();
     for await (const event of stream) {
       if (event.type === 'text_delta') inline.push(event.delta);
       if (event.type === 'thinking_delta') {
         onDelta?.({ messageId, type: 'reasoning_delta', delta: event.delta });
       }
+      if (event.type === 'toolcall_delta') rawArguments.push(event.contentIndex, event.delta);
       if (event.type === 'error' && event.reason === 'aborted') {
         throw new DOMException('Aborted', 'AbortError');
       }
@@ -858,6 +867,11 @@ export async function chat(
       throw new DOMException('Aborted', 'AbortError');
     }
     if (result.stopReason !== 'error') {
+      // 恢复被适配器丢弃的原始参数：只在解码结果为空且原文非 "{}" 时接管。
+      diagnostics.toolArgumentsById = mergeRawArguments(
+        diagnostics.toolArgumentsById,
+        rawArgumentsByToolCallId(result.content, rawArguments.snapshot()),
+      );
       const message = toLegacyMessage(
         result,
         diagnostics.toolNamesById,
