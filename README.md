@@ -6,7 +6,7 @@
 
 * **安全优先**：shell 在 macOS seatbelt 沙箱内执行（fail-closed），API 密钥存 macOS Keychain 不落库
 
-* **当前版本：v1.8**
+* **当前版本：v1.9**
 
 > 完整架构与契约（工具清单、Trace 事件、API、安全边界）以 [docs/architecture-current.md](docs/architecture-current.md) 为唯一权威文档。
 
@@ -28,11 +28,13 @@
 
 **工具集**
 
-* 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（目录递归子串搜索）/ `moveFile` / `deleteFile`
+* 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（正则递归搜索，默认忽略依赖/产物目录）/ `glob`（按模式查找文件，mtime 排序）/ `moveFile` / `deleteFile`
 
 * `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；HOME/TMPDIR 指向沙箱外受管 scratch（Read Only 下仍可写缓存，不污染工作区）；沙箱不可用时拒绝执行（绝不裸跑）
 
-* `loadSkill`：按需加载工作区 `.payaso/skills/<name>/SKILL.md`；`calculator` / `getWeather` 为演示工具
+* `loadSkill`：按需加载工作区 skill（`.payaso/skills`、`.claude/skills`、`.pi/skills`）；`calculator` / `getWeather` 为演示工具
+
+* 项目约定：自动加载 `PAYASO.md` / `AGENTS.md` / `CLAUDE.md`（按优先级合并、标注来源、软链去重）
 
 **权限与密钥**
 
@@ -78,7 +80,7 @@ npm run cli "帮我计算 15*37"   # 命令行单次任务
 
 | 命令                               | 内容                                                                     | 依赖            |
 | -------------------------------- | ---------------------------------------------------------------------- | ------------- |
-| `npm run test:all`               | **53 个确定性套件**（子进程隔离，秒级）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、Host Auth、Keychain 契约等 | 无 LLM         |
+| `npm run test:all`               | **59 个确定性套件**（子进程隔离，秒级）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、Host Auth、Keychain 契约等 | 无 LLM         |
 | `npx tsc --noEmit`               | TypeScript 类型检查                                                        | 无             |
 | `npm run build:web`              | 前端生产构建                                                                 | 无             |
 | `npm run test:host`              | Host API 集成测试（真实 HTTP server + 真实 Run）                                 | 需 LLM（`.env`） |
@@ -93,8 +95,6 @@ CI（`.github/workflows/ci.yml`，macOS + Node 22）固定执行 `npm ci` → `n
 * **无联网工具**：没有 web search / fetch，Agent 无法获取外部信息（`shell` 的网络能力由 `network.mode` 控制，默认 on）
 
 * **shell 沙箱仅 macOS**：`sandbox-exec` 不可用时 shell 工具整体禁用（fail-closed）；其他平台需显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才放行
-
-* **grep 为字面量子串**：不支持正则，也不排除 node_modules（已知缺口，见架构文档 §8）
 
 * **上下文管理**：超预算先按完整旧轮增量摘要压缩（compaction），单任务长执行有当前轮紧急裁剪兜底
 

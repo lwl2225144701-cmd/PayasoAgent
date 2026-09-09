@@ -107,6 +107,10 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tools/tools.ts`                              | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey                                                                                                      |
 | `src/tools/filesystem.ts`                         | listDir / readFile / writeFile（含可写区权限与原子写）                                                                                                                                     |
 | `src/tools/tool-arguments.ts`                     | 工具参数 schema 校验（未知/缺失/类型/枚举）→ 结构化回传模型
+| `src/tools/workspace-scan.ts`                     | 文件发现单一来源：目录遍历 + 默认 ignore 规则（grep/glob 共用）
+| `src/tools/glob-pattern.ts`                       | glob → RegExp 编译器（* / ? / ** / **/ / {a,b}，元字符按字面量）
+| `src/host/workspace-instructions.ts`              | 项目指令发现链（PAYASO.md/AGENTS.md/CLAUDE.md）+ skills 目录（.payaso/.claude/.pi）
+| `src/sandbox/shell-command-effect.ts`             | shell 命令级副作用分类（只读命令免回放；不确定即 non_idempotent）
 | `src/runtime/tool-error-classifier.ts`            | 工具错误分类（默认不重试；瞬时错误白名单）
 | `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
@@ -150,7 +154,7 @@ web/src/
 <!-- docs-contract:tools -->
 
 ```json
-["calculator","getWeather","loadSkill","read","write","edit","grep","ls","shell","moveFile","deleteFile"]
+["calculator","getWeather","loadSkill","read","write","edit","grep","glob","ls","shell","moveFile","deleteFile"]
 ```
 
 <!-- /docs-contract:tools -->
@@ -183,7 +187,7 @@ for (i = startIter; ; i++):
         │      Schema Validate（v1.8）→ Side-effect preparation → Execute；
         │      任一前置失败 = 可恢复 invocation error，工具不执行、不创建 side-effect，
         │      结构化错误回传模型修正，trace 记 tool_call_invalid）：
-        ├─ 2a. non_idempotent → resolveOperation（replay / uncertain / start）
+        ├─ 2a. resolveToolEffect(args) → non_idempotent 才走 resolveOperation（replay/uncertain/start）
         ├─ 2b. isBlocked 防死循环（同 tool+input 失败超限 / 已 invalid → 禁调）
         ├─ 2c. non_idempotent → begin(opKey) + saveCheckpoint()（persist 失败禁止 execute）
         └─ 2d. 执行：错误分类决定是否重试（v1.8，默认不重试；仅瞬时错误 ≤2 次）
@@ -204,6 +208,9 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | 工具输出预算单一来源 | `src/tool-output-budget.ts` 同时被 Runtime guard 与 read/grep 等生产者使用，宣称契约 == 执行契约 | `tests/tool-output-budget.test.ts` |
 | Read Only 下 shell 仍可用 | `sandbox/shell-scratch.ts` 提供沙箱外受管可写 HOME/TMPDIR；工作区保持只读 | `tests/shell-execution.test.ts` |
 | 超时由 host 策略收敛 | `sandbox/shell-timeout.ts`（默认 120s、上限 600s、env 可配、模型可请求 `timeoutMs`） | `tests/shell-execution.test.ts` |
+| 搜索不吞掉依赖目录 | grep/glob 共用 `workspace-scan.ts` 的 ignore 策略；`includeIgnored` 显式放行 | `tests/workspace-scan.test.ts` |
+| 项目约定必须被读到 | `workspace-instructions.ts` 按 PAYASO.md → AGENTS.md → CLAUDE.md 合并，skills 兼容三个目录 | `tests/workspace-instructions.test.ts` |
+| 只读 shell 命令不得回放缓存 | `Tool.resolveEffect` + `shell-command-effect.ts`；写命令仍走三态副作用保护 | `tests/shell-command-effect.test.ts` |
 
 ### 4.2 三层状态职责
 
@@ -330,7 +337,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 48 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 48 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 59 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 59 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |
