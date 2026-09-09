@@ -853,8 +853,9 @@
   justify-content: flex-end;
 }
 
-/* 模型目录 tag 内的窗口输入（v1.6 按模型能力配置） */
-.tagWindowInput {
+/* 模型目录 tag 内的数值输入（上下文窗口 / 最大输出，v1.6 按模型能力配置） */
+.tagWindowInput,
+.tagOutputInput {
   width: 88px;
   padding: 2px 6px;
   border: 1px solid var(--border-color);
@@ -864,11 +865,13 @@
   font-size: 11.5px;
 }
 
-.tagWindowInput::placeholder {
+.tagWindowInput::placeholder,
+.tagOutputInput::placeholder {
   color: var(--text-muted);
 }
 
-.tagWindowInput:focus {
+.tagWindowInput:focus,
+.tagOutputInput:focus {
   outline: none;
   border-color: var(--brand, var(--text-secondary));
 }

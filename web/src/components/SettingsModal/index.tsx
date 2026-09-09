@@ -57,6 +57,8 @@ interface ModelTag {
   value: string;
   // 可选的上下文窗口（tokens）；空字符串 = 未配置
   contextWindow?: string;
+  // 可选的最大输出（tokens）；空字符串 = 未配置（由后端按窗口推导）
+  maxOutputTokens?: string;
   // 模型支持图片输入（视觉能力）；显式配置优先于 pi-ai 注册表声明
   vision?: boolean;
 }
@@ -195,11 +197,16 @@ function mergeCatalogIntoTags(
   let contextFilledCount = 0;
   const tags = currentTags.map((tag) => {
     const model = catalogById.get(tag.value);
-    if (model?.contextWindow !== undefined && !(tag.contextWindow ?? '').trim()) {
+    if (!model) return tag;
+    let next = tag;
+    if (model.contextWindow !== undefined && !(tag.contextWindow ?? '').trim()) {
       contextFilledCount += 1;
-      return { ...tag, contextWindow: String(model.contextWindow) };
+      next = { ...next, contextWindow: String(model.contextWindow) };
     }
-    return tag;
+    if (model.maxOutputTokens !== undefined && !(next.maxOutputTokens ?? '').trim()) {
+      next = { ...next, maxOutputTokens: String(model.maxOutputTokens) };
+    }
+    return next;
   });
 
   const known = new Set(tags.map((tag) => tag.value));
@@ -210,6 +217,9 @@ function mergeCatalogIntoTags(
       id: crypto.randomUUID(),
       value: model.id,
       ...(model.contextWindow !== undefined ? { contextWindow: String(model.contextWindow) } : {}),
+      ...(model.maxOutputTokens !== undefined
+        ? { maxOutputTokens: String(model.maxOutputTokens) }
+        : {}),
       ...(model.vision ? { vision: true } : {}),
     }));
   contextFilledCount += added.filter((tag) => tag.contextWindow !== undefined).length;
@@ -335,6 +345,7 @@ export function SettingsModal({
       id: crypto.randomUUID(),
       value: model.id,
       contextWindow: model.contextWindow !== undefined ? String(model.contextWindow) : '',
+      maxOutputTokens: model.maxOutputTokens !== undefined ? String(model.maxOutputTokens) : '',
       ...(model.vision ? { vision: true } : {}),
     }));
     setForm((prev) => ({
@@ -358,11 +369,13 @@ export function SettingsModal({
       hadApiKey: m.hasApiKey,
       tags: m.models.map((value, idx) => {
         const window = m.modelCapabilities?.[value]?.contextWindow;
+        const output = m.modelCapabilities?.[value]?.maxOutputTokens;
         const vision = m.modelCapabilities?.[value]?.vision === true;
         return {
           id: `${m.id}-${idx}`,
           value,
           contextWindow: window !== undefined ? String(window) : '',
+          maxOutputTokens: output !== undefined ? String(output) : '',
           ...(vision ? { vision: true } : {}),
         };
       }),
@@ -403,23 +416,37 @@ export function SettingsModal({
       setError('请填写 API 密钥后再保存内置提供方。');
       return;
     }
-    // 按模型能力覆盖：收集填写了上下文窗口或开启了视觉能力的模型；窗口数值必须为正整数
-    let modelCapabilities: Record<string, { contextWindow?: number; vision?: boolean }> | undefined;
+    // 按模型能力覆盖：收集填写了上下文窗口/最大输出或开启了视觉能力的模型；
+    // 数值必须为正整数。最大输出留空时由后端按上下文窗口推导（不再固定 4K）。
+    let modelCapabilities:
+      | Record<string, { contextWindow?: number; maxOutputTokens?: number; vision?: boolean }>
+      | undefined;
     for (const tag of form.tags) {
-      const raw = (tag.contextWindow ?? '').trim();
+      const rawWindow = (tag.contextWindow ?? '').trim();
       let contextWindow: number | undefined;
-      if (raw) {
-        const window = Number(raw);
+      if (rawWindow) {
+        const window = Number(rawWindow);
         if (!Number.isSafeInteger(window) || window <= 0) {
           setError(`模型 ${tag.value} 的上下文窗口必须是正整数。`);
           return;
         }
         contextWindow = window;
       }
-      if (contextWindow === undefined && !tag.vision) continue;
+      const rawOutput = (tag.maxOutputTokens ?? '').trim();
+      let maxOutputTokens: number | undefined;
+      if (rawOutput) {
+        const output = Number(rawOutput);
+        if (!Number.isSafeInteger(output) || output <= 0) {
+          setError(`模型 ${tag.value} 的最大输出必须是正整数。`);
+          return;
+        }
+        maxOutputTokens = output;
+      }
+      if (contextWindow === undefined && maxOutputTokens === undefined && !tag.vision) continue;
       modelCapabilities = modelCapabilities ?? {};
       modelCapabilities[tag.value] = {
         ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
         ...(tag.vision ? { vision: true } : {}),
       };
     }
@@ -754,6 +781,22 @@ export function SettingsModal({
                               ...prev,
                               tags: prev.tags.map((t) =>
                                 t.id === tag.id ? { ...t, contextWindow: e.target.value } : t,
+                              ),
+                            }))
+                          }
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          className={styles.tagOutputInput}
+                          placeholder="最大输出"
+                          title="单次回复最大输出（tokens，可选）；留空时按上下文窗口推导"
+                          value={tag.maxOutputTokens ?? ''}
+                          onChange={(e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              tags: prev.tags.map((t) =>
+                                t.id === tag.id ? { ...t, maxOutputTokens: e.target.value } : t,
                               ),
                             }))
                           }

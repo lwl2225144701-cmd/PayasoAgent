@@ -305,6 +305,13 @@ export interface RecoveryDecisionEvent extends TraceEventBase {
   decision: string;
 }
 
+// v1.8 空回合不变量：模型没有可见输出，Harness 策略已追加恢复提示。
+export interface EmptyTurnRecoveredEvent extends TraceEventBase {
+  type: 'empty_turn_recovered';
+  attempt: number;
+  maxAttempts: number;
+}
+
 export interface SideEffectSkipEvent extends TraceEventBase {
   type: 'side_effect_skip';
   tool: string;
@@ -418,6 +425,7 @@ export type TraceEvent =
   | ContextUsageEvent
   | ContextCompactionEvent
   | RecoveryDecisionEvent
+  | EmptyTurnRecoveredEvent
   | SideEffectSkipEvent
   | SideEffectUncertainEvent
   | ToolOutputTruncatedEvent

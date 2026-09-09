@@ -7,6 +7,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { deriveMaxOutputTokens } from '../src/harness/model-context.js';
 import { SettingsStore } from '../src/host/persistence/settings-store.js';
 import { createDefaultRunStore, SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
 import { RunManager } from '../src/host/run-manager.js';
@@ -1623,12 +1624,14 @@ async function postJSONWithOrigin(
       await new Promise((r) => setTimeout(r, 50));
     }
     check('cap: Run 在配置窗口下完成', status9 === 'completed', `status=${status9}`);
-    // 预算 = 窗口(131072) - 输出预留(未配置 → fallback 4096) - 安全余量(2622) = 124354
+    // 预算 = 窗口(131072) - 输出预留(未配置 → v1.8 按窗口推导) - 安全余量(2622)
+    const expectedBudget =
+      131_072 - deriveMaxOutputTokens(131_072) - Math.max(2_048, Math.ceil(131_072 * 0.02));
     const usageEvents = (
       await (await fetch(`${base}/runs/${created9.runId}/events?live=0`)).text()
-    ).includes('"inputBudgetTokens":124354');
+    ).includes(`"inputBudgetTokens":${expectedBudget}`);
     check(
-      'cap: context_usage 预算 = 窗口-输出预留-安全余量（124354）',
+      `cap: context_usage 预算 = 窗口-输出预留-安全余量（${expectedBudget}）`,
       usageEvents,
       'budget mismatch',
     );

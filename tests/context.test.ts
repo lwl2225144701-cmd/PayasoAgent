@@ -4,7 +4,11 @@ import assert from 'node:assert/strict';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
 import { ContextManager } from '../src/harness/context-manager.js';
 import type { ConversationSummarizer } from '../src/harness/conversation-summarizer.js';
-import { estimateTextTokens, resolveModelContextConfig } from '../src/harness/model-context.js';
+import {
+  deriveMaxOutputTokens,
+  estimateTextTokens,
+  resolveModelContextConfig,
+} from '../src/harness/model-context.js';
 import type { ChatMessage, ToolSchema } from '../src/llm/llm.js';
 
 let passed = 0;
@@ -95,7 +99,30 @@ await test('unknown explicit run model uses conservative fallback', () => {
   assert.equal(config.modelSource, 'run');
   assert.equal(config.source, 'fallback');
   assert.equal(config.contextWindowTokens, 262_144); // 引入模型已知下限 256K
-  assert.equal(config.maxOutputTokens, 4_096);
+  // v1.8：输出预留按窗口推导，不再固定 4K（固定值会让 1M 窗口模型只输出 4K）
+  assert.equal(config.maxOutputTokens, deriveMaxOutputTokens(262_144));
+  assert.ok(config.maxOutputTokens > 4_096, '未知模型不应被钉死在 4K 输出');
+});
+
+await test('v1.8 output reserve derivation: 按窗口推导并夹在 [4K, 32K]', () => {
+  assert.equal(deriveMaxOutputTokens(32_768), 4_096, '小窗口取下限');
+  assert.equal(deriveMaxOutputTokens(256_000), 20_480);
+  assert.equal(deriveMaxOutputTokens(1_000_000), 32_768, '大窗口取上限');
+  assert.ok(
+    deriveMaxOutputTokens(500_000) >= deriveMaxOutputTokens(100_000),
+    '推导必须随窗口单调不减',
+  );
+});
+
+await test('v1.8 显式 maxOutputTokens 覆盖推导，并正确扣减输入预算', () => {
+  const config = resolveModelContextConfig({
+    model: 'step-3.7-flash',
+    contextWindowTokens: 256_000,
+    maxOutputTokens: 64_000,
+  });
+  assert.equal(config.maxOutputTokens, 64_000);
+  assert.equal(config.safetyTokens, 5_120);
+  assert.equal(config.maxInputTokens, 256_000 - 64_000 - 5_120);
 });
 
 await test('invalid explicit numeric input fails early', () => {

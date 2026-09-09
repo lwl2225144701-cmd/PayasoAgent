@@ -34,8 +34,23 @@ interface ModelCapability {
 // 当前引入的模型上下文窗口基本都在 256K 及以上；若将来接入更低窗口的模型，
 // 应在 MODEL_CAPABILITIES 显式登记（而不是调低这个值）。
 const FALLBACK_CONTEXT_WINDOW_TOKENS = 262_144;
-// 输出预留保持保守：未知模型的 max_tokens 上限未知，4K 是各家普遍安全的取值
-const FALLBACK_MAX_OUTPUT_TOKENS = 4_096;
+
+// 输出预算推导（v1.8）：以前是固定 4096，导致除 MiniMax-M3 外所有模型（含
+// 1M 窗口的模型）单次回复被硬截断。现在按窗口推导：取窗口的 8%，下限 4K
+// （保证小窗口模型仍有可用输出），上限 32K（避免输出预留吃掉输入预算）。
+const OUTPUT_RESERVE_RATIO = 0.08;
+const OUTPUT_RESERVE_MIN_TOKENS = 4_096;
+const OUTPUT_RESERVE_MAX_TOKENS = 32_768;
+
+/**
+ * Derive a sane output reserve from the context window when neither the model
+ * registry nor the settings page declares one. Monotonic and clamped, so a
+ * 1M-window model is no longer limited to 4096 output tokens.
+ */
+export function deriveMaxOutputTokens(contextWindowTokens: number): number {
+  const raw = Math.floor(contextWindowTokens * OUTPUT_RESERVE_RATIO);
+  return Math.min(OUTPUT_RESERVE_MAX_TOKENS, Math.max(OUTPUT_RESERVE_MIN_TOKENS, raw));
+}
 
 const MODEL_CAPABILITIES: ModelCapability[] = [
   {
@@ -115,16 +130,17 @@ export function resolveModelContextConfig(
     const capability = getKnownModelCapability(explicitModel);
     const hasSettingsOverride =
       input.contextWindowTokens !== undefined || input.maxOutputTokens !== undefined;
+    const contextWindowTokens =
+      positiveIntegerInput(input.contextWindowTokens, 'contextWindowTokens') ??
+      capability?.contextWindowTokens ??
+      FALLBACK_CONTEXT_WINDOW_TOKENS;
     return buildConfig({
       model: explicitModel,
-      contextWindowTokens:
-        positiveIntegerInput(input.contextWindowTokens, 'contextWindowTokens') ??
-        capability?.contextWindowTokens ??
-        FALLBACK_CONTEXT_WINDOW_TOKENS,
+      contextWindowTokens,
       maxOutputTokens:
         positiveIntegerInput(input.maxOutputTokens, 'maxOutputTokens') ??
         capability?.maxOutputTokens ??
-        FALLBACK_MAX_OUTPUT_TOKENS,
+        deriveMaxOutputTokens(contextWindowTokens),
       safetyTokens: positiveIntegerInput(input.safetyTokens, 'safetyTokens'),
       modelSource: 'run',
       source: hasSettingsOverride ? 'settings' : capability ? 'model_registry' : 'fallback',
@@ -141,11 +157,13 @@ export function resolveModelContextConfig(
     env.MODEL_MAX_OUTPUT_TOKENS,
     'MODEL_MAX_OUTPUT_TOKENS',
   );
+  const contextWindowTokens =
+    configuredWindow ?? capability?.contextWindowTokens ?? FALLBACK_CONTEXT_WINDOW_TOKENS;
   return buildConfig({
     model,
-    contextWindowTokens:
-      configuredWindow ?? capability?.contextWindowTokens ?? FALLBACK_CONTEXT_WINDOW_TOKENS,
-    maxOutputTokens: configuredOutput ?? capability?.maxOutputTokens ?? FALLBACK_MAX_OUTPUT_TOKENS,
+    contextWindowTokens,
+    maxOutputTokens:
+      configuredOutput ?? capability?.maxOutputTokens ?? deriveMaxOutputTokens(contextWindowTokens),
     safetyTokens: positiveIntegerEnv(
       env.MODEL_CONTEXT_SAFETY_TOKENS,
       'MODEL_CONTEXT_SAFETY_TOKENS',

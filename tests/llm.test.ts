@@ -1,6 +1,7 @@
 // Deterministic LLM transport tests: no real network or credentials.
 
 import assert from 'node:assert/strict';
+import { deriveMaxOutputTokens } from '../src/harness/model-context.js';
 import { chat } from '../src/llm/llm.js';
 
 const originalFetch = globalThis.fetch;
@@ -377,7 +378,8 @@ try {
     assert.equal(bodies[0].model, 'MiniMax-M3');
     assert.equal(bodies[0].max_tokens, 16_384);
     assert.equal(bodies[1].model, 'gpt-4o-mini');
-    assert.equal(bodies[1].max_tokens, 4_096);
+    // v1.8：未登记模型不再固定 4K 输出，按窗口推导（256K fallback → 20971）
+    assert.equal(bodies[1].max_tokens, deriveMaxOutputTokens(262_144));
   });
 } finally {
   globalThis.fetch = originalFetch;
