@@ -476,7 +476,11 @@ async function executeContainedShell(
             'filesystem containment.',
         );
       }
-      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, context.networkMode === 'on', {
+      // v1.10 回归修复：运行时注入 context.networkMode；测试/CLI 缺省时回退全局
+      // getNetworkMode()（默认 on）。若按 undefined 判为 off，沙箱 profile 加
+      // (deny network*)，会连带拦截 AF_UNIX socket 创建 → tsx/npx listen EPERM。
+      const networkAccess = (context.networkMode ?? getNetworkMode()) === 'on';
+      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess, {
         scratchRoots: [scratch.path],
       });
       result = await sandbox.run(command, {

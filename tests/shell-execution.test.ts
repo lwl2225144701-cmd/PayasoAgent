@@ -19,7 +19,11 @@ import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manage
 import {
   createShellScratch,
   isShellScratchPath,
+  SCRATCH_MAX_TMPDIR_BYTES,
+  SCRATCH_SOCKET_RESERVE_BYTES,
   shellScratchRoot,
+  shellScratchRoots,
+  UNIX_SOCKET_PATH_LIMIT_BYTES,
 } from '../src/sandbox/shell-scratch.js';
 import {
   resolveShellTimeout,
@@ -73,12 +77,31 @@ async function shell(
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ---- 1. scratch 模块（纯函数/文件系统契约）----
+// 环境门（v1.10）：这批检查依赖两个假设——
+//   a) 能创建受管 scratch 根；
+//   b) os.tmpdir() 是独立于受管 scratch 的外部位置（若干断言用它当"外部"样本）。
+// 嵌套沙箱（agent 在自己的沙箱里跑 test:all）两条件都不成立：TMPDIR 指向外层
+// scratch（本身就是受管根），且 /private/tmp 不可写。与 os-sandbox 的 E2E 门
+// 一致——环境不具备能力时如实 SKIP，而不是假绿或假红。
+let scratchChecksEligible = true;
+try {
+  createShellScratch('eligibility-probe').dispose();
+  if (isShellScratchPath(os.tmpdir())) scratchChecksEligible = false;
+} catch {
+  scratchChecksEligible = false;
+}
 
-await check('shellScratchRoot 默认在 OS 临时目录下，且不位于工作区内', () => {
+if (scratchChecksEligible) {
+
+await check('shellScratchRoot 默认落在短临时根（/private/tmp/payaso-shell），不位于工作区内', () => {
   const root = shellScratchRoot({});
-  assert.ok(root.startsWith(fs.realpathSync.native(os.tmpdir())), `root=${root}`);
-  assert.ok(root.endsWith('payaso-shell'), `root=${root}`);
+  assert.ok(root.endsWith(path.sep + 'payaso-shell'), `root=${root}`);
+  assert.ok(!root.startsWith(fs.realpathSync.native(os.tmpdir())), '不应再落在 /var/folders 深层路径');
+  // v1.10 关键约束：根路径本身必须短，TMPDIR 才有余量（见 UNIX_SOCKET_PATH_LIMIT_BYTES）
+  assert.ok(
+    root.length < 60,
+    `根路径必须短（实际 ${root.length} 字节），否则 TMPDIR 会逼近 AF_UNIX 108 上限`,
+  );
 });
 
 await check('shellScratchRoot 支持 PAYASO_SHELL_SCRATCH_ROOT 覆盖', () => {
@@ -125,6 +148,75 @@ await check('createShellScratch：scope 含路径分隔符也不会逃逸受管�
   }
 });
 
+await check('TMPDIR 长度不变量：scratch 路径 + socket 预留 < 108（tsx 不再 listen EINVAL）', () => {
+  const scratch = createShellScratch('run-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx');
+  try {
+    const tmpdirBytes = Buffer.byteLength(scratch.path, 'utf8');
+    assert.ok(
+      tmpdirBytes + SCRATCH_SOCKET_RESERVE_BYTES < UNIX_SOCKET_PATH_LIMIT_BYTES,
+      `TMPDIR=${tmpdirBytes} + socket 预留 ${SCRATCH_SOCKET_RESERVE_BYTES} 必须 < 108`,
+    );
+    assert.ok(tmpdirBytes <= SCRATCH_MAX_TMPDIR_BYTES, `TMPDIR=${tmpdirBytes} 超预算`);
+  } finally {
+    scratch.dispose();
+  }
+});
+
+await check('scope 不再进入路径：超长 runId 也不会影响 TMPDIR 长度', () => {
+  const a = createShellScratch('x');
+  const b = createShellScratch('y'.repeat(100));
+  try {
+    assert.equal(a.path.length, b.path.length, '路径长度不应随 scope 变化');
+    assert.ok(Buffer.byteLength(b.path, 'utf8') < 60, `路径应保持短: ${b.path.length}`);
+  } finally {
+    a.dispose();
+    b.dispose();
+  }
+});
+
+await check('测试套件最坏 mkdtemp 前缀也放得下（os.tmpdir() = TMPDIR）', () => {
+  const scratch = createShellScratch('probe');
+  try {
+    // run-all 里最长的套件临时前缀约 29 字符 + mkdtemp 6 位随机
+    const worstCase = Buffer.byteLength(scratch.path, 'utf8') + 29 + 6;
+    assert.ok(
+      worstCase < UNIX_SOCKET_PATH_LIMIT_BYTES,
+      `测试套件 mkdtemp 最坏情况 ${worstCase} 必须 < 108`,
+    );
+  } finally {
+    scratch.dispose();
+  }
+});
+
+await check('回退链：主根不可写时回退到 os.tmpdir()/payaso-shell（嵌套沙箱场景）', () => {
+  const roots = shellScratchRoots({});
+  const primary = roots[0];
+  fs.mkdirSync(primary, { recursive: true, mode: 0o700 });
+  fs.chmodSync(primary, 0o500); // 让 mkdtemp 在主根下 EPERM
+  try {
+    const scratch = createShellScratch('fallback-probe');
+    try {
+      const fallbackRoot = fs.realpathSync.native(roots[1]);
+      assert.ok(
+        scratch.path.startsWith(fallbackRoot + path.sep),
+        `应回退到 os.tmpdir() 根: ${scratch.path}`,
+      );
+      assert.equal(isShellScratchPath(scratch.path), true, '回退后的路径仍必须被识别为受管 scratch');
+      // 硬约束：即使回退到 os.tmpdir()（裸环境是 /var/folders 长路径），
+      // TMPDIR + socket 预留必须仍 < 108，tsx 才不会 EINVAL。
+      assert.ok(
+        Buffer.byteLength(scratch.path, 'utf8') + SCRATCH_SOCKET_RESERVE_BYTES <
+          UNIX_SOCKET_PATH_LIMIT_BYTES,
+        `回退根 TMPDIR 超预算: ${Buffer.byteLength(scratch.path, 'utf8')}`,
+      );
+    } finally {
+      scratch.dispose();
+    }
+  } finally {
+    fs.chmodSync(primary, 0o700); // 还原主根权限
+  }
+});
+
 // ---- 2. sandbox policy：scratch 是工作区外唯一可写根 ----
 
 await check('read-only + scratchRoots：scratch 可写、工作区不可写', () => {
@@ -155,6 +247,12 @@ await check('scratchRoots 落在受管根之外 → 策略构造失败（fail-cl
   );
 });
 
+
+} else {
+  console.log(
+    '  [SKIP] scratch/policy 文件系统检查：当前环境不满足可创建 scratch 根 或 os.tmpdir() 已位于受管根内（嵌套沙箱）',
+  );
+}
 // ---- 3. 超时策略 ----
 
 await check('resolveShellTimeout：未请求 → 策略默认值', () => {
@@ -256,6 +354,22 @@ if (process.platform !== 'darwin') {
       timeoutMs: 30_000,
     });
     assert.ok(out.includes('DONE'), `输出: ${out}`);
+  });
+
+  await check('E2E：短 TMPDIR 下 tsx 可运行（回归 listen EINVAL）', async () => {
+    // workspaceRoot = 真实项目，让 node_modules/.bin/tsx 可读可执行；
+    // read-only 模式下 HOME/TMPDIR 仍指向可写 scratch。
+    const out = await tool(
+      'shell',
+      {
+        command: 'npx tsx -e "console.log(\"TMPDIR_OK\")"',
+        timeoutMs: 120_000,
+      },
+      'read-only',
+      process.cwd(),
+    );
+    assert.ok(out.includes('TMPDIR_OK'), `tsx 输出应包含 TMPDIR_OK: ${out.slice(0, 300)}`);
+    assert.ok(!out.includes('EINVAL'), `不应出现 listen EINVAL: ${out.slice(0, 300)}`);
   });
 
   await check('后台作业：立即返回 jobId，完成后可取回输出', async () => {

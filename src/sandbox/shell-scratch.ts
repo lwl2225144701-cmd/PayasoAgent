@@ -9,11 +9,22 @@
 // The Workspace boundary must stay read-only, but a command still needs a
 // writable scratch area; this module owns that area.
 //
+// Why the root is SHORT (v1.10 fix):
+// The path handed to a child as HOME/TMPDIR becomes the base for everything the
+// tool writes, including Unix domain sockets (AF_UNIX hard limit = 108 bytes)
+// and the test suite's own `fs.mkdtempSync(os.tmpdir(), ...)`. The original
+// root was `os.tmpdir()/payaso-shell/<runId>-<rand>` — 113 bytes — so `tsx`
+// crashed with `listen EINVAL` (socket path 132 > 108) and the agent could
+// never run its own tests. The default root therefore lives at `/private/tmp`
+// (12 bytes on macOS) instead of `/private/var/folders/...` (59+ bytes), and
+// each invocation uses a minimal `s-XXXXXX` name. `scope` is no longer embedded
+// in the path — it exists only for caller bookkeeping.
+//
 // Contract:
-// - The scratch root lives under the OS temp dir (never inside the Workspace),
-//   so a crashed run can never leave artifacts in the user's project.
-// - Each scratch directory is created 0700, unique per Shell invocation, and
-//   removed by the caller via `dispose()`.
+// - The scratch root lives OUTSIDE the Workspace, so a crashed run can never
+//   leave artifacts in the user's project.
+// - The root and each scratch directory are 0700; per-invocation directories
+//   are unique (mkdtemp) and removed by the caller via `dispose()`.
 // - `isShellScratchPath` is the only authority the sandbox policy trusts to
 //   accept a writable root outside the Workspace.
 
@@ -22,21 +33,58 @@ import os from 'node:os';
 import path from 'node:path';
 
 const SCRATCH_DIR_NAME = 'payaso-shell';
+/** Minimal per-invocation prefix; mkdtemp appends 6 random chars → `s-XXXXXX`. */
+const SCRATCH_DIR_PREFIX = 's';
 
-/** Root under which all per-invocation scratch directories are created (canonical). */
-export function shellScratchRoot(env: Record<string, string | undefined> = process.env): string {
+/** AF_UNIX (Unix domain socket) path length limit. */
+export const UNIX_SOCKET_PATH_LIMIT_BYTES = 108;
+/**
+ * Longest expected child-created suffix under $TMPDIR: `/tsx-<uid>/<pid>.pipe`
+ * (~24 bytes). Kept explicit so the length invariant is testable.
+ */
+export const SCRATCH_SOCKET_RESERVE_BYTES = 24;
+/** Safe upper bound for the TMPDIR path handed to a child process. */
+export const SCRATCH_MAX_TMPDIR_BYTES = UNIX_SOCKET_PATH_LIMIT_BYTES - SCRATCH_SOCKET_RESERVE_BYTES;
+
+/**
+ * Candidate scratch roots in priority order (canonicalized when they exist).
+ * macOS primary is `/tmp/payaso-shell` → `/private/tmp/payaso-shell` (short,
+ * avoids `/var/folders/...`); fallback is `os.tmpdir()/payaso-shell`, which in a
+ * nested sandbox resolves to the outer scratch (writable AND short). This
+ * fallback keeps the Shell tool functional when the primary root is not
+ * writable (e.g. the Host itself runs inside another sandbox).
+ * `PAYASO_SHELL_SCRATCH_ROOT` overrides the whole list.
+ */
+export function shellScratchRoots(env: Record<string, string | undefined> = process.env): string[] {
   const override = env.PAYASO_SHELL_SCRATCH_ROOT?.trim();
-  return canonicalize(override ? path.resolve(override) : path.join(os.tmpdir(), SCRATCH_DIR_NAME));
+  if (override) return [path.resolve(override)];
+  if (process.platform === 'darwin') {
+    return [path.join('/tmp', SCRATCH_DIR_NAME), path.join(os.tmpdir(), SCRATCH_DIR_NAME)];
+  }
+  return [path.join(os.tmpdir(), SCRATCH_DIR_NAME)];
 }
 
-/** True when `candidate` is the scratch root or a descendant of it. */
+/** Primary scratch root (first candidate). Kept for callers that want one path. */
+export function shellScratchRoot(env: Record<string, string | undefined> = process.env): string {
+  const root = shellScratchRoots(env)[0];
+  try {
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  } catch {
+    /* a later create/validate will surface the real error */
+  }
+  return canonicalize(root);
+}
+
+/** True when `candidate` is any managed scratch root or a descendant of it. */
 export function isShellScratchPath(
   candidate: string,
   env: Record<string, string | undefined> = process.env,
 ): boolean {
-  const root = shellScratchRoot(env);
   const target = canonicalize(path.resolve(candidate));
-  return target === root || target.startsWith(root + path.sep);
+  return shellScratchRoots(env).some((root) => {
+    const canonicalRoot = canonicalize(root);
+    return target === canonicalRoot || target.startsWith(canonicalRoot + path.sep);
+  });
 }
 
 export interface ShellScratch {
@@ -48,32 +96,42 @@ export interface ShellScratch {
 
 /**
  * Create one 0700 scratch directory for a Shell invocation.
- * `scope` is a human-readable prefix (runId / tool name); it is sanitized so a
- * hostile value can never escape the scratch root.
+ * `scope` is retained for caller bookkeeping only — it is NEVER placed in the
+ * path, because the path length is the hard constraint here (see module doc).
  */
 export function createShellScratch(
-  scope: string,
+  _scope: string,
   env: Record<string, string | undefined> = process.env,
 ): ShellScratch {
-  const root = shellScratchRoot(env);
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const safeScope = scope.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 48) || 'run';
-  const created = fs.mkdtempSync(path.join(root, `${safeScope}-`));
-  fs.chmodSync(created, 0o700);
-  const canonical = canonicalize(created);
-  let disposed = false;
-  return {
-    path: canonical,
-    dispose: () => {
-      if (disposed) return;
-      disposed = true;
-      try {
-        fs.rmSync(canonical, { recursive: true, force: true });
-      } catch {
-        /* best effort: a leaked scratch dir must never fail the tool call */
-      }
-    },
-  };
+  const roots = shellScratchRoots(env);
+  let lastError: unknown;
+  for (const root of roots) {
+    try {
+      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      const created = fs.mkdtempSync(path.join(root, `${SCRATCH_DIR_PREFIX}-`));
+      fs.chmodSync(created, 0o700);
+      const canonical = canonicalize(created);
+      let disposed = false;
+      return {
+        path: canonical,
+        dispose: () => {
+          if (disposed) return;
+          disposed = true;
+          try {
+            fs.rmSync(canonical, { recursive: true, force: true });
+          } catch {
+            /* best effort: a leaked scratch dir must never fail the tool call */
+          }
+        },
+      };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  // 所有候选根都不可写：把最后一个真实错误抛给调用方（fail-closed，不静默降级）。
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`unable to create shell scratch under any managed root (${roots.join(', ')})`);
 }
 
 /** realpath when the path exists, resolve otherwise (never throws). */

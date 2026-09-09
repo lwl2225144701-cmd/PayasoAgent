@@ -30,7 +30,7 @@
 
 * 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（正则递归搜索，默认忽略依赖/产物目录）/ `glob`（按模式查找文件，mtime 排序）/ `moveFile` / `deleteFile`
 
-* `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出/终止（长测试与构建不阻塞本轮）；HOME/TMPDIR 指向沙箱外受管 scratch（Read Only 下仍可写缓存，不污染工作区）；沙箱不可用时拒绝执行（绝不裸跑）
+* `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出/终止（长测试与构建不阻塞本轮）；HOME/TMPDIR 指向沙箱外**短路径**受管 scratch（macOS 默认 /private/tmp/payaso-shell，Read Only 下仍可写缓存，不污染工作区；短路径保证 tsx 等依赖 TMPDIR 建 Unix socket 的工具可用）；沙箱不可用时拒绝执行（绝不裸跑）
 
 * `loadSkill`：按需加载工作区 skill（`.payaso/skills`、`.claude/skills`、`.pi/skills`）；`calculator` / `getWeather` 为演示工具
 

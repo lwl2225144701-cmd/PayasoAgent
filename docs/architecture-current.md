@@ -117,7 +117,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
 | `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）
-| `src/sandbox/shell-scratch.ts`                    | 受管可写 scratch（HOME/TMPDIR）：read-only 下命令仍可写缓存，工作区保持只读
+| `src/sandbox/shell-scratch.ts`                    | 受管可写 scratch（HOME/TMPDIR）：read-only 下命令仍可写缓存，工作区保持只读；**根目录刻意取短路径**（macOS 默认 /private/tmp/payaso-shell，避开 /var/folders 的 AF_UNIX 108 字节限制）
 | `src/sandbox/shell-timeout.ts`                    | Shell 超时策略（默认 120s / 上限 600s / env 可配 / 模型可请求 `timeoutMs`）                                                                               |
 | `src/sandbox/sandbox-policy.ts`                   | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false）                                                                                                            |
 | `src/sandbox/toolchain-manager.ts`                | macOS 工具链启动发现、Mach-O 依赖闭包、Git helper/runtime 路径封装；对模型只投影无路径能力快照                                                                                                     |
