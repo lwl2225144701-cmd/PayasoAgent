@@ -16,11 +16,19 @@ import {
   getRunWorkspaceRoot,
   resolveWorkspacePath,
 } from '../sandbox/sandbox-manager.js';
+import {
+  type SliceBudget,
+  TOOL_OUTPUT_HEAD_BYTES,
+  TOOL_OUTPUT_MAX_BYTES,
+  TOOL_OUTPUT_TAIL_BYTES,
+  utf8ByteLength,
+  utf8Head,
+} from '../tool-output-budget.js';
 import { register, registerAlias, type ToolContext } from './tools.js';
 
-// 单次 read 返回的文本上限：超过则前部截断 + continuation hint（offset 续读）。
-// 数值远大于 runtime output guard（16KB），保证 guard 截断前模型仍能看到
-// 足够多的有效头部；offset 参数支持模型继续阅读，不丢失文件内容。
+// 单文件读入内存的上限/单行上限（安全阈值，不是模型可见的输出预算）。
+// 模型可见的输出预算统一由 tool-output-budget.ts 决定：read 自己按该预算
+// 切片，Runtime guard 因此对 read 永不触发（宣称契约 == 执行契约）。
 export const MAX_READ_BYTES = 64 * 1024; // 64KB
 
 // v1.9 read 双限截断：按行号读取时，行数与字节数双限，取先到者。
@@ -56,9 +64,107 @@ function readTextByByteWindow(real: string, total: number, rel: string, byteOffs
   ).trim();
 }
 
+// ---- 行感知输出预算切片 ----
+// read 的窗口可能远大于模型可见预算（例如 500 行 × 长行）。这里按整行边界
+// 保留头部 + 尾部，把中间省略掉，并给出**精确**的续读区间，使每一页都必然
+// 落在预算内、且模型能逐段读完整文件（不丢内容，只分页）。
+export interface NumberedWindowSlice {
+  text: string;
+  /** 省略的行数（0 = 未省略，仅因单行超长而字节截断） */
+  omittedLines: number;
+  /** 省略区间的起止行号（1-based，含）；无省略时为 0 */
+  omittedFromLine: number;
+  omittedToLine: number;
+  /** 续读该省略区间的参数 */
+  resumeOffset: number;
+  resumeLimit: number;
+  truncated: boolean;
+}
+
+export function sliceNumberedWindow(
+  numberedLines: string[],
+  startLine: number,
+  budget: SliceBudget = {},
+): NumberedWindowSlice {
+  const maxBytes = budget.maxBytes ?? TOOL_OUTPUT_MAX_BYTES;
+  const headBudget = budget.headBytes ?? TOOL_OUTPUT_HEAD_BYTES;
+  const tailBudget = budget.tailBytes ?? TOOL_OUTPUT_TAIL_BYTES;
+  const marker = budget.marker ?? '[READ TRUNCATED]';
+
+  const full = numberedLines.join('\n');
+  if (utf8ByteLength(full) <= maxBytes) {
+    return {
+      text: full,
+      omittedLines: 0,
+      omittedFromLine: 0,
+      omittedToLine: 0,
+      resumeOffset: 0,
+      resumeLimit: 0,
+      truncated: false,
+    };
+  }
+
+  // 头部：整行累加；首个超长行允许字节截断，保证头部必有内容。
+  let headCount = 0;
+  let headBytes = 0;
+  for (let i = 0; i < numberedLines.length; i++) {
+    const lineBytes = utf8ByteLength(numberedLines[i]) + 1;
+    if (i > 0 && headBytes + lineBytes > headBudget) break;
+    headCount++;
+    headBytes += lineBytes;
+    if (headBytes > headBudget) break;
+  }
+  let headText = numberedLines.slice(0, headCount).join('\n');
+  const headLineTruncated = headCount === 1 && utf8ByteLength(headText) > headBudget;
+  if (headLineTruncated) headText = utf8Head(headText, headBudget);
+
+  // 尾部：从末尾整行累加，且不与头部重叠。
+  let tailStart = numberedLines.length;
+  let tailBytes = 0;
+  for (let i = numberedLines.length - 1; i >= headCount; i--) {
+    const lineBytes = utf8ByteLength(numberedLines[i]) + 1;
+    if (tailBytes + lineBytes > tailBudget) break;
+    tailBytes += lineBytes;
+    tailStart = i;
+  }
+  const tailText = numberedLines.slice(tailStart).join('\n');
+
+  const omittedLines = Math.max(0, tailStart - headCount);
+  const omittedFromLine = startLine + headCount;
+  const omittedToLine = startLine + tailStart - 1;
+  const lastLine = startLine + numberedLines.length - 1;
+
+  const hint: string[] = [];
+  if (omittedLines > 0) {
+    hint.push(
+      `[READ 提示] 本次窗口第 ${startLine}-${lastLine} 行共 ${numberedLines.length} 行，` +
+        `受 ${maxBytes} 字节输出预算省略中间 ${omittedLines} 行（第 ${omittedFromLine}-${omittedToLine} 行）。` +
+        `用 offset=${omittedFromLine} limit=${omittedLines} 续读该段；或用 grep 先定位再精读。`,
+    );
+  } else if (headLineTruncated) {
+    hint.push(
+      `[READ 提示] 第 ${startLine} 行单行超过 ${headBudget} 字节，已按字节截断显示。` +
+        `可用 shell: sed -n '${startLine}p' <file> | head -c 128K 查看片段。`,
+    );
+  } else {
+    hint.push(
+      `[READ 提示] 本次窗口第 ${startLine}-${lastLine} 行超过 ${maxBytes} 字节输出预算，已保留首尾并省略中间。`,
+    );
+  }
+
+  return {
+    text: [headText, marker, tailText, ...hint].filter(Boolean).join('\n'),
+    omittedLines,
+    omittedFromLine: omittedLines > 0 ? omittedFromLine : 0,
+    omittedToLine: omittedLines > 0 ? omittedToLine : 0,
+    resumeOffset: omittedFromLine,
+    resumeLimit: omittedLines,
+    truncated: true,
+  };
+}
+
 // 拒绝路径的统一脱敏消息：只回显相对路径，不泄露宿主机绝对路径
-function rejectPath(rel: string): never {
-  throw new Error(`路径被拒绝（仅允许工作区内相对路径，禁止穿越/绝对路径/symlink 逃逸）: ${rel}`);
+function rejectPath(rel: string): never {  throw new Error(`路径被拒绝（仅允许工作区内相对路径，禁止穿越/绝对路径/symlink 逃逸）: ${rel}`);
 }
 
 // 解析 + 双重校验（resolvePath 字符串级 + assertInsideWorkspace 真实路径级）
@@ -272,7 +378,7 @@ const MAX_IMAGE_READ_BYTES = 8 * 1024 * 1024;
 register({
   name: 'read',
   description:
-    '读取文件内容，返回时每行带行号前缀（格式"行号→内容"，行号仅为定位用，不是文件内容；用 edit 复制 oldText 时请勿包含行号前缀）。默认返回前 500 行；用 offset 从指定行号续读、limit 限定本次行数。文本超过 500 行或 64KB 会截断并在末尾给出续读行号。图片文件：当前模型支持视觉时直接返回图片供查看分析（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
+    '读取文件内容，返回时每行带行号前缀（格式"行号→内容"，行号仅为定位用，不是文件内容；用 edit 复制 oldText 时请勿包含行号前缀）。默认返回前 500 行；用 offset 从指定行号续读、limit 限定本次行数。单次返回受 16KB 输出预算限制：超预算时保留首尾并在中间标注省略区间，提示中会给出精确的 offset/limit 续读参数（内容不丢失，只是分页）。图片文件：当前模型支持视觉时直接返回图片供查看分析（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
   effect: 'read',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '').trim();
@@ -382,15 +488,9 @@ register({
 
     // 行号列宽（不超过 6 位）
     const width = Math.min(MAX_LINE_NUMBER_WIDTH, String(totalLines).length);
-    const numbered = windowLines
-      .map((line, i) => {
-        const ln = startLine + i;
-        return `${String(ln).padStart(width, ' ')}→${line}`;
-      })
-      .join('\n');
-
-    // 字节估算（窗口内容 + 行号前缀）
-    const windowBytes = Buffer.byteLength(numbered, 'utf8');
+    const numberedLines = windowLines.map(
+      (line, i) => `${String(startLine + i).padStart(width, ' ')}→${line}`,
+    );
     const lastShownLine = startLine + windowLines.length - 1;
     const hasMoreLines = endIdx < totalLines;
 
@@ -398,7 +498,7 @@ register({
     if (hadBom) hints.push('[READ 提示] 文件含 UTF-8 BOM（已在显示中剥离）。');
 
     // 超长单行：窗口内若某行本身超 64KB，提示用字节窗口/shell
-    const hugeLine = windowLines.find((l) => Buffer.byteLength(l, 'utf8') > MAX_READ_BYTES);
+    const hugeLine = windowLines.find((l) => utf8ByteLength(l) > MAX_READ_BYTES);
     if (hugeLine) {
       const hugeLineNo = startLine + windowLines.indexOf(hugeLine);
       hints.push(
@@ -407,40 +507,20 @@ register({
       );
     }
 
-    if (windowBytes > MAX_READ_BYTES) {
-      // 字节超限：行数还没到 limit 就被字节卡住，按字节截断 + 续读行号
-      // 逐行累加，找到字节预算内能放的行数
-      let acc = 0;
-      let fit = 0;
-      for (let i = 0; i < windowLines.length; i++) {
-        const lineBytes = Buffer.byteLength(
-          `${String(startLine + i).padStart(width, ' ')}→${windowLines[i]}\n`,
-          'utf8',
-        );
-        if (acc + lineBytes > MAX_READ_BYTES && fit > 0) break;
-        acc += lineBytes;
-        fit++;
-      }
-      const fitLines = windowLines
-        .slice(0, fit)
-        .map((line, i) => `${String(startLine + i).padStart(width, ' ')}→${line}`)
-        .join('\n');
-      const nextLine = startLine + fit;
-      hints.push(
-        `[READ TRUNCATED]\n[READ 提示] 显示第 ${startLine}-${nextLine - 1} 行（共 ${totalLines} 行，` +
-          `受 ${MAX_READ_BYTES} 字节上限截断）。用 offset=${nextLine} 续读。`,
-      );
-      return [fitLines, ...hints].join('\n');
-    }
-
+    // 窗口之后仍有内容：始终给出窗口续读提示（超预算时与"中间省略区间"
+    // 提示并存——两者指向不同区段，缺一模型就会以为文件读完了）。
     if (hasMoreLines) {
       hints.push(
-        `[READ 提示] 显示第 ${startLine}-${lastShownLine} 行，共 ${totalLines} 行。` +
+        `[READ 提示] 本次窗口显示到第 ${lastShownLine} 行，共 ${totalLines} 行。` +
           `用 offset=${lastShownLine + 1} 续读剩余 ${totalLines - lastShownLine} 行。`,
       );
     }
 
-    return [numbered, ...hints].filter(Boolean).join('\n');
+    // 输出预算：与 Runtime guard 同一份预算（tool-output-budget.ts）。
+    // 超预算时保留整行头部 + 整行尾部，并给出**精确**的中间续读区间，
+    // 每一页都必然可被模型完整读取（分页而非丢内容）。
+    const sliced = sliceNumberedWindow(numberedLines, startLine);
+    return [sliced.text, ...hints].filter(Boolean).join('\n');
   },
   validateResult: (result) => {
     // read 不再产生 invalid 结果（截断/图片省略/二进制都有效返回），
