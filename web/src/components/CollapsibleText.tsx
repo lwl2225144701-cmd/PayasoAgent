@@ -1,4 +1,4 @@
-import { type CSSProperties, isValidElement, useState } from 'react';
+import { type CSSProperties, isValidElement, memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import styles from './CollapsibleText.module.css';
@@ -37,7 +37,7 @@ interface CollapsibleTextProps {
  * Renders long text with a "显示更多" (show more) footer when it exceeds `maxChars`.
  * Preserves whitespace and line breaks.
  */
-export function CollapsibleText({
+export const CollapsibleText = memo(function CollapsibleText({
   text,
   streaming = false,
   maxChars = 0,
@@ -60,26 +60,11 @@ export function CollapsibleText({
     <div className={styles.root}>
       <div className={styles.text} style={lineClampStyle}>
         {streaming ? (
-          // Keep Markdown readable while tokens arrive. Mermaid is deliberately
-          // left to the settled branch below because an incomplete diagram can
-          // repeatedly fail parsing and cause large layout jumps.
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              a: ({ children, ...props }) => (
-                <a {...props} target="_blank" rel="noreferrer">
-                  {children}
-                </a>
-              ),
-              code: ({ className, children, ...props }) => (
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              ),
-            }}
-          >
-            {display}
-          </ReactMarkdown>
+          // 流式中渲染轻量纯文本（pre-wrap 保留换行），不做 Markdown 解析。
+          // 根因：react-markdown 每次渲染都对整条累计消息全量 runSync(parse)，
+          // 每帧 text 都在变化，解析成本随长度线性上涨 → 16KB 时单帧已超预算。
+          // 终态后由 settled 分支一次性解析（Mermaid/fence 也在那时处理）。
+          <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{display}</div>
         ) : (
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -128,4 +113,4 @@ export function CollapsibleText({
       )}
     </div>
   );
-}
+});

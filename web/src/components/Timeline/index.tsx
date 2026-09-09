@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelToolchainPreparation,
   openFileInDefaultBrowser,
@@ -115,7 +115,17 @@ function ExecutionPanel({
 }) {
   // 执行详情默认收起，避免每次发送消息都把页面撑开；用户仍可手动展开。
   const [open, setOpen] = useState(false);
+  // 时钟下沉：运行中每秒强制 ExecutionPanel 自身重渲一次，刷新执行时长 /
+  // 阶段化文案 / 首 token 等待秒数。不再依赖父级 Timeline 的全局 tick——
+  // 否则每 1.2s 会拖整棵 Timeline（含 finalAnswer/CollapsibleText 子树）重渲。
+  const [, setClockTick] = useState(0);
   const wasRunning = useRef(running);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setClockTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [running]);
   const tools = groups.flatMap((group) => group.tools);
   const failedCount = tools.filter((tool) => tool.status === 'failed').length;
   const elapsed = running && startedAt ? elapsedSeconds(startedAt) : 0;
@@ -250,7 +260,7 @@ function ExecutionPanel({
   );
 }
 
-export function Timeline({
+export const Timeline = memo(function Timeline({
   run,
   embedded = false,
   onRunTerminal,
@@ -261,7 +271,7 @@ export function Timeline({
   // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
   // 正确的关闭时机交给 useEventStream 内部：收到 run_completed/run_failed/run_stopped/run_interrupted 后主动 close SSE。
-  const { events } = useEventStream(
+  const { events, streamedText } = useEventStream(
     run?.runId ?? null,
     true,
     run?.status === 'running' ? onRunTerminal : undefined,
@@ -273,19 +283,11 @@ export function Timeline({
   const [fileActionError, setFileActionError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
-  const [, setForceTick] = useState(0);
   const getScrollContainer = useCallback(() => findScrollContainer(scrollRef.current), []);
 
   useEffect(() => {
     setFilesOpen(false);
   }, [run?.runId]);
-
-  // Light tick while running so status line / duration updates.
-  useEffect(() => {
-    if (!run || run.status !== 'running') return;
-    const id = setInterval(() => setForceTick((t) => t + 1), 1200);
-    return () => clearInterval(id);
-  }, [run]);
 
   const onScroll = useCallback(() => {
     const el = getScrollContainer();
@@ -329,10 +331,24 @@ export function Timeline({
     }
   };
 
+  // ---- 答案派生：引用稳定时跳过全串正则（stripThinkTags 是剩余最大单点成本）----
+  // rawFinalAnswer：优先级与 buildStructure 原逻辑一致（final_answer > run_completed.result
+  // > run.result > 流式增量全文）。流式中其引用 = streamedText 引用，仅在 delta 帧变化。
+  const rawFinalAnswer = useMemo(
+    () => (run ? deriveRawFinalAnswer(run, events, streamedText) : null),
+    [run, events, streamedText],
+  );
+  // stripThinkTags 三趟全串正则只随 rawFinalAnswer 引用变化重算：
+  // context_usage/tool 等非 delta 帧不触碰 streamedText → 这里跳过，避免每帧 O(全文) 正则。
+  const finalParsed = useMemo(
+    () => (rawFinalAnswer ? stripThinkTags(rawFinalAnswer) : null),
+    [rawFinalAnswer],
+  );
+
   const structure = useMemo<BuildOut | null>(() => {
     if (!run) return null;
-    return buildStructure(run, events);
-  }, [run, events]);
+    return buildStructure(run, events, rawFinalAnswer, finalParsed);
+  }, [run, events, rawFinalAnswer, finalParsed]);
 
   // ---- v2.0.1 JIT Approval：收集未裁决的批准请求，用户点击后回传 Host ----
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
@@ -729,7 +745,7 @@ export function Timeline({
       )}
     </div>
   );
-}
+});
 
 function FileIcon() {
   return (
@@ -773,7 +789,34 @@ interface ToolStepGroup {
   compactionNote?: string | null;
 }
 
-function buildStructure(run: HostRun, events: HostEvent[]): BuildOut {
+/**
+ * 答案原始文本（尚未 stripThinkTags）：final_answer > run_completed.result >
+ * run.result > 流式增量全文。流式路径复用 useEventStream 增量累计的 streamedText
+ * （引用稳定，见 useEventStream.flushPending），不再每帧 filter+map+join delta 事件。
+ */
+function deriveRawFinalAnswer(
+  run: HostRun,
+  events: HostEvent[],
+  streamedText: string,
+): string | null {
+  const finalEv = events.find((e) => e.type === 'final_answer');
+  const completedEv = events.find((e) => e.type === 'run_completed');
+  let finalAnswer: string | null = null;
+  if (finalEv && 'content' in finalEv) finalAnswer = finalEv.content?.trim() || null;
+  if (!finalAnswer && completedEv && 'result' in completedEv) {
+    finalAnswer = (completedEv.result as unknown as string | undefined)?.trim() || null;
+  }
+  if (!finalAnswer && run.result) finalAnswer = String(run.result).trim() || null;
+  if (!finalAnswer) finalAnswer = streamedText || null;
+  return finalAnswer;
+}
+
+function buildStructure(
+  run: HostRun,
+  events: HostEvent[],
+  rawFinalAnswer: string | null,
+  finalParsed: { visible: string; thinking: string | null } | null,
+): BuildOut {
   const runStarted = events.find((e) => e.type === 'run_started');
   const completedEv = events.find((e) => e.type === 'run_completed');
   const failedEv = events.find((e) => e.type === 'run_failed');
@@ -781,25 +824,8 @@ function buildStructure(run: HostRun, events: HostEvent[]): BuildOut {
   const errorEv = [...events].reverse().find((e) => e.type === 'error');
   const finalEv = events.find((e) => e.type === 'final_answer');
 
-  let finalAnswer: string | null = null;
-  if (finalEv && 'content' in finalEv) finalAnswer = finalEv.content?.trim() || null;
-  if (!finalAnswer && completedEv && 'result' in completedEv) {
-    finalAnswer = (completedEv.result as unknown as string | undefined)?.trim() || null;
-  }
-  if (!finalAnswer && run.result) finalAnswer = String(run.result).trim() || null;
-  if (!finalAnswer) {
-    const streamed = events
-      .filter((event): event is StreamingEvent => event.type === 'assistant_delta')
-      .map((event) => event.delta)
-      .join('');
-    finalAnswer = streamed || null;
-  }
-  let finalThinking: string | null = null;
-  if (finalAnswer) {
-    const parsedFinal = stripThinkTags(finalAnswer);
-    finalAnswer = parsedFinal.visible || null;
-    finalThinking = parsedFinal.thinking;
-  }
+  const finalAnswer: string | null = rawFinalAnswer ? finalParsed?.visible || null : null;
+  const finalThinking: string | null = rawFinalAnswer ? (finalParsed?.thinking ?? null) : null;
 
   const finalError: string | null =
     (failedEv && 'error' in failedEv && typeof failedEv.error === 'string'
