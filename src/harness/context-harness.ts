@@ -314,9 +314,11 @@ export class DefaultContextHarness implements AgentContextHarness {
     tools: ToolSchema[],
     signal?: AbortSignal,
   ): Promise<PreparedModelTurn> {
+    // v1.10：scratchpad 视图只承载"进度/防重复"信号（不含工具结果——那些在
+    // transcript 里，压缩时由摘要承载）。预算从 10%/8K 收紧到 3%/2K 作为兜底。
     const maxScratchpadTokens = Math.max(
       256,
-      Math.min(8_000, Math.floor(this.modelContext.maxInputTokens * 0.1)),
+      Math.min(2_000, Math.floor(this.modelContext.maxInputTokens * 0.03)),
     );
     const boundedScratchpad = renderBoundedScratchpadView(scratchpad);
     const scratchpadText = this.truncateToTokens(boundedScratchpad.text, maxScratchpadTokens);
