@@ -153,7 +153,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","llm_call_started","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
 ```
 
 <!-- /docs-contract:events -->

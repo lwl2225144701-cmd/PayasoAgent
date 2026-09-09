@@ -24,6 +24,17 @@ export type TraceEvent =
       usage?: TokenUsage;
     }
   | {
+      // LLM 调用已发出、尚未收到任何流式增量。大上下文 prefill 下这段等待可达
+      // 数十秒 —— 有了它前端才能在「工具轮结束 → 首个 delta」之间给出实时反馈，
+      // 否则 UI 完全静默，观感即「执行者执行着没输出」。
+      type: 'llm_call_started';
+      step: number;
+      timestamp: string;
+      iteration: number; // 当前迭代（从 1 开始）
+      messageCount: number; // 输入消息条数
+      estimatedInputTokens?: number; // 上下文估算输入 tokens（前端可提示 prefill 规模）
+    }
+  | {
       type: 'tool_call';
       step: number;
       timestamp: string;
@@ -189,6 +200,12 @@ export type TraceEventInput =
       reasoning?: string;
       hasToolCalls: boolean;
       usage?: TokenUsage;
+    }
+  | {
+      type: 'llm_call_started';
+      iteration: number;
+      messageCount: number;
+      estimatedInputTokens?: number;
     }
   | {
       type: 'tool_call';

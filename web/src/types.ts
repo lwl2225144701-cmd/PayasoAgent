@@ -204,6 +204,14 @@ export interface LlmCallEvent extends TraceEventBase {
   usage?: TokenUsage;
 }
 
+// LLM 调用已发出、尚未收到任何流式增量（首 token 等待期的信号）
+export interface LlmCallStartedEvent extends TraceEventBase {
+  type: 'llm_call_started';
+  iteration: number;
+  messageCount: number;
+  estimatedInputTokens?: number;
+}
+
 export interface ToolCallEvent extends TraceEventBase {
   type: 'tool_call';
   tool: string;
@@ -399,6 +407,7 @@ export interface StreamingEvent {
 
 export type TraceEvent =
   | LlmCallEvent
+  | LlmCallStartedEvent
   | ToolCallEvent
   | ToolCallInvalidEvent
   | ToolResultEvent

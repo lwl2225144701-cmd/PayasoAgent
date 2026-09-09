@@ -5,6 +5,7 @@ import {
   applyCompactUsage,
   compactStatusText,
   contextGaugeTitle,
+  deriveModelWaitState,
   deriveRunStreamMetrics,
   deriveRunTokenUsage,
   findLatestContextUsage,
@@ -24,7 +25,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.error(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.error(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
 
@@ -301,13 +302,13 @@ check(
     });
     return (
       next !== null &&
-        next.estimatedInputTokens === 7_400 &&
-        next.messageTokens === 6_000 &&
-        next.usageRatio === 0.28 &&
-        next.pressureTokens === undefined &&
-        next.emergencyTrim === false &&
-        next.model === 'step-3.7-flash' &&
-        next.configSource === 'fallback'
+      next.estimatedInputTokens === 7_400 &&
+      next.messageTokens === 6_000 &&
+      next.usageRatio === 0.28 &&
+      next.pressureTokens === undefined &&
+      next.emergencyTrim === false &&
+      next.model === 'step-3.7-flash' &&
+      next.configSource === 'fallback'
     );
   })(),
   '保留 model/config 等上一轮字段',
@@ -321,6 +322,72 @@ check(
     inputBudgetTokens: 10,
     usageRatio: 0.2,
   }) === null,
+);
+
+// ---- deriveModelWaitState：首 token 等待期判定 ----
+const llmStart = (over: Record<string, unknown> = {}): HostEvent =>
+  ({
+    ...base,
+    type: 'llm_call_started',
+    iteration: 2,
+    messageCount: 150,
+    estimatedInputTokens: 125_000,
+    ...over,
+  }) as HostEvent;
+const nowAfter = Date.parse('2026-09-06T00:00:14.000Z');
+check(
+  '最后一条是 llm_call_started → 返回等待状态（轮次/消息数/估算 tokens）',
+  (() => {
+    const s = deriveModelWaitState([llmStart()], nowAfter);
+    return (
+      s !== null &&
+      s.iteration === 2 &&
+      s.messageCount === 150 &&
+      s.estimatedInputTokens === 125_000
+    );
+  })(),
+);
+check(
+  'llm_call_started 后跟 reasoning_delta → 等待结束（null）',
+  deriveModelWaitState(
+    [
+      llmStart(),
+      {
+        type: 'reasoning_delta',
+        runId: 'r',
+        messageId: 'm1',
+        timestamp: base.timestamp,
+        delta: '思',
+      },
+    ],
+    nowAfter,
+  ) === null,
+);
+check(
+  'llm_call_started 后跟 tool_result → 等待结束（null）',
+  deriveModelWaitState(
+    [llmStart(), { ...base, type: 'tool_result', tool: 'grep', result: 'x', durationMs: 1 }],
+    nowAfter,
+  ) === null,
+);
+check('事件流为空 → null', deriveModelWaitState([], nowAfter) === null);
+check(
+  '最后一条是其它事件（tool_result）→ null',
+  deriveModelWaitState(
+    [{ ...base, type: 'tool_result', tool: 'grep', result: 'x', durationMs: 1 }],
+    nowAfter,
+  ) === null,
+);
+check(
+  'now 早于 startedAt（时钟回拨）→ null',
+  deriveModelWaitState([llmStart({ timestamp: '2026-09-06T00:00:20.000Z' })], nowAfter) === null,
+);
+check(
+  'estimatedInputTokens 缺省 → 字段省略',
+  (() => {
+    const s = deriveModelWaitState([llmStart({ estimatedInputTokens: undefined })], nowAfter);
+    return s !== null && s.estimatedInputTokens === undefined;
+  })(),
 );
 
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);

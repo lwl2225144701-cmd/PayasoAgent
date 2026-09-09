@@ -211,6 +211,35 @@ export function findLatestContextUsage(events: HostEvent[]): ContextUsageEvent |
   return null;
 }
 
+/** 当前正处于「LLM 调用已发出、首个流式增量未到」的等待期时的事件快照。 */
+export interface ModelWaitState {
+  iteration: number;
+  messageCount: number;
+  estimatedInputTokens?: number;
+  /** llm_call_started 的时间戳（ISO），UI 据此实时计算已等待秒数 */
+  startedAt: string;
+}
+
+/**
+ * 是否正在等待模型首 token：仅当事件流最后一条是 llm_call_started 时成立。
+ * 任何后续事件（reasoning/assistant delta、tool_call 等）都意味着等待结束。
+ * 运行态由调用方保证（只在 run.status === 'running' 时调用），这里保持纯事件判定。
+ */
+export function deriveModelWaitState(events: HostEvent[], now: number): ModelWaitState | null {
+  const last = events[events.length - 1];
+  if (last?.type !== 'llm_call_started') return null;
+  const startedMs = Date.parse(last.timestamp);
+  if (!Number.isFinite(startedMs) || now < startedMs) return null;
+  return {
+    iteration: last.iteration,
+    messageCount: last.messageCount,
+    ...(last.estimatedInputTokens === undefined
+      ? {}
+      : { estimatedInputTokens: last.estimatedInputTokens }),
+    startedAt: last.timestamp,
+  };
+}
+
 /** 占用率分档：<70% 正常，<90% 警告，≥90% 危险（≥100% 必然已超限）。 */
 export function gaugeLevel(ratio: number): 'normal' | 'warning' | 'danger' {
   if (ratio >= 0.9) return 'danger';

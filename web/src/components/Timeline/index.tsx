@@ -33,7 +33,7 @@ import type {
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
-import { findLatestContextUsage } from './context-gauge';
+import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
@@ -97,6 +97,7 @@ function ExecutionPanel({
   groups,
   thinking,
   running,
+  modelWait,
   startedAt,
   status,
   finishedAt,
@@ -105,6 +106,8 @@ function ExecutionPanel({
   groups: ToolStepGroup[];
   thinking: string;
   running: boolean;
+  /** 非 null = 正在等待模型首 token（llm_call_started 之后无任何后续事件） */
+  modelWait: ModelWaitState | null;
   startedAt: string | undefined;
   status: HostRunStatus;
   finishedAt: string;
@@ -123,6 +126,15 @@ function ExecutionPanel({
   const durationLabel = durationMs >= 1000 ? formatDurationMs(durationMs) : '<1秒';
   // 阶段化文案：随等待时间演进，避免静态文字的呆滞感
   const thinkingPhase = elapsed < 6 ? '正在思考' : elapsed < 20 ? '正在分析' : '正在处理复杂任务';
+  // 等待模型首 token 的实时秒数（父组件 running 期间每 1.2s tick 一次，随渲染刷新）
+  const modelWaitSeconds = modelWait
+    ? Math.max(0, Math.round((Date.now() - Date.parse(modelWait.startedAt)) / 1000))
+    : 0;
+  // 大上下文时提示 prefill 慢的根因与出路（≥100K 才提示，避免噪音）
+  const modelWaitTitle =
+    modelWait?.estimatedInputTokens !== undefined && modelWait.estimatedInputTokens >= 100_000
+      ? `本轮上下文约 ${Math.round(modelWait.estimatedInputTokens / 1000)}K tokens，prefill 较慢；可用 /compact 压缩会话历史`
+      : undefined;
   const bodyEmpty =
     !thinking &&
     tools.length === 0 &&
@@ -173,9 +185,11 @@ function ExecutionPanel({
         <span className={styles.executionTitle}>{statusTitle}</span>
         <span className={styles.executionMeta}>
           {tools.length > 0 && <span>{`已执行 ${tools.length} 个操作`}</span>}
-          {running && tools.length === 0 && (
-            <span className={styles.thinkingText}>
-              {thinkingPhase}
+          {running && (modelWait || tools.length === 0) && (
+            <span className={styles.thinkingText} title={modelWaitTitle}>
+              {modelWait
+                ? `等待模型响应 · 第 ${modelWait.iteration} 轮 · 已等待 ${modelWaitSeconds}s`
+                : thinkingPhase}
               <span className={styles.thinkDots} aria-hidden="true">
                 <i />
                 <i />
@@ -441,6 +455,9 @@ export function Timeline({
 
   // 上下文预算环形指示器：取最新一条 context_usage（压缩/紧急裁剪状态随之可见）
   const latestContextUsage = findLatestContextUsage(events);
+  // 首个 token 等待期：运行中且最后一条事件是 llm_call_started（任何后续事件都意味着等待结束）。
+  // 父组件 running 期间每 1.2s tick，秒数随之实时刷新。
+  const modelWait = run.status === 'running' ? deriveModelWaitState(events, Date.now()) : null;
   // 上抛给宿主（输入栏底部环形指示器的数据源）；随 events 变化自动更新
   useEffect(() => {
     onContextUsage?.(latestContextUsage);
@@ -624,6 +641,7 @@ export function Timeline({
               groups={toolSteps}
               thinking={globalThinking}
               running={lastStepRunning}
+              modelWait={modelWait}
               startedAt={runStarted?.timestamp ?? run.createdAt}
               status={run.status}
               finishedAt={finalTimestamp}

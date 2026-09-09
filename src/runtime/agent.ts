@@ -295,6 +295,14 @@ export async function runAgent(
       // 图片在调用边界物化：Harness 视图里的图片是路径引用，这里读取为 base64
       // 副本（不污染 transcript / checkpoint）；非视觉模型则剥离图片并文本注明。
       const modelMessages = materializeMessagesForModel(ctx.messages, workspaceRoot, visionEnabled);
+      // Trace: LLM 调用开始 —— llm_call 只在调用结束后落盘，大上下文 prefill 的
+      // 首 token 等待期（可达数十秒）必须有自己的事件，否则前端在该窗口完全静默。
+      emit({
+        type: 'llm_call_started',
+        iteration: i + 1,
+        messageCount: messages.length,
+        estimatedInputTokens: ctx.usage.estimatedInputTokens,
+      });
       const assistantMsg = await chat(
         modelMessages,
         schemas,
