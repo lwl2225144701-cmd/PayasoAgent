@@ -1,10 +1,12 @@
-// 模块: Runtime 工具（grep / createDir / moveFile / deleteFile / shell）
+// 模块: Runtime 工具（grep / glob / createDir / moveFile / deleteFile / shell / loadSkill）
 // 安全契约与 filesystem.ts 一致：
 // - LLM 只传工作区内相对路径；真实路径由 ToolContext.workspaceRoot + 双重路径校验
 // - 全部显式声明 effect（副作用语义必须明确）
 // - shell 以当前 context.workspaceRoot 为 cwd；文件系统边界由 macOS OS Sandbox 强制执行
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
 // v1.7：searchText → grep（目录递归搜索）；createDir 移出核心（hidden），write 已覆盖其核心场景。
+// v1.9：grep 升级为正则 + 默认忽略 node_modules/.git/dist 等；新增 glob 工具；
+//       两者共用 workspace-scan.ts 的 walker 与 ignore 策略，并各自遵守输出预算。
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +22,8 @@ import {
   shellTimeoutPolicy,
 } from '../sandbox/shell-timeout.js';
 import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
+import { classifyShellCommand } from '../sandbox/shell-command-effect.js';
+import { TOOL_OUTPUT_MAX_BYTES, utf8ByteLength } from '../tool-output-budget.js';
 import {
   assertWritableZone,
   canonicalPathKey,
@@ -27,118 +31,146 @@ import {
   MAX_READ_BYTES,
   resolveAuthorizedPath,
 } from './filesystem.js';
+import { compileGlob } from './glob-pattern.js';
+import { resolveSkillRelativePath } from '../host/workspace-instructions.js';
 import { RequiredRuntimeToolUnavailableError, register, registerAlias } from './tools.js';
+import { scanWorkspaceFiles, SEARCH_MAX_FILE_BYTES } from './workspace-scan.js';
 
-// ---- ① grep（原 searchText，目录递归搜索）----
+// ---- ① grep（正则 + 默认忽略依赖/构建目录）----
+// v1.9：pattern 现在是正则（JavaScript 语法）。旧的字面量子串搜索仍然可用
+// （字面量本身是合法正则），但 `a.b` 这类模式语义变为正则——因此结果里会明确
+// 回显所用 pattern。默认跳过 node_modules/.git/dist 等（includeIgnored 可关闭），
+// 否则 5000 文件预算会被依赖目录吃光，"搜索项目"等于没搜。
 register({
   name: 'grep',
   description:
-    '在工作区内递归搜索文本子串（非正则）。支持指定文件或目录路径，结果数量可限，所有访问严格限制在 Workspace 内，自动跳过二进制文件与超大文件，禁止跟随 symlink 避免逃逸。',
+    '在工作区内递归搜索正则表达式（JavaScript RegExp 语法，非字面量）。可指定文件或目录路径；默认跳过 node_modules/.git/dist/build/coverage 等依赖与产物目录（includeIgnored=true 可包含）。自动跳过二进制与超大文件，禁止跟随 symlink 避免逃逸。结果按文件分组并受 16KB 输出预算约束。',
   effect: 'read',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '.').trim();
     const key = context ? canonicalPathKey(context, rel) : null;
-    return `path:${key ?? JSON.stringify(rel)}:pattern:${args.pattern}:max:${args.maxResults ?? 100}`;
+    return `path:${key ?? JSON.stringify(rel)}:re:${args.pattern}:max:${args.maxResults ?? 100}:ignored:${args.includeIgnored === true}`;
   },
   parameters: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: '要查找的文本子串（非正则）' },
+      pattern: {
+        type: 'string',
+        description:
+          '正则表达式（JavaScript 语法），如 "function\\\\s+\\\\w+" 或 "TODO|FIXME"。含特殊字符时请正确转义。',
+      },
       path: { type: 'string', description: '工作区内相对路径，文件或目录（默认当前目录 .）' },
       maxResults: { type: 'number', description: '最多返回的匹配行数（默认 100，上限 500）' },
+      includeIgnored: {
+        type: 'boolean',
+        description:
+          '是否搜索默认忽略的目录（node_modules/.git/dist 等）。默认 false；仅在明确需要时开启。',
+      },
     },
     required: ['pattern'],
   },
   execute: async (args, context) => {
     const pattern = String(args.pattern ?? '');
     if (!pattern) throw new Error('缺少参数 pattern');
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern);
+    } catch (err) {
+      // 非法正则 = 确定性失败（错误分类器不会重试），消息里给出解析器的原因。
+      throw new Error(`pattern 不是合法的正则表达式: ${(err as Error).message}`);
+    }
 
     const rel = String(args.path ?? '.').trim();
-    const maxResults = Math.min(Number(args.maxResults ?? 100) || 100, 500);
+    const maxResults = Math.min(Math.max(1, Number(args.maxResults ?? 100) || 100), 500);
+    const includeIgnored = args.includeIgnored === true;
 
     const real = resolveAuthorizedPath(context, rel);
-    let st: fs.Stats;
+    let stat: fs.Stats;
     try {
-      st = fs.lstatSync(real);
+      stat = fs.lstatSync(real);
     } catch {
       throw new Error(`路径不存在: ${rel}`);
     }
 
-    const matches: Array<{ file: string; line: number; content: string }> = [];
-    let filesVisited = 0;
-    const MAX_DEPTH = 32;
-    const MAX_FILES = 5000;
-
-    function searchInFile(filePath: string): 'ok' | 'too_big' | 'binary' | 'error' {
-      if (filesVisited >= MAX_FILES) return 'error';
-      filesVisited++;
-      let fst: fs.Stats;
-      try {
-        fst = fs.lstatSync(filePath);
-      } catch {
-        return 'error';
+    // 直接指向单文件时保留旧语义：过大/二进制 → invalid（区别于"没找到"）。
+    if (stat.isFile()) {
+      if (stat.size > SEARCH_MAX_FILE_BYTES) {
+        return `[sandbox-tool-invalid] 文件过大，无法搜索（限制 ${SEARCH_MAX_FILE_BYTES} 字节）: ${rel}`;
       }
-      if (fst.size > MAX_READ_BYTES) return 'too_big';
-      let buf: Buffer;
-      try {
-        buf = fs.readFileSync(filePath);
-      } catch {
-        return 'error';
-      }
-      if (isProbablyBinary(buf)) return 'binary';
-      const text = buf.toString('utf8');
-      const lines = text.split('\n');
-      for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
-        if (lines[i].includes(pattern)) {
-          matches.push({ file: filePath, line: i + 1, content: lines[i] });
-        }
-      }
-      return 'ok';
-    }
-
-    function walk(dir: string, depth: number): void {
-      if (depth > MAX_DEPTH || filesVisited >= MAX_FILES) return;
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (filesVisited >= MAX_FILES) break;
-        const full = path.join(dir, entry.name);
-        if (entry.isSymbolicLink()) continue; // 跳过 symlink，避免逃逸和无限递归
-        if (entry.isDirectory()) {
-          walk(full, depth + 1);
-        } else if (entry.isFile()) {
-          searchInFile(full);
-        }
-      }
-    }
-
-    if (st.isFile()) {
-      const status = searchInFile(real);
-      if (status === 'too_big') {
-        return `[sandbox-tool-invalid] 文件过大，无法搜索（限制 ${MAX_READ_BYTES} 字节）: ${rel}`;
-      }
-      if (status === 'binary') {
+      const buf = fs.readFileSync(real);
+      if (isProbablyBinary(buf)) {
         return `[sandbox-tool-invalid] 二进制文件，不支持文本搜索: ${rel}`;
       }
-    } else if (st.isDirectory()) {
-      walk(real, 0);
-    } else {
+    } else if (!stat.isDirectory()) {
       throw new Error(`不是文件也不是目录: ${rel}`);
     }
 
-    if (matches.length === 0) return `未找到 "${pattern}"（${rel}）`;
+    const scan = scanWorkspaceFiles({
+      root: context.workspaceRoot,
+      baseDir: real,
+      ignore: !includeIgnored,
+    });
+
+    const budget = TOOL_OUTPUT_MAX_BYTES - 512; // 给汇总行留余量
+    const groups = new Map<string, string[]>();
+    let matchCount = 0;
+    let filesScanned = 0;
+    let skippedLarge = 0;
+    let bytes = 0;
+    let budgetHit = false;
+
+    for (const file of scan.files) {
+      if (matchCount >= maxResults || budgetHit) break;
+      if (file.size > SEARCH_MAX_FILE_BYTES) {
+        skippedLarge++;
+        continue;
+      }
+      let buf: Buffer;
+      try {
+        buf = fs.readFileSync(file.absPath);
+      } catch {
+        continue;
+      }
+      if (isProbablyBinary(buf)) continue;
+      filesScanned++;
+
+      const lines = buf.toString('utf8').split('\n');
+      const hits: string[] = [];
+      for (let i = 0; i < lines.length && matchCount < maxResults; i++) {
+        if (!regex.test(lines[i])) continue;
+        const rendered = `  ${i + 1}: ${lines[i].length > 400 ? `${lines[i].slice(0, 400)}…` : lines[i]}`;
+        const renderedBytes = utf8ByteLength(rendered) + 1;
+        if (bytes + renderedBytes > budget) {
+          budgetHit = true;
+          break;
+        }
+        bytes += renderedBytes;
+        hits.push(rendered);
+        matchCount++;
+      }
+      if (hits.length > 0) groups.set(file.relPath, hits);
+    }
+
+    if (matchCount === 0) {
+      return `未找到 "${pattern}"（${rel}；已扫描 ${filesScanned} 个文件${includeIgnored ? '' : '，已忽略依赖/产物目录'}）`;
+    }
 
     const lines: string[] = [];
-    for (const m of matches) {
-      const relPath = path.relative(context.workspaceRoot, m.file);
-      lines.push(`${relPath}:${m.line}:${m.content}`);
+    for (const [file, hits] of groups) {
+      lines.push(file, ...hits);
     }
-    const summary = `找到 ${matches.length} 处匹配（共扫描 ${filesVisited} 个文件）`;
-    return [...lines, summary].join('\n');
+    const notes: string[] = [
+      `找到 ${matchCount} 处匹配（扫描 ${filesScanned} 个文件）${includeIgnored ? '' : '，已忽略依赖/产物目录'}`,
+    ];
+    if (budgetHit) {
+      notes.push(
+        `[grep 提示] 结果已达 ${TOOL_OUTPUT_MAX_BYTES} 字节输出预算上限，仅返回前 ${matchCount} 处匹配；请用更精确的 pattern 或 path 缩小范围。`,
+      );
+    }
+    if (matchCount >= maxResults) notes.push(`[grep 提示] 已达 maxResults=${maxResults} 上限。`);
+    if (skippedLarge > 0) notes.push(`[grep 提示] 跳过 ${skippedLarge} 个超过 ${SEARCH_MAX_FILE_BYTES} 字节的文件。`);
+    if (scan.truncated) notes.push('[grep 提示] 文件数达到扫描上限，结果可能不完整。');
+    return [...lines, ...notes].join('\n');
   },
   validateResult: (result) => {
     if (typeof result === 'string' && result.startsWith('[sandbox-tool-invalid]')) {
@@ -148,6 +180,102 @@ register({
   },
 });
 registerAlias('grep', 'searchText');
+
+// ---- ①.5 glob（按模式查找文件）----
+// 与 grep 共用 walker/ignore：grep 找内容，glob 找文件名。模型此前只能靠
+// shell 的 find（10s 超时 + 输出预算 + 沙箱），现在有原生工具。
+register({
+  name: 'glob',
+  description:
+    '按 glob 模式查找工作区内的文件（支持 *、?、**、{a,b}），返回工作区相对路径，按最近修改时间排序。默认跳过 node_modules/.git/dist 等依赖与产物目录（includeIgnored=true 可包含）。禁止跟随 symlink 逃逸。',
+  effect: 'read',
+  getOperationKey: (args, context) => {
+    const rel = String(args.path ?? '.').trim();
+    const key = context ? canonicalPathKey(context, rel) : null;
+    return `path:${key ?? JSON.stringify(rel)}:glob:${args.pattern}:max:${args.maxResults ?? 100}:ignored:${args.includeIgnored === true}`;
+  },
+  parameters: {
+    type: 'object',
+    properties: {
+      pattern: {
+        type: 'string',
+        description:
+          'glob 模式，如 "src/**/*.ts"、"**/*.{json,md}"、"*.test.ts"。* 匹配单层任意字符，** 匹配任意层目录。',
+      },
+      path: { type: 'string', description: '工作区内相对起始目录（默认当前目录 .）' },
+      maxResults: { type: 'number', description: '最多返回的文件数（默认 100，上限 500）' },
+      includeIgnored: {
+        type: 'boolean',
+        description:
+          '是否包含默认忽略的目录（node_modules/.git/dist 等）。默认 false；仅在明确需要时开启。',
+      },
+    },
+    required: ['pattern'],
+  },
+  execute: async (args, context) => {
+    const pattern = String(args.pattern ?? '').trim();
+    if (!pattern) throw new Error('缺少参数 pattern');
+    let compiled: ReturnType<typeof compileGlob>;
+    try {
+      compiled = compileGlob(pattern);
+    } catch (err) {
+      throw new Error(`pattern 不是合法的 glob: ${(err as Error).message}`);
+    }
+
+    const rel = String(args.path ?? '.').trim();
+    const maxResults = Math.min(Math.max(1, Number(args.maxResults ?? 100) || 100), 500);
+    const includeIgnored = args.includeIgnored === true;
+
+    const real = resolveAuthorizedPath(context, rel);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(real);
+    } catch {
+      throw new Error(`路径不存在: ${rel}`);
+    }
+    if (!stat.isDirectory() && !stat.isFile()) {
+      throw new Error(`不是文件也不是目录: ${rel}`);
+    }
+
+    const scan = scanWorkspaceFiles({
+      root: context.workspaceRoot,
+      baseDir: real,
+      ignore: !includeIgnored,
+    });
+    const matched = scan.files
+      .filter((file) => compiled.regex.test(file.relPath))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || (a.relPath < b.relPath ? -1 : 1));
+
+    if (matched.length === 0) {
+      return `未找到匹配 "${pattern}" 的文件（起始路径 ${rel}；已扫描 ${scan.files.length} 个文件${includeIgnored ? '' : '，已忽略依赖/产物目录'}）`;
+    }
+
+    const budget = TOOL_OUTPUT_MAX_BYTES - 512;
+    const lines: string[] = [];
+    let bytes = 0;
+    let budgetHit = false;
+    for (const file of matched) {
+      if (lines.length >= maxResults) break;
+      const rendered = `${file.relPath} (${file.size} bytes)`;
+      const renderedBytes = utf8ByteLength(rendered) + 1;
+      if (bytes + renderedBytes > budget) {
+        budgetHit = true;
+        break;
+      }
+      bytes += renderedBytes;
+      lines.push(rendered);
+    }
+
+    const notes = [`找到 ${matched.length} 个匹配文件（共扫描 ${scan.files.length} 个）`];
+    if (lines.length < matched.length) {
+      notes.push(
+        `[glob 提示] 仅返回前 ${lines.length} 个（${budgetHit ? `${TOOL_OUTPUT_MAX_BYTES} 字节输出预算` : `maxResults=${maxResults}`} 上限）。`,
+      );
+    }
+    if (scan.truncated) notes.push('[glob 提示] 文件数达到扫描上限，结果可能不完整。');
+    return [...lines, ...notes].join('\n');
+  },
+});
 
 // 从 shell stderr 识别"命令缺失"（导出供测试纯函数直接验证，不依赖真实沙箱）。
 // Only normalize the shell's own command lookup failure. Do not inspect or
@@ -317,6 +445,10 @@ register({
     `超时会整树终止并返回 [shell-timeout]。命令的 HOME/TMPDIR 指向运行时的临时 scratch 目录（可写，不污染 Workspace），因此 npm/npx/git 等需要缓存目录的命令在 Read Only 模式下同样可用。` +
     `文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。`,
   effect: 'non_idempotent',
+  // v1.9：按命令细化 effect —— 只读命令（ls/git log/find 等，且不含 shell 组合
+  // 或重定向）声明为 read，避免副作用守卫回放缓存结果（同一条 `git status`
+  // 第二次返回旧输出）。无法证明只读时保守回退 non_idempotent。
+  resolveEffect: (args) => classifyShellCommand(String(args.command ?? '')).effect,
   // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
   // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
   capabilities: { network: true },
@@ -448,7 +580,7 @@ register({
 register({
   name: 'loadSkill',
   description:
-    'Load a skill definition file from the workspace skill registry. Returns the full SKILL.md content as a tool message. Use this when you need the step-by-step workflow for a specific task type.',
+    'Load a skill definition file from the workspace skill registry (.payaso/skills, .claude/skills, .pi/skills). Returns the full SKILL.md content as a tool message. Use this when you need the step-by-step workflow for a specific task type.',
   effect: 'read',
   parameters: {
     type: 'object',
@@ -467,7 +599,9 @@ register({
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(rawName)) {
       throw new Error('skill 名称格式不合法（小写字母 + 连字符，最长 64 字符）');
     }
-    const relPath = path.join('.payaso', 'skills', rawName, 'SKILL.md');
+    // v1.9：与 Host 共用同一发现策略（.payaso / .claude / .pi，优先级顺序）。
+    const relPath = resolveSkillRelativePath(context.workspaceRoot, rawName);
+    if (relPath === null) throw new Error(`skill 不存在: ${rawName}`);
     const fullPath = resolveAuthorizedPath(context, relPath);
     try {
       const stat = fs.statSync(fullPath);
