@@ -27,6 +27,7 @@ import {
   normalizeToolResult,
   parseToolArguments,
   RequiredRuntimeToolUnavailableError,
+  resolveToolEffect,
   type ToolCallError,
   type ToolImage,
   type ToolSandboxEvent,
@@ -444,6 +445,10 @@ export async function runAgent(
           continue;
         }
 
+        // v1.9：副作用类别按本次调用解析（shell 只读命令不再被回放缓存结果）。
+        // 后续所有 effect 判定统一使用 effect，不再直接读 toolDef.effect。
+        const effect = resolveToolEffect(toolDef, args, toolContext);
+
         // v2.0.1 JIT Approval：ask 模式 + 网络工具 → 执行前即时授权。
         // 批准通过才继续（不创建 side-effect）；拒绝/超时走 NetworkDenied 语义。
         if (needsNetworkApproval(toolDef, getNetworkMode())) {
@@ -501,9 +506,9 @@ export async function runAgent(
         //   executing / uncertain → 不执行，返回明确 uncertain recovery 信息（不伪造成功）
         //   start      → 正常开始（execute 前持久化 executing，见下）
         // 置于防死循环判定之前。
-        if (toolDef?.effect === 'non_idempotent') {
+        if (effect === 'non_idempotent') {
           // 注入 ToolContext（runId + workspaceRoot）供路径工具归一化 identity；LLM 不可覆盖
-          const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext);
+          const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext, effect);
           if (disposition.kind === 'replay') {
             observer.log(
               `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`,
@@ -583,7 +588,7 @@ export async function runAgent(
         // 首次失败直接进入 Recovery，由 LLM 决策。read / idempotent 保持原重试行为。
         // v1.3.2：non_idempotent 开始执行前先持久化 executing 状态；
         //   persist(executing) 失败 → 禁止 execute，作为 Runtime 错误处理（防止无保护的副作用执行）。
-        if (toolDef?.effect === 'non_idempotent') {
+        if (effect === 'non_idempotent') {
           const opKey = operationIdentity(toolDef, args, toolContext);
           sideEffectGuard.begin(opKey);
           try {
@@ -594,7 +599,7 @@ export async function runAgent(
             throw new Error(persistMsg);
           }
         }
-        const effectiveRetries = toolDef?.effect === 'non_idempotent' ? 0 : MAX_RETRY;
+        const effectiveRetries = effect === 'non_idempotent' ? 0 : MAX_RETRY;
         for (let attempt = 1; attempt <= effectiveRetries + 1; attempt++) {
           try {
             const start = performance.now();
@@ -641,7 +646,7 @@ export async function runAgent(
             observer.log(`[Tool 返回] ${result}`);
 
             // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）
-            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, toolContext);
+            if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, toolContext, effect);
 
             // State: 工具执行成功（execute 维度，先于结果有效性判定）
             updateState(state, {
@@ -806,7 +811,7 @@ export async function runAgent(
 
             // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
             // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
-            if (toolDef?.effect === 'non_idempotent') {
+            if (effect === 'non_idempotent') {
               sideEffectGuard.markUncertain(operationIdentity(toolDef, args, toolContext));
             }
 

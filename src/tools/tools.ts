@@ -79,6 +79,10 @@ export interface Tool {
   parameters: object; // JSON Schema（严禁包含 runId 等 Runtime 内部字段）
   // v1.3 契约收紧：声明副作用类别（必填）
   effect: ToolEffect;
+  // v1.9 动态副作用类别：按本次调用参数细化 effect（缺省用静态 effect）。
+  // 典型场景：shell 整体是 non_idempotent，但 `git log` / `ls` 这类只读命令
+  // 不应被副作用守卫回放缓存结果。分类必须保守：不确定时返回 non_idempotent。
+  resolveEffect?: (args: Record<string, unknown>, context?: ToolContext) => ToolEffect;
   // v2.0 Network Control：Tool 注册时显式声明是否具备网络能力。
   // 缺省（undefined）视为无网络能力 —— 不要求网络、也不受网络开关影响。
   // 由 Tool 作者声明，Runtime 绝不猜测（不做 curl/wget/git 字符串识别）。
@@ -132,6 +136,17 @@ export function registerAlias(canonicalName: string, aliasName: string): void {
 // 按名称取工具定义（供 Runtime 读取 effect / getOperationKey 等契约字段）
 export function getTool(name: string): Tool | undefined {
   return registry.get(name);
+}
+
+// v1.9：解析一次调用的实际副作用类别（动态 effect 优先于静态声明）。
+// 所有副作用判定（回放/重试/begin-persist）必须经过这里，避免各处直接读
+// tool.effect 导致动态分类被绕过。
+export function resolveToolEffect(
+  tool: Tool,
+  args: Record<string, unknown>,
+  context?: ToolContext,
+): ToolEffect {
+  return tool.resolveEffect?.(args, context) ?? tool.effect;
 }
 
 // v2.0 Network Control：Tool 是否具备网络能力（注册时声明）判断辅助

@@ -8,7 +8,7 @@
 // read / idempotent 可安全重复执行，不进入本生命周期。
 // 核心原则：对 non_idempotent 操作，Runtime 一旦无法确认"没有执行过"，就不能再次自动执行。
 
-import type { Tool, ToolContext } from '../tools/tools.js';
+import type { Tool, ToolContext, ToolEffect } from '../tools/tools.js';
 import { resolveOperationKey } from '../tools/tools.js';
 
 // 操作状态：executing / succeeded / uncertain
@@ -88,8 +88,10 @@ export function resolveOperation(
   tool: Tool,
   args: Record<string, unknown>,
   context?: ToolContext,
+  // v1.9：调用方传入 resolveToolEffect 的结果；缺省回退静态声明（兼容旧调用方）。
+  effect: ToolEffect = tool.effect,
 ): OperationDisposition {
-  if (tool.effect !== 'non_idempotent') return { kind: 'start' };
+  if (effect !== 'non_idempotent') return { kind: 'start' };
   const key = operationIdentity(tool, args, context);
   const state = guard.getState(key);
   if (state === 'succeeded') {
@@ -107,8 +109,9 @@ export function getReplay(
   tool: Tool,
   args: Record<string, unknown>,
   context?: ToolContext,
+  effect: ToolEffect = tool.effect,
 ): string | undefined {
-  if (tool.effect !== 'non_idempotent') return undefined;
+  if (effect !== 'non_idempotent') return undefined;
   return guard.replay(operationIdentity(tool, args, context));
 }
 
@@ -119,7 +122,8 @@ export function markExecuted(
   args: Record<string, unknown>,
   result: string,
   context?: ToolContext,
+  effect: ToolEffect = tool.effect,
 ): void {
-  if (tool.effect !== 'non_idempotent') return;
+  if (effect !== 'non_idempotent') return;
   guard.succeed(operationIdentity(tool, args, context), result);
 }
