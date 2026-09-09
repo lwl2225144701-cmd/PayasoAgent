@@ -370,9 +370,10 @@ export default function App() {
   }, [currentRunId]);
 
   const createRunNow = useCallback(
-    async (task: string, attachments?: File[]) => {
+    // 返回 true = Run 已创建；false = 创建失败（内部已 alert）。InputBar 据此还原草稿。
+    async (task: string, attachments?: File[]): Promise<boolean> => {
       const trimmed = task.trim();
-      if (!trimmed) return;
+      if (!trimmed) return true;
       setCompactStatus(null);
       try {
         // 客户端先压像素再转 base64（附件 v2 P2：请求体从 20MB 级降回 ~2MB 级）；
@@ -443,10 +444,12 @@ export default function App() {
         // Session 列表与 Run 状态解耦；仅新建会话后做一次服务端同步。
         if (isNewSession) void refreshSessions();
         setPreferredWorkspaceName(null);
+        return true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('Failed to create run:', err);
         alert(`任务创建失败：${msg}`);
+        return false;
       }
     },
     [
@@ -461,12 +464,13 @@ export default function App() {
   );
 
   const handleCreateRun = useCallback(
-    (task: string, attachments?: File[]) => {
+    // 返回 Promise<boolean>：入队视为成功（true）；直接创建透传 createRunNow 的成败
+    (task: string, attachments?: File[]): Promise<boolean> => {
       if (sessionBusy || queueDispatchingRef.current || sendQueue.length > 0) {
         setSendQueue((queue) => [...queue, { id: crypto.randomUUID(), task, attachments }]);
-        return;
+        return Promise.resolve(true);
       }
-      void createRunNow(task, attachments);
+      return createRunNow(task, attachments);
     },
     [createRunNow, sendQueue.length, sessionBusy],
   );
@@ -967,7 +971,6 @@ export default function App() {
             onStop={handleStopRun}
             isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}
             isStopping={currentRun.status === 'stopping'}
-            placeholder="发消息或做任务... / Enter 换行，⌘/Ctrl+Enter 发送"
             currentModel={currentModelSelection ?? undefined}
             models={models}
             onSelectModel={handleSelectModel}

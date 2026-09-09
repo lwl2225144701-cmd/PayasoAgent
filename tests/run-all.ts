@@ -65,6 +65,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'prompt-commands', file: 'tests/prompt-commands.test.ts' },
   { name: 'frontend-toolchain-retry', file: 'tests/frontend-toolchain-retry.test.ts' },
   { name: 'frontend-context-gauge', file: 'tests/frontend-context-gauge.test.ts' },
+  { name: 'frontend-enter-key', file: 'tests/frontend-enter-key.test.ts' },
   { name: 'pi-ai-provider', file: 'tests/pi-ai-provider.test.ts' },
 ];
 

@@ -1,6 +1,7 @@
 import {
   type ChangeEventHandler,
   type ClipboardEventHandler,
+  type CompositionEventHandler,
   forwardRef,
   type KeyboardEventHandler,
   useEffect,
@@ -27,6 +28,9 @@ interface ComposerTextareaProps {
   onKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
   // 粘贴图片（截图）时拦截剪贴板中的图片项作为消息附件
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
+  // IME 组词生命周期：Enter 发送的三重保险判定依赖这两个信号
+  onCompositionStart?: CompositionEventHandler<HTMLTextAreaElement>;
+  onCompositionEnd?: CompositionEventHandler<HTMLTextAreaElement>;
   placeholder: string;
   disabled?: boolean;
   autoFocus?: boolean;
@@ -34,7 +38,18 @@ interface ComposerTextareaProps {
 
 export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
   function ComposerTextarea(
-    { variant, value, onChange, onKeyDown, onPaste, placeholder, disabled, autoFocus },
+    {
+      variant,
+      value,
+      onChange,
+      onKeyDown,
+      onPaste,
+      onCompositionStart,
+      onCompositionEnd,
+      placeholder,
+      disabled,
+      autoFocus,
+    },
     ref,
   ) {
     return (
@@ -45,6 +60,8 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
         onChange={onChange}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
         placeholder={placeholder}
         rows={2}
         disabled={disabled}
@@ -254,7 +271,7 @@ function SubmitButton({
       shape="circle"
       onClick={onSend}
       disabled={!canSend}
-      title="发送（⌘/Ctrl+Enter）"
+      title="发送（Enter）"
     >
       <ArrowUpIcon size={20} />
     </IconButton>

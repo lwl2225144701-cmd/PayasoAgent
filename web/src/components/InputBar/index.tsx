@@ -1,4 +1,11 @@
-import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import {
+  type ClipboardEvent,
+  type CompositionEvent,
+  type KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { listPromptCommands } from '../../api';
 import { matchBuiltinCommand, mergeCommandCandidates } from '../../commands/builtin-commands';
 import type {
@@ -10,6 +17,7 @@ import type {
 } from '../../types';
 import { ChevronDownIcon, CloseIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
+import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
 
 // 与 Host 侧约束保持一致（routes.ts：MAX_ATTACHMENTS / MAX_IMAGE_FILE_BYTES / ATTACHMENT_MIME）
@@ -33,7 +41,8 @@ export interface QueuedComposerMessage {
 }
 
 interface InputBarProps {
-  onSend: (text: string, attachments?: File[]) => void;
+  /** 返回 Promise<boolean> 时：resolve(false) = 创建失败（App 侧已提示），发送框据此还原草稿 */
+  onSend: (text: string, attachments?: File[]) => Promise<boolean> | undefined;
   onStop?: () => void;
   isRunning?: boolean;
   // v1.6 True cancellation：停止请求已发出、执行尚未真正退出；停止按钮禁用
@@ -68,7 +77,7 @@ export function InputBar({
   isRunning,
   isStopping,
   disabled,
-  placeholder = '发消息或做任务... / Enter 换行，⌘/Ctrl+Enter 发送',
+  placeholder = '发消息或做任务... / Enter 发送，Shift+Enter 换行',
   variant = 'compact',
   workspaceName,
   openingWorkspace,
@@ -91,6 +100,12 @@ export function InputBar({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 附件状态用 ref 镜像一份，粘贴事件回调里始终读到最新值
   const attachmentsRef = useRef<PendingAttachment[]>([]);
+  // ===== 发送进行中标志：上一次 onSend 未落定前，再次 Enter/点击不重复发送 =====
+  const sendingRef = useRef(false);
+  // ===== IME 组词状态（Enter 发送的三重保险之一） =====
+  const composingRef = useRef(false);
+  // Safari 确认组词的收尾 keydown 在 compositionend 之后派发，记一个 10ms 时间窗吞掉它
+  const compositionUntilRef = useRef(0);
 
   // ===== Prompt 命令补全（/cmd 前缀） =====
   const [promptCommands, setPromptCommands] = useState<PromptCommand[]>([]);
@@ -152,8 +167,10 @@ export function InputBar({
     });
   }
 
-  // 在 handleSend 之前拦截：补全打开时 Enter 选中命令；↑↓ 导航；Esc 关闭
+  // 在 handleSend 之前拦截：补全打开时 Enter 选中命令；↑↓ 导航；Esc 关闭。
+  // 组词期的按键（含 ↑↓/Esc）属于输入法候选操作，一律交还输入法，不导航菜单。
   function handlePromptKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (isImeComposingEvent(e)) return false;
     if (!promptOpen || filteredPrompts.length === 0) return false;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -165,7 +182,7 @@ export function InputBar({
       setPromptIndex((i) => (i - 1 + filteredPrompts.length) % filteredPrompts.length);
       return true;
     }
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+    if (e.key === 'Enter') {
       e.preventDefault();
       applyPromptSelection(filteredPrompts[promptIndex] ?? filteredPrompts[0]);
       return true;
@@ -175,6 +192,26 @@ export function InputBar({
       return true;
     }
     return false;
+  }
+
+  // IME 三重保险：isComposing / keyCode 229（旧引擎）/ compositionend 后 Safari 收尾 keydown 的时间窗
+  function isImeComposingEvent(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+    return isImeComposing(
+      e.nativeEvent,
+      composingRef.current,
+      compositionUntilRef.current,
+      Date.now(),
+    );
+  }
+
+  function handleCompositionStart(_e: CompositionEvent<HTMLTextAreaElement>) {
+    composingRef.current = true;
+  }
+
+  function handleCompositionEnd(_e: CompositionEvent<HTMLTextAreaElement>) {
+    composingRef.current = false;
+    // Safari：确认组词的那条 Enter 在 compositionend 之后才派发，留 10ms 窗口把它吞掉
+    compositionUntilRef.current = Date.now() + 10;
   }
 
   // 卸载时释放全部 object URL，避免内存泄漏
@@ -196,11 +233,6 @@ export function InputBar({
   function commitAttachments(next: PendingAttachment[]) {
     attachmentsRef.current = next;
     setAttachments(next);
-  }
-
-  function clearAttachments() {
-    for (const item of attachmentsRef.current) URL.revokeObjectURL(item.url);
-    commitAttachments([]);
   }
 
   function removeAttachment(id: string) {
@@ -249,12 +281,37 @@ export function InputBar({
     if (rejected.length > 0) alert(rejected.join('\n'));
   }
 
+  // Enter 发送 + 输入法安全的键位判定：优先级表见 ./enter-key.ts（有确定性测试锁定）
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // 补全下拉优先：打开时 Enter/↑↓/Esc 属于命令选择，不触发发送
-    if (handlePromptKeyDown(e)) return;
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      handleSend();
+    const action = resolveEnterAction({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      repeat: e.repeat,
+      isComposing: isImeComposingEvent(e),
+      menuOpen: promptOpen && filteredPrompts.length > 0,
+      locked: disabled === true || sendingRef.current,
+      draftEmpty: !text.trim() && attachmentsRef.current.length === 0,
+    });
+
+    switch (action) {
+      case 'pass':
+        // 非 Enter（↑↓/Esc 仍需喂给补全菜单）与 Shift+Enter：不拦截，浏览器默认行为（换行）
+        if (e.key !== 'Enter') handlePromptKeyDown(e);
+        return;
+      case 'swallow':
+        // 组词期 / 长按连发 / Ctrl+Cmd 保留键 / 会话锁定 / 空草稿：吃掉，不发送也不换行
+        e.preventDefault();
+        return;
+      case 'menu':
+        // 补全菜单打开：Enter 选中高亮项（内部 preventDefault；无候选时不会进入此分支）
+        handlePromptKeyDown(e);
+        return;
+      case 'send':
+        e.preventDefault();
+        handleSend();
+        return;
     }
   }
 
@@ -270,13 +327,52 @@ export function InputBar({
       return;
     }
     if (!trimmed && attachmentsRef.current.length === 0) return;
-    const files = attachmentsRef.current.map((item) => item.file);
-    onSend(
-      trimmed || (files.length > 0 ? IMAGE_ONLY_TASK : ''),
-      files.length > 0 ? files : undefined,
-    );
+    // 上一次发送还在进行中：忽略本次触发，避免重复发送/重复入队
+    if (sendingRef.current) return;
+
+    // 失败还原用：发送前的原始草稿与附件
+    const draftText = text;
+    const sentAttachments = attachmentsRef.current;
+    const files = sentAttachments.map((item) => item.file);
+    const sentText = trimmed || (files.length > 0 ? IMAGE_ONLY_TASK : '');
+
+    sendingRef.current = true;
+    // 发送后立即清空草稿；object URL 暂不释放，失败还原时预览仍可用
     setText('');
-    clearAttachments();
+    commitAttachments([]);
+
+    let settled = false;
+    const settle = (failed: boolean) => {
+      if (settled) return;
+      settled = true;
+      sendingRef.current = false;
+      if (failed) {
+        // 失败还原草稿：期间用户新输入的内容保留在后面，附件原样还回（URL 未释放，预览仍可用）
+        setText((prev) => (prev.length === 0 ? draftText : `${draftText}\n${prev}`));
+        commitAttachments([...sentAttachments, ...attachmentsRef.current]);
+        return;
+      }
+      // 发送成功（或已加入发送队列）：预览不再需要，释放 object URL
+      for (const item of sentAttachments) URL.revokeObjectURL(item.url);
+    };
+
+    let outcome: Promise<boolean> | undefined;
+    try {
+      outcome = onSend(sentText, files.length > 0 ? files : undefined);
+    } catch (err) {
+      console.error('Send failed:', err);
+      settle(true);
+      return;
+    }
+    if (outcome instanceof Promise) {
+      // App 约定：resolve(false) = 创建失败（App 侧已 alert）；reject = 异常失败
+      outcome.then(
+        (ok) => settle(ok === false),
+        () => settle(true),
+      );
+    } else {
+      settle(false);
+    }
   }
 
   const canSend = (text.trim().length > 0 || attachments.length > 0) && !disabled;
@@ -341,6 +437,8 @@ export function InputBar({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             placeholder={placeholder}
             disabled={disabled}
             autoFocus
@@ -430,6 +528,8 @@ export function InputBar({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           placeholder={placeholder}
           disabled={disabled}
         />
