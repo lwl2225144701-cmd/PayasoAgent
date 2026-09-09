@@ -23,6 +23,12 @@ import {
 } from '../sandbox/shell-timeout.js';
 import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
 import { classifyShellCommand } from '../sandbox/shell-command-effect.js';
+import {
+  getBackgroundJob,
+  killBackgroundJob,
+  listBackgroundJobs,
+  startBackgroundJob,
+} from '../sandbox/background-jobs.js';
 import { TOOL_OUTPUT_MAX_BYTES, utf8ByteLength } from '../tool-output-budget.js';
 import {
   assertWritableZone,
@@ -33,7 +39,12 @@ import {
 } from './filesystem.js';
 import { compileGlob } from './glob-pattern.js';
 import { resolveSkillRelativePath } from '../host/workspace-instructions.js';
-import { RequiredRuntimeToolUnavailableError, register, registerAlias } from './tools.js';
+import {
+  RequiredRuntimeToolUnavailableError,
+  register,
+  registerAlias,
+  type ToolContext,
+} from './tools.js';
 import { scanWorkspaceFiles, SEARCH_MAX_FILE_BYTES } from './workspace-scan.js';
 
 // ---- ① grep（正则 + 默认忽略依赖/构建目录）----
@@ -436,23 +447,126 @@ register({
   },
 });
 
-// ---- ⑤ shell ----
+// ---- ⑤ shell（前台 + 后台）----
+// 前台：等待命令结束（超时由 shell-timeout 策略收敛）。
+// 后台（background=true）：立即返回 jobId，由 shellJob 轮询/终止；长测试、构建
+// 不再占满整个回合。两条路径共用同一受管 scratch 与沙箱执行器。
+async function executeContainedShell(
+  command: string,
+  context: ToolContext,
+  timeoutMs: number,
+): Promise<MacOSSandboxResult> {
+  const workspaceRoot = context.workspaceRoot;
+  const permissionMode = storedPermissionMode(context.permissionMode);
+  // Scratch（HOME/TMPDIR）：所有权限模式下都放在受管临时根目录，而不是
+  // Workspace 内。Read Only 下命令仍需要可写的缓存目录（npm/npx/git/tsx），
+  // 而 Workspace 必须保持只读；Workspace Write 下也避免污染用户项目。
+  const scratch = createShellScratch(context.runId);
+  try {
+    // 双通道（docs/windows-mac-compat.md §3）：
+    // - macOS：Seatbelt 沙箱，fail-closed——sandbox-exec 不可用即拒绝，绝不静默降级
+    // - 其他平台：无 OS 沙箱原语，默认同样拒绝（延续"绝不静默降低遏制"原则），
+    //   仅当用户显式选择审批模式或设置 PAYASO_SHELL_UNSANDBOXED=1 才放行
+    let result: MacOSSandboxResult;
+    if (process.platform === 'darwin') {
+      if (!(await probeSandboxAvailability())) {
+        throw new Error(
+          'Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
+            '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve ' +
+            'filesystem containment.',
+        );
+      }
+      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, context.networkMode === 'on', {
+        scratchRoots: [scratch.path],
+      });
+      result = await sandbox.run(command, {
+        cwd: workspaceRoot,
+        home: scratch.path,
+        tmpdir: scratch.path,
+        timeoutMs,
+        signal: context.signal,
+        onEvent: (event) => {
+          if (event === 'started') {
+            context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
+          } else {
+            context.onSandboxEvent?.({
+              type: 'shell_sandbox_denied',
+              platform: 'macos',
+              reason: 'workspace_policy',
+            });
+          }
+        },
+      });
+    } else {
+      if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
+        throw new Error(
+          'Shell unavailable on this platform: 当前平台无 macOS OS Sandbox，' +
+            '为保持文件系统遏制默认拒绝。请设置 PAYASO_SHELL_UNSANDBOXED=1 ' +
+            '显式允许无沙箱 shell 后重试（默认关闭）。',
+        );
+      }
+      const host = await discoverShellHost();
+      if (!host) {
+        throw new Error(
+          'Shell unavailable: 未找到 bash 解释器。Windows 请安装 Git for Windows ' +
+            '(https://git-scm.com) 后重试。',
+        );
+      }
+      result = await runUncontainedShell(host, command, {
+        cwd: workspaceRoot,
+        home: scratch.path,
+        tmpdir: scratch.path,
+        timeoutMs,
+        signal: context.signal,
+      });
+    }
+    if (result.denied) {
+      // Do not expose stderr or host paths to the LLM/context.
+      throw new Error(
+        'Shell operation denied by the workspace sandbox (filesystem policy). ' +
+          'The command attempted to write outside the allowed roots.',
+      );
+    }
+    const missingTool = result.exitCode !== 0 ? missingShellToolName(result.stderr) : undefined;
+    if (missingTool !== undefined) {
+      // Discovery happens once at process start; a missing optional host tool
+      // is a normal recoverable tool error, not a Runtime crash.
+      throw new RequiredRuntimeToolUnavailableError(missingTool);
+    }
+    return result;
+  } finally {
+    scratch.dispose();
+  }
+}
+
+function formatShellResult(result: MacOSSandboxResult, timeoutMs: number): string {
+  const head = result.timedOut
+    ? `[shell-timeout] 命令超时(${timeoutMs}ms)或强制终止\n`
+    : `[shell-exit-${result.exitCode ?? -1}]\n`;
+  return (head + result.stdout + result.stderr).trim();
+}
+
 register({
   name: 'shell',
   description:
     `执行一条 shell 命令（cwd=Workspace，非交互，输出限 64KB；macOS 走 OS Sandbox，其他平台需审批模式）。` +
     `默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s，可用 timeoutMs 延长（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）；` +
-    `超时会整树终止并返回 [shell-timeout]。命令的 HOME/TMPDIR 指向运行时的临时 scratch 目录（可写，不污染 Workspace），因此 npm/npx/git 等需要缓存目录的命令在 Read Only 模式下同样可用。` +
+    `超时会整树终止并返回 [shell-timeout]。background=true 时立即返回 jobId，用 shellJob 轮询/终止（长测试、构建用）。` +
+    `命令的 HOME/TMPDIR 指向运行时的临时 scratch 目录（可写，不污染 Workspace），因此 npm/npx/git 等需要缓存目录的命令在 Read Only 模式下同样可用。` +
     `文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。`,
   effect: 'non_idempotent',
   // v1.9：按命令细化 effect —— 只读命令（ls/git log/find 等，且不含 shell 组合
-  // 或重定向）声明为 read，避免副作用守卫回放缓存结果（同一条 `git status`
-  // 第二次返回旧输出）。无法证明只读时保守回退 non_idempotent。
-  resolveEffect: (args) => classifyShellCommand(String(args.command ?? '')).effect,
+  // 或重定向）声明为 read，避免副作用守卫回放缓存结果。后台作业始终视为
+  // non_idempotent：同一条命令不应因为"只读"而启动第二个作业。
+  resolveEffect: (args) =>
+    args.background === true
+      ? 'non_idempotent'
+      : classifyShellCommand(String(args.command ?? '')).effect,
   // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
   // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
   capabilities: { network: true },
-  getOperationKey: (args) => `cmd:${String(args.command ?? '').trim()}`,
+  getOperationKey: (args) =>
+    `cmd:${String(args.command ?? '').trim()}:bg:${args.background === true}`,
   parameters: {
     type: 'object',
     properties: {
@@ -463,113 +577,114 @@ register({
           `可选：本次命令的超时毫秒数（${SHELL_TIMEOUT_MIN_MS}-${SHELL_TIMEOUT_MAX_MS}，超出范围会被收敛）。` +
           `不传则用运行时默认值。长任务（测试、构建）请显式传入。`,
       },
+      background: {
+        type: 'boolean',
+        description:
+          '可选：true 时命令在后台运行并立即返回 jobId（不阻塞本轮），用 shellJob 查看状态/输出或终止。适合长测试、构建、安装。',
+      },
     },
     required: ['command'],
   },
   execute: async (args, context) => {
     const cmd = String(args.command ?? '').trim();
     if (!cmd) throw new Error('缺少参数 command');
-
-    const workspaceRoot = context.workspaceRoot;
-    const permissionMode = storedPermissionMode(context.permissionMode);
-    const workDir = workspaceRoot;
     const timeoutMs = resolveShellTimeout(args.timeoutMs, shellTimeoutPolicy());
-    // v2.0 Network Control：shell 的网络能力跟随全局 network.mode ——
-    // on → 允许网络；off → execute() 已在执行前拒绝，绝不会走到这里。
-    const networkAccess = getNetworkMode() === 'on';
-    // Scratch（HOME/TMPDIR）：所有权限模式下都放在受管临时根目录，而不是
-    // Workspace 内。Read Only 下命令仍需要可写的缓存目录（npm/npx/git/tsx），
-    // 而 Workspace 必须保持只读；Workspace Write 下也避免污染用户项目。
-    const scratch = createShellScratch(context.runId);
-    const home = scratch.path;
-    const tmpdir = scratch.path;
 
-    // 双通道（docs/windows-mac-compat.md §3）：
-    // - macOS：Seatbelt 沙箱，fail-closed——sandbox-exec 不可用即拒绝，绝不静默降级
-    // - 其他平台：无 OS 沙箱原语，默认同样拒绝（延续"绝不静默降低遏制"原则），
-    //   仅当用户显式选择审批模式或设置 PAYASO_SHELL_UNSANDBOXED=1 才放行
-    let result: MacOSSandboxResult;
-    try {
-      if (process.platform === 'darwin') {
-        // Fail-closed gate（darwin 原语义，保持不变）：sandbox-exec 不可用即拒绝。
-        // probeSandboxAvailability 单进程缓存；macOS 26 等无法应用 profile 的
-        // 版本会在这里返回 false，绝不静默降级为无沙箱执行。
-        if (!(await probeSandboxAvailability())) {
-          throw new Error(
-            'Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
-              '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve ' +
-              'filesystem containment.',
-          );
-        }
-        const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess, {
-          scratchRoots: [scratch.path],
-        });
-        result = await sandbox.run(cmd, {
-          cwd: workDir,
-          home,
-          tmpdir,
-          timeoutMs,
-          signal: context.signal,
-          onEvent: (event) => {
-            if (event === 'started') {
-              context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
-            } else {
-              context.onSandboxEvent?.({
-                type: 'shell_sandbox_denied',
-                platform: 'macos',
-                reason: 'workspace_policy',
-              });
-            }
-          },
-        });
-      } else {
-        // 非 darwin：fail-closed，放行需显式同意（仅环境开关；full-access 只放宽
-        // 文件边界，不隐含允许无沙箱命令执行）
-        if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
-          throw new Error(
-            'Shell unavailable on this platform: 当前平台无 macOS OS Sandbox，' +
-              '为保持文件系统遏制默认拒绝。请设置 PAYASO_SHELL_UNSANDBOXED=1 ' +
-              '显式允许无沙箱 shell 后重试（默认关闭）。',
-          );
-        }
-        const host = await discoverShellHost();
-        if (!host) {
-          throw new Error(
-            'Shell unavailable: 未找到 bash 解释器。Windows 请安装 Git for Windows ' +
-              '(https://git-scm.com) 后重试。',
-          );
-        }
-        result = await runUncontainedShell(host, cmd, {
-          cwd: workDir,
-          home,
-          tmpdir,
-          timeoutMs,
-          signal: context.signal,
-        });
-      }
-    } finally {
-      scratch.dispose();
-    }
-
-    if (result.denied) {
-      // Do not expose stderr or host paths to the LLM/context.
-      throw new Error(
-        'Shell operation denied by the workspace sandbox (filesystem policy). ' +
-          'The command attempted to write outside the allowed roots.',
+    if (args.background === true) {
+      const job = startBackgroundJob({
+        runId: context.runId,
+        command: cmd,
+        parentSignal: context.signal,
+        executor: (signal) =>
+          executeContainedShell(cmd, { ...context, signal }, timeoutMs),
+      });
+      return (
+        `[shell-background] jobId=${job.jobId} status=running timeoutMs=${timeoutMs}\n` +
+        `命令: ${cmd}\n` +
+        `查看: shellJob {action:"status", jobId:"${job.jobId}"} / {action:"output", jobId:"${job.jobId}"} / {action:"kill", jobId:"${job.jobId}"}\n` +
+        `本轮无需等待，可继续其他工作。`
       );
     }
 
-    const missingTool = result.exitCode !== 0 ? missingShellToolName(result.stderr) : undefined;
-    if (missingTool !== undefined) {
-      // Discovery happens once at process start; a missing optional host tool
-      // is a normal recoverable tool error, not a Runtime crash.
-      throw new RequiredRuntimeToolUnavailableError(missingTool);
+    const result = await executeContainedShell(cmd, context, timeoutMs);
+    return formatShellResult(result, timeoutMs);
+  },
+});
+
+// ---- ⑤.5 shellJob（后台作业控制）----
+// 只读查询 + 幂等终止；作业生命周期由 Host 在 Run 终态统一回收。
+register({
+  name: 'shellJob',
+  description:
+    '查看/终止 shell 后台作业。action: "list" 列出本 Run 全部作业；"status" 查单个作业状态；"output" 取回已完成作业的输出（运行中会提示仍在运行）；"kill" 终止作业。作业随 Run 结束自动清理。',
+  effect: 'idempotent',
+  getOperationKey: (args) => `job:${String(args.action ?? '')}:${String(args.jobId ?? '')}`,
+  parameters: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['list', 'status', 'output', 'kill'],
+        description: 'list / status / output / kill',
+      },
+      jobId: {
+        type: 'string',
+        description: '作业 id（如 job-1）；action=list 时可省略',
+      },
+    },
+    required: ['action'],
+  },
+  execute: async (args, context) => {
+    const action = String(args.action ?? '').trim();
+    const jobId = String(args.jobId ?? '').trim();
+
+    // 先校验 action：schema 的 enum 已挡住模型的非法值，这里保证直接调用方
+    // 也拿到"未知 action"而不是误导性的"作业不存在"。
+    if (!['list', 'status', 'output', 'kill'].includes(action)) {
+      throw new Error(`未知 action: ${action}（可用 list / status / output / kill）`);
     }
 
-    const head = result.timedOut
-      ? `[shell-timeout] 命令超时(${timeoutMs}ms)或强制终止\n`
-      : `[shell-exit-${result.exitCode ?? -1}]\n`;
-    return (head + result.stdout + result.stderr).trim();
+    if (action === 'list') {
+      const jobs = listBackgroundJobs(context.runId);
+      if (jobs.length === 0) return '当前 Run 没有后台作业。';
+      return jobs
+        .map(
+          (job) =>
+            `${job.jobId} [${job.status}] ${job.command}（启动 ${job.startedAt}${job.finishedAt ? `，结束 ${job.finishedAt}` : ''}）`,
+        )
+        .join('\n');
+    }
+
+    if (!jobId) throw new Error(`action=${action} 需要参数 jobId`);
+    const job = getBackgroundJob(context.runId, jobId);
+    if (!job) throw new Error(`后台作业不存在: ${jobId}（用 shellJob {action:"list"} 查看）`);
+
+    if (action === 'status') {
+      return (
+        `${job.jobId} [${job.status}] ${job.command}\n` +
+        `启动: ${job.startedAt}${job.finishedAt ? `\n结束: ${job.finishedAt}` : ''}` +
+        (job.error ? `\n错误: ${job.error}` : '') +
+        (job.status === 'running' ? '\n（仍在运行；用 action:"output" 取回输出，或 action:"kill" 终止）' : '')
+      );
+    }
+
+    if (action === 'output') {
+      if (job.status === 'running') {
+        return `${job.jobId} 仍在运行中，暂无输出（完成后用 action:"output" 取回）。`;
+      }
+      const body = job.output?.trim() ? job.output : '(无输出)';
+      return `[${job.jobId} ${job.status}]\n${body}${job.error ? `\n[error] ${job.error}` : ''}`;
+    }
+
+    if (action === 'kill') {
+      const existed = killBackgroundJob(context.runId, jobId);
+      if (!existed) throw new Error(`后台作业不存在: ${jobId}`);
+      const after = getBackgroundJob(context.runId, jobId);
+      return `已请求终止 ${jobId}（当前状态: ${after?.status ?? 'unknown'}）。`;
+    }
+
+    // 不可达：action 已在上方白名单校验
+    throw new Error(`未知 action: ${action}`);
   },
 });
 

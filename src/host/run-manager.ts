@@ -51,6 +51,7 @@ import {
   readProjectInstructions,
   scanWorkspaceSkills,
 } from './workspace-instructions.js';
+import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
 
 // ---- Prompt 命令注册表 ----
 interface PromptCommand {
@@ -1179,6 +1180,8 @@ export class RunManager {
       clearTimeout(run.runTimeoutTimer);
       run.runTimeoutTimer = undefined;
     }
+    // v1.10：Run 进入终态即回收后台作业，绝不留下孤儿进程（幂等）。
+    disposeRunBackgroundJobs(run.runId);
     // 提交成功后才应用到内存并发布（memory 不会提前显示未持久化的终态）
     run.status = status;
     run.updatedAt = timestamp;

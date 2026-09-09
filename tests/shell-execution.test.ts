@@ -48,19 +48,30 @@ async function check(name: string, fn: () => void | Promise<void>): Promise<void
   }
 }
 
-async function shell(
-  command: string,
+async function tool(
+  name: string,
+  args: Record<string, unknown>,
   permissionMode: 'read-only' | 'workspace-write' | 'full-access',
   root: string,
-  args: Record<string, unknown> = {},
 ): Promise<string> {
   const context: ToolContext = {
     runId: 'shell-exec-test',
     workspaceRoot: root,
     permissionMode,
   };
-  return normalizeToolResult(await executeRaw('shell', { command, ...args }, context)).text;
+  return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
+async function shell(
+  command: string,
+  permissionMode: 'read-only' | 'workspace-write' | 'full-access',
+  root: string,
+  args: Record<string, unknown> = {},
+): Promise<string> {
+  return tool('shell', { command, ...args }, permissionMode, root);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---- 1. scratch 模块（纯函数/文件系统契约）----
 
@@ -245,6 +256,41 @@ if (process.platform !== 'darwin') {
       timeoutMs: 30_000,
     });
     assert.ok(out.includes('DONE'), `输出: ${out}`);
+  });
+
+  await check('后台作业：立即返回 jobId，完成后可取回输出', async () => {
+    const started = await shell('printf bg-ok', 'workspace-write', readOnlyRoot, {
+      background: true,
+    });
+    assert.ok(started.includes('[shell-background]'), `输出: ${started}`);
+    const jobId = started.match(/jobId=(job-\d+)/)?.[1];
+    assert.ok(jobId, `缺少 jobId: ${started}`);
+
+    let output = '';
+    for (let attempt = 0; attempt < 40; attempt++) {
+      output = await tool('shellJob', { action: 'output', jobId }, 'workspace-write', readOnlyRoot);
+      if (!output.includes('仍在运行')) break;
+      await sleep(50);
+    }
+    assert.ok(output.includes('bg-ok'), `后台输出缺失: ${output}`);
+  });
+
+  await check('后台作业：kill 终止长命令', async () => {
+    const started = await shell('sleep 30', 'workspace-write', readOnlyRoot, {
+      background: true,
+    });
+    const jobId = started.match(/jobId=(job-\d+)/)?.[1];
+    assert.ok(jobId, `缺少 jobId: ${started}`);
+    const killed = await tool(
+      'shellJob',
+      { action: 'kill', jobId },
+      'workspace-write',
+      readOnlyRoot,
+    );
+    assert.ok(killed.includes('已请求终止'), killed);
+    await sleep(200);
+    const status = await tool('shellJob', { action: 'status', jobId }, 'workspace-write', readOnlyRoot);
+    assert.ok(status.includes('[killed]'), `应已终止: ${status}`);
   });
 
   cleanupWorkspace(runId);
