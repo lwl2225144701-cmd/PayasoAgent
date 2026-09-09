@@ -103,6 +103,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/side-effect.ts`                      | 副作用三态生命周期 + canonical operation key 去重                                                                                                                                         |
 | `src/tool-output-budget.ts`                       | **工具输出预算单一来源**（16KB / 首 6KB + 尾 4KB，UTF-8 边界安全）；Runtime guard 与 read 等生产者共用
 | `src/runtime/output-guard.ts`                     | Runtime 侧预算执行点（委托 `tool-output-budget.ts`）                                                                                                                                                     |
+| `src/llm/tool-call-arguments.ts`                  | 从 `toolcall_delta` 恢复模型原始参数（原生适配器畸形 JSON 不再被当成 `{}`）
 | `src/llm/llm.ts`                                  | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验；`max_tokens` 按当前请求模型逐请求解析）                                             |
 | `src/tools/tools.ts`                              | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey                                                                                                      |
 | `src/tools/filesystem.ts`                         | listDir / readFile / writeFile（含可写区权限与原子写）                                                                                                                                     |
@@ -111,6 +112,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tools/glob-pattern.ts`                       | glob → RegExp 编译器（* / ? / ** / **/ / {a,b}，元字符按字面量）
 | `src/host/workspace-instructions.ts`              | 项目指令发现链（PAYASO.md/AGENTS.md/CLAUDE.md）+ skills 目录（.payaso/.claude/.pi）
 | `src/sandbox/shell-command-effect.ts`             | shell 命令级副作用分类（只读命令免回放；不确定即 non_idempotent）
+| `src/sandbox/background-jobs.ts`                  | 后台作业注册表（执行器端口注入、并发上限、输出预算、Run 终态回收）
 | `src/runtime/tool-error-classifier.ts`            | 工具错误分类（默认不重试；瞬时错误白名单）
 | `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
@@ -154,7 +156,7 @@ web/src/
 <!-- docs-contract:tools -->
 
 ```json
-["calculator","getWeather","loadSkill","read","write","edit","grep","glob","ls","shell","moveFile","deleteFile"]
+["calculator","getWeather","loadSkill","read","write","edit","grep","glob","ls","shell","shellJob","moveFile","deleteFile"]
 ```
 
 <!-- /docs-contract:tools -->
@@ -211,6 +213,9 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | 搜索不吞掉依赖目录 | grep/glob 共用 `workspace-scan.ts` 的 ignore 策略；`includeIgnored` 显式放行 | `tests/workspace-scan.test.ts` |
 | 项目约定必须被读到 | `workspace-instructions.ts` 按 PAYASO.md → AGENTS.md → CLAUDE.md 合并，skills 兼容三个目录 | `tests/workspace-instructions.test.ts` |
 | 只读 shell 命令不得回放缓存 | `Tool.resolveEffect` + `shell-command-effect.ts`；写命令仍走三态副作用保护 | `tests/shell-command-effect.test.ts` |
+| 原生适配器不得吞掉畸形参数 | `llm/tool-call-arguments.ts` 从 `toolcall_delta` 还原原文，交由 Runtime 统一解析 | `tests/tool-call-arguments.test.ts` |
+| scratchpad 不重复 transcript 内容 | `harness/scratchpad-view.ts` 只保留进度/失败/无效/下一步信号（实测 6.3K → <1.5K token） | `tests/scratchpad-view.test.ts` |
+| 后台作业不得成为孤儿 | `sandbox/background-jobs.ts` + `RunManager.finalizeRun` 终态回收 + Run 取消联动 | `tests/background-jobs.test.ts` |
 
 ### 4.2 三层状态职责
 
@@ -337,7 +342,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 59 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 59 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 62 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 62 套件全绿为合并门槛；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

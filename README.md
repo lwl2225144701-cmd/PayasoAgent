@@ -6,7 +6,7 @@
 
 * **安全优先**：shell 在 macOS seatbelt 沙箱内执行（fail-closed），API 密钥存 macOS Keychain 不落库
 
-* **当前版本：v1.9**
+* **当前版本：v1.10**
 
 > 完整架构与契约（工具清单、Trace 事件、API、安全边界）以 [docs/architecture-current.md](docs/architecture-current.md) 为唯一权威文档。
 
@@ -30,7 +30,7 @@
 
 * 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（正则递归搜索，默认忽略依赖/产物目录）/ `glob`（按模式查找文件，mtime 排序）/ `moveFile` / `deleteFile`
 
-* `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；HOME/TMPDIR 指向沙箱外受管 scratch（Read Only 下仍可写缓存，不污染工作区）；沙箱不可用时拒绝执行（绝不裸跑）
+* `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出/终止（长测试与构建不阻塞本轮）；HOME/TMPDIR 指向沙箱外受管 scratch（Read Only 下仍可写缓存，不污染工作区）；沙箱不可用时拒绝执行（绝不裸跑）
 
 * `loadSkill`：按需加载工作区 skill（`.payaso/skills`、`.claude/skills`、`.pi/skills`）；`calculator` / `getWeather` 为演示工具
 
@@ -80,7 +80,7 @@ npm run cli "帮我计算 15*37"   # 命令行单次任务
 
 | 命令                               | 内容                                                                     | 依赖            |
 | -------------------------------- | ---------------------------------------------------------------------- | ------------- |
-| `npm run test:all`               | **59 个确定性套件**（子进程隔离，秒级）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、Host Auth、Keychain 契约等 | 无 LLM         |
+| `npm run test:all`               | **62 个确定性套件**（子进程隔离，秒级）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、Host Auth、Keychain 契约等 | 无 LLM         |
 | `npx tsc --noEmit`               | TypeScript 类型检查                                                        | 无             |
 | `npm run build:web`              | 前端生产构建                                                                 | 无             |
 | `npm run test:host`              | Host API 集成测试（真实 HTTP server + 真实 Run）                                 | 需 LLM（`.env`） |
