@@ -6,7 +6,7 @@
 
 * **安全优先**：shell 在 macOS seatbelt 沙箱内执行（fail-closed），API 密钥存 macOS Keychain 不落库
 
-* **当前版本：v1.6**
+* **当前版本：v1.8**
 
 > 完整架构与契约（工具清单、Trace 事件、API、安全边界）以 [docs/architecture-current.md](docs/architecture-current.md) 为唯一权威文档。
 
@@ -14,23 +14,25 @@
 
 **Agent 运行时**
 
-* Agent Loop：迭代预算、工具重试/失败恢复、防死循环、Checkpoint/Resume（中断后从断点续跑）
+* Agent Loop：工具重试/失败恢复、防死循环、Checkpoint/Resume（中断后从断点续跑）；无固定迭代上限，由模型收尾/取消/错误/Harness 策略终止
+
+* 内核不变量（v1.8）：回合终态必须有可见产出（空回答按 Harness 策略有界恢复，用尽则失败，绝不静默完成）；工具参数必须满足声明 schema；只有瞬时错误才重试
 
 * Side-Effect Safety：non-idempotent 操作三态生命周期（executing/succeeded/uncertain），崩溃恢复不重复副作用
 
-* Tool Output Guard：单工具结果 16KB 硬上限，防止大输出撑爆 Context
+* Tool Output Guard：单工具结果 16KB 硬上限（预算与切片算法为 `src/tool-output-budget.ts` 单一来源），防止大输出撑爆 Context
 
 * True Cancellation：AbortSignal 全链路传播（Host → Agent → LLM 请求 → shell 进程组），`running → stopping → stopped`
 
 * 原子终态落盘：终态状态与终态事件在同一 SQLite 事务提交，崩溃不出现"状态完成但事件丢失"
 
-**工具集（10 个）**
+**工具集**
 
-* 文件：`listDir` / `readFile` / `writeFile`（原子写）/ `searchText` / `createDir` / `moveFile` / `deleteFile`
+* 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（目录递归子串搜索）/ `moveFile` / `deleteFile`
 
-* `shell`：macOS `sandbox-exec` 执行，10s 超时、64KB 输出上限、**网络全隔离**；沙箱不可用时拒绝执行（绝不裸跑）
+* `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；HOME/TMPDIR 指向沙箱外受管 scratch（Read Only 下仍可写缓存，不污染工作区）；沙箱不可用时拒绝执行（绝不裸跑）
 
-* Demo：`calculator` / `getWeather`（mock）
+* `loadSkill`：按需加载工作区 `.payaso/skills/<name>/SKILL.md`；`calculator` / `getWeather` 为演示工具
 
 **权限与密钥**
 
@@ -76,7 +78,7 @@ npm run cli "帮我计算 15*37"   # 命令行单次任务
 
 | 命令                               | 内容                                                                     | 依赖            |
 | -------------------------------- | ---------------------------------------------------------------------- | ------------- |
-| `npm run test:all`               | **31 个确定性套件**（子进程隔离，秒级）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、Host Auth、Keychain 契约等 | 无 LLM         |
+| `npm run test:all`               | **53 个确定性套件**（子进程隔离，秒级）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、Host Auth、Keychain 契约等 | 无 LLM         |
 | `npx tsc --noEmit`               | TypeScript 类型检查                                                        | 无             |
 | `npm run build:web`              | 前端生产构建                                                                 | 无             |
 | `npm run test:host`              | Host API 集成测试（真实 HTTP server + 真实 Run）                                 | 需 LLM（`.env`） |
@@ -88,17 +90,15 @@ CI（`.github/workflows/ci.yml`，macOS + Node 22）固定执行 `npm ci` → `n
 
 ## 当前限制
 
-* **迭代硬上限 10 轮**：复杂长任务可能中途失败（Checkpoint 可 resume，但不延长预算）
+* **无联网工具**：没有 web search / fetch，Agent 无法获取外部信息（`shell` 的网络能力由 `network.mode` 控制，默认 on）
 
-* **shell 限制**：10s 超时、64KB 输出、所有权限模式下禁止网络；`sandbox-exec` 仅 macOS 可用（不可用时 shell 工具整体禁用）
+* **shell 沙箱仅 macOS**：`sandbox-exec` 不可用时 shell 工具整体禁用（fail-closed）；其他平台需显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才放行
 
-* **无联网工具**：没有 web search / fetch，Agent 无法获取外部信息
+* **grep 为字面量子串**：不支持正则，也不排除 node_modules（已知缺口，见架构文档 §8）
 
-* **文件操作基础**：`readFile` 整文件读取（≤1MB，无行范围分页）；`writeFile` 整文件覆盖写（无精确字符串替换/diff 编辑）；`searchText` 仅单文件字面量匹配
+* **上下文管理**：超预算先按完整旧轮增量摘要压缩（compaction），单任务长执行有当前轮紧急裁剪兜底
 
-* **纯文本交互**：无多模态（图片/文档解析）、无文件上传入口
-
-* **上下文管理**：超预算按轮裁剪最早消息，无摘要压缩（compaction）
+* **纯文本交互**：无文档解析；图片输入需模型声明视觉能力
 
 * **单机单用户**：仅监听 127.0.0.1，无用户鉴权/多租户
 

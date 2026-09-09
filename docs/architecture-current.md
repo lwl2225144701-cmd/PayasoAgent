@@ -101,13 +101,18 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/observer-port.ts`                    | Runtime 诊断观察端口；接收隔离快照，Observer 修改或抛错均不影响执行语义                                                                                                                                    |
 | `src/observability/console-runtime-observer.ts`   | 默认 CLI/本地 stdout 渲染器；Runtime 源码不直接输出控制台                                                                                                                                          |
 | `src/runtime/side-effect.ts`                      | 副作用三态生命周期 + canonical operation key 去重                                                                                                                                         |
-| `src/runtime/output-guard.ts`                     | 单工具结果 16KB 硬上限（UTF-8 安全截断）                                                                                                                                                     |
+| `src/tool-output-budget.ts`                       | **工具输出预算单一来源**（16KB / 首 6KB + 尾 4KB，UTF-8 边界安全）；Runtime guard 与 read 等生产者共用
+| `src/runtime/output-guard.ts`                     | Runtime 侧预算执行点（委托 `tool-output-budget.ts`）                                                                                                                                                     |
 | `src/llm/llm.ts`                                  | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验；`max_tokens` 按当前请求模型逐请求解析）                                             |
 | `src/tools/tools.ts`                              | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey                                                                                                      |
 | `src/tools/filesystem.ts`                         | listDir / readFile / writeFile（含可写区权限与原子写）                                                                                                                                     |
-| `src/tools/runtime-tools.ts`                      | searchText / createDir / moveFile / deleteFile / shell                                                                                                                         |
+| `src/tools/tool-arguments.ts`                     | 工具参数 schema 校验（未知/缺失/类型/枚举）→ 结构化回传模型
+| `src/runtime/tool-error-classifier.ts`            | 工具错误分类（默认不重试；瞬时错误白名单）
+| `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
-| `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（timeout 10s、输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）                                                                               |
+| `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）
+| `src/sandbox/shell-scratch.ts`                    | 受管可写 scratch（HOME/TMPDIR）：read-only 下命令仍可写缓存，工作区保持只读
+| `src/sandbox/shell-timeout.ts`                    | Shell 超时策略（默认 120s / 上限 600s / env 可配 / 模型可请求 `timeoutMs`）                                                                               |
 | `src/sandbox/sandbox-policy.ts`                   | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false）                                                                                                            |
 | `src/sandbox/toolchain-manager.ts`                | macOS 工具链启动发现、Mach-O 依赖闭包、Git helper/runtime 路径封装；对模型只投影无路径能力快照                                                                                                     |
 | `src/sandbox/toolchain-preparation.ts`            | 缺失 Git/Node/npm 的固定准备计划与用户批准端口；不接受模型安装命令或路径                                                                                                                        |
@@ -153,7 +158,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","llm_call_started","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -172,20 +177,33 @@ for (i = startIter; ; i++):
   ├─ 1.    chat(messages, getSchemas(), onStreamDelta, modelConfig?)
   │         ├─ SSE delta → Host 批量持久化 → Web 增量显示
   │         └─ 完整组装 assistant/tool_calls 后才进入 Loop
-  │         └─ 无 tool_calls → stripThink → final_answer → status=completed
+  │         └─ 无 tool_calls → stripThink → 空内容则走空回合不变量（v1.8）
+  │                            → 非空则 final_answer → status=completed
   └─ 2.    逐个 tool_call（v1.6 Invocation Pipeline：Parse → Validate → Resolve →
-        │      Side-effect preparation → Execute；①②③ 失败 = 可恢复 invocation error，
-        │      工具不执行、不创建 side-effect，结构化错误回传模型修正，trace 记 tool_call_invalid）：
+        │      Schema Validate（v1.8）→ Side-effect preparation → Execute；
+        │      任一前置失败 = 可恢复 invocation error，工具不执行、不创建 side-effect，
+        │      结构化错误回传模型修正，trace 记 tool_call_invalid）：
         ├─ 2a. non_idempotent → resolveOperation（replay / uncertain / start）
         ├─ 2b. isBlocked 防死循环（同 tool+input 失败超限 / 已 invalid → 禁调）
         ├─ 2c. non_idempotent → begin(opKey) + saveCheckpoint()（persist 失败禁止 execute）
-        └─ 2d. 执行：read/idempotent 重试 ≤2；non_idempotent 零重试
-              ├─ success → validate(raw) → guard(16KB) → 按 valid/invalid 分支
-              └─ throw   → non_idempotent markUncertain / 其余 recordFailure+重试
+        └─ 2d. 执行：错误分类决定是否重试（v1.8，默认不重试；仅瞬时错误 ≤2 次）
+              ├─ success → validate(raw) → guard(共享输出预算) → 按 valid/invalid 分支
+              └─ throw   → non_idempotent markUncertain / 其余 recordFailure+分类决策
   └─ 工具轮结束后可由 Harness.shouldStopAfterTurn 请求优雅停止；Host 另有总运行时限保险丝
 ```
 
-Runtime 不设置固定 `MAX_ITERATIONS`；只保留 `MAX_RETRY=2`（工具总尝试 3 次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。Host 侧默认以 15 分钟总运行时限（可由 `AGENT_RUN_TIMEOUT_MS` 覆盖）作为最后保险丝；超时会 abort Runtime 并将 Run 原子落为 `failed`。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > fallback 256K（引入模型的已知窗口下限；接更低窗口模型需在模型设置中显式配置）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
+Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**重试上限（v1.8 起由 `tool-error-classifier.ts` 判定，确定性错误只执行一次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。Host 侧默认以 15 分钟总运行时限（可由 `AGENT_RUN_TIMEOUT_MS` 覆盖）作为最后保险丝；超时会 abort Runtime 并将 Run 原子落为 `failed`。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > 窗口 fallback 256K + 输出预留按窗口推导（v1.8：窗口 8%，夹在 4K–32K；不再固定 4K）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
+
+### 4.1.1 v1.8 内核不变量（可测试的硬约束）
+
+| 不变量 | 实现 | 守住它的测试 |
+| --- | --- | --- |
+| 回合终态必须有可见产出 | 无 tool_calls 且 content 为空 → 按 `Harness.emptyTurnPolicy()` 有界恢复（默认 2 次），用尽抛 `AgentEmptyAnswerError`，绝不 `completed` 空结果 | `tests/empty-turn.test.ts` |
+| 工具参数必须满足声明 schema | `tools/tool-arguments.ts` 校验未知/缺失/类型/枚举，结构化回传（`INVALID_ARGUMENT_SHAPE`），绝不静默丢弃未知参数 | `tests/tool-argument-validation.test.ts` |
+| 只有瞬时错误才重试 | `runtime/tool-error-classifier.ts` 规则链；未分类默认不重试（fail-safe） | `tests/tool-error-classifier.test.ts` |
+| 工具输出预算单一来源 | `src/tool-output-budget.ts` 同时被 Runtime guard 与 read/grep 等生产者使用，宣称契约 == 执行契约 | `tests/tool-output-budget.test.ts` |
+| Read Only 下 shell 仍可用 | `sandbox/shell-scratch.ts` 提供沙箱外受管可写 HOME/TMPDIR；工作区保持只读 | `tests/shell-execution.test.ts` |
+| 超时由 host 策略收敛 | `sandbox/shell-timeout.ts`（默认 120s、上限 600s、env 可配、模型可请求 `timeoutMs`） | `tests/shell-execution.test.ts` |
 
 ### 4.2 三层状态职责
 
@@ -198,7 +216,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；只保留 `MAX_RETRY=2`（工具总�
 
 ### 4.3 关键保证（与测试对应）
 
-* **Tool Output Guard**：`validateResult` 看完整 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果，防止大输出把 Context 撑爆。
+* **Tool Output Guard**：`validateResult` 看完整 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果，防止大输出把 Context 撑爆。v1.8 起预算常量与切片算法收敛到 `src/tool-output-budget.ts`，read 自己按同一预算做行感知分页（首尾保留 + 精确续读区间），因此 read 的结果不会再被 guard 二次截断。
 
 * **Side-Effect Safety**：`executing → succeeded | uncertain`；`succeeded` 同 key 回放不重跑；`executing/uncertain` 不再自动执行；execute 前必须先持久化 executing。
 
@@ -237,7 +255,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；只保留 `MAX_RETRY=2`（工具总�
 | `createDir`  | idempotent          | `path:<canonical>`                        | 单层创建，父目录需存在                                                                                                                                                              |
 | `moveFile`   | **non\_idempotent** | `src:<canonical>:dst:<canonical>`         | 拒绝覆盖已存在目标                                                                                                                                                                |
 | `deleteFile` | idempotent          | `path:<canonical>`                        | 文件不存在幂等返回                                                                                                                                                                |
-| `shell`      | **non\_idempotent** | `cmd:<command>`                           | macOS sandbox-exec 执行，cwd=workspaceRoot，timeout 10s，输出 64KB；**网络默认 deny**（独立 capability，shell 永远显式 false）；**fail-closed**：sandbox-exec 不可用（如 macOS 26）时拒绝执行，绝不跑无沙箱 shell |
+| `shell`      | **non\_idempotent** | `cmd:<command>`                           | macOS sandbox-exec 执行，cwd=workspaceRoot，输出 64KB；超时默认 120s（模型可传 `timeoutMs`，上限 600s）；HOME/TMPDIR 指向受管 scratch（read-only 下仍可写缓存，不污染工作区）；**网络默认 deny**（独立 capability，shell 永远显式 false）；**fail-closed**：sandbox-exec 不可用（如 macOS 26）时拒绝执行，绝不跑无沙箱 shell |
 
 **写区权限**：`input/` 只读、仅 `work/` 与 `output/` 可写 —— 仅对 legacy per-run sandbox 生效（见 §8 已知缺口 #2）。
 
@@ -326,7 +344,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 * 网络能力粒度控制（域名白名单、代理、流量审计）：shell 只保留 `networkAccess` deny/allow 二态开关；Browser/Network capability 属后续阶段，不通过 shell 实现
 
-* 工具执行超时（除 shell 的 10s 上限）；LLM 请求已有总超时 + AbortSignal 取消，shell 已支持进程组级取消（v1.6），其余工具取消语义取决于工具自身
+* 工具执行超时（除 shell 的可配置上限）；LLM 请求已有总超时 + AbortSignal 取消，shell 已支持进程组级取消（v1.6），其余工具取消语义取决于工具自身
 
 * 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排；Runtime 内部不提供固定迭代计数上限（长任务由 Harness 策略或 Host 总运行时限收口）
 
