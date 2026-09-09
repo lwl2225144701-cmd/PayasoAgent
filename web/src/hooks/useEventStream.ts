@@ -20,7 +20,9 @@ export function useEventStream(
 ) {
   const [events, setEvents] = useState<HostEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
-  const processedIdsRef = useRef<Set<number>>(new Set());
+  // SSE 单连接按 append 顺序广播、重连回放也严格递增，seq 单调 → 只需记住最大已见 seq
+  // 即可去重（等价于 Set 且 O(1) 内存；若未来服务端乱序广播，此假设不成立需回退 Set）。
+  const lastSeqRef = useRef(0);
   const closeRef = useRef<(() => void) | null>(null);
   const endedRef = useRef(false);
   const onTerminalRef = useRef(onTerminal);
@@ -38,14 +40,14 @@ export function useEventStream(
     if (!runId) {
       setEvents([]);
       setIsConnected(false);
-      processedIdsRef.current = new Set();
+      lastSeqRef.current = 0;
       return;
     }
 
     // 重置状态
     setEvents([]);
     setIsConnected(false);
-    processedIdsRef.current = new Set();
+    lastSeqRef.current = 0;
 
     let isActive = true;
     let pendingEvents: HostEvent[] = [];
@@ -72,8 +74,8 @@ export function useEventStream(
       live,
       (ev, seq) => {
         if (!isActive || endedRef.current) return;
-        if (seq > 0 && processedIdsRef.current.has(seq)) return;
-        if (seq > 0) processedIdsRef.current.add(seq);
+        if (seq > 0 && seq <= lastSeqRef.current) return;
+        if (seq > 0) lastSeqRef.current = seq;
         pendingEvents.push(ev);
         if (isTerminal(ev)) {
           // Do not let the terminal close discard deltas received in the same

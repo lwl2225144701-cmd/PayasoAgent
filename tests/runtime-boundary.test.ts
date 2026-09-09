@@ -130,7 +130,13 @@ try {
   assert.equal(snapshots[0]?.runId, explicit.runId);
   assert.equal(snapshots[0]?.status, 'completed');
   assert.equal(snapshots[0]?.workspaceRoot, explicit.workspaceRoot);
-  assert.deepEqual(observedEvents, ['context_trim', 'context_usage', 'llm_call', 'final_answer']);
+  assert.deepEqual(observedEvents, [
+    'context_trim',
+    'context_usage',
+    'llm_call_started',
+    'llm_call',
+    'final_answer',
+  ]);
   assert.ok(observedStates.includes('summary:completed'));
   assert.ok(observedStates.includes('full:completed'));
 

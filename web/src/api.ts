@@ -281,6 +281,7 @@ export function connectSSE(
     'assistant_delta',
     'reasoning_delta',
     'llm_call',
+    'llm_call_started',
     'tool_call',
     'tool_call_invalid',
     'tool_result',
