@@ -47,64 +47,10 @@ import { getSchemas } from '../tools/tools.js';
 import { isAbortError } from '../util/abort.js';
 import { aggregateSessionStats, deriveRunStats, type SessionStats } from './run-stats.js';
 import { createZip, type ZipEntry } from './zip.js';
-
-// Skill manifest: name + description only; full content loaded on demand via loadSkill tool.
-function scanWorkspaceSkills(
-  workspaceRoot: string,
-  permissionMode: string,
-): Array<{ name: string; description: string }> {
-  if (permissionMode === 'read-only') return [];
-  const skillsDir = path.join(workspaceRoot, '.payaso', 'skills');
-  let entries: Array<string>;
-  try {
-    entries = fs
-      .readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return [];
-  }
-  const manifests: Array<{ name: string; description: string }> = [];
-  for (const dir of entries) {
-    if (!/^[a-z][a-z0-9-]{0,63}$/.test(dir)) continue;
-    try {
-      const filePath = path.join(skillsDir, dir, 'SKILL.md');
-      const stat = fs.statSync(filePath);
-      if (!stat.isFile()) continue;
-      const content = fs.readFileSync(filePath, 'utf8');
-      const fm = parseSkillFrontmatter(content);
-      manifests.push({
-        name: fm.name || dir,
-        description: fm.description || '',
-      });
-    } catch {
-      /* 单个 skill 损坏不影响整体 */
-    }
-  }
-  return manifests;
-}
-
-// 极简 frontmatter 解析：只认 name / description / version，未知字段忽略（fail-closed）。
-function parseSkillFrontmatter(content: string): {
-  name?: string;
-  description?: string;
-  version?: string;
-} {
-  if (!content.startsWith('---\n')) return {};
-  const end = content.indexOf('\n---', 4);
-  if (end < 0) return {};
-  const block = content.slice(4, end);
-  const result: Record<string, string> = {};
-  for (const line of block.split('\n')) {
-    const match = line.match(/^([a-z][a-z0-9-]*):\s*(.*)$/);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
-    result[match[1]] = value;
-  }
-  return { name: result.name, description: result.description, version: result.version };
-}
+import {
+  readProjectInstructions,
+  scanWorkspaceSkills,
+} from './workspace-instructions.js';
 
 // ---- Prompt 命令注册表 ----
 interface PromptCommand {
@@ -203,21 +149,6 @@ export function expandPromptCommand(task: string, commands: PromptCommand[]): st
   const body = task.slice(firstLine.length + 1); // 去掉第一行后的内容（追加到 $@ 尾部更灵活——这里直接追加到模板末尾）
   const expanded = interpolatePrompt(cmd.template, args) + (body ? `\n${body}` : '');
   return expanded.trim();
-}
-
-// 项目级指令：workspace 根目录 PAYASO.md（仅 workspace-write / full-access 加载）。
-// 读取失败一律降级为空串，不阻塞 Run 创建（fail-closed 安全门控在调用方）。
-function readProjectInstructions(workspaceRoot: string, permissionMode: string): string {
-  if (permissionMode === 'read-only') return '';
-  try {
-    const filePath = path.join(workspaceRoot, 'PAYASO.md');
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) return '';
-    if (stat.size > 32 * 1024) return ''; // 超过 32KB 不加载，由段预算二次截断
-    return fs.readFileSync(filePath, 'utf8');
-  } catch {
-    return '';
-  }
 }
 
 import { createDefaultRunStore } from './persistence/sqlite-store.js';
