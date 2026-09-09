@@ -43,9 +43,9 @@ function writeApp(content: string): void {
 
 let passed = 0;
 let failed = 0;
-function test(name: string, fn: () => void | Promise<void>): void {
+async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
-    fn();
+    await fn();
     passed++;
     console.log(`  [PASS] ${name}`);
   } catch (err) {
@@ -55,7 +55,7 @@ function test(name: string, fn: () => void | Promise<void>): void {
 }
 
 // ---- 1. 单编辑成功 ----
-test('edit 单编辑成功并返回 diff', async () => {
+await test('edit 单编辑成功并返回 diff', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   const res = await execute(
     'edit',
@@ -74,7 +74,7 @@ test('edit 单编辑成功并返回 diff', async () => {
 });
 
 // ---- 2. oldText 未找到 → 失败 ----
-test('edit oldText 未找到 → tool_error', async () => {
+await test('edit oldText 未找到 → tool_error', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   await assert.rejects(
     () =>
@@ -86,12 +86,13 @@ test('edit oldText 未找到 → tool_error', async () => {
         },
         ctx,
       ),
-    /oldText 未找到/,
+    // 实现返回的是"未精确匹配"诊断（含前 80 字符 + 下一步提示）
+    /oldText 在文件中未精确匹配/,
   );
 });
 
 // ---- 3. oldText 多次匹配 → 失败 ----
-test('edit oldText 多次匹配 → 拒绝', async () => {
+await test('edit oldText 多次匹配 → 拒绝', async () => {
   fs.writeFileSync(path.join(root, 'work', 'dup.txt'), 'x\nx\nx\n', 'utf8');
   await assert.rejects(
     () =>
@@ -108,7 +109,7 @@ test('edit oldText 多次匹配 → 拒绝', async () => {
 });
 
 // ---- 4. 多次非重叠编辑 ----
-test('edit 多次非重叠编辑成功', async () => {
+await test('edit 多次非重叠编辑成功', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   const res = await execute(
     'edit',
@@ -129,7 +130,7 @@ test('edit 多次非重叠编辑成功', async () => {
 });
 
 // ---- 5. 重叠编辑 → 拒绝 ----
-test('edit 重叠编辑 → 拒绝', async () => {
+await test('edit 重叠编辑 → 拒绝', async () => {
   fs.writeFileSync(path.join(root, 'work', 'overlap.txt'), 'abcdef', 'utf8');
   await assert.rejects(
     () =>
@@ -149,7 +150,7 @@ test('edit 重叠编辑 → 拒绝', async () => {
 });
 
 // ---- 6. 保留 CRLF 换行风格 ----
-test('edit 保留 CRLF 换行风格', async () => {
+await test('edit 保留 CRLF 换行风格', async () => {
   fs.writeFileSync(path.join(root, 'work', 'crlf.ts'), 'line1\r\nline2\r\nline3\r\n', 'utf8');
   const res = await execute(
     'edit',
@@ -166,14 +167,14 @@ test('edit 保留 CRLF 换行风格', async () => {
 });
 
 // ---- 7. 保留 LF 换行风格 ----
-test('edit 保留 LF 换行风格', async () => {
+await test('edit 保留 LF 换行风格', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   const content = fs.readFileSync(path.join(root, 'work', 'app.ts'), 'utf8');
   assert.ok(!content.includes('\r\n'), '应保留 LF: ' + JSON.stringify(content));
 });
 
 // ---- 8. 无实际修改（oldText === newText）→ 无修改提示 ----
-test('edit oldText 与 newText 相同 → 无修改', async () => {
+await test('edit oldText 与 newText 相同 → 无修改', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   const res = await execute(
     'edit',
@@ -187,7 +188,7 @@ test('edit oldText 与 newText 相同 → 无修改', async () => {
 });
 
 // ---- 9. 空 oldText → 失败 ----
-test('edit 空 oldText → tool_error', async () => {
+await test('edit 空 oldText → tool_error', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   await assert.rejects(
     () =>
@@ -204,7 +205,7 @@ test('edit 空 oldText → tool_error', async () => {
 });
 
 // ---- 10. 超大文件 → invalid result ----
-test('edit 超大文件（>1MB）→ tool_result_invalid', async () => {
+await test('edit 超大文件（>1MB）→ tool_result_invalid', async () => {
   fs.writeFileSync(path.join(root, 'output', 'big.ts'), 'x'.repeat(2 * 1024 * 1024), 'utf8');
   const res = await execute(
     'edit',
@@ -219,13 +220,13 @@ test('edit 超大文件（>1MB）→ tool_result_invalid', async () => {
 });
 
 // ---- 11. Schema 包含 edit ----
-test('edit 在 Schema 中注册', () => {
+await test('edit 在 Schema 中注册', () => {
   const names = getSchemas().map((s) => s.function.name);
   assert.ok(names.includes('edit'));
 });
 
 // ---- 12. BOM 剥离 + 还原（Windows 记事本类文件）----
-test('edit 含 BOM 文件：匹配成功且 BOM/CRLF 还原', async () => {
+await test('edit 含 BOM 文件：匹配成功且 BOM/CRLF 还原', async () => {
   const p = path.join(root, 'work', 'bom.ts');
   fs.writeFileSync(p, '﻿line one\r\nline two\r\n', 'utf8');
   const res = await execute(
@@ -240,7 +241,7 @@ test('edit 含 BOM 文件：匹配成功且 BOM/CRLF 还原', async () => {
 });
 
 // ---- 13. 参数容错：edits 是 JSON 字符串 / legacy 顶层参数 ----
-test('edit edits 为 JSON 字符串 → 容错解析', async () => {
+await test('edit edits 为 JSON 字符串 → 容错解析', async () => {
   const p = path.join(root, 'work', 'arg1.ts');
   fs.writeFileSync(p, 'alpha beta gamma', 'utf8');
   const res = await execute(
@@ -252,7 +253,7 @@ test('edit edits 为 JSON 字符串 → 容错解析', async () => {
   assert.equal(fs.readFileSync(p, 'utf8'), 'alpha BETA gamma');
 });
 
-test('edit legacy 顶层 oldText/newText → 容错解析', async () => {
+await test('edit legacy 顶层 oldText/newText → 容错解析', async () => {
   const p = path.join(root, 'work', 'arg2.ts');
   fs.writeFileSync(p, 'foo bar baz', 'utf8');
   const res = await execute('edit', { path: 'work/arg2.ts', oldText: 'bar', newText: 'BAR' }, ctx);
@@ -261,7 +262,7 @@ test('edit legacy 顶层 oldText/newText → 容错解析', async () => {
 });
 
 // ---- 14. 保守 fuzzy：缩进差异（唯一整行块）自动应用并保留缩进 ----
-test('edit oldText 缩进不一致（唯一）→ fuzzy 自动应用且保留原缩进', async () => {
+await test('edit oldText 缩进不一致（唯一）→ fuzzy 自动应用且保留原缩进', async () => {
   const p = path.join(root, 'work', 'fz.ts');
   fs.writeFileSync(p, 'function f() {\n  const x = 1;\n  return x;\n}\n', 'utf8');
   const res = await execute(
@@ -275,7 +276,7 @@ test('edit oldText 缩进不一致（唯一）→ fuzzy 自动应用且保留原
   assert.ok(!after.includes('const x = 1;'), '旧内容应被替换');
 });
 
-test('edit fuzzy 真歧义（两处相同行）→ 仍拒绝', async () => {
+await test('edit fuzzy 真歧义（两处相同行）→ 仍拒绝', async () => {
   const p = path.join(root, 'work', 'fzamb.ts');
   fs.writeFileSync(p, 'function a() {\n  return 1;\n}\nfunction b() {\n  return 1;\n}\n', 'utf8');
   await assert.rejects(
