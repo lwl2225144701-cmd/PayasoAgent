@@ -21,6 +21,7 @@ import {
   formatToolCallError,
   getSchemas,
   getTool,
+  invalidToolArgumentsError,
   NetworkDeniedError,
   needsNetworkApproval,
   normalizeToolResult,
@@ -32,6 +33,7 @@ import {
   toolNotFoundError,
   validateToolResult,
 } from '../tools/tools.js';
+import { formatToolArgumentIssues, validateToolArguments } from '../tools/tool-arguments.js';
 import { isAbortError, throwIfAborted } from '../util/abort.js';
 import { type ApprovalPort, resolveApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
@@ -55,6 +57,7 @@ import {
   resolveOperation,
 } from './side-effect.js';
 import { createState, updateState } from './state.js';
+import { classifyToolError } from './tool-error-classifier.js';
 import { addEvent, createTrace, type TraceEvent, type TraceEventInput } from './trace.js';
 
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
@@ -66,6 +69,19 @@ export class AgentStopRequestedError extends Error {
   constructor(message = 'Agent turn stopped by Harness policy') {
     super(message);
     this.name = 'AgentStopRequestedError';
+  }
+}
+
+// v1.8 空回合不变量：模型既没有工具调用也没有可见内容时，Runtime 绝不把它当成
+// 最终答案（那会让 Run 以空结果"成功"结束，用户什么都看不到）。先按 Harness
+// 策略有界恢复，恢复次数用尽后抛此错误 → Run 落 failed 并给出明确原因。
+export class AgentEmptyAnswerError extends Error {
+  constructor(recoveries: number) {
+    super(
+      `Model produced no visible content and no tool call after ${recoveries} recovery attempt(s); ` +
+        'the run cannot be completed with an empty answer.',
+    );
+    this.name = 'AgentEmptyAnswerError';
   }
 }
 
@@ -175,6 +191,9 @@ export async function runAgent(
   // 真实用量锚点（Adapter/投影思想）：记录最近一次 provider 上报的用量，
   // 供下一轮 context_usage 携带 prompt 侧真实压力（pressureTokens）校准估算。
   let lastRequestUsage: TokenUsage | undefined;
+  // v1.8 空回合恢复计数（每次 Run 独立；resume 后从 0 重新计数，避免旧 checkpoint
+  // 把恢复额度永久耗尽）。
+  let emptyTurnRecoveries = 0;
 
   // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
   const save = (status?: string) => {
@@ -335,6 +354,32 @@ export async function runAgent(
         observer.log('[LLM 决策] 未选择工具 → 生成最终答案');
         const answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
 
+        // v1.8 空回合不变量：没有工具调用且没有可见内容 → 不是答案。
+        // 按 Harness 策略追加提示并重试（有界）；用尽后 fail loudly。
+        if (answer.trim() === '') {
+          const policy = contextHarness.emptyTurnPolicy?.();
+          if (policy && emptyTurnRecoveries < policy.maxRecoveries) {
+            emptyTurnRecoveries++;
+            observer.log(
+              `[空回合] 模型未产生可见输出，按 Harness 策略追加提示（${emptyTurnRecoveries}/${policy.maxRecoveries}）`,
+            );
+            emit({
+              type: 'empty_turn_recovered',
+              attempt: emptyTurnRecoveries,
+              maxAttempts: policy.maxRecoveries,
+            });
+            updateState(state, {
+              currentStep: 'empty_turn_recovery',
+              currentError: 'empty assistant turn',
+            });
+            observeState('summary');
+            messages.push({ role: 'user', content: policy.nudge });
+            save();
+            continue;
+          }
+          throw new AgentEmptyAnswerError(emptyTurnRecoveries);
+        }
+
         // Trace: 最终答案 + 总执行步骤数
         emit({
           type: 'final_answer',
@@ -383,6 +428,19 @@ export async function runAgent(
         const toolDef = getTool(toolName);
         if (!toolDef) {
           pushToolCallError(call.id, toolName, toolNotFoundError(toolName));
+          continue;
+        }
+
+        // v1.8 Pipeline ③.5：Schema 校验 —— 声明的 Tool schema 是契约。
+        // 未知参数/缺必填/类型错一律显式回传（绝不静默丢弃），否则模型会带着
+        // 被忽略的意图继续跑（例如它以为传了 timeout 就延长了超时）。
+        const argumentCheck = validateToolArguments(toolDef.parameters, args);
+        if (!argumentCheck.ok) {
+          pushToolCallError(
+            call.id,
+            toolName,
+            invalidToolArgumentsError(formatToolArgumentIssues(toolName, argumentCheck.issues)),
+          );
           continue;
         }
 
@@ -763,13 +821,19 @@ export async function runAgent(
             // Scratchpad: 记录失败（不推进 completedSteps，不推进 nextStep）
             recordFailure(scratchpad, { tool: toolName, input, error: msg });
 
+            // v1.8 Error Classification：只有瞬时错误才重试。确定性错误（文件不
+            // 存在、offset 越界、参数非法、策略拒绝）重试必然得到同样结果——
+            // 那只会烧掉模型轮次并让同一错误进入上下文三次。
+            const classification = classifyToolError(err);
+            const willRetry = classification.retryable && attempt <= effectiveRetries;
+
             // Trace: 工具错误事件（v2.0 审计：记录网络模式；网络拒绝为 "denied"）
             emit({
               type: 'tool_error',
               tool: toolName,
               error: msg,
               attempt,
-              exhausted: attempt > effectiveRetries,
+              exhausted: !willRetry,
               network: getNetworkMode(),
             });
 
@@ -783,29 +847,32 @@ export async function runAgent(
             // Checkpoint: 工具失败后保存
             save();
 
-            if (attempt > effectiveRetries) {
-              // 重试耗尽 → 失败恢复：将错误作为消息返回 LLM，由其决策
+            if (!willRetry) {
+              // 失败恢复：将错误（含"为什么不再重试"）作为消息返回 LLM，由其决策
+              const exhaustedByRetries = attempt > effectiveRetries;
+              const failureNote = exhaustedByRetries
+                ? `重试 ${effectiveRetries} 次仍失败`
+                : `该错误为确定性失败（${classification.reason}），未重试`;
               observer.log(
-                `[恢复] 工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，将错误返回 LLM 由其决策`,
+                `[恢复] 工具 ${toolName} ${failureNote}，将错误返回 LLM 由其决策`,
               );
-              // State: 工具失败（仅当所有重试均失败）
               updateState(state, {
                 failedToolCalls: state.failedToolCalls + 1,
               });
               emit({
                 type: 'recovery_decision',
                 tool: toolName,
-                decision: `工具 ${toolName} 重试 ${effectiveRetries} 次仍失败，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
+                decision: `工具 ${toolName} ${failureNote}，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
               });
               messages.push({
                 role: 'tool',
                 tool_call_id: call.id,
-                content: `工具 ${toolName} 参数 "${input}" 执行失败（重试 ${effectiveRetries} 次）：${msg}。禁止再次使用相同参数调用，请修正参数或换其他方法。`,
+                content: `工具 ${toolName} 参数 "${input}" 执行失败（${failureNote}）：${msg}。禁止再次使用相同参数调用，请修正参数或换其他方法。`,
               });
               break; // 跳出重试，外层循环继续 → LLM 重新决策
             }
             observer.log(
-              `[重试 ${attempt}/${effectiveRetries}] 工具 ${toolName} 失败，正在重试...`,
+              `[重试 ${attempt}/${effectiveRetries}] 工具 ${toolName} 失败（${classification.reason}），正在重试...`,
             );
           }
         }

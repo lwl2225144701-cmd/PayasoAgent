@@ -140,6 +140,15 @@ export type TraceEvent =
       decision: string; // 恢复决策描述（交还 LLM 决策）
     }
   | {
+      // v1.8 空回合不变量：模型既无工具调用也无可见内容，已按 Harness 策略
+      // 追加恢复提示并重试（次数用尽则 Run 落 failed，不再静默完成）。
+      type: 'empty_turn_recovered';
+      step: number;
+      timestamp: string;
+      attempt: number; // 第几次恢复
+      maxAttempts: number; // 策略允许的恢复次数上限
+    }
+  | {
       type: 'side_effect_skip';
       step: number;
       timestamp: string;
@@ -283,6 +292,11 @@ export type TraceEventInput =
       type: 'recovery_decision';
       tool: string;
       decision: string;
+    }
+  | {
+      type: 'empty_turn_recovered';
+      attempt: number;
+      maxAttempts: number;
     }
   | {
       type: 'side_effect_skip';

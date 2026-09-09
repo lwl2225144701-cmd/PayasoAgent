@@ -247,6 +247,7 @@ export function resolveOperationKey(
 export type ToolCallErrorCode =
   | 'INVALID_ARGUMENT_JSON' // arguments 不是合法 JSON（含空/缺失）
   | 'INVALID_ARGUMENTS' // 合法 JSON 但不是 object
+  | 'INVALID_ARGUMENT_SHAPE' // 符合 object 但违反 Tool 声明的 schema（未知/缺失/类型/枚举）
   | 'TOOL_NOT_FOUND'; // 注册表中不存在该工具
 
 export interface ToolCallError {
@@ -301,6 +302,12 @@ export function toolNotFoundError(toolName: string): ToolCallError {
     code: 'TOOL_NOT_FOUND',
     message: `Tool "${toolName}" does not exist. Retry with one of the available tools.`,
   };
+}
+
+// v1.8：schema 级校验失败（未知参数 / 缺必填 / 类型错 / 枚举错）。
+// 与 JSON 解析失败同级：工具不执行、不创建副作用，结构化错误回传模型修正。
+export function invalidToolArgumentsError(message: string): ToolCallError {
+  return { code: 'INVALID_ARGUMENT_SHAPE', message };
 }
 
 // 标准化 tool result 内容（保留 tool_call_id 关联由 messages 层负责）

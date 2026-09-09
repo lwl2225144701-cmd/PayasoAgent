@@ -34,6 +34,18 @@ export interface ContextCompactionResult {
   summaryTokens: number;
 }
 
+/**
+ * Model-facing policy for a turn that produced neither a tool call nor any
+ * visible content. The Runtime owns the *invariant* (a run must never end
+ * silently with an empty answer); the Harness owns the *words* and the budget.
+ */
+export interface EmptyTurnPolicy {
+  /** Instruction appended to the transcript to make the model continue. */
+  nudge: string;
+  /** Recoveries allowed before the run fails loudly instead of completing empty. */
+  maxRecoveries: number;
+}
+
 export interface PreparedModelTurn {
   messages: ChatMessage[];
   usage: ContextUsage;
@@ -69,6 +81,9 @@ export interface AgentContextHarness {
   // v1.6 工具链闭环：受控安装完成后由 Host 经准备结果通道刷新当前 Run 的
   // 工具链能力快照，下一轮模型视图即反映新的可用工具（不自动重放原命令）。
   refreshToolchain?(capabilities: RuntimeToolchainCapabilities): void;
+  // v1.8 空回合不变量：模型既没有工具调用也没有可见内容时，Runtime 依此策略
+  // 追加提示并重试；返回 undefined 表示不做恢复（直接按失败处理）。
+  emptyTurnPolicy?(): EmptyTurnPolicy;
 }
 
 function stripThink(text: string): string {
@@ -422,5 +437,17 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   sanitizeFinalAnswer(text: string): string {
     return stripThink(text);
+  }
+
+  // v1.8：空回合恢复策略。默认提示明确要求"要么调工具、要么给出完整回答"，
+  // 并给出有限次数（2 次）——超过次数由 Runtime 落 failed，而不是静默完成。
+  emptyTurnPolicy(): EmptyTurnPolicy {
+    return {
+      nudge:
+        'Your previous turn produced no visible content: no tool call and an empty answer. ' +
+        'Continue the task now — either call a tool to make progress, or write the complete ' +
+        'user-facing answer. Never end a turn with an empty message.',
+      maxRecoveries: 2,
+    };
   }
 }
