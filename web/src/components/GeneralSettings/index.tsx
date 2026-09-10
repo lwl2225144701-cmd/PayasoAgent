@@ -53,9 +53,7 @@ export function GeneralSettings({
             aria-label="界面语言"
           >
             <option value="zh-CN">中文</option>
-            <option value="en-US" disabled>
-              English（即将支持）
-            </option>
+            <option value="en-US">English</option>
           </select>
           <ChevronDownIcon size={14} className={styles.selectChevron} />
         </div>

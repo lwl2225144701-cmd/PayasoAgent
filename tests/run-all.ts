@@ -93,6 +93,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-enter-key', file: 'tests/frontend-enter-key.test.ts' },
   { name: 'frontend-sse-contract', file: 'tests/frontend-sse-contract.test.ts' },
   { name: 'frontend-plan-state', file: 'tests/frontend-plan-state.test.ts' },
+  { name: 'frontend-thinking-level', file: 'tests/frontend-thinking-level.test.ts' },
   { name: 'pi-ai-provider', file: 'tests/pi-ai-provider.test.ts' },
   // v1.8 内核不变量（空回合 / 参数契约 / 错误分类 / 输出预算 / shell 执行环境）
   { name: 'tool-output-budget', file: 'tests/tool-output-budget.test.ts' },

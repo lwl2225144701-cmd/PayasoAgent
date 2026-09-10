@@ -34,6 +34,11 @@ import {
 import { Modal } from '../Modal';
 import { ModelSyncDialog } from '../ModelSyncDialog';
 import styles from './SettingsModal.module.css';
+import {
+  thinkingLevelOptionsFor,
+  thinkingLevelSelectAriaLabel,
+  thinkingLevelSelectTitle,
+} from './thinking-level-options';
 
 type Tab = 'general' | 'models';
 
@@ -64,63 +69,6 @@ interface ModelTag {
   vision?: boolean;
   // 思考档次（可选）；undefined = 不设置（请求不带思考参数）
   thinkingLevel?: ModelThinkingLevel;
-}
-
-// 思考档次下拉选项。只列"能真正发出的档次"：`off` 与"默认（不设置）"在请求层
-// 完全等价（都不介入请求，由端点默认行为决定），故不作为独立选项——避免暗示一个
-// 我们并不会发出的"关闭思考"指令。自定义端点（无注册表）给 5 档：xhigh/max 会被
-// pi-ai clamp 成 high，不提供会静默降级的选项；pi 内置模型按注册表声明显示；
-// 目录未加载（如编辑模式）时用全量档兜底，避免丢掉用户已选的 xhigh/max。
-const CUSTOM_THINKING_LEVELS: Array<{ value: string; label: string }> = [
-  { value: '', label: '默认（不设置）' },
-  { value: 'minimal', label: '最低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-];
-
-const FULL_THINKING_LEVELS: Array<{ value: string; label: string }> = [
-  { value: '', label: '默认（不设置）' },
-  { value: 'minimal', label: '最低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '最高' },
-  { value: 'max', label: '最强' },
-];
-
-const THINKING_LEVEL_LABELS: Record<string, string> = {
-  off: '无思考',
-  minimal: '最低',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '最高',
-  max: '最强',
-};
-
-// 模型在某 Provider 下支持的思考档次下拉（注册表里的 off 已按上述理由剔除）。
-function thinkingLevelOptionsFor(
-  provider: PiAiProviderInfo | undefined,
-  modelId: string,
-  isPiProvider: boolean,
-): Array<{ value: string; label: string }> {
-  const model = provider?.models.find((m) => m.id === modelId);
-  // 目录里找到了该模型：只列它真正支持的档次。非推理模型（注册表只给 off）
-  // 便只剩「默认（不设置）」——不给会静默降级的选项。
-  if (model) {
-    const levels = (model.thinkingLevels ?? []).filter((level) => level !== 'off');
-    return [
-      { value: '', label: '默认（不设置）' },
-      ...levels.map((level) => ({
-        value: level,
-        label: THINKING_LEVEL_LABELS[level] ?? level,
-      })),
-    ];
-  }
-  // pi 内置但目录未加载（编辑模式）→ 全量档兜底，避免丢掉已选值；
-  // 自定义端点（无注册表）→ 5 档。
-  return isPiProvider ? FULL_THINKING_LEVELS : CUSTOM_THINKING_LEVELS;
 }
 
 interface FormState {
@@ -848,98 +796,106 @@ export function SettingsModal({
                       : '检测后自动同步对话模型和上下文窗口；已手动填写的上下文不会覆盖。'}
                   </div>
                   <div className={styles.tagList}>
-                    {form.tags.map((tag) => (
-                      <span key={tag.id} className={styles.tag}>
-                        <span className={styles.tagValue}>{tag.value}</span>
-                        <input
-                          type="number"
-                          min={1}
-                          className={styles.tagWindowInput}
-                          placeholder="上下文窗口"
-                          title="上下文窗口（tokens，可选；来自模型供应商文档）"
-                          value={tag.contextWindow ?? ''}
-                          onChange={(e) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              tags: prev.tags.map((t) =>
-                                t.id === tag.id ? { ...t, contextWindow: e.target.value } : t,
-                              ),
-                            }))
-                          }
-                        />
-                        <input
-                          type="number"
-                          min={1}
-                          className={styles.tagOutputInput}
-                          placeholder="最大输出"
-                          title="单次回复最大输出（tokens，可选）；留空时按上下文窗口推导"
-                          value={tag.maxOutputTokens ?? ''}
-                          onChange={(e) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              tags: prev.tags.map((t) =>
-                                t.id === tag.id ? { ...t, maxOutputTokens: e.target.value } : t,
-                              ),
-                            }))
-                          }
-                        />
-                        <select
-                          className={styles.tagThinkingSelect}
-                          value={tag.thinkingLevel ?? ''}
-                          title="思考档次（可选）：未设置时不发送任何思考参数，由端点默认行为决定；设置后按厂商协议发送（pi 内置模型按注册表映射，自定义端点发 reasoning_effort）"
-                          onChange={(e) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              tags: prev.tags.map((t) =>
-                                t.id === tag.id
-                                  ? {
-                                      ...t,
-                                      thinkingLevel:
-                                        e.target.value === ''
-                                          ? undefined
-                                          : (e.target.value as ModelThinkingLevel),
-                                    }
-                                  : t,
-                              ),
-                            }))
-                          }
-                        >
-                          {thinkingLevelOptionsFor(
-                            piAiProviders.find((p) => p.id === form.piProviderId),
-                            tag.value,
-                            Boolean(form.piProviderId),
-                          ).map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={tag.vision ?? false}
-                          className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
-                          title="该模型支持图片输入（视觉能力）；已按模型声明预选"
-                          onClick={() =>
-                            setForm((prev) => ({
-                              ...prev,
-                              tags: prev.tags.map((t) =>
-                                t.id === tag.id ? { ...t, vision: !t.vision } : t,
-                              ),
-                            }))
-                          }
-                        >
-                          视觉
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.tagRemove}
-                          onClick={() => removeTag(tag.id)}
-                        >
-                          <TrashIcon size={12} />
-                        </button>
-                      </span>
-                    ))}
+                    {form.tags.map((tag) => {
+                      // 选项随模型与界面语言变化：pi 内置模型只列注册表声明的档次，
+                      // 自定义端点列通用档；文案跟随语言偏好（见 thinking-level-options.ts）
+                      const thinkingOptions = thinkingLevelOptionsFor({
+                        supportedLevels: piAiProviders
+                          .find((p) => p.id === form.piProviderId)
+                          ?.models.find((m) => m.id === tag.value)?.thinkingLevels,
+                        isPiProvider: Boolean(form.piProviderId),
+                        language,
+                      });
+                      return (
+                        <span key={tag.id} className={styles.tag}>
+                          <span className={styles.tagValue}>{tag.value}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            className={styles.tagWindowInput}
+                            placeholder="上下文窗口"
+                            title="上下文窗口（tokens，可选；来自模型供应商文档）"
+                            value={tag.contextWindow ?? ''}
+                            onChange={(e) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                tags: prev.tags.map((t) =>
+                                  t.id === tag.id ? { ...t, contextWindow: e.target.value } : t,
+                                ),
+                              }))
+                            }
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            className={styles.tagOutputInput}
+                            placeholder="最大输出"
+                            title="单次回复最大输出（tokens，可选）；留空时按上下文窗口推导"
+                            value={tag.maxOutputTokens ?? ''}
+                            onChange={(e) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                tags: prev.tags.map((t) =>
+                                  t.id === tag.id ? { ...t, maxOutputTokens: e.target.value } : t,
+                                ),
+                              }))
+                            }
+                          />
+                          <select
+                            className={styles.tagThinkingSelect}
+                            value={tag.thinkingLevel ?? ''}
+                            title={thinkingLevelSelectTitle(language)}
+                            aria-label={thinkingLevelSelectAriaLabel(language)}
+                            onChange={(e) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                tags: prev.tags.map((t) =>
+                                  t.id === tag.id
+                                    ? {
+                                        ...t,
+                                        thinkingLevel:
+                                          e.target.value === ''
+                                            ? undefined
+                                            : (e.target.value as ModelThinkingLevel),
+                                      }
+                                    : t,
+                                ),
+                              }))
+                            }
+                          >
+                            {thinkingOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={tag.vision ?? false}
+                            className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
+                            title="该模型支持图片输入（视觉能力）；已按模型声明预选"
+                            onClick={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                tags: prev.tags.map((t) =>
+                                  t.id === tag.id ? { ...t, vision: !t.vision } : t,
+                                ),
+                              }))
+                            }
+                          >
+                            视觉
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.tagRemove}
+                            onClick={() => removeTag(tag.id)}
+                          >
+                            <TrashIcon size={12} />
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
                   <div className={styles.tagAddRow}>
                     <input
