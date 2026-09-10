@@ -48,18 +48,12 @@ assert.equal(getPiAiProviderModel('missing-provider', 'missing-model'), undefine
   );
   assert.ok(
     !reasoningModel.thinkingLevels.includes('xhigh') ||
-      deepseek.models.every(
-        (m) => !m.thinkingLevels?.includes('xhigh') || m.reasoning,
-      ),
+      deepseek.models.every((m) => !m.thinkingLevels?.includes('xhigh') || m.reasoning),
     'xhigh should only appear when explicitly declared by the registry',
   );
   const nonReasoning = deepseek.models.find((model) => !model.reasoning);
   if (nonReasoning) {
-    assert.deepEqual(
-      nonReasoning.thinkingLevels,
-      ['off'],
-      'non-reasoning models only support off',
-    );
+    assert.deepEqual(nonReasoning.thinkingLevels, ['off'], 'non-reasoning models only support off');
   }
 }
 

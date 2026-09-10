@@ -8,14 +8,7 @@ export type ModelProviderProbeStatus = 'available' | 'error';
 
 // 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出/视觉支持/思考档次。
 // 缺省字段走"内置注册表 → fallback 256K"链路；预算解析优先级见 model-context.ts。
-export type ModelThinkingLevel =
-  | 'off'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max';
+export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface ModelCapabilitySetting {
   contextWindow?: number;
@@ -334,9 +327,7 @@ export class SettingsStore {
       }
       if (capability.thinkingLevel !== undefined) {
         if (!MODEL_THINKING_LEVELS.includes(capability.thinkingLevel)) {
-          throw new Error(
-            `thinkingLevel must be one of: ${MODEL_THINKING_LEVELS.join(', ')}`,
-          );
+          throw new Error(`thinkingLevel must be one of: ${MODEL_THINKING_LEVELS.join(', ')}`);
         }
         entry.thinkingLevel = capability.thinkingLevel;
       }
