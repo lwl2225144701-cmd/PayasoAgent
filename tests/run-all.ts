@@ -1,6 +1,7 @@
-// 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM、秒级），统一统计 PASS/FAIL
-// 用法: npx tsx tests/run-all.ts   （或 npm run test:all）
-// 覆盖: 62 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
+// 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM），统一统计 PASS/FAIL
+// 用法: tsx tests/run-all.ts                        （或 npm run test:all）
+//      PAYASO_TEST_CONCURRENCY=8 tsx tests/run-all.ts   （覆盖默认并发）
+// 覆盖: 64 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
 //   Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、
 //   Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、
 //   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、工具链能力刷新与显式重试、docs contract、
@@ -11,13 +12,31 @@
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
 //   2. 以子进程退出码判定套件通过与否（各套件内部已实现 失败 → 非 0 退出）
-//   3. 压测 stress.test.ts 与 Agent E2E（agent.test.ts）需 LLM、耗时，不纳入本集合，
+//   3. 有界并发调度（默认 min(6, CPU)，PAYASO_TEST_CONCURRENCY 可覆盖）：套件本来就互相隔离，
+//      串行只是把启动开销逐条叠加；直接走 `node --import tsx` 也省掉每套件一次 npx 解析
+//   4. 单个套件的完整输出成组写入 .payaso/logs/run-all-<时间戳>.log，失败详情随汇总再打一遍 ——
+//      复查失败读日志即可，不必为了换一个 tail/grep 切片重跑整轮
+//   5. 压测 stress.test.ts 与 Agent E2E（agent.test.ts）需 LLM、耗时，不纳入本集合，
 //      保持独立 script：npm run test:stress / npm test
 // 注: 本文件用顶层执行 + 手动 process.exit，与各套件自定义 runner 风格保持一致（不走 node:test）
 
-import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { sliceTextToBudget } from '../src/tool-output-budget.js';
 
 const PROJECT_ROOT = process.cwd();
+/** 单个套件在内存里最多保留的原始输出：异常刷屏的套件不该把 runner 撑爆。 */
+const SUITE_CAPTURE_MAX_BYTES = 4 * 1024 * 1024;
+/** 单个套件在日志里保留的输出上限：超出按 head+tail 切片（复用运行时同一套预算算法）。 */
+const SUITE_LOG_MAX_BYTES = 256 * 1024;
+/** 失败详情回显到终端的单套件上限：太小丢上下文，太大会把汇总本身挤出可见范围。 */
+const FAILURE_EXCERPT_MAX_BYTES = 8 * 1024;
+const LOG_DIR = path.resolve(PROJECT_ROOT, '.payaso', 'logs');
+/** 本地只保留最近 N 份日志：跑测试很频繁，不能让工作区堆成日志垃圾场。 */
+const LOG_KEEP = 10;
+const NAME_WIDTH = 26;
 
 const SUITES: { name: string; file: string }[] = [
   { name: 'runtime-boundary', file: 'tests/runtime-boundary.test.ts' },
@@ -89,36 +108,207 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'background-jobs', file: 'tests/background-jobs.test.ts' },
 ];
 
-console.log('='.repeat(70));
-console.log('PayasoAgent 确定性测试集合（无 LLM）');
-console.log('='.repeat(70));
+interface SuiteResult {
+  index: number;
+  name: string;
+  file: string;
+  pass: boolean;
+  exitCode: number | null;
+  durationMs: number;
+  output: string;
+}
 
-const results: { name: string; pass: boolean }[] = [];
-for (const s of SUITES) {
-  console.log(`\n▶ ${s.name}`);
-  try {
-    execFileSync('npx', ['tsx', s.file], {
+/** 默认并发：套件本身是隔离子进程，串行只是浪费；并发上限随机器 CPU 收敛。 */
+function resolveConcurrency(): number {
+  const raw = Number(process.env.PAYASO_TEST_CONCURRENCY);
+  if (Number.isFinite(raw) && raw >= 1) return Math.floor(raw);
+  return Math.min(6, Math.max(1, os.cpus().length));
+}
+
+const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+
+function runSuite(suite: { name: string; file: string }, index: number): Promise<SuiteResult> {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const child = spawn(process.execPath, ['--import', 'tsx', suite.file], {
       cwd: PROJECT_ROOT,
-      stdio: ['ignore', 'inherit', 'pipe'], // stdout 透传显示套件细节
-      encoding: 'utf-8',
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    results.push({ name: s.name, pass: true });
-  } catch (e) {
-    const err = e as { status?: number; stderr?: string };
-    if (err.stderr) process.stderr.write(err.stderr);
-    results.push({ name: s.name, pass: false });
+    const chunks: Buffer[] = [];
+    let capturedBytes = 0;
+    let droppedBytes = 0;
+    const collect = (chunk: Buffer): void => {
+      capturedBytes += chunk.length;
+      if (capturedBytes > SUITE_CAPTURE_MAX_BYTES) {
+        droppedBytes += chunk.length;
+        return;
+      }
+      chunks.push(chunk);
+    };
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', (err) => {
+      chunks.push(Buffer.from(`[runner] 子进程启动失败: ${err.message}\n`));
+    });
+    child.on('close', (exitCode) => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      const overflow =
+        droppedBytes > 0
+          ? `\n[runner] 输出过大：已保留前 ${SUITE_CAPTURE_MAX_BYTES / 1024 / 1024}MB，丢弃后续 ${droppedBytes} 字节\n`
+          : '';
+      resolve({
+        index,
+        name: suite.name,
+        file: suite.file,
+        pass: exitCode === 0,
+        exitCode,
+        durationMs: Date.now() - startedAt,
+        output:
+          overflow +
+          sliceTextToBudget(raw, {
+            maxBytes: SUITE_LOG_MAX_BYTES,
+            headBytes: SUITE_LOG_MAX_BYTES / 2,
+            tailBytes: SUITE_LOG_MAX_BYTES / 2 - 256,
+          }).content,
+      });
+    });
+  });
+}
+
+// ---- 日志落盘：best-effort，落盘不可用只降级提示，绝不影响测试结论 ----
+let logPath: string | null = null;
+let logWriteFailed = false;
+
+function appendLog(text: string): void {
+  if (!logPath) return;
+  try {
+    fs.appendFileSync(logPath, text);
+  } catch (err) {
+    if (!logWriteFailed) {
+      logWriteFailed = true;
+      console.log(`[runner] 日志写入失败，后续不再落盘: ${(err as Error).message}`);
+    }
   }
 }
+
+function initLog(concurrency: number): void {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    pruneLogs();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    logPath = path.join(LOG_DIR, `run-all-${stamp}.log`);
+    appendLog(
+      [
+        `# PayasoAgent 确定性测试集合日志`,
+        `# 时间: ${new Date().toISOString()}  并发: ${concurrency}  套件: ${SUITES.length}`,
+        `# 命令: node --import tsx tests/run-all.ts`,
+        '',
+      ].join('\n'),
+    );
+  } catch (err) {
+    logPath = null;
+    console.log(`[runner] 日志落盘不可用，仅输出到终端: ${(err as Error).message}`);
+  }
+}
+
+/** 清理超出保留份数的历史日志（文件名是 ISO 时间戳，字典序即时间序）。 */
+function pruneLogs(): void {
+  try {
+    const stale = fs
+      .readdirSync(LOG_DIR)
+      .filter((name) => name.startsWith('run-all-') && name.endsWith('.log'))
+      .sort()
+      .slice(0, -LOG_KEEP);
+    for (const name of stale) fs.rmSync(path.join(LOG_DIR, name), { force: true });
+  } catch {
+    /* 清理是 best-effort：历史日志的任何问题都不该影响本轮落盘与结论 */
+  }
+}
+
+// ---- 有界并发：固定 worker 抢同一个队列索引，避免 64 个 tsx 子进程同时起 ----
+async function runSuites(concurrency: number): Promise<SuiteResult[]> {
+  const results: SuiteResult[] = [];
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, SUITES.length) }, async () => {
+    while (next < SUITES.length) {
+      const index = next++;
+      const result = await runSuite(SUITES[index], index);
+      results.push(result);
+      const label = result.pass ? 'PASS' : 'FAIL';
+      console.log(`  ${label}  ${result.name.padEnd(NAME_WIDTH)} ${seconds(result.durationMs)}`);
+      appendLog(
+        `\n=== ${label} ${result.name} (exit=${result.exitCode}, ${seconds(result.durationMs)}) ===\n` +
+          `${result.output.trimEnd()}\n`,
+      );
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+const concurrency = resolveConcurrency();
+
+console.log('='.repeat(70));
+console.log('PayasoAgent 确定性测试集合（无 LLM）');
+console.log(`套件: ${SUITES.length} | 并发: ${concurrency}`);
+console.log('='.repeat(70));
+
+initLog(concurrency);
+const startedAt = Date.now();
+const results = (await runSuites(concurrency)).sort((a, b) => a.index - b.index);
+const totalMs = Date.now() - startedAt;
+const failures = results.filter((r) => !r.pass);
+const passed = results.length - failures.length;
 
 console.log(`\n${'='.repeat(70)}`);
 console.log('测试集合汇总');
 console.log('='.repeat(70));
-const passed = results.filter((r) => r.pass).length;
-console.log(`套件: ${results.length} | PASS: ${passed} | FAIL: ${results.length - passed}`);
-results.forEach((r) => {
-  console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name}`);
-});
 console.log(
-  `提示: 需 LLM 的压测与 E2E 未纳入本集合 — stress 用 npm run test:stress；Agent E2E 用 npm test`,
+  `套件: ${results.length} | PASS: ${passed} | FAIL: ${failures.length} | ` +
+    `总耗时 ${seconds(totalMs)}（并发 ${concurrency}）`,
+);
+results.forEach((r) => {
+  console.log(
+    `  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name.padEnd(NAME_WIDTH)} ${seconds(r.durationMs)}`,
+  );
+});
+
+// 失败详情放在汇总之后重打一遍：tail 截断或只看尾部时，失败原因仍在可见范围内。
+if (failures.length > 0) {
+  console.log(`\n${'-'.repeat(70)}`);
+  console.log(`FAIL 详情（${failures.map((r) => r.name).join(', ')}）`);
+  for (const failure of failures) {
+    console.log(`\n▶ ${failure.name}  exit=${failure.exitCode}  ${seconds(failure.durationMs)}`);
+    console.log(
+      sliceTextToBudget(failure.output, {
+        maxBytes: FAILURE_EXCERPT_MAX_BYTES,
+        headBytes: FAILURE_EXCERPT_MAX_BYTES / 2,
+        tailBytes: FAILURE_EXCERPT_MAX_BYTES / 2 - 256,
+      }).content.trimEnd(),
+    );
+  }
+}
+
+console.log(
+  `\n完整日志: ${logPath ? path.relative(PROJECT_ROOT, logPath) : '(未落盘)'}（含全部套件输出与失败详情）`,
+);
+// 末行固定为一行判定：无论上面的失败详情多长，tail 都能看到结论、失败套件与重跑命令。
+console.log(
+  failures.length === 0
+    ? `结果: PASS — ${results.length} 套件全绿 | ${seconds(totalMs)}（并发 ${concurrency}）`
+    : `结果: FAIL — ${results.length} 套件 | PASS ${passed} | FAIL ${failures.length} | ` +
+        `${seconds(totalMs)} | 失败: ${failures.map((r) => r.name).join(', ')}`,
+);
+if (failures.length > 0) {
+  console.log(`重跑失败套件: ${failures.map((r) => `node --import tsx ${r.file}`).join('；')}`);
+}
+console.log(
+  '提示: 需 LLM 的压测与 E2E 未纳入本集合 — stress 用 npm run test:stress；Agent E2E 用 npm test',
+);
+
+appendLog(
+  `\n${'='.repeat(70)}\n汇总: 套件 ${results.length} | PASS ${passed} | FAIL ${failures.length} | ` +
+    `总耗时 ${seconds(totalMs)}（并发 ${concurrency}）\n`,
 );
 process.exit(passed === results.length ? 0 : 1);

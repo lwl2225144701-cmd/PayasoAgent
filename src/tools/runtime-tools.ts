@@ -558,6 +558,7 @@ register({
     `前台默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s；background=true 且未传 timeoutMs 时默认 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s；` +
     `可用 timeoutMs 调整（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）。` +
     `超时会整树终止并返回 [shell-timeout]。background=true 时立即返回 jobId，用 shellJob wait 等待（长测试、构建用），不要用 shell sleep 轮询。` +
+    `分钟级命令的输出请先重定向到工作区文件（如 .payaso/logs/xxx.log），再用 read/grep 按需复查：tail/grep 管道会切掉关键失败行，为换一个切片重复执行同一条长命令是纯浪费。` +
     `HOME/TMPDIR 是单次 shell 调用的可写 scratch，调用结束即删除，不能跨调用传文件，也不代表 Workspace 可写。` +
     `非零退出不算验证通过；若 Read Only 权限阻止测试写文件，结果是不确定，不能据此宣称代码无缺陷。` +
     `文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。`,

@@ -1507,6 +1507,10 @@ export class RunManager {
     while (Date.now() - start < timeoutMs) {
       const run = this.runs.get(runId);
       if (!run || isTerminalRunStatus(run.status)) return;
+      // 没有在途执行链的占位 Run（startAgent:false / persist 先于执行的窗口）不会
+      // 自己进入终态：等满 cap 只是让 close() 白等 10s。与 stop() 对占位 Run 的
+      // 处理一致 —— 没有在途执行可等，直接走下面的兜底收口。
+      if (!run.agentPromise) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     // 超时后强制终止（理论上 abort 已发出，这里做最后清理）
