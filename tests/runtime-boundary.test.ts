@@ -134,6 +134,7 @@ try {
     'context_trim',
     'context_usage',
     'llm_call_started',
+    'llm_request_sent',
     'llm_call',
     'final_answer',
   ]);
