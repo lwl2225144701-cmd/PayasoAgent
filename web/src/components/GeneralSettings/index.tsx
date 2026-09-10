@@ -1,4 +1,5 @@
 import type { KeyboardEvent, ReactNode, WheelEvent } from 'react';
+import { useI18n } from '../../i18n';
 import {
   type ConversationFontSize,
   type LanguageMode,
@@ -33,25 +34,30 @@ export function GeneralSettings({
   fontSize,
   onFontSizeChange,
 }: GeneralSettingsProps) {
+  const { t } = useI18n();
   return (
     <div className={styles.settings}>
-      <SettingRow title="权限" description="选择新会话的默认权限模式">
+      <SettingRow
+        title={t('settings.general.permission')}
+        description={t('settings.general.permissionDescription')}
+      >
         <PermissionDropdown
           mode={permissionMode}
           onChange={onPermissionModeChange}
-          ariaLabel="默认权限模式"
+          ariaLabel={t('settings.general.permissionAria')}
           placement="down"
         />
       </SettingRow>
 
-      <SettingRow title="语言" className={styles.languageRow}>
+      <SettingRow title={t('settings.general.language')} className={styles.languageRow}>
         <div className={styles.selectWrap}>
           <select
             className={styles.select}
             value={language}
             onChange={(event) => onLanguageChange(event.target.value as LanguageMode)}
-            aria-label="界面语言"
+            aria-label={t('settings.general.languageAria')}
           >
+            {/* i18n-exempt: 语言自称，英文界面下也显示「中文」 */}
             <option value="zh-CN">中文</option>
             <option value="en-US">English</option>
           </select>
@@ -61,8 +67,14 @@ export function GeneralSettings({
 
       <AppearanceSettings mode={themeMode} onChange={onThemeModeChange} />
 
-      <SettingRow title="字号大小" description="仅影响会话内容的字号">
-        <fieldset className={styles.fontSizeControl} aria-label="会话字号">
+      <SettingRow
+        title={t('settings.general.fontSize')}
+        description={t('settings.general.fontSizeDescription')}
+      >
+        <fieldset
+          className={styles.fontSizeControl}
+          aria-label={t('settings.general.fontSizeAria')}
+        >
           <FontSizeStepper value={fontSize} onChange={onFontSizeChange} />
           <span className={styles.fontSizeUnit}>px</span>
         </fieldset>
@@ -78,6 +90,7 @@ function FontSizeStepper({
   value: ConversationFontSize;
   onChange: (size: ConversationFontSize) => void;
 }) {
+  const { t } = useI18n();
   const updateBy = (delta: number) => {
     const next = Math.min(
       MAX_CONVERSATION_FONT_SIZE,
@@ -107,13 +120,13 @@ function FontSizeStepper({
       className={styles.fontSizeStepper}
       role="spinbutton"
       tabIndex={0}
-      aria-label="会话字号"
+      aria-label={t('settings.general.fontSizeAria')}
       aria-valuemin={MIN_CONVERSATION_FONT_SIZE}
       aria-valuemax={MAX_CONVERSATION_FONT_SIZE}
       aria-valuenow={value}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
-      title="可使用鼠标滚轮或上下箭头调整字号"
+      title={t('settings.general.fontSizeTitle')}
     >
       <output className={styles.fontSizeValue}>{value}</output>
       <div className={styles.fontSizeArrows}>
@@ -122,7 +135,7 @@ function FontSizeStepper({
           className={styles.fontSizeArrow}
           disabled={value >= MAX_CONVERSATION_FONT_SIZE}
           onClick={() => updateBy(1)}
-          aria-label="增大字号"
+          aria-label={t('settings.general.fontSizeIncrease')}
         >
           <ChevronDownIcon size={12} className={styles.fontSizeArrowUp} />
         </button>
@@ -131,7 +144,7 @@ function FontSizeStepper({
           className={styles.fontSizeArrow}
           disabled={value <= MIN_CONVERSATION_FONT_SIZE}
           onClick={() => updateBy(-1)}
-          aria-label="减小字号"
+          aria-label={t('settings.general.fontSizeDecrease')}
         >
           <ChevronDownIcon size={12} />
         </button>

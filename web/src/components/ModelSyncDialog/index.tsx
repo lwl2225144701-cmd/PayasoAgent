@@ -1,3 +1,6 @@
+import { useI18n } from '../../i18n';
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
 import type { ProviderModelInfo } from '../../types';
 import styles from './ModelSyncDialog.module.css';
 
@@ -15,11 +18,19 @@ interface ModelSyncDialogProps {
   onConfirm: () => void;
 }
 
-function formatContextWindow(value: number | undefined): string | null {
+function formatContextWindow(value: number | undefined, language: LanguageMode): string | null {
   if (value === undefined) return null;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M 上下文`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K 上下文`;
-  return `${value} 上下文`;
+  if (value >= 1_000_000) {
+    return translate(language, 'settings.sync.contextWindowM', {
+      value: (value / 1_000_000).toFixed(1),
+    });
+  }
+  if (value >= 1_000) {
+    return translate(language, 'settings.sync.contextWindowK', {
+      value: Math.round(value / 1_000),
+    });
+  }
+  return translate(language, 'settings.sync.contextWindowTokens', { value });
 }
 
 export function ModelSyncDialog({
@@ -35,6 +46,7 @@ export function ModelSyncDialog({
   onCancel,
   onConfirm,
 }: ModelSyncDialogProps) {
+  const { t, language } = useI18n();
   if (!open) return null;
 
   const selectedCount = selectedIds.length;
@@ -70,17 +82,17 @@ export function ModelSyncDialog({
           <div className={styles.header}>
             <div>
               <h2 id="model-sync-title" className={styles.title}>
-                选择同步模型
+                {t('settings.sync.title')}
               </h2>
               <p className={styles.subtitle}>
-                检测到 {models.length} 个对话模型，勾选后才会加入当前提供方。
+                {t('settings.sync.subtitle', { count: models.length })}
               </p>
             </div>
             <button
               type="button"
               className={styles.closeButton}
               onClick={onCancel}
-              aria-label="关闭"
+              aria-label={t('common.close')}
             >
               ×
             </button>
@@ -88,7 +100,7 @@ export function ModelSyncDialog({
 
           <div className={styles.toolbar}>
             <span className={styles.count}>
-              已选择 <strong>{selectedCount}</strong> / {models.length}
+              {t('settings.sync.selectedLabel')} <strong>{selectedCount}</strong> / {models.length}
             </span>
             <div className={styles.toolbarActions}>
               <button
@@ -97,7 +109,7 @@ export function ModelSyncDialog({
                 onClick={onSelectAll}
                 disabled={allSelected}
               >
-                全选
+                {t('settings.sync.selectAll')}
               </button>
               <button
                 type="button"
@@ -105,7 +117,7 @@ export function ModelSyncDialog({
                 onClick={onClearAll}
                 disabled={selectedCount === 0}
               >
-                清空
+                {t('settings.sync.clearAll')}
               </button>
             </div>
           </div>
@@ -113,7 +125,7 @@ export function ModelSyncDialog({
           <div className={styles.list}>
             {models.map((model) => {
               const checked = selectedIds.includes(model.id);
-              const contextWindow = formatContextWindow(model.contextWindow);
+              const contextWindow = formatContextWindow(model.contextWindow, language);
               return (
                 <label
                   key={model.id}
@@ -127,8 +139,8 @@ export function ModelSyncDialog({
                   <span className={styles.itemBody}>
                     <span className={styles.modelId}>{model.id}</span>
                     <span className={styles.meta}>
-                      {contextWindow ?? '上下文未提供'}
-                      {model.vision ? ' · 视觉' : ''}
+                      {contextWindow ?? t('settings.sync.contextWindowMissing')}
+                      {model.vision ? ` · ${t('settings.sync.vision')}` : ''}
                     </span>
                   </span>
                 </label>
@@ -140,17 +152,17 @@ export function ModelSyncDialog({
             className={`${styles.summary} ${resultModelCount > maxModels ? styles.summaryWarning : ''}`}
           >
             {resultModelCount > maxModels
-              ? `当前选择 ${resultModelCount} 个模型；保存上限为 ${maxModels} 个，请继续调整勾选。`
-              : `确认后当前表单将保留 ${resultModelCount} 个模型。`}
+              ? t('settings.sync.overLimit', { count: resultModelCount, max: maxModels })
+              : t('settings.sync.willKeep', { count: resultModelCount })}
           </div>
           {error && <div className={styles.error}>{error}</div>}
 
           <div className={styles.actions}>
             <button type="button" className={styles.secondaryButton} onClick={onCancel}>
-              取消
+              {t('common.cancel')}
             </button>
             <button type="button" className={styles.primaryButton} onClick={onConfirm}>
-              同步已选模型
+              {t('settings.sync.confirm')}
             </button>
           </div>
         </div>

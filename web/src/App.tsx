@@ -35,18 +35,21 @@ import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
-import { PlanPanel } from './components/Timeline/PlanPanel';
-import type { PlanView } from './components/Timeline/plan-state';
 import {
   applyCompactUsage,
   type CompactStatusState,
   compactStatusText,
 } from './components/Timeline/context-gauge';
+import { PlanPanel } from './components/Timeline/PlanPanel';
+import type { PlanView } from './components/Timeline/plan-state';
 import { TurnNavigator } from './components/TurnNavigator';
 import { WorkspacePickerModal } from './components/WorkspacePickerModal';
 import { useConversationScroll } from './hooks/useConversationScroll';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import { useThemeMode } from './hooks/useThemeMode';
+import { I18nProvider } from './i18n';
+import { translate, translator } from './i18n/translate';
+import type { LanguageMode } from './preferences';
 import { reconcileRuns } from './run-reconcile';
 import type {
   ContextUsageEvent,
@@ -64,9 +67,10 @@ import type {
 } from './types';
 import { alignedAttachmentName, prepareImageForUpload } from './utils/image-prepare';
 
-// 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）
-function sessionTitle(task: string): string {
-  return task.replace(/\s+/g, ' ').trim().slice(0, 80) || '未命名任务';
+// 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）。
+// 语言是入参而非 hook：模块级纯函数，且要能被非组件调用点复用。
+function sessionTitle(task: string, language: LanguageMode): string {
+  return task.replace(/\s+/g, ' ').trim().slice(0, 80) || translate(language, 'app.untitledTask');
 }
 
 interface QueuedMessage {
@@ -79,6 +83,8 @@ export default function App() {
   const [themeMode, setThemeMode] = useThemeMode();
   const { permissionMode, setPermissionMode, language, setLanguage, fontSize, setFontSize } =
     useGeneralSettings();
+  // App 自身在 I18nProvider 之外渲染，这里直接绑定语言（子树用 useI18n）
+  const t = useMemo(() => translator(language), [language]);
   const [runs, setRuns] = useState<HostRun[]>([]);
   // POST /runs 返回前的本地占位回合：让用户消息与执行状态在点击发送后立即出现，
   // 不再把首个视觉反馈绑定到 Host 创建/落库耗时。它不进入 runs，也不建立 SSE。
@@ -151,7 +157,7 @@ export default function App() {
         .catch((err: unknown) => {
           if (version === modelSaveVersionRef.current) {
             const msg = err instanceof Error ? err.message : String(err);
-            showToast(`默认模型保存失败：${msg}`);
+            showToast(t('app.defaultModelSaveFailed', { message: msg }));
             setDefaultModelState(previous);
             previousDefaultModelRef.current = previous;
           }
@@ -162,7 +168,7 @@ export default function App() {
           }
         });
     },
-    [showToast],
+    [showToast, t],
   );
 
   const refreshRuns = useCallback(async () => {
@@ -431,7 +437,7 @@ export default function App() {
         const attachmentPayload = attachments?.length
           ? await Promise.all(
               attachments.map(async (file) => {
-                const prepared = await prepareImageForUpload(file);
+                const prepared = await prepareImageForUpload(file, language);
                 return {
                   // 扩展名对齐实际编码产物（浏览器回退编码时 mime 可能变化）
                   name: alignedAttachmentName(
@@ -481,7 +487,7 @@ export default function App() {
         if (isNewSession) {
           const optimisticSession: HostSession = {
             sessionId: resp.sessionId,
-            title: sessionTitle(trimmed),
+            title: sessionTitle(trimmed, language),
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             workspace: workspace ?? undefined,
@@ -499,7 +505,7 @@ export default function App() {
         setPendingRun(null);
         const msg = err instanceof Error ? err.message : String(err);
         console.error('Failed to create run:', err);
-        alert(`任务创建失败：${msg}`);
+        alert(t('app.createRunFailed', { message: msg }));
         return false;
       }
     },
@@ -511,6 +517,8 @@ export default function App() {
       refreshSessions,
       workspace,
       currentModelSelection,
+      language,
+      t,
     ],
   );
 
@@ -545,16 +553,16 @@ export default function App() {
         return;
       }
       immediateStopRunIdRef.current = activeRun.runId;
-      showToast('正在停止当前任务，准备发送队列消息…');
+      showToast(t('app.stoppingForQueue'));
       void stopRun(activeRun.runId)
         .then(() => refreshRuns())
         .catch((err: unknown) => {
           immediateStopRunIdRef.current = null;
           const msg = err instanceof Error ? err.message : String(err);
-          showToast(`立即发送失败：${msg}`);
+          showToast(t('app.sendNowFailed', { message: msg }));
         });
     },
-    [latestSessionRun, refreshRuns, showToast],
+    [latestSessionRun, refreshRuns, showToast, t],
   );
 
   const handleDeleteQueued = useCallback((messageId: string) => {
@@ -594,7 +602,7 @@ export default function App() {
   const handleBuiltinCommand = useCallback(
     async (name: string, args: string) => {
       const requireSession = (): string => {
-        if (!currentSessionId) throw new Error('请先打开一个会话再使用该命令');
+        if (!currentSessionId) throw new Error(t('app.needSession'));
         return currentSessionId;
       };
       try {
@@ -624,44 +632,42 @@ export default function App() {
         if (name === 'export') {
           const sessionId = requireSession();
           downloadSessionExport(sessionId);
-          showToast('会话日志归档已开始下载');
+          showToast(t('app.exportStarted'));
           return;
         }
         if (name === 'feedback') {
           if (!args) {
-            showToast('用法：/feedback <意见>');
+            showToast(t('app.feedbackUsage'));
             return;
           }
           const sessionId = requireSession();
           await sendSessionFeedback(sessionId, args);
-          showToast('反馈已记录，谢谢！');
+          showToast(t('app.feedbackRecorded'));
           return;
         }
         if (name === 'goal') {
           if (!args) {
             const sessionId = requireSession();
             const resp = await getSessionGoal(sessionId);
-            showToast(resp.goal ? `当前目标：${resp.goal}` : '未设置目标；用法 /goal <目标内容>');
+            showToast(resp.goal ? t('app.goalCurrent', { goal: resp.goal }) : t('app.goalUnset'));
             return;
           }
           await setSessionGoal(requireSession(), args);
-          showToast('会话目标已更新');
+          showToast(t('app.goalUpdated'));
           return;
         }
         if (name === 'permission') {
           if (!args) {
-            showToast(
-              `当前权限：${permissionMode}；用法 /permission read-only | workspace-write | full-access`,
-            );
+            showToast(t('app.permissionCurrent', { mode: permissionMode }));
             return;
           }
           const mode = matchPermissionMode(args);
           if (!mode) {
-            showToast('无法识别的权限档；可用 read-only / workspace-write / full-access');
+            showToast(t('app.permissionUnknown'));
             return;
           }
           setPermissionMode(mode);
-          showToast(`权限已切换：${mode}（对下一轮生效）`);
+          showToast(t('app.permissionSwitched', { mode }));
           return;
         }
         if (name === 'plan') {
@@ -669,42 +675,41 @@ export default function App() {
           const next = !planMode;
           await setSessionPlanMode(sessionId, next);
           setPlanModeState(next);
-          showToast(
-            next
-              ? '已进入计划模式：只读 + 仅产出方案（对下一轮生效）；再次 /plan 退出'
-              : '已退出计划模式',
-          );
+          showToast(next ? t('app.planModeOn') : t('app.planModeOff'));
           return;
         }
         if (name === 'model') {
           if (!args) {
             showToast(
               defaultModel
-                ? `当前模型：${defaultModel.defaultProviderId}/${defaultModel.defaultModelId}；用法 /model <关键词>`
-                : '用法：/model <provider/模型关键词>',
+                ? t('app.modelCurrent', {
+                    provider: defaultModel.defaultProviderId,
+                    model: defaultModel.defaultModelId,
+                  })
+                : t('app.modelUsage'),
             );
             return;
           }
           const { match, candidates } = matchModelByQuery(models, args);
           if (match) {
             handleSelectModel(match.providerId, match.model);
-            showToast(`模型已切换：${match.providerId}/${match.model}`);
+            showToast(t('app.modelSwitched', { provider: match.providerId, model: match.model }));
             return;
           }
           if (candidates.length > 1) {
             const listed = candidates
               .slice(0, 5)
               .map((candidate) => `${candidate.providerId}/${candidate.model}`)
-              .join('、');
-            showToast(`匹配到 ${candidates.length} 个模型，请更精确：${listed}`);
+              .join(t('app.listSeparator'));
+            showToast(t('app.modelMatchMany', { count: candidates.length, list: listed }));
             return;
           }
-          showToast('没有匹配的模型；用 /model <provider/模型关键词> 重试');
+          showToast(t('app.modelNoMatch'));
           return;
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        showToast(`/${name} 执行失败：${message}`);
+        showToast(t('app.commandFailed', { name, message }));
       }
     },
     [
@@ -717,6 +722,7 @@ export default function App() {
       planMode,
       setPermissionMode,
       showToast,
+      t,
     ],
   );
 
@@ -814,10 +820,10 @@ export default function App() {
         await refreshSessions('replace');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        alert(`重命名失败：${msg}`);
+        alert(t('app.renameFailed', { message: msg }));
       }
     },
-    [refreshSessions],
+    [refreshSessions, t],
   );
 
   const handleDeleteWorkspace = useCallback(
@@ -836,10 +842,10 @@ export default function App() {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        alert(`删除工作区失败：${msg}`);
+        alert(t('app.deleteWorkspaceFailed', { message: msg }));
       }
     },
-    [currentSessionId, refreshSessions],
+    [currentSessionId, refreshSessions, t],
   );
 
   const handleRenameSession = useCallback(
@@ -851,13 +857,13 @@ export default function App() {
             s.sessionId === sessionId ? { ...s, title, updatedAt: new Date().toISOString() } : s,
           ),
         );
-        showToast('重命名成功');
+        showToast(t('app.renameSucceeded'));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        showToast(`重命名失败：${msg}`);
+        showToast(t('app.renameFailed', { message: msg }));
       }
     },
-    [showToast],
+    [showToast, t],
   );
 
   const handleArchiveSession = useCallback(
@@ -872,17 +878,17 @@ export default function App() {
           setCurrentRunId(null);
           setViewingFile(null);
         }
-        showToast('已归档');
+        showToast(t('app.archived'));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        showToast(`归档失败：${msg}`);
+        showToast(t('app.archiveFailed', { message: msg }));
       }
       // 后台与服务端对齐；失败只记日志，不打扰用户
       void refreshSessions('replace').catch((err) => {
         console.error('Failed to refresh sessions:', err);
       });
     },
-    [currentSessionId, refreshSessions, showToast],
+    [currentSessionId, refreshSessions, showToast, t],
   );
 
   const handleOpenWorkspace = useCallback(async () => {
@@ -898,11 +904,11 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to open workspace:', err);
-      setPickerError(err instanceof Error ? err.message : '打开工作区失败');
+      setPickerError(err instanceof Error ? err.message : t('app.openWorkspaceFailed'));
     } finally {
       setOpeningWorkspace(false);
     }
-  }, [openingWorkspace, pickerCapability]);
+  }, [openingWorkspace, pickerCapability, t]);
 
   // 网页内目录选择器确认后采纳：与 native picker 等价地切换 Host 当前
   // Workspace（Host 侧走 canonicalizeWorkspaceRoot 校验，不弹系统窗口）。
@@ -914,189 +920,191 @@ export default function App() {
         setPickerOpen(false);
       } catch (err) {
         console.error('Failed to select workspace:', err);
-        setPickerError(err instanceof Error ? err.message : '选择工作区失败');
-        showToast(err instanceof Error ? err.message : '选择工作区失败');
+        setPickerError(err instanceof Error ? err.message : t('app.selectWorkspaceFailed'));
+        showToast(err instanceof Error ? err.message : t('app.selectWorkspaceFailed'));
       }
     },
-    [showToast],
+    [showToast, t],
   );
 
   void online;
   void loading;
 
   return (
-    <div className={`${styles.app} ${currentRun ? '' : styles.landing}`}>
-      <Sidebar
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        onSelectSession={handleSelectSession}
-        onNewTask={handleNewTask}
-        onNewTaskInWorkspace={handleNewTaskInWorkspace}
-        onRenameWorkspace={handleRenameWorkspace}
-        onDeleteWorkspace={handleDeleteWorkspace}
-        onRenameSession={handleRenameSession}
-        onArchiveSession={handleArchiveSession}
-        collapsed={sidebarCollapsed}
-        onToggleCollapsed={() => {
-          sidebarUserOverrideRef.current = true;
-          setSidebarCollapsed((value) => !value);
-        }}
-        workspace={workspace}
-        openingWorkspace={openingWorkspace}
-        onOpenWorkspace={handleOpenWorkspace}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-
-      <div className={`${styles.main} ${currentSessionId ? styles.sessionMain : ''}`}>
-        <div
-          className={`${styles.deerBackdrop} ${currentSessionId ? styles.sessionDeerBackdrop : ''}`}
-          aria-hidden="true"
-        />
-        <ShellBar
-          run={currentRun}
-          title={currentSession?.title}
-          onResume={handleResumeRun}
-          resuming={resumingRun}
-          stats={sessionStats}
-          planMode={planMode}
+    <I18nProvider language={language}>
+      <div className={`${styles.app} ${currentRun ? '' : styles.landing}`}>
+        <Sidebar
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onSelectSession={handleSelectSession}
+          onNewTask={handleNewTask}
+          onNewTaskInWorkspace={handleNewTaskInWorkspace}
+          onRenameWorkspace={handleRenameWorkspace}
+          onDeleteWorkspace={handleDeleteWorkspace}
+          onRenameSession={handleRenameSession}
+          onArchiveSession={handleArchiveSession}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => {
+            sidebarUserOverrideRef.current = true;
+            setSidebarCollapsed((value) => !value);
+          }}
+          workspace={workspace}
+          openingWorkspace={openingWorkspace}
+          onOpenWorkspace={handleOpenWorkspace}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
 
-        {currentSessionId ? (
-          <div className={styles.workspace}>
-            <div className={styles.sessionTimeline} ref={conversationScrollRef}>
-              {/* 0 高 sticky 槽必须挂在滚动容器内部，rail 才能钉在可视带右缘 */}
-              <TurnNavigator
-                runs={currentSessionRuns}
-                activeRunId={currentRunId}
-                onNavigate={handleNavigateRun}
-              />
-              <div ref={conversationContentRef}>
-                {displayedSessionRuns.length > 0 ? (
-                  displayedSessionRuns.map((run) => (
-                    <Timeline
-                      key={run.runId}
-                      run={run}
-                      optimistic={run.runId === pendingRun?.runId}
-                      modelFallback={null}
-                      embedded
-                      onRunTerminal={handleRunTerminal}
-                      onRetryCommand={handleCreateRun}
-                      onContextUsage={
-                        run.runId === latestSessionRunId ? setContextUsage : undefined
-                      }
-                      // 计划只认"当前这一轮"：乐观 pending 窗口内不接受上一轮的再次上抛，
-                      // 保证点发送后旧计划不会回闪（新 Run 落库后才由它自己上抛）。
-                      onPlan={
-                        run.runId === latestSessionRunId && !pendingRun
-                          ? setActivePlan
-                          : undefined
-                      }
-                    />
-                  ))
-                ) : (
-                  <div className={styles.sessionTimelineEmpty}>
-                    <p>正在准备工作区…</p>
-                  </div>
-                )}
-                {compactStatus && (
-                  <div className={styles.compactStatus} role="status">
-                    <span className={styles.compactCmd}>compact</span>
-                    <span className={styles.compactSep}>·</span>
-                    {compactStatusText(compactStatus)}
-                  </div>
-                )}
+        <div className={`${styles.main} ${currentSessionId ? styles.sessionMain : ''}`}>
+          <div
+            className={`${styles.deerBackdrop} ${currentSessionId ? styles.sessionDeerBackdrop : ''}`}
+            aria-hidden="true"
+          />
+          <ShellBar
+            run={currentRun}
+            title={currentSession?.title}
+            onResume={handleResumeRun}
+            resuming={resumingRun}
+            stats={sessionStats}
+            planMode={planMode}
+          />
+
+          {currentSessionId ? (
+            <div className={styles.workspace}>
+              <div className={styles.sessionTimeline} ref={conversationScrollRef}>
+                {/* 0 高 sticky 槽必须挂在滚动容器内部，rail 才能钉在可视带右缘 */}
+                <TurnNavigator
+                  runs={currentSessionRuns}
+                  activeRunId={currentRunId}
+                  onNavigate={handleNavigateRun}
+                />
+                <div ref={conversationContentRef}>
+                  {displayedSessionRuns.length > 0 ? (
+                    displayedSessionRuns.map((run) => (
+                      <Timeline
+                        key={run.runId}
+                        run={run}
+                        optimistic={run.runId === pendingRun?.runId}
+                        modelFallback={null}
+                        embedded
+                        onRunTerminal={handleRunTerminal}
+                        onRetryCommand={handleCreateRun}
+                        onContextUsage={
+                          run.runId === latestSessionRunId ? setContextUsage : undefined
+                        }
+                        // 计划只认"当前这一轮"：乐观 pending 窗口内不接受上一轮的再次上抛，
+                        // 保证点发送后旧计划不会回闪（新 Run 落库后才由它自己上抛）。
+                        onPlan={
+                          run.runId === latestSessionRunId && !pendingRun
+                            ? setActivePlan
+                            : undefined
+                        }
+                      />
+                    ))
+                  ) : (
+                    <div className={styles.sessionTimelineEmpty}>
+                      <p>{t('app.preparingWorkspace')}</p>
+                    </div>
+                  )}
+                  {compactStatus && (
+                    <div className={styles.compactStatus} role="status">
+                      <span className={styles.compactCmd}>compact</span>
+                      <span className={styles.compactSep}>·</span>
+                      {compactStatusText(compactStatus, language)}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ) : (
-          <div className={styles.emptyState}>
-            {pendingRun ? (
-              <Timeline run={pendingRun} modelFallback={null} embedded optimistic />
-            ) : (
-              <div className={styles.heroTitleRow}>
-                <span className={styles.emptyLogo} role="img" aria-label="Payaso" />
-                <h1 className={styles.emptyTitle}>路漫漫其修远兮，吾将上下而求索。</h1>
-              </div>
-            )}
+          ) : (
+            <div className={styles.emptyState}>
+              {pendingRun ? (
+                <Timeline run={pendingRun} modelFallback={null} embedded optimistic />
+              ) : (
+                <div className={styles.heroTitleRow}>
+                  <span className={styles.emptyLogo} role="img" aria-label="Payaso" />
+                  <h1 className={styles.emptyTitle}>{t('app.heroTitle')}</h1>
+                </div>
+              )}
+              <InputBar
+                variant="hero"
+                onSend={handleCreateRun}
+                placeholder={t('app.heroPlaceholder')}
+                workspaceName={workspace?.name}
+                openingWorkspace={openingWorkspace}
+                onOpenWorkspace={handleOpenWorkspace}
+                currentModel={currentModelSelection ?? undefined}
+                models={models}
+                onSelectModel={handleSelectModel}
+                visionSupported={currentModelVision}
+                permissionMode={permissionMode}
+                onSelectPermission={setPermissionMode}
+                onBuiltinCommand={handleBuiltinCommand}
+              />
+            </div>
+          )}
+
+          {currentSessionId && currentRun && (
             <InputBar
-              variant="hero"
               onSend={handleCreateRun}
-              placeholder="描述你想要构建的内容"
-              workspaceName={workspace?.name}
-              openingWorkspace={openingWorkspace}
-              onOpenWorkspace={handleOpenWorkspace}
+              onStop={handleStopRun}
+              isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}
+              isStopping={currentRun.status === 'stopping'}
               currentModel={currentModelSelection ?? undefined}
               models={models}
               onSelectModel={handleSelectModel}
               visionSupported={currentModelVision}
+              contextUsage={contextUsage ?? undefined}
+              queuedCount={sendQueue.length}
+              queuedMessages={sendQueue}
+              onSendQueuedNow={handleSendQueuedNow}
+              onDeleteQueued={handleDeleteQueued}
               permissionMode={permissionMode}
               onSelectPermission={setPermissionMode}
               onBuiltinCommand={handleBuiltinCommand}
+              headerSlot={
+                activePlan ? (
+                  <PlanPanel plan={activePlan} running={latestSessionRun?.status === 'running'} />
+                ) : null
+              }
             />
-          </div>
+          )}
+        </div>
+
+        {viewingFile && currentRunId && (
+          <FileModal runId={currentRunId} file={viewingFile} onClose={() => setViewingFile(null)} />
         )}
 
-        {currentSessionId && currentRun && (
-          <InputBar
-            onSend={handleCreateRun}
-            onStop={handleStopRun}
-            isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}
-            isStopping={currentRun.status === 'stopping'}
-            currentModel={currentModelSelection ?? undefined}
-            models={models}
-            onSelectModel={handleSelectModel}
-            visionSupported={currentModelVision}
-            contextUsage={contextUsage ?? undefined}
-            queuedCount={sendQueue.length}
-            queuedMessages={sendQueue}
-            onSendQueuedNow={handleSendQueuedNow}
-            onDeleteQueued={handleDeleteQueued}
-            permissionMode={permissionMode}
-            onSelectPermission={setPermissionMode}
-            onBuiltinCommand={handleBuiltinCommand}
-            headerSlot={
-              activePlan ? (
-                <PlanPanel plan={activePlan} running={latestSessionRun?.status === 'running'} />
-              ) : null
-            }
+        {pickerOpen && (
+          <WorkspacePickerModal
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            onSelect={(path) => {
+              void handlePickerSelect(path);
+            }}
           />
         )}
+
+        {settingsOpen && (
+          <SettingsModal
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            themeMode={themeMode}
+            onThemeModeChange={setThemeMode}
+            permissionMode={permissionMode}
+            onPermissionModeChange={setPermissionMode}
+            language={language}
+            onLanguageChange={setLanguage}
+            fontSize={fontSize}
+            onFontSizeChange={setFontSize}
+            onSaved={() => {
+              void refreshModels();
+              void refreshDefaultModel();
+            }}
+          />
+        )}
+
+        {toast && <div className={styles.toast}>{toast}</div>}
       </div>
-
-      {viewingFile && currentRunId && (
-        <FileModal runId={currentRunId} file={viewingFile} onClose={() => setViewingFile(null)} />
-      )}
-
-      {pickerOpen && (
-        <WorkspacePickerModal
-          open={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          onSelect={(path) => {
-            void handlePickerSelect(path);
-          }}
-        />
-      )}
-
-      {settingsOpen && (
-        <SettingsModal
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          themeMode={themeMode}
-          onThemeModeChange={setThemeMode}
-          permissionMode={permissionMode}
-          onPermissionModeChange={setPermissionMode}
-          language={language}
-          onLanguageChange={setLanguage}
-          fontSize={fontSize}
-          onFontSizeChange={setFontSize}
-          onSaved={() => {
-            void refreshModels();
-            void refreshDefaultModel();
-          }}
-        />
-      )}
-
-      {toast && <div className={styles.toast}>{toast}</div>}
-    </div>
+    </I18nProvider>
   );
 }

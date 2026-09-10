@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { useI18n } from '../../i18n';
 import type { HostSession, WorkspaceView } from '../../types';
 import { Collapse } from '../Collapse';
 import { IconButton } from '../IconButton';
@@ -35,7 +36,9 @@ interface MenuState {
   y: number;
 }
 
-const FALLBACK_WORKSPACE_NAME = '未选择工作区';
+// 无工作区会话的分组哨兵名：它只参与分组与比较，不是展示文案；
+// 渲染时由 groupLabel 翻成当前语言的「未选择工作区」。
+const NO_WORKSPACE_GROUP = '\u0000no-workspace';
 
 function groupSessionsByWorkspace(
   sessions: HostSession[],
@@ -43,7 +46,7 @@ function groupSessionsByWorkspace(
 ): WorkspaceGroup[] {
   const map = new Map<string, HostSession[]>();
   for (const session of sessions) {
-    const name = session.workspace?.name ?? FALLBACK_WORKSPACE_NAME;
+    const name = session.workspace?.name ?? NO_WORKSPACE_GROUP;
     const list = map.get(name) ?? [];
     list.push(session);
     map.set(name, list);
@@ -72,6 +75,7 @@ function WorkspaceFolderHeader({
   onOpenMenu: (x: number, y: number) => void;
   onNewTask: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <span className={styles.folderHeader}>
       <span className={styles.folderIconSlot}>
@@ -83,8 +87,8 @@ function WorkspaceFolderHeader({
         <button
           type="button"
           className={styles.actionBtn}
-          title="更多操作"
-          aria-label={`${name} 更多操作`}
+          title={t('shell.action.more')}
+          aria-label={t('shell.action.moreFor', { name })}
           onClick={(e) => {
             e.stopPropagation();
             const rect = e.currentTarget.getBoundingClientRect();
@@ -96,8 +100,8 @@ function WorkspaceFolderHeader({
         <button
           type="button"
           className={styles.actionBtn}
-          title="新建任务"
-          aria-label={`在 ${name} 中新建任务`}
+          title={t('shell.action.newTask')}
+          aria-label={t('shell.workspace.newTaskIn', { name })}
           onClick={(e) => {
             e.stopPropagation();
             onNewTask();
@@ -123,6 +127,7 @@ function WorkspaceMenu({
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   useEscapeKey(true, onClose);
   useClickOutside(ref, true, onClose);
@@ -140,7 +145,7 @@ function WorkspaceMenu({
         }}
       >
         <PencilIcon size={14} />
-        <span>重命名</span>
+        <span>{t('shell.action.rename')}</span>
       </button>
       <button
         type="button"
@@ -151,7 +156,7 @@ function WorkspaceMenu({
         }}
       >
         <TrashIcon size={14} />
-        <span>删除工作区</span>
+        <span>{t('shell.workspace.delete')}</span>
       </button>
     </div>,
     document.getElementById('payaso-portal-root') ?? document.body,
@@ -171,6 +176,7 @@ export function WorkspaceSection({
   onRenameSession,
   onArchiveSession,
 }: WorkspaceSectionProps) {
+  const { t } = useI18n();
   const groups = useMemo(
     () => groupSessionsByWorkspace(sessions, workspace),
     [sessions, workspace],
@@ -182,7 +188,10 @@ export function WorkspaceSection({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const isFallbackWorkspace = (name: string) => name === FALLBACK_WORKSPACE_NAME;
+  const isFallbackWorkspace = (name: string) => name === NO_WORKSPACE_GROUP;
+  // 分组名可能是内部哨兵，展示前统一翻成当前语言
+  const groupLabel = (name: string) =>
+    isFallbackWorkspace(name) ? t('shell.workspace.none') : name;
 
   const openRename = () => {
     if (!menu) return;
@@ -226,13 +235,13 @@ export function WorkspaceSection({
   return (
     <div className={styles.section}>
       <div className={styles.header}>
-        <span className={styles.label}>工作区</span>
+        <span className={styles.label}>{t('shell.workspace.label')}</span>
         <IconButton
           buttonSize="sm"
           variant="ghost"
           shape="rounded"
-          title={workspace ? '更换文件夹' : '打开文件夹'}
-          aria-label={workspace ? '更换文件夹' : '打开文件夹'}
+          title={workspace ? t('shell.workspace.change') : t('shell.workspace.open')}
+          aria-label={workspace ? t('shell.workspace.change') : t('shell.workspace.open')}
           onClick={onOpenWorkspace}
           disabled={openingWorkspace}
         >
@@ -241,18 +250,18 @@ export function WorkspaceSection({
       </div>
 
       {groups.length === 0 ? (
-        <div className={styles.empty}>暂无历史任务</div>
+        <div className={styles.empty}>{t('shell.workspace.empty')}</div>
       ) : (
-        <nav className={styles.tree} aria-label="工作区任务">
+        <nav className={styles.tree} aria-label={t('shell.workspace.tree')}>
           {groups.map((group) => {
-            const isCurrentWorkspace = group.name === (workspace?.name ?? FALLBACK_WORKSPACE_NAME);
+            const isCurrentWorkspace = group.name === (workspace?.name ?? NO_WORKSPACE_GROUP);
             const fallback = isFallbackWorkspace(group.name);
             return (
               <Collapse
                 key={group.name}
                 header={
                   <WorkspaceFolderHeader
-                    name={group.name}
+                    name={groupLabel(group.name)}
                     onOpenMenu={fallback ? () => {} : (x, y) => setMenu({ name: group.name, x, y })}
                     onNewTask={fallback ? () => {} : () => onNewTaskInWorkspace(group.name)}
                   />
@@ -289,9 +298,9 @@ export function WorkspaceSection({
       )}
 
       {renaming && (
-        <Modal onClose={() => setRenaming(null)} ariaLabel="重命名工作区">
+        <Modal onClose={() => setRenaming(null)} ariaLabel={t('shell.workspace.rename')}>
           <div className={styles.dialog}>
-            <div className={styles.dialogTitle}>重命名工作区</div>
+            <div className={styles.dialogTitle}>{t('shell.workspace.rename')}</div>
             <input
               className={styles.dialogInput}
               value={renameValue}
@@ -305,7 +314,7 @@ export function WorkspaceSection({
             />
             <div className={styles.dialogActions}>
               <button type="button" className={styles.dialogBtn} onClick={() => setRenaming(null)}>
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -313,7 +322,7 @@ export function WorkspaceSection({
                 disabled={busy || !renameValue.trim() || renameValue.trim() === renaming}
                 onClick={() => void submitRename()}
               >
-                确定
+                {t('common.ok')}
               </button>
             </div>
           </div>
@@ -321,15 +330,15 @@ export function WorkspaceSection({
       )}
 
       {deleting && (
-        <Modal onClose={() => setDeleting(null)} ariaLabel="删除工作区">
+        <Modal onClose={() => setDeleting(null)} ariaLabel={t('shell.workspace.delete')}>
           <div className={styles.dialog}>
-            <div className={styles.dialogTitle}>删除工作区</div>
+            <div className={styles.dialogTitle}>{t('shell.workspace.delete')}</div>
             <p className={styles.dialogText}>
-              将删除“{deleting}”下的所有会话与运行记录，此操作不可恢复。
+              {t('shell.workspace.deleteConfirm', { name: deleting })}
             </p>
             <div className={styles.dialogActions}>
               <button type="button" className={styles.dialogBtn} onClick={() => setDeleting(null)}>
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -337,7 +346,7 @@ export function WorkspaceSection({
                 disabled={busy}
                 onClick={() => void submitDelete()}
               >
-                删除
+                {t('common.delete')}
               </button>
             </div>
           </div>

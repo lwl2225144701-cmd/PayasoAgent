@@ -14,6 +14,9 @@ import {
   stripThinkTags,
 } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
+import { useI18n } from '../../i18n';
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
 import type {
   ApprovalRequestedEvent,
   ContextUsageEvent,
@@ -59,14 +62,14 @@ interface TimelineProps {
   onPlan?: (plan: PlanView | null) => void;
 }
 
-function preparationPhaseLabel(phase: ToolchainPreparationPhase): string {
+function preparationPhaseLabel(phase: ToolchainPreparationPhase, language: LanguageMode): string {
   switch (phase) {
     case 'checking':
-      return '正在检查受控运行时…';
+      return translate(language, 'timeline.preparation.checking');
     case 'installing':
-      return '正在安装依赖…';
+      return translate(language, 'timeline.preparation.installing');
     case 'verifying':
-      return '正在验证工具链…';
+      return translate(language, 'timeline.preparation.verifying');
   }
 }
 
@@ -121,6 +124,7 @@ function ExecutionPanel({
   runId: string;
 }) {
   // 执行详情默认收起，避免每次发送消息都把页面撑开；用户仍可手动展开。
+  const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   // 时钟下沉：运行中每秒强制 ExecutionPanel 自身重渲一次，刷新执行时长 /
   // 阶段化文案 / 首 token 等待秒数。不再依赖父级 Timeline 的全局 tick——
@@ -140,18 +144,33 @@ function ExecutionPanel({
   const endMs = running ? Date.now() : new Date(finishedAt).getTime();
   const durationMs =
     Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, endMs - startMs) : 0;
-  const durationLabel = durationMs >= 1000 ? formatDurationMs(durationMs) : '<1秒';
+  const durationLabel =
+    durationMs >= 1000
+      ? formatDurationMs(durationMs, language)
+      : t('timeline.duration.underOneSecond');
   // 阶段化文案：随等待时间演进，避免静态文字的呆滞感
-  const thinkingPhase = elapsed < 6 ? '正在思考' : elapsed < 20 ? '正在分析' : '正在处理复杂任务';
+  const thinkingPhase =
+    elapsed < 6
+      ? t('timeline.wait.thinking')
+      : elapsed < 20
+        ? t('timeline.wait.analyzing')
+        : t('timeline.wait.complexTask');
   // 等待模型首 token 的实时秒数（父组件 running 期间每 1.2s tick 一次，随渲染刷新）
   // 已发出 Provider 请求（llm_request_sent）后从 requestSentAt 起算；否则从 llm_call_started 起算。
   const modelWaitSeconds = modelWait
-    ? Math.max(0, Math.round((Date.now() - Date.parse(modelWait.requestSentAt ?? modelWait.startedAt)) / 1000))
+    ? Math.max(
+        0,
+        Math.round(
+          (Date.now() - Date.parse(modelWait.requestSentAt ?? modelWait.startedAt)) / 1000,
+        ),
+      )
     : 0;
   // 大上下文时提示 prefill 慢的根因与出路（≥100K 才提示，避免噪音）
   const modelWaitTitle =
     modelWait?.estimatedInputTokens !== undefined && modelWait.estimatedInputTokens >= 100_000
-      ? `本轮上下文约 ${Math.round(modelWait.estimatedInputTokens / 1000)}K tokens，prefill 较慢；可用 /compact 压缩会话历史`
+      ? t('timeline.wait.largeContextHint', {
+          k: Math.round(modelWait.estimatedInputTokens / 1000),
+        })
       : undefined;
   const bodyEmpty =
     !thinking &&
@@ -164,16 +183,16 @@ function ExecutionPanel({
     groups.some((group) => group.compactionNote) ||
     groups.some((group) => group.planNote);
   const statusTitle = running
-    ? '正在执行'
+    ? t('timeline.execution.statusRunning')
     : status === 'failed'
-      ? '执行失败'
+      ? t('timeline.execution.statusFailed')
       : status === 'stopping'
-        ? '正在停止'
+        ? t('timeline.execution.statusStopping')
         : status === 'stopped'
-          ? '已停止'
+          ? t('timeline.execution.statusStopped')
           : status === 'interrupted'
-            ? '已中断'
-            : '任务完成';
+            ? t('timeline.execution.statusInterrupted')
+            : t('timeline.execution.statusDone');
 
   useEffect(() => {
     if (!running && wasRunning.current) setOpen(false);
@@ -203,13 +222,22 @@ function ExecutionPanel({
         </span>
         <span className={styles.executionTitle}>{statusTitle}</span>
         <span className={styles.executionMeta}>
-          {tools.length > 0 && <span>{`已执行 ${tools.length} 个操作`}</span>}
+          {tools.length > 0 && (
+            <span>{t('timeline.execution.toolCount', { count: tools.length })}</span>
+          )}
           {running && (modelWait || tools.length === 0) && (
             <span className={styles.thinkingText} title={modelWaitTitle}>
               {modelWait
                 ? modelWait.requestSentAt
-                  ? `等待模型首包 · 第 ${modelWait.iteration} 轮 · 已等待 ${modelWaitSeconds}s${modelWait.attempt && modelWait.attempt > 1 ? `（第 ${modelWait.attempt} 次请求）` : ''}`
-                  : `正在准备请求 · 第 ${modelWait.iteration} 轮 · ${modelWaitSeconds}s`
+                  ? `${t('timeline.wait.firstPacket', { iteration: modelWait.iteration, seconds: modelWaitSeconds })}${
+                      modelWait.attempt && modelWait.attempt > 1
+                        ? t('timeline.wait.attemptSuffix', { attempt: modelWait.attempt })
+                        : ''
+                    }`
+                  : t('timeline.wait.preparing', {
+                      iteration: modelWait.iteration,
+                      seconds: modelWaitSeconds,
+                    })
                 : thinkingPhase}
               <span className={styles.thinkDots} aria-hidden="true">
                 <i />
@@ -218,9 +246,15 @@ function ExecutionPanel({
               </span>
             </span>
           )}
-          <span className={styles.executionDuration}> · 用时 {durationLabel}</span>
+          <span className={styles.executionDuration}>
+            {' · '}
+            {t('timeline.execution.duration', { duration: durationLabel })}
+          </span>
           {failedCount > 0 && (
-            <span className={styles.executionFailed}> · {failedCount} 个失败</span>
+            <span className={styles.executionFailed}>
+              {' · '}
+              {t('timeline.execution.failedCount', { count: failedCount })}
+            </span>
           )}
         </span>
         <ChevronRightIcon
@@ -255,7 +289,7 @@ function ExecutionPanel({
                 </div>
               )}
               {group.tools.length > 0 && (
-                <ul className={styles.toolList} aria-label="工具">
+                <ul className={styles.toolList} aria-label={t('timeline.tools.ariaLabel')}>
                   {group.tools.map((tool) => (
                     <ToolActionRow
                       key={tool.operationKey ?? `${tool.tool}-${tool.startedAt}`}
@@ -287,6 +321,7 @@ export const Timeline = memo(function Timeline({
   onContextUsage,
   onPlan,
 }: TimelineProps) {
+  const { t, language } = useI18n();
   // 传输方式按 Run 状态分流：
   // - live（running/stopping）：常驻 SSE，边流边推。
   // - snapshot（已终态）：一次性取回。已完成 Run 的事件不可变，用 SSE 会让每个历史回合
@@ -350,7 +385,7 @@ export const Timeline = memo(function Timeline({
       await openFileInDefaultBrowser(run.runId, file.name);
       setOpenedInBrowser(file.name);
     } catch {
-      setFileActionError('无法使用默认浏览器打开该文件。');
+      setFileActionError(t('timeline.files.openError'));
     }
   };
 
@@ -370,8 +405,8 @@ export const Timeline = memo(function Timeline({
 
   const structure = useMemo<BuildOut | null>(() => {
     if (!run) return null;
-    return buildStructure(run, events, rawFinalAnswer, finalParsed);
-  }, [run, events, rawFinalAnswer, finalParsed]);
+    return buildStructure(run, events, rawFinalAnswer, finalParsed, language);
+  }, [run, events, rawFinalAnswer, finalParsed, language]);
 
   // 计划清单：从事件派生（取 revision 最大的一条），无计划事件 → null。
   // 面板不再画在对话流里：这里只把派生结果上抛给宿主（输入栏上方的"当前计划"），
@@ -484,7 +519,7 @@ export const Timeline = memo(function Timeline({
   if (!run || !structure) {
     return (
       <div ref={scrollRef} className={styles.timelineWrap}>
-        <div className={styles.empty}>选择或创建一个任务开始。</div>
+        <div className={styles.empty}>{t('timeline.empty')}</div>
       </div>
     );
   }
@@ -559,7 +594,9 @@ export const Timeline = memo(function Timeline({
                 ))}
               </div>
             )}
-          <time className={styles.time}>{formatTime(runStarted?.timestamp ?? run.createdAt)}</time>
+          <time className={styles.time}>
+            {formatTime(runStarted?.timestamp ?? run.createdAt, language)}
+          </time>
         </article>
 
         {hasAnyWork ? (
@@ -568,9 +605,11 @@ export const Timeline = memo(function Timeline({
               <div className={styles.approvalList}>
                 {pendingApprovals.map((ev) => (
                   <div key={ev.requestId} className={styles.approvalCard}>
-                    <div className={styles.approvalTitle}>网络访问批准请求</div>
+                    <div className={styles.approvalTitle}>
+                      {t('timeline.approval.networkTitle')}
+                    </div>
                     <div className={styles.approvalBody}>
-                      <code>{ev.toolName}</code> 请求网络访问
+                      <code>{ev.toolName}</code> {t('timeline.approval.networkBody')}
                       <span className={styles.approvalArgs}>
                         {JSON.stringify(ev.args ?? {}).slice(0, 120)}
                       </span>
@@ -582,7 +621,9 @@ export const Timeline = memo(function Timeline({
                         disabled={resolvingIds.has(ev.requestId)}
                         onClick={() => void handleApproval(ev, true)}
                       >
-                        {resolvingIds.has(ev.requestId) ? '提交中…' : '允许'}
+                        {resolvingIds.has(ev.requestId)
+                          ? t('timeline.approval.submitting')
+                          : t('timeline.approval.allow')}
                       </button>
                       <button
                         type="button"
@@ -590,7 +631,7 @@ export const Timeline = memo(function Timeline({
                         disabled={resolvingIds.has(ev.requestId)}
                         onClick={() => void handleApproval(ev, false)}
                       >
-                        拒绝
+                        {t('timeline.approval.deny')}
                       </button>
                     </div>
                   </div>
@@ -601,16 +642,19 @@ export const Timeline = memo(function Timeline({
               <div className={styles.approvalList}>
                 {pendingPreparations.map((ev) => (
                   <div key={ev.requestId} className={styles.approvalCard}>
-                    <div className={styles.approvalTitle}>需要准备运行时依赖</div>
+                    <div className={styles.approvalTitle}>{t('timeline.preparation.title')}</div>
                     <div className={styles.approvalBody}>
-                      当前受控运行时缺少 <code>{ev.toolName}</code>。
+                      {t('timeline.preparation.missingPrefix')} <code>{ev.toolName}</code>
+                      {t('timeline.preparation.missingSuffix')}
                       <span className={styles.approvalArgs}>
-                        允许后将使用受控的 {ev.source} 计划安装 {ev.packageName}
-                        ，不会执行模型提供的安装命令。
+                        {t('timeline.preparation.detail', {
+                          source: ev.source,
+                          packageName: ev.packageName,
+                        })}
                       </span>
                       {preparationPhases.has(ev.requestId) && (
                         <span className={styles.approvalProgress}>
-                          {preparationPhaseLabel(preparationPhases.get(ev.requestId)!)}
+                          {preparationPhaseLabel(preparationPhases.get(ev.requestId)!, language)}
                         </span>
                       )}
                     </div>
@@ -622,7 +666,9 @@ export const Timeline = memo(function Timeline({
                           disabled={resolvingPreparationIds.has(ev.requestId)}
                           onClick={() => void handleToolchainPreparation(ev, 'cancel')}
                         >
-                          {resolvingPreparationIds.has(ev.requestId) ? '取消中…' : '取消准备'}
+                          {resolvingPreparationIds.has(ev.requestId)
+                            ? t('timeline.preparation.cancelling')
+                            : t('timeline.preparation.cancel')}
                         </button>
                       ) : (
                         <>
@@ -632,7 +678,9 @@ export const Timeline = memo(function Timeline({
                             disabled={resolvingPreparationIds.has(ev.requestId)}
                             onClick={() => void handleToolchainPreparation(ev, 'approve')}
                           >
-                            {resolvingPreparationIds.has(ev.requestId) ? '提交中…' : '允许准备'}
+                            {resolvingPreparationIds.has(ev.requestId)
+                              ? t('timeline.approval.submitting')
+                              : t('timeline.preparation.approve')}
                           </button>
                           <button
                             type="button"
@@ -640,7 +688,7 @@ export const Timeline = memo(function Timeline({
                             disabled={resolvingPreparationIds.has(ev.requestId)}
                             onClick={() => void handleToolchainPreparation(ev, 'deny')}
                           >
-                            拒绝
+                            {t('timeline.approval.deny')}
                           </button>
                         </>
                       )}
@@ -653,13 +701,12 @@ export const Timeline = memo(function Timeline({
               <div className={styles.approvalList}>
                 {preparedResolutions.map((ev) => (
                   <div key={`prepared-${ev.requestId}`} className={styles.approvalCard}>
-                    <div className={styles.approvalTitle}>依赖准备完成</div>
+                    <div className={styles.approvalTitle}>{t('timeline.prepared.title')}</div>
                     <div className={styles.approvalBody}>
-                      受控依赖已安装并通过验证，当前会话的工具链视图已刷新。
-                      原命令不会自动重试（副作用安全）；确认后可重新执行。
+                      {t('timeline.prepared.body')}
                       {!retryCommand && (
                         <span className={styles.approvalArgs}>
-                          未在本次执行中找到失败的 shell 命令。
+                          {t('timeline.prepared.noFailedCommand')}
                         </span>
                       )}
                     </div>
@@ -670,18 +717,18 @@ export const Timeline = memo(function Timeline({
                         disabled={runActive || !retryCommand || !onRetryCommand}
                         title={
                           runActive
-                            ? '等待当前执行退出后可重试'
+                            ? t('timeline.prepared.retryBlockedRunning')
                             : !retryCommand
-                              ? '未找到失败的 shell 命令'
+                              ? t('timeline.prepared.retryBlockedNoCommand')
                               : undefined
                         }
                         onClick={() => {
                           if (retryCommand && onRetryCommand) {
-                            onRetryCommand(composeToolchainRetryMessage(retryCommand));
+                            onRetryCommand(composeToolchainRetryMessage(retryCommand, language));
                           }
                         }}
                       >
-                        重新执行刚才的命令
+                        {t('timeline.prepared.retry')}
                       </button>
                     </div>
                   </div>
@@ -715,9 +762,11 @@ export const Timeline = memo(function Timeline({
                       <span className={styles.artifactsSummaryIcon}>
                         <FileIcon />
                       </span>
-                      <span>{`已修改 ${files.length} 个文件`}</span>
+                      <span>{t('timeline.files.changedCount', { count: files.length })}</span>
                       <span className={styles.artifactsSummaryPreview}>
-                        {files.length === 1 ? files[0].name : `${files[0].name} 等`}
+                        {files.length === 1
+                          ? files[0].name
+                          : t('timeline.files.andMore', { name: files[0].name })}
                       </span>
                       <ChevronRightIcon
                         size={14}
@@ -744,14 +793,16 @@ export const Timeline = memo(function Timeline({
                                   className={styles.attachAction}
                                   onClick={() => setOpenFile(f)}
                                 >
-                                  查看
+                                  {t('timeline.files.view')}
                                 </button>
                                 <button
                                   type="button"
                                   className={styles.attachBrowserAction}
                                   onClick={() => void openInBrowser(f)}
                                 >
-                                  {openedInBrowser === f.name ? '已打开' : '打开'}
+                                  {openedInBrowser === f.name
+                                    ? t('timeline.files.opened')
+                                    : t('timeline.files.open')}
                                 </button>
                               </span>
                             </div>
@@ -875,6 +926,7 @@ function buildStructure(
   events: HostEvent[],
   rawFinalAnswer: string | null,
   finalParsed: { visible: string; thinking: string | null } | null,
+  language: LanguageMode,
 ): BuildOut {
   const runStarted = events.find((e) => e.type === 'run_started');
   const completedEv = events.find((e) => e.type === 'run_completed');
@@ -930,7 +982,7 @@ function buildStructure(
   }
 
   // 计划变更说明：按 revision 顺序 diff 出「这一步之后计划变成了什么」，挂到对应 step。
-  const planNotes = derivePlanNotes(events);
+  const planNotes = derivePlanNotes(events, language);
 
   const toolSteps: ToolStepGroup[] = [];
   const processedToolsEv: HostEvent[] = [];
@@ -975,7 +1027,9 @@ function buildStructure(
     const compactionEv = stepEvents.find((e) => e.type === 'context_compaction');
     const compactionNote =
       compactionEv && compactionEv.type === 'context_compaction'
-        ? `上下文已压缩 · ${compactionEv.totalSummarizedMessages} 条早期对话已摘要保留要点`
+        ? translate(language, 'timeline.compaction.note', {
+            count: compactionEv.totalSummarizedMessages,
+          })
         : null;
     const planNote = planNotes.get(step) ?? null;
 

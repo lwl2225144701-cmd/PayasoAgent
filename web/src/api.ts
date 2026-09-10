@@ -352,6 +352,7 @@ export function connectSSE(
     if (!connectedOnce) failedAttempts += 1;
     if (failedAttempts >= MAX_FAILS_BEFORE_CLOSE) {
       console.warn(
+        // i18n-exempt: 开发期日志，非界面文案
         `[SSE] 连续 ${failedAttempts} 次连接失败，关闭 EventSource 以避免无限重连（runId=${runId}）`,
       );
       es.close();

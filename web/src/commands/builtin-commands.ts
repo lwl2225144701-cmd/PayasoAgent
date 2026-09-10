@@ -3,12 +3,15 @@
 // 与工作区提示词模板（.payaso/prompts/*.md → LLM 提示词）相对：内置命令是
 // 真功能，发送时被客户端拦截执行，不会作为任务发给模型。
 
+import type { MessageKey } from '../i18n/messages';
 import type { PermissionMode } from '../types';
 
 export interface BuiltinCommand {
   name: string;
-  description: string;
-  usage: string;
+  /** 命令一句话说明的消息 key（调用方用 t() 取文案）。 */
+  descriptionKey: MessageKey;
+  /** 用法示例的消息 key：占位符里的「意见 / 目标内容」等随语言切换。 */
+  usageKey: MessageKey;
 }
 
 /**
@@ -22,17 +25,41 @@ export function isEnabledCommand(name: string): boolean {
 }
 
 export const BUILTIN_COMMANDS: BuiltinCommand[] = [
-  { name: 'compact', description: '压缩更早的对话历史（下一条消息发送时执行）', usage: '/compact' },
-  { name: 'export', description: '下载本会话完整日志归档（ZIP）', usage: '/export' },
-  { name: 'feedback', description: '记录对本会话的反馈', usage: '/feedback <意见>' },
-  { name: 'goal', description: '设置或查看本会话的长期目标', usage: '/goal [目标内容]' },
+  {
+    name: 'compact',
+    descriptionKey: 'composer.commands.compact.description',
+    usageKey: 'composer.commands.compact.usage',
+  },
+  {
+    name: 'export',
+    descriptionKey: 'composer.commands.export.description',
+    usageKey: 'composer.commands.export.usage',
+  },
+  {
+    name: 'feedback',
+    descriptionKey: 'composer.commands.feedback.description',
+    usageKey: 'composer.commands.feedback.usage',
+  },
+  {
+    name: 'goal',
+    descriptionKey: 'composer.commands.goal.description',
+    usageKey: 'composer.commands.goal.usage',
+  },
   {
     name: 'permission',
-    description: '切换权限预设（沙箱模式）',
-    usage: '/permission [read-only|workspace-write|full-access]',
+    descriptionKey: 'composer.commands.permission.description',
+    usageKey: 'composer.commands.permission.usage',
   },
-  { name: 'plan', description: '进入/退出计划模式（只读 + 仅产出方案）', usage: '/plan' },
-  { name: 'model', description: '选择本会话使用的模型', usage: '/model <provider/模型关键词>' },
+  {
+    name: 'plan',
+    descriptionKey: 'composer.commands.plan.description',
+    usageKey: 'composer.commands.plan.usage',
+  },
+  {
+    name: 'model',
+    descriptionKey: 'composer.commands.model.description',
+    usageKey: 'composer.commands.model.usage',
+  },
 ];
 
 export interface BuiltinCommandMatch {
@@ -54,17 +81,30 @@ export function matchBuiltinCommand(text: string): BuiltinCommandMatch | null {
   return { name, args };
 }
 
+/**
+ * 补全候选：内置命令与工作区提示词模板**显式区分**文案来源，
+ * 避免把 Host 下发的模板原文当 key 去查消息表。
+ */
+export interface CommandCandidate {
+  name: string;
+  builtin: boolean;
+  /** 工作区提示词模板的原文描述（Host 下发，非消息 key，直接渲染）。 */
+  description?: string;
+  /** 内置命令描述的消息 key（渲染时用 t() 取文案）。 */
+  descriptionKey?: MessageKey;
+}
+
 /** 补全候选：内置命令优先，其后是工作区提示词模板（按前缀过滤）。 */
 export function mergeCommandCandidates(
   query: string,
   workspacePrompts: Array<{ name: string; description: string }>,
-): Array<{ name: string; description: string; builtin: boolean }> {
+): CommandCandidate[] {
   const q = query.toLowerCase();
   const builtins = BUILTIN_COMMANDS.filter(
     (cmd) => cmd.name.startsWith(q) && isEnabledCommand(cmd.name),
   ).map((cmd) => ({
     name: cmd.name,
-    description: cmd.description,
+    descriptionKey: cmd.descriptionKey,
     builtin: true,
   }));
   const prompts = workspacePrompts
@@ -76,11 +116,14 @@ export function mergeCommandCandidates(
 }
 
 const PERMISSION_ALIASES: Array<{ mode: PermissionMode; keywords: string[] }> = [
+  // i18n-exempt: /permission 的用户输入别名，不是展示文案
   { mode: 'read-only', keywords: ['read-only', 'readonly', 'read', '只读'] },
   {
     mode: 'workspace-write',
+    // i18n-exempt: /permission 的用户输入别名，不是展示文案
     keywords: ['workspace-write', 'workspace', 'write', '工作区', '写入'],
   },
+  // i18n-exempt: /permission 的用户输入别名，不是展示文案
   { mode: 'full-access', keywords: ['full-access', 'full', '完全'] },
 ];
 

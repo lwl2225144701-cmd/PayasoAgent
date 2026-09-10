@@ -9,6 +9,8 @@ import {
   previewAvailableModels,
   updateModel,
 } from '../../api';
+import { useI18n } from '../../i18n';
+import type { Translate } from '../../i18n/translate';
 import type { ConversationFontSize, LanguageMode } from '../../preferences';
 import type { ThemeMode } from '../../theme';
 import type {
@@ -83,18 +85,18 @@ interface FormState {
   newTag: string;
 }
 
-function statusLabel(status: ModelProviderView['status']): string {
+function statusLabel(status: ModelProviderView['status'], t: Translate): string {
   switch (status) {
     case 'unconfigured':
-      return '未配置';
+      return t('settings.models.status.unconfigured');
     case 'configured':
-      return '待检测';
+      return t('settings.models.status.configured');
     case 'available':
-      return '可用（已检测）';
+      return t('settings.models.status.available');
     case 'error':
-      return '检测失败';
+      return t('settings.models.status.error');
     case 'checking':
-      return '正在检测';
+      return t('settings.models.status.checking');
     default:
       return status;
   }
@@ -113,6 +115,7 @@ function ProviderPicker({
 }) {
   const [open, setOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const { t } = useI18n();
   const selected = providers.find((provider) => provider.id === value);
 
   useEffect(() => {
@@ -144,12 +147,17 @@ function ProviderPicker({
         <span
           className={selected ? styles.providerPickerSelected : styles.providerPickerPlaceholder}
         >
-          {selected?.name ?? (loading ? '加载内置提供方…' : '选择提供方')}
+          {selected?.name ??
+            (loading ? t('settings.models.loadingProviders') : t('settings.models.chooseProvider'))}
         </span>
         <ChevronDownIcon size={15} />
       </button>
       {open && (
-        <div className={styles.providerPickerMenu} role="listbox" aria-label="内置提供方">
+        <div
+          className={styles.providerPickerMenu}
+          role="listbox"
+          aria-label={t('settings.models.builtinProvider')}
+        >
           {providers.map((provider) => (
             <button
               key={provider.id}
@@ -164,7 +172,7 @@ function ProviderPicker({
             >
               <span className={styles.providerPickerName}>{provider.name}</span>
               <span className={styles.providerPickerMeta}>
-                {provider.id} · {provider.models.length} 个模型
+                {provider.id} · {t('settings.models.modelCount', { count: provider.models.length })}
               </span>
             </button>
           ))}
@@ -264,6 +272,7 @@ export function SettingsModal({
   onFontSizeChange,
   onSaved,
 }: SettingsModalProps) {
+  const { t } = useI18n();
   const [models, setModels] = useState<ModelProviderView[]>([]);
   const [loading, setLoading] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('list');
@@ -291,11 +300,11 @@ export function SettingsModal({
       setDefaultId(defResp.defaultProviderId || null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`加载模型列表失败：${msg}`);
+      setError(t('settings.models.loadListFailed', { message: msg }));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open) {
@@ -332,12 +341,12 @@ export function SettingsModal({
       return resp.providers;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`加载内置提供方失败：${msg}`);
+      setError(t('settings.models.loadProvidersFailed', { message: msg }));
       return [];
     } finally {
       setLoadingPiAiProviders(false);
     }
-  }, []);
+  }, [t]);
 
   const startAddPiAi = () => {
     setForm({ ...EMPTY_FORM, tags: [] });
@@ -415,19 +424,21 @@ export function SettingsModal({
     const isBuiltIn = Boolean(form.piProviderId);
     const modelsList = modelsFromTags();
     if (!name || (!isBuiltIn && !baseUrl)) {
-      setError(isBuiltIn ? '名称不能为空。' : '名称和 Base URL 不能为空。');
+      setError(
+        isBuiltIn ? t('settings.models.nameRequired') : t('settings.models.nameAndBaseUrlRequired'),
+      );
       return;
     }
     if (modelsList.length === 0) {
-      setError('至少需要一个模型标识。');
+      setError(t('settings.models.atLeastOneModel'));
       return;
     }
     if (formMode === 'add-pi-ai' && !form.piProviderId) {
-      setError('请选择一个内置提供方。');
+      setError(t('settings.models.providerRequired'));
       return;
     }
     if (formMode === 'add-pi-ai' && !form.apiKey.trim()) {
-      setError('请填写 API 密钥后再保存内置提供方。');
+      setError(t('settings.models.apiKeyRequiredToSave'));
       return;
     }
     // 按模型能力覆盖：收集填写了上下文窗口/最大输出/思考档次或开启了视觉能力的
@@ -449,7 +460,7 @@ export function SettingsModal({
       if (rawWindow) {
         const window = Number(rawWindow);
         if (!Number.isSafeInteger(window) || window <= 0) {
-          setError(`模型 ${tag.value} 的上下文窗口必须是正整数。`);
+          setError(t('settings.models.contextWindowPositiveInteger', { model: tag.value }));
           return;
         }
         contextWindow = window;
@@ -459,7 +470,7 @@ export function SettingsModal({
       if (rawOutput) {
         const output = Number(rawOutput);
         if (!Number.isSafeInteger(output) || output <= 0) {
-          setError(`模型 ${tag.value} 的最大输出必须是正整数。`);
+          setError(t('settings.models.maxOutputPositiveInteger', { model: tag.value }));
           return;
         }
         maxOutputTokens = output;
@@ -514,7 +525,7 @@ export function SettingsModal({
       onSaved?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`保存失败：${msg}`);
+      setError(t('settings.models.saveFailed', { message: msg }));
     } finally {
       setSaving(false);
     }
@@ -531,7 +542,7 @@ export function SettingsModal({
       setForm((prev) => ({ ...prev, apiKey: '', hadApiKey: false }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`清除密钥失败：${msg}`);
+      setError(t('settings.models.clearApiKeyFailed', { message: msg }));
     } finally {
       setSaving(false);
     }
@@ -547,7 +558,7 @@ export function SettingsModal({
       await refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(`删除失败：${msg}`);
+      setError(t('settings.models.deleteFailed', { message: msg }));
       setDeletingId(null);
     }
   };
@@ -579,7 +590,7 @@ export function SettingsModal({
       ).values(),
     );
     if (chatCatalog.length === 0) {
-      setError('检测到模型目录，但没有识别到可用于 Agent 的对话模型；请手动添加模型标识。');
+      setError(t('settings.models.noChatModels'));
       return;
     }
     setSyncError(null);
@@ -604,9 +615,7 @@ export function SettingsModal({
     const selectedCatalog = syncCatalog.filter((model) => selectedIds.has(model.id));
     const merged = mergeCatalogIntoTags(preservedTags, selectedCatalog);
     if (merged.tags.length > 50) {
-      setSyncError(
-        `当前选择 ${merged.tags.length} 个模型，最多只能保存 50 个，请将选择调整到 50 个以内。`,
-      );
+      setSyncError(t('settings.models.tooManyModels', { count: merged.tags.length, max: 50 }));
       return;
     }
     setForm((prev) => ({ ...prev, tags: merged.tags }));
@@ -625,12 +634,12 @@ export function SettingsModal({
       try {
         const providers = piAiProviders.length > 0 ? piAiProviders : await loadPiAiProviders();
         const provider = providers.find((item) => item.id === form.piProviderId);
-        if (!provider) throw new Error('内置提供方未找到');
+        if (!provider) throw new Error(t('settings.models.builtinProviderNotFound'));
         const catalog = catalogFromPiAiProvider(provider);
         openSyncDialog(catalog);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setError(`内置模型目录刷新失败：${msg}`);
+        setError(t('settings.models.builtinCatalogRefreshFailed', { message: msg }));
       } finally {
         setDetectingModels(false);
       }
@@ -644,13 +653,13 @@ export function SettingsModal({
         openSyncDialog(catalog);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setError(`模型检测失败：${msg}`);
+        setError(t('settings.models.detectFailed', { message: msg }));
       } finally {
         setDetectingModels(false);
       }
     } else if (formMode === 'add') {
       if (!form.baseUrl || !form.apiKey) {
-        setError('请填写 API 地址与 API 密钥后再检测模型目录。');
+        setError(t('settings.models.baseUrlAndApiKeyRequired'));
         return;
       }
       setDetectingModels(true);
@@ -660,12 +669,12 @@ export function SettingsModal({
         openSyncDialog(catalog);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setError(`模型检测失败：${msg}`);
+        setError(t('settings.models.detectFailed', { message: msg }));
       } finally {
         setDetectingModels(false);
       }
     } else {
-      setError('请先保存 Provider 后再检测模型目录。');
+      setError(t('settings.models.saveProviderFirst'));
     }
   };
 
@@ -674,10 +683,10 @@ export function SettingsModal({
       const hasApiKey = formMode === 'edit' && (form.hadApiKey || form.apiKey.length > 0);
       const isPiAiForm = formMode === 'add-pi-ai';
       const title = isPiAiForm
-        ? '添加内置提供方'
+        ? t('settings.models.addBuiltinProvider')
         : formMode === 'add'
-          ? '添加自定义提供方'
-          : '编辑提供方';
+          ? t('settings.models.addCustomProvider')
+          : t('settings.models.editProvider');
       return (
         <div className={styles.formCard}>
           <div className={styles.formHeader}>
@@ -687,7 +696,7 @@ export function SettingsModal({
           {isPiAiForm && (
             <div className={styles.field}>
               <label className={styles.label} htmlFor="pi-ai-provider">
-                内置提供方
+                {t('settings.models.builtinProvider')}
               </label>
               <ProviderPicker
                 providers={piAiProviders}
@@ -695,26 +704,24 @@ export function SettingsModal({
                 loading={loadingPiAiProviders}
                 onChange={handlePiAiProviderChange}
               />
-              <div className={styles.tagHint}>
-                目录来自内置模型库；保存后会按模型的真实 API 协议流式调用。
-              </div>
+              <div className={styles.tagHint}>{t('settings.models.builtinCatalogHint')}</div>
             </div>
           )}
           <div className={styles.field}>
             <label className={styles.label} htmlFor="provider-name">
-              名称
+              {t('settings.models.name')}
             </label>
             <input
               id="provider-name"
               className={styles.input}
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="例如 DeepSeek"
+              placeholder={t('settings.models.namePlaceholder')}
             />
           </div>
           <div className={styles.field}>
             <label className={styles.label} htmlFor="provider-api-key">
-              API 密钥
+              {t('settings.models.apiKey')}
             </label>
             <input
               id="provider-api-key"
@@ -724,10 +731,10 @@ export function SettingsModal({
               onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder={
                 hasApiKey
-                  ? '已配置——输入新值可替换'
+                  ? t('settings.models.apiKeyConfiguredPlaceholder')
                   : formMode === 'edit'
-                    ? '留空 = 不修改'
-                    : '输入 API 密钥'
+                    ? t('settings.models.apiKeyUnchangedPlaceholder')
+                    : t('settings.models.apiKeyPlaceholder')
               }
             />
             {formMode === 'edit' && hasApiKey && (
@@ -737,7 +744,7 @@ export function SettingsModal({
                 onClick={handleClearApiKey}
                 disabled={saving}
               >
-                清除密钥
+                {t('settings.models.clearApiKey')}
               </button>
             )}
           </div>
@@ -747,14 +754,16 @@ export function SettingsModal({
               className={styles.collapseButton}
               onClick={() => setCustomOpen((v) => !v)}
             >
-              <span>{customOpen ? '▾' : '▸'} 自定义设置</span>
+              <span>
+                {customOpen ? '▾' : '▸'} {t('settings.models.customSettings')}
+              </span>
             </button>
             {customOpen && (
               <div className={styles.collapseBody}>
                 {!isPiAiForm && !form.piProviderId && (
                   <div className={styles.field}>
                     <label className={styles.label} htmlFor="provider-base-url">
-                      API 地址
+                      {t('settings.models.baseUrl')}
                     </label>
                     <input
                       id="provider-base-url"
@@ -768,7 +777,7 @@ export function SettingsModal({
                 <div className={styles.field}>
                   <div className={styles.tagHeader}>
                     <label className={styles.label} htmlFor="provider-new-tag">
-                      模型目录
+                      {t('settings.models.catalog')}
                     </label>
                     <button
                       type="button"
@@ -784,16 +793,16 @@ export function SettingsModal({
                       }
                     >
                       {detectingModels
-                        ? '刷新中…'
+                        ? t('common.refreshing')
                         : isPiAiForm || form.piProviderId
-                          ? '刷新内置模型'
-                          : '检测并同步模型'}
+                          ? t('settings.models.refreshBuiltinModels')
+                          : t('settings.models.detectAndSync')}
                     </button>
                   </div>
                   <div className={styles.tagHint}>
                     {isPiAiForm || form.piProviderId
-                      ? '使用内置模型目录；模型上下文和协议由模型库提供。'
-                      : '检测后自动同步对话模型和上下文窗口；已手动填写的上下文不会覆盖。'}
+                      ? t('settings.models.builtinCatalogSourceHint')
+                      : t('settings.models.detectHint')}
                   </div>
                   <div className={styles.tagList}>
                     {form.tags.map((tag) => {
@@ -813,8 +822,8 @@ export function SettingsModal({
                             type="number"
                             min={1}
                             className={styles.tagWindowInput}
-                            placeholder="上下文窗口"
-                            title="上下文窗口（tokens，可选；来自模型供应商文档）"
+                            placeholder={t('settings.models.contextWindow')}
+                            title={t('settings.models.contextWindowTitle')}
                             value={tag.contextWindow ?? ''}
                             onChange={(e) =>
                               setForm((prev) => ({
@@ -829,8 +838,8 @@ export function SettingsModal({
                             type="number"
                             min={1}
                             className={styles.tagOutputInput}
-                            placeholder="最大输出"
-                            title="单次回复最大输出（tokens，可选）；留空时按上下文窗口推导"
+                            placeholder={t('settings.models.maxOutput')}
+                            title={t('settings.models.maxOutputTitle')}
                             value={tag.maxOutputTokens ?? ''}
                             onChange={(e) =>
                               setForm((prev) => ({
@@ -874,7 +883,7 @@ export function SettingsModal({
                             role="switch"
                             aria-checked={tag.vision ?? false}
                             className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
-                            title="该模型支持图片输入（视觉能力）；已按模型声明预选"
+                            title={t('settings.models.visionTitle')}
                             onClick={() =>
                               setForm((prev) => ({
                                 ...prev,
@@ -884,7 +893,7 @@ export function SettingsModal({
                               }))
                             }
                           >
-                            视觉
+                            {t('settings.models.vision')}
                           </button>
                           <button
                             type="button"
@@ -909,10 +918,10 @@ export function SettingsModal({
                           addTag();
                         }
                       }}
-                      placeholder="输入模型标识"
+                      placeholder={t('settings.models.modelIdPlaceholder')}
                     />
                     <button type="button" className={styles.tagAddButton} onClick={addTag}>
-                      + 添加模型
+                      + {t('settings.models.addModel')}
                     </button>
                   </div>
                 </div>
@@ -926,7 +935,7 @@ export function SettingsModal({
               onClick={cancelForm}
               disabled={saving}
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -934,7 +943,7 @@ export function SettingsModal({
               onClick={handleSave}
               disabled={saving}
             >
-              {saving ? '保存中…' : '保存'}
+              {saving ? t('common.saving') : t('common.save')}
             </button>
           </div>
         </div>
@@ -946,18 +955,18 @@ export function SettingsModal({
         <div className={styles.toolbar}>
           <button type="button" className={styles.secondaryButton} onClick={startAddPiAi}>
             <PlusIcon size={14} />
-            <span>添加内置提供方</span>
+            <span>{t('settings.models.addBuiltinProvider')}</span>
           </button>
           <button type="button" className={styles.primaryButton} onClick={startAdd}>
             <PlusIcon size={14} />
-            <span>添加自定义提供方</span>
+            <span>{t('settings.models.addCustomProvider')}</span>
           </button>
         </div>
         {error && <div className={styles.error}>{error}</div>}
         {loading ? (
-          <div className={styles.placeholder}>加载中…</div>
+          <div className={styles.placeholder}>{t('common.loading')}</div>
         ) : models.length === 0 ? (
-          <div className={styles.placeholder}>暂无模型提供方，点击上方按钮添加。</div>
+          <div className={styles.placeholder}>{t('settings.models.emptyList')}</div>
         ) : (
           <div className={styles.list}>
             {models.map((m) => {
@@ -965,19 +974,27 @@ export function SettingsModal({
                 <div
                   key={m.id}
                   className={styles.card}
-                  title={`${m.name} · ${m.baseUrl} · ${m.hasApiKey ? 'API Key 已配置' : 'API Key 未设置'} · ${statusLabel(m.status)}`}
+                  title={`${m.name} · ${m.baseUrl} · ${
+                    m.hasApiKey ? t('settings.models.apiKeySet') : t('settings.models.apiKeyNotSet')
+                  } · ${statusLabel(m.status, t)}`}
                 >
                   <div className={styles.cardMain}>
                     <div className={styles.cardTitleRow}>
                       <span className={styles.cardTitle}>{m.name}</span>
                       {!m.piProviderId && m.kind === 'custom' && (
-                        <span className={styles.sourceBadge}>自定义</span>
+                        <span className={styles.sourceBadge}>
+                          {t('settings.models.sourceCustom')}
+                        </span>
                       )}
-                      {m.id === defaultId && <span className={styles.defaultBadge}>默认</span>}
+                      {m.id === defaultId && (
+                        <span className={styles.defaultBadge}>
+                          {t('settings.models.defaultBadge')}
+                        </span>
+                      )}
                       <span
                         className={styles.statusDot}
                         data-status={m.status}
-                        title={statusLabel(m.status)}
+                        title={statusLabel(m.status, t)}
                       />
                     </div>
                   </div>
@@ -987,7 +1004,7 @@ export function SettingsModal({
                       className={`${styles.textButton} ${styles.cardEditButton}`}
                       onClick={() => startEdit(m)}
                     >
-                      编辑
+                      {t('common.edit')}
                     </button>
                     {m.kind === 'custom' && (
                       <button
@@ -995,7 +1012,7 @@ export function SettingsModal({
                         className={`${styles.textButton} ${styles.textButtonDanger}`}
                         onClick={() => setDeletingId(m.id)}
                       >
-                        删除
+                        {t('common.delete')}
                       </button>
                     )}
                   </div>
@@ -1033,15 +1050,15 @@ export function SettingsModal({
 
   return (
     <>
-      <Modal onClose={handleModalClose} ariaLabel="设置">
+      <Modal onClose={handleModalClose} ariaLabel={t('settings.title')}>
         <div className={styles.container}>
           <div className={styles.header}>
-            <h2 className={styles.title}>设置</h2>
+            <h2 className={styles.title}>{t('settings.title')}</h2>
             <button
               type="button"
               className={styles.closeButton}
               onClick={handleModalClose}
-              aria-label="关闭"
+              aria-label={t('common.close')}
             >
               <CloseIcon size={16} />
             </button>
@@ -1054,7 +1071,7 @@ export function SettingsModal({
                 onClick={() => setActiveTab('general')}
               >
                 <SettingsIcon size={16} />
-                <span>通用设置</span>
+                <span>{t('settings.tabs.general')}</span>
               </button>
               <button
                 type="button"
@@ -1062,7 +1079,7 @@ export function SettingsModal({
                 onClick={() => setActiveTab('models')}
               >
                 <DatabaseIcon size={16} />
-                <span>模型</span>
+                <span>{t('settings.tabs.models')}</span>
               </button>
               <button
                 type="button"
@@ -1070,7 +1087,7 @@ export function SettingsModal({
                 disabled
               >
                 <SlidersIcon size={16} />
-                <span>插件</span>
+                <span>{t('settings.tabs.plugins')}</span>
               </button>
               <button
                 type="button"
@@ -1078,7 +1095,7 @@ export function SettingsModal({
                 disabled
               >
                 <UserIcon size={16} />
-                <span>Agent 预设</span>
+                <span>{t('settings.tabs.agentPresets')}</span>
               </button>
             </nav>
             <div className={styles.content}>
@@ -1091,7 +1108,7 @@ export function SettingsModal({
           <button
             type="button"
             className={styles.confirmBackdrop}
-            aria-label="取消删除"
+            aria-label={t('settings.models.cancelDelete')}
             onClick={() => setDeletingId(null)}
           >
             {/* biome-ignore lint/a11y/useKeyWithClickEvents: 确认容器仅用于阻止遮罩冒泡，键盘操作由内部"取消"按钮提供 */}
@@ -1099,25 +1116,25 @@ export function SettingsModal({
               className={styles.confirm}
               role="alertdialog"
               aria-modal="true"
-              aria-label="删除提供方确认"
+              aria-label={t('settings.models.deleteConfirmAria')}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className={styles.confirmTitle}>删除提供方</h3>
-              <p className={styles.confirmText}>确定要删除这个模型提供方吗？此操作不可恢复。</p>
+              <h3 className={styles.confirmTitle}>{t('settings.models.deleteProvider')}</h3>
+              <p className={styles.confirmText}>{t('settings.models.deleteConfirm')}</p>
               <div className={styles.confirmActions}>
                 <button
                   type="button"
                   className={`${styles.primaryButton} ${styles.dangerButton}`}
                   onClick={confirmDelete}
                 >
-                  删除
+                  {t('common.delete')}
                 </button>
                 <button
                   type="button"
                   className={styles.secondaryButton}
                   onClick={() => setDeletingId(null)}
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </div>

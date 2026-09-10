@@ -2,6 +2,10 @@
 // 数据来自 plan-state.derivePlan（事件派生，无本地状态）；面板本身不持有计划状态。
 
 import { memo, useState } from 'react';
+import { useI18n } from '../../i18n';
+import type { MessageKey } from '../../i18n/messages';
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
 import { ChevronDownIcon } from '../icons';
 import styles from './PlanPanel.module.css';
 import type { PlanItemStatus, PlanView } from './plan-state';
@@ -12,10 +16,11 @@ const STATUS_MARK: Record<PlanItemStatus, string> = {
   completed: '✓',
 };
 
-const STATUS_TEXT: Record<PlanItemStatus, string> = {
-  pending: '待办',
-  in_progress: '进行中',
-  completed: '已完成',
+// 用户可见的「计划项状态」按语言取的 key：状态词本体在 common 消息表（跨领域复用）。
+const STATUS_TEXT_KEY: Record<PlanItemStatus, MessageKey> = {
+  pending: 'common.status.pending',
+  in_progress: 'common.status.inProgress',
+  completed: 'common.status.completed',
 };
 
 export const PlanPanel = memo(function PlanPanel({
@@ -25,20 +30,21 @@ export const PlanPanel = memo(function PlanPanel({
   plan: PlanView;
   running: boolean;
 }) {
+  const { t, language } = useI18n();
   // 默认跟随 Run 状态（运行中展开、结束后折叠）；用户点过之后以用户选择为准。
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
   const expanded = userToggled ?? running;
   const percent = plan.total > 0 ? Math.round((plan.completed / plan.total) * 100) : 0;
 
   return (
-    <section className={styles.panel} aria-label="任务计划">
+    <section className={styles.panel} aria-label={t('timeline.plan.ariaLabel')}>
       <button
         type="button"
         className={styles.header}
         onClick={() => setUserToggled(!expanded)}
         aria-expanded={expanded}
       >
-        <span className={styles.title}>计划</span>
+        <span className={styles.title}>{t('timeline.plan.title')}</span>
         <span className={styles.count}>
           {plan.completed}/{plan.total}
         </span>
@@ -48,7 +54,7 @@ export const PlanPanel = memo(function PlanPanel({
             style={{ width: `${percent}%` }}
           />
         </span>
-        {!expanded && <span className={styles.summary}>{summarize(plan, running)}</span>}
+        {!expanded && <span className={styles.summary}>{summarize(plan, running, language)}</span>}
         <ChevronDownIcon size={14} className={expanded ? styles.chevronOpen : styles.chevron} />
       </button>
 
@@ -60,7 +66,7 @@ export const PlanPanel = memo(function PlanPanel({
                 {STATUS_MARK[item.status]}
               </span>
               <span className={styles.itemTitle}>{item.title}</span>
-              <span className={styles.statusText}>{STATUS_TEXT[item.status]}</span>
+              <span className={styles.statusText}>{t(STATUS_TEXT_KEY[item.status])}</span>
             </li>
           ))}
         </ol>
@@ -69,10 +75,18 @@ export const PlanPanel = memo(function PlanPanel({
   );
 });
 
-function summarize(plan: PlanView, running: boolean): string {
-  if (plan.allDone) return `全部完成（${plan.total} 项）`;
+function summarize(plan: PlanView, running: boolean, language: LanguageMode): string {
+  if (plan.allDone) {
+    return translate(language, 'timeline.plan.summaryAllDone', { count: plan.total });
+  }
   // 终态仍有未完成项：如实说明（对应 trace 里的 plan_incomplete_at_finish 审计事件）。
-  if (!running) return `结束时仍有 ${plan.total - plan.completed} 项未完成`;
+  if (!running) {
+    return translate(language, 'timeline.plan.summaryIncomplete', {
+      count: plan.total - plan.completed,
+    });
+  }
   const active = plan.items.find((item) => item.status === 'in_progress');
-  return active ? `进行中：${active.title}` : `待办 ${plan.total - plan.completed} 项`;
+  return active
+    ? translate(language, 'timeline.plan.summaryActive', { title: active.title })
+    : translate(language, 'timeline.plan.summaryPending', { count: plan.total - plan.completed });
 }

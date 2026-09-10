@@ -2,6 +2,8 @@
 // 从事件流里折叠出"当前计划"，供 PlanPanel 渲染。与 context-gauge.ts 同风格——
 // 组件只负责画，折叠逻辑可单独跑确定性测试。
 
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
 import type { HostEvent, PlanUpdateEvent } from '../../types';
 
 export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
@@ -89,8 +91,13 @@ function clipTitle(title: string): string {
  * 为什么这样做"视觉呼应"而不是把工具调用和计划项连线：事件里**没有**计划项与工具调用的
  * 对应关系，任何自动连线都是猜测。我们能确定性知道的是"这一步之后计划变成了什么"，
  * 所以只在对应 step 上落一行说明 —— 宁缺勿错。
+ *
+ * 说明文案跟随语言（末位可选入参，默认中文；不传时输出与改造前一致）。
  */
-export function derivePlanNotes(events: HostEvent[]): Map<number, PlanNote> {
+export function derivePlanNotes(
+  events: HostEvent[],
+  language: LanguageMode = 'zh-CN',
+): Map<number, PlanNote> {
   const updates: PlanUpdateEvent[] = [];
   for (const event of events) {
     if (event.type !== 'plan_update') continue;
@@ -104,7 +111,7 @@ export function derivePlanNotes(events: HostEvent[]): Map<number, PlanNote> {
   let previous: PlanItemView[] = [];
   for (const update of updates) {
     const items = sanitizeItems(update.items);
-    const described = describeChange(previous, items);
+    const described = describeChange(previous, items, language);
     if (described) {
       const step = Number.isSafeInteger(update.step) ? update.step : 0;
       notes.set(step, { step, ...described });
@@ -117,10 +124,18 @@ export function derivePlanNotes(events: HostEvent[]): Map<number, PlanNote> {
 function describeChange(
   before: PlanItemView[],
   after: PlanItemView[],
+  language: LanguageMode,
 ): { text: string; kind: PlanNote['kind'] } | null {
   if (before.length === 0 && after.length === 0) return null;
-  if (before.length === 0) return { text: `计划已建立 · ${after.length} 项`, kind: 'created' };
-  if (after.length === 0) return { text: '计划已清空', kind: 'cleared' };
+  if (before.length === 0) {
+    return {
+      text: translate(language, 'timeline.planNote.created', { count: after.length }),
+      kind: 'created',
+    };
+  }
+  if (after.length === 0) {
+    return { text: translate(language, 'timeline.planNote.cleared'), kind: 'cleared' };
+  }
 
   const beforeById = new Map(before.map((item) => [item.id, item]));
   const completed = after.filter(
@@ -133,15 +148,35 @@ function describeChange(
   const allDone = completedCount === after.length;
 
   if (completed.length === 0 && !started) {
-    return { text: `计划已更新 · ${completedCount}/${after.length} 完成`, kind: 'progress' };
+    return {
+      text: translate(language, 'timeline.planNote.updated', {
+        completed: completedCount,
+        total: after.length,
+      }),
+      kind: 'progress',
+    };
   }
   const parts: string[] = [];
   if (completed.length > 0) {
-    parts.push(`✅ 完成：${completed.map((item) => clipTitle(item.title)).join('、')}`);
+    parts.push(
+      translate(language, 'timeline.planNote.completed', {
+        titles: completed
+          .map((item) => clipTitle(item.title))
+          .join(translate(language, 'timeline.planNote.titleJoiner')),
+      }),
+    );
   }
-  if (started) parts.push(`▶ 开始：${clipTitle(started.title)}`);
+  if (started) {
+    parts.push(
+      translate(language, 'timeline.planNote.started', { title: clipTitle(started.title) }),
+    );
+  }
   return {
-    text: `${parts.join(' · ')}（${completedCount}/${after.length}）`,
+    text: translate(language, 'timeline.planNote.summary', {
+      parts: parts.join(' · '),
+      completed: completedCount,
+      total: after.length,
+    }),
     kind: allDone ? 'done' : 'progress',
   };
 }

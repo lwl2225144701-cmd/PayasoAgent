@@ -1,4 +1,5 @@
 import { type CSSProperties, memo, useState } from 'react';
+import { useI18n } from '../i18n';
 import styles from './CollapsibleText.module.css';
 import { MarkdownText } from './MarkdownText';
 
@@ -42,6 +43,7 @@ export const CollapsibleText = memo(function CollapsibleText({
   maxLinesSoft,
 }: CollapsibleTextProps) {
   const [open, setOpen] = useState(false);
+  const { t } = useI18n();
   const clamped = maxChars > 0 && !open && text.length > maxChars;
   const display = clamped ? `${text.slice(0, maxChars)}…` : text;
   const lineClampStyle: CSSProperties | undefined =
@@ -74,7 +76,7 @@ export const CollapsibleText = memo(function CollapsibleText({
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
         >
-          {open ? '收起' : '显示更多'}
+          {open ? t('common.collapse') : t('widgets.collapsibleText.showMore')}
         </button>
       )}
     </div>

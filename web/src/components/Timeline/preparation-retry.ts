@@ -4,6 +4,8 @@
 // 命令"，以新会话轮次发起 —— 新轮次拥有全新的 side-effect 身份空间（无
 // uncertain 阻塞），Runtime 绝不自动重放原命令。
 
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
 import type { HostEvent } from '../../types';
 
 /**
@@ -25,12 +27,15 @@ export function findLastFailedShellCommand(events: HostEvent[]): string | null {
   return lastFailed;
 }
 
-/** 组装显式重试的用户消息（作为新会话轮次发送）。 */
-export function composeToolchainRetryMessage(command: string): string {
+/** 组装显式重试的用户消息（作为新会话轮次发送）；语言为末位可选入参，默认中文。 */
+export function composeToolchainRetryMessage(
+  command: string,
+  language: LanguageMode = 'zh-CN',
+): string {
   return [
-    '依赖已安装完成，请重新执行之前失败的命令：',
+    translate(language, 'timeline.retry.intro'),
     `\`${command}\``,
     '',
-    '（这是我在依赖准备完成后明确发起的重试；如果该命令仍不可用，请告诉我原因。）',
+    translate(language, 'timeline.retry.note'),
   ].join('\n');
 }

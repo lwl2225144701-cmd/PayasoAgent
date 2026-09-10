@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useI18n } from '../../i18n';
 import { ChevronDownIcon, ThinkIcon } from '../icons';
 import styles from './ThinkBlock.module.css';
 
@@ -7,12 +8,13 @@ interface ThinkBlockProps {
 }
 
 export function ThinkBlock({ text }: ThinkBlockProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const preview = text.replace(/\s+/g, ' ').trim();
   const shortPreview = preview.length > 180 ? `${preview.slice(0, 180)}…` : preview;
 
   return (
-    <section className={styles.block} aria-label="模型思考">
+    <section className={styles.block} aria-label={t('timeline.think.ariaLabel')}>
       <button
         type="button"
         className={styles.toggle}
@@ -23,7 +25,7 @@ export function ThinkBlock({ text }: ThinkBlockProps) {
           <ThinkIcon size={16} className={styles.atomIcon} />
           <ChevronDownIcon size={14} className={styles.hoverIcon} />
         </span>
-        <span className={styles.label}>思考过程</span>
+        <span className={styles.label}>{t('timeline.think.label')}</span>
         {!open && (
           <>
             <span className={styles.separator}>·</span>

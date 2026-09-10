@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { useI18n } from '../../i18n';
+import type { MessageKey } from '../../i18n/messages';
 import type { ThemeMode } from '../../theme';
 import { MonitorIcon, MoonIcon, SunIcon } from '../icons';
 import styles from './AppearanceSettings.module.css';
@@ -10,25 +12,30 @@ interface AppearanceSettingsProps {
 
 interface ThemeOption {
   mode: ThemeMode;
-  label: string;
+  labelKey: MessageKey;
   icon: ReactNode;
 }
 
 const THEME_OPTIONS: ThemeOption[] = [
-  { mode: 'light', label: '浅色', icon: <SunIcon size={20} /> },
-  { mode: 'dark', label: '深色', icon: <MoonIcon size={20} /> },
-  { mode: 'system', label: '跟随系统', icon: <MonitorIcon size={20} /> },
+  { mode: 'light', labelKey: 'settings.appearance.light', icon: <SunIcon size={20} /> },
+  { mode: 'dark', labelKey: 'settings.appearance.dark', icon: <MoonIcon size={20} /> },
+  { mode: 'system', labelKey: 'settings.appearance.system', icon: <MonitorIcon size={20} /> },
 ];
 
 export function AppearanceSettings({ mode, onChange }: AppearanceSettingsProps) {
+  const { t } = useI18n();
   return (
     <section className={styles.section} aria-labelledby="appearance-settings-title">
       <div className={styles.header}>
         <h3 id="appearance-settings-title" className={styles.title}>
-          外观
+          {t('settings.appearance.title')}
         </h3>
       </div>
-      <div className={styles.options} role="radiogroup" aria-label="主题模式">
+      <div
+        className={styles.options}
+        role="radiogroup"
+        aria-label={t('settings.appearance.themeModeAria')}
+      >
         {THEME_OPTIONS.map((option) => {
           const selected = option.mode === mode;
           return (
@@ -42,7 +49,7 @@ export function AppearanceSettings({ mode, onChange }: AppearanceSettingsProps) 
               onClick={() => onChange(option.mode)}
             >
               <span className={styles.icon}>{option.icon}</span>
-              <span className={styles.label}>{option.label}</span>
+              <span className={styles.label}>{t(option.labelKey)}</span>
             </button>
           );
         })}

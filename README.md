@@ -54,6 +54,9 @@
 
 * 深色"文档流"界面：会话列表、流式 Timeline（思考折叠、工具调用极简行、上下文压缩弱提示）、模型/权限选择、设置弹窗
 
+* 中英双语界面：设置 → 通用设置 → 语言可切换（`zh-CN` / `en-US`），文案集中在前端 `web/src/i18n/`
+  （约定见 `web/src/i18n/CONVENTIONS.md`）；`tests/frontend-i18n-coverage.test.ts` 是"用户可见位置不得残留中文"的验收闸门
+
 ## 快速启动
 
 要求 **Node.js ≥ 22.5**（使用 `node:sqlite`；`nvm use` 可读取仓库 `.nvmrc`）。

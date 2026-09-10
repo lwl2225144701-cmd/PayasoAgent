@@ -2,12 +2,10 @@
 // 纯函数与组件分离，便于 node 测试。所有折叠都是确定性纯函数，供
 // RunUsage / ContextUsageRing / InputBar 环形与测试复用。
 
-import type {
-  ContextUsageEvent,
-  HostEvent,
-  LlmCallStartedEvent,
-  TokenUsage,
-} from '../../types';
+import type { MessageKey } from '../../i18n/messages';
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
+import type { ContextUsageEvent, HostEvent, LlmCallStartedEvent, TokenUsage } from '../../types';
 
 // ---- 用量校验（镜像 host src/llm/token-usage.ts 的 isValidTokenUsage）----
 // web 是独立 Vite 构建，不跨项目引用 host 源码；校验规则必须与 host 保持一致，
@@ -291,30 +289,49 @@ export function formatContextTokens(tokens: number): string {
 }
 
 /** 精确用量的分项展示（未缓存输入 / 输出 / cache / 推理），仅在有分桶时可用。 */
-export function formatTokenBreakdown(usage: RunTokenUsage): string {
+export function formatTokenBreakdown(
+  usage: RunTokenUsage,
+  language: LanguageMode = 'zh-CN',
+): string {
   if (!usage.hasBuckets) return '';
+  const part = (key: MessageKey, tokens: number) =>
+    translate(language, key, { value: formatContextTokens(tokens) });
   const parts = [
-    `输入 ${formatContextTokens(usage.inputTokens)}`,
-    `输出 ${formatContextTokens(usage.outputTokens)}`,
+    part('widgets.usage.input', usage.inputTokens),
+    part('widgets.usage.output', usage.outputTokens),
   ];
-  if (usage.cacheReadTokens > 0) parts.push(`缓存读 ${formatContextTokens(usage.cacheReadTokens)}`);
+  if (usage.cacheReadTokens > 0) parts.push(part('widgets.usage.cacheRead', usage.cacheReadTokens));
   if (usage.cacheWriteTokens > 0)
-    parts.push(`缓存写 ${formatContextTokens(usage.cacheWriteTokens)}`);
-  if (usage.reasoningTokens > 0) parts.push(`推理 ${formatContextTokens(usage.reasoningTokens)}`);
+    parts.push(part('widgets.usage.cacheWrite', usage.cacheWriteTokens));
+  if (usage.reasoningTokens > 0) parts.push(part('widgets.usage.reasoning', usage.reasoningTokens));
   return parts.join(' · ');
 }
 
 /** 悬停明细（模型 / 已用 / 预算 / 占比 / 真实压力锚点 / 特殊状态）。 */
-export function contextGaugeTitle(usage: ContextUsageEvent): string {
+export function contextGaugeTitle(
+  usage: ContextUsageEvent,
+  language: LanguageMode = 'zh-CN',
+): string {
   const parts = [
-    `上下文 ${formatContextTokens(usage.estimatedInputTokens)} / ${formatContextTokens(usage.inputBudgetTokens)} tokens（${Math.round(usage.usageRatio * 100)}%）`,
-    `模型 ${usage.model}`,
+    translate(language, 'widgets.contextGauge.title.context', {
+      used: formatContextTokens(usage.estimatedInputTokens),
+      budget: formatContextTokens(usage.inputBudgetTokens),
+      percent: Math.round(usage.usageRatio * 100),
+    }),
+    translate(language, 'widgets.contextGauge.title.model', { model: usage.model }),
   ];
   if (usage.pressureTokens !== undefined && usage.pressureTokens > 0) {
-    parts.push(`上次上报真实 ${formatContextTokens(usage.pressureTokens)}`);
+    parts.push(
+      translate(language, 'widgets.contextGauge.title.pressure', {
+        value: formatContextTokens(usage.pressureTokens),
+      }),
+    );
   }
-  if (usage.emergencyTrim) parts.push('已触发紧急裁剪');
-  if (usage.configSource === 'fallback') parts.push('模型能力未知，按保守预算估计');
+  if (usage.emergencyTrim)
+    parts.push(translate(language, 'widgets.contextGauge.title.emergencyTrim'));
+  if (usage.configSource === 'fallback') {
+    parts.push(translate(language, 'widgets.contextGauge.title.fallbackBudget'));
+  }
   return parts.join(' · ');
 }
 
@@ -329,15 +346,21 @@ export type CompactStatusState =
     };
 
 /** /compact 状态行文案：进行中 / 量化结果 / 两类零结果原因。 */
-export function compactStatusText(status: CompactStatusState): string {
-  if (status.phase === 'running') return '正在压缩…';
+export function compactStatusText(
+  status: CompactStatusState,
+  language: LanguageMode = 'zh-CN',
+): string {
+  if (status.phase === 'running') return translate(language, 'widgets.compact.running');
   if (status.summarizedMessages > 0) {
-    return `已压缩 ${status.summarizedMessages} 条历史记录（约 ${formatContextTokens(status.compactedTokens)} tokens）`;
+    return translate(language, 'widgets.compact.done', {
+      count: status.summarizedMessages,
+      tokens: formatContextTokens(status.compactedTokens),
+    });
   }
   if (status.reason === 'no_checkpoint') {
-    return '该会话没有可用的运行记录（checkpoint），无法压缩';
+    return translate(language, 'widgets.compact.noCheckpoint');
   }
-  return '没有可压缩的历史记录';
+  return translate(language, 'widgets.compact.nothingCompactable');
 }
 
 /**
@@ -376,9 +399,14 @@ export function applyCompactUsage(
  * 预算推导说明：窗口 = 输入预算 + 输出预留 + 安全余量。
  * 解释分母为何小于用户配置的上下文窗口（如 1M 窗口显示 976K 预算）。
  */
-export function formatBudgetDerivation(usage: ContextUsageEvent): string {
-  return (
-    `窗口 ${formatContextTokens(usage.contextWindowTokens)} = 预算 ${formatContextTokens(usage.inputBudgetTokens)}` +
-    ` + 输出预留 ${formatContextTokens(usage.maxOutputTokens)} + 安全 ${formatContextTokens(usage.safetyTokens)}`
-  );
+export function formatBudgetDerivation(
+  usage: ContextUsageEvent,
+  language: LanguageMode = 'zh-CN',
+): string {
+  return translate(language, 'widgets.contextGauge.budgetDerivation', {
+    window: formatContextTokens(usage.contextWindowTokens),
+    budget: formatContextTokens(usage.inputBudgetTokens),
+    output: formatContextTokens(usage.maxOutputTokens),
+    safety: formatContextTokens(usage.safetyTokens),
+  });
 }

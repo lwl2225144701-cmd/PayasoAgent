@@ -7,8 +7,9 @@
 | 目的 | 命令 | 量级 |
 | --- | --- | --- |
 | 单个确定性套件（定位问题） | `node --import tsx tests/<suite>.test.ts` | ~1s |
-| 全量确定性套件（无 LLM，68 个） | `npm run test:all` | ~17s（有界并发） |
+| 全量确定性套件（无 LLM，70 个） | `npm run test:all` | ~17s（有界并发） |
 | 类型检查 | `npx tsc --noEmit` | ~2s |
+| 界面文案残留扫描（i18n） | `npx tsx tests/helpers/i18n-check.ts [文件…]` | <1s |
 | 前端生产构建 | `npm run build:web` | ~5s |
 | 需 LLM：Host 集成 / E2E / 压测 26 场景 | `npm run test:host` / `npm test` / `npm run test:stress` | 分钟级 |
 

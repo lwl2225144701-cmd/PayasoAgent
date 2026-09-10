@@ -1,4 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useI18n } from '../../i18n';
+import type { MessageKey } from '../../i18n/messages';
+import type { MessageParams } from '../../i18n/translate';
 import { readThemeMode, resolveThemeMode } from '../../theme';
 import styles from './MermaidBlock.module.css';
 
@@ -131,9 +134,11 @@ function enqueueRender(task: () => Promise<void>): Promise<void> {
 
 export function MermaidBlock({ chart }: { chart: string }) {
   const rawId = useId();
+  const { t } = useI18n();
   const chartRef = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  // 失败原因存消息 key 而不是成品字符串：渲染时再取文案，语言切换后回退提示跟着变。
+  const [failure, setFailure] = useState<{ key: MessageKey; params?: MessageParams } | null>(null);
   const [themeTick, setThemeTick] = useState(0);
   const [fontSize, setFontSize] = useState(18);
   const [stackWideChart, setStackWideChart] = useState(false);
@@ -203,8 +208,9 @@ export function MermaidBlock({ chart }: { chart: string }) {
     const timer = setTimeout(() => {
       if (cancelled || settled) return;
       settled = true;
+      // i18n-exempt: 纯开发期日志（console.error），不是界面文案
       console.error('[MermaidBlock] 渲染超时:', chart.slice(0, 80));
-      setFailure('渲染超时——页面版本可能已过期，请刷新页面后重试');
+      setFailure({ key: 'widgets.mermaid.timeout' });
     }, RENDER_TIMEOUT_MS);
     const dark = currentDark();
     enqueueRender(async () => {
@@ -230,13 +236,17 @@ export function MermaidBlock({ chart }: { chart: string }) {
         if (cancelled || settled) return;
         settled = true;
         clearTimeout(timer);
+        // i18n-exempt: 纯开发期日志（console.error），不是界面文案
         console.error('[MermaidBlock] 渲染失败:', err);
         const message = err instanceof Error ? err.message : String(err);
         // 动态 chunk 加载失败 = 打开中的页面落后于最近一次构建（hash 已换代）
         if (/dynamically imported module|MIME type|error loading|Failed to fetch/i.test(message)) {
-          setFailure('图表组件加载失败——页面版本已过期，请刷新页面后重试');
+          setFailure({ key: 'widgets.mermaid.loadFailed' });
         } else {
-          setFailure(`mermaid 语法有误：${message.slice(0, 200)}`);
+          setFailure({
+            key: 'widgets.mermaid.syntaxError',
+            params: { message: message.slice(0, 200) },
+          });
         }
       }
     });
@@ -251,7 +261,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
     return (
       <div ref={chartRef} className={styles.wrap}>
         <pre className={styles.error}>{chart}</pre>
-        <p className={styles.note}>{failure}</p>
+        <p className={styles.note}>{t(failure.key, failure.params)}</p>
       </div>
     );
   }
@@ -266,7 +276,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
   if (!svg) {
     return (
       <div ref={chartRef} className={styles.wrap}>
-        <p className={styles.note}>图表渲染中…</p>
+        <p className={styles.note}>{t('widgets.mermaid.rendering')}</p>
       </div>
     );
   }

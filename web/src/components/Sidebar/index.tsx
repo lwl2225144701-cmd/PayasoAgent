@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n';
 import type { HostSession, WorkspaceView } from '../../types';
 import { IconButton } from '../IconButton';
 import { PanelLeftIcon, PlusIcon, SettingsIcon } from '../icons';
@@ -39,6 +40,7 @@ export function Sidebar({
   onOpenWorkspace,
   onOpenSettings,
 }: SidebarProps) {
+  const { t } = useI18n();
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
       <div className={styles.logoRow}>
@@ -46,8 +48,8 @@ export function Sidebar({
           <button
             className={styles.collapsedLogoBtn}
             type="button"
-            title="展开侧栏"
-            aria-label="展开侧栏"
+            title={t('shell.sidebar.expand')}
+            aria-label={t('shell.sidebar.expand')}
             onClick={onToggleCollapsed}
           >
             <img
@@ -72,8 +74,8 @@ export function Sidebar({
               buttonSize="sm"
               variant="ghost"
               shape="rounded"
-              title="收起侧栏"
-              aria-label="收起侧栏"
+              title={t('shell.sidebar.collapse')}
+              aria-label={t('shell.sidebar.collapse')}
               aria-pressed={false}
               onClick={onToggleCollapsed}
             >
@@ -86,7 +88,7 @@ export function Sidebar({
       <div className={styles.newTaskWrap}>
         <button type="button" className={styles.newTaskBtn} onClick={onNewTask}>
           <PlusIcon size={15} />
-          <span>新建任务</span>
+          <span>{t('shell.action.newTask')}</span>
         </button>
       </div>
 
@@ -107,9 +109,14 @@ export function Sidebar({
       </div>
 
       <div className={styles.footer}>
-        <button className={styles.settingsBtn} title="设置" type="button" onClick={onOpenSettings}>
+        <button
+          className={styles.settingsBtn}
+          title={t('shell.sidebar.settings')}
+          type="button"
+          onClick={onOpenSettings}
+        >
           <SettingsIcon size={18} />
-          <span>设置</span>
+          <span>{t('shell.sidebar.settings')}</span>
         </button>
       </div>
     </aside>

@@ -1,5 +1,11 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { browseDirectory, createWorkspaceDirectory, type DirectoryEntry, type DirectoryListing } from '../../api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  browseDirectory,
+  createWorkspaceDirectory,
+  type DirectoryEntry,
+  type DirectoryListing,
+} from '../../api';
+import { useI18n } from '../../i18n';
 import { Modal } from '../Modal';
 import styles from './WorkspacePickerModal.module.css';
 
@@ -26,6 +32,7 @@ const INITIAL_STATE: PickerState = {
 };
 
 export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePickerModalProps) {
+  const { t } = useI18n();
   const [state, setState] = useState<PickerState>(INITIAL_STATE);
   // Edit path（直填绝对路径，仿 dsh）：受控输入 + 编辑标记，导航成功后回填规范化路径
   const [draftPath, setDraftPath] = useState('');
@@ -49,14 +56,14 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
           setState((prev) => ({
             ...prev,
             loading: false,
-            error: err instanceof Error ? err.message : '无法加载目录列表',
+            error: err instanceof Error ? err.message : t('shell.picker.loadListFailed'),
           }));
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, t]);
 
   // listing.path 变化（点击导航/编辑提交成功）且用户未在编辑输入时同步路径框
   useEffect(() => {
@@ -65,20 +72,23 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
     }
   }, [state.listing?.path, state.listing]);
 
-  const handleNavigate = useCallback(async (path: string) => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
-    try {
-      const listing = await browseDirectory(path);
-      setState((prev) => ({ ...prev, listing, loading: false }));
-      editingRef.current = false;
-    } catch (err) {
-      setState((prev) => ({
-        ...prev,
-        loading: false,
-        error: err instanceof Error ? err.message : '无法加载目录',
-      }));
-    }
-  }, []);
+  const handleNavigate = useCallback(
+    async (path: string) => {
+      setState((prev) => ({ ...prev, loading: true, error: null }));
+      try {
+        const listing = await browseDirectory(path);
+        setState((prev) => ({ ...prev, listing, loading: false }));
+        editingRef.current = false;
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          error: err instanceof Error ? err.message : t('shell.picker.loadFailed'),
+        }));
+      }
+    },
+    [t],
+  );
 
   // Edit path 提交：直填/粘贴绝对路径回车即直达（无匹配目录则提示错误保留输入）
   const handlePathSubmit = useCallback(async () => {
@@ -99,17 +109,24 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
         ...prev,
         creating: false,
         newFolderName: '',
-        listing: { ...prev.listing!, path: createdPath, home: prev.listing!.home, crumbs: prev.listing!.crumbs, entries: prev.listing!.entries, truncated: prev.listing!.truncated },
+        listing: {
+          ...prev.listing!,
+          path: createdPath,
+          home: prev.listing!.home,
+          crumbs: prev.listing!.crumbs,
+          entries: prev.listing!.entries,
+          truncated: prev.listing!.truncated,
+        },
       }));
       await handleNavigate(createdPath);
     } catch (err) {
       setState((prev) => ({
         ...prev,
         creating: false,
-        error: err instanceof Error ? err.message : '创建文件夹失败',
+        error: err instanceof Error ? err.message : t('shell.picker.createFailed'),
       }));
     }
-  }, [state.newFolderName, state.listing, handleNavigate]);
+  }, [state.newFolderName, state.listing, handleNavigate, t]);
 
   const handleSelect = useCallback(
     (entry: DirectoryEntry) => {
@@ -126,19 +143,21 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
 
   const entries = useMemo(() => {
     if (!state.listing) return [];
-    return state.listing.entries.filter((e) => !e.hidden).sort((a, b) => a.name.localeCompare(b.name));
+    return state.listing.entries
+      .filter((e) => !e.hidden)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [state.listing]);
 
   return (
     <Modal
       onClose={onClose}
-      ariaLabel="选择文件夹"
+      ariaLabel={t('shell.picker.title')}
       width="min(430px, calc(100vw - 48px))"
       height="min(380px, calc(100vh - 48px))"
     >
       <div className={styles.container}>
         <div className={styles.header}>
-          <div className={styles.title}>选择文件夹</div>
+          <div className={styles.title}>{t('shell.picker.title')}</div>
         </div>
 
         {state.error && <div className={styles.error}>{state.error}</div>}
@@ -148,7 +167,7 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
             className={styles.pathInput}
             type="text"
             spellCheck={false}
-            placeholder="输入或粘贴绝对路径后回车，直达该目录"
+            placeholder={t('shell.picker.pathPlaceholder')}
             value={draftPath}
             onChange={(e) => {
               setDraftPath(e.target.value);
@@ -157,7 +176,7 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
             onKeyDown={(e) => {
               if (e.key === 'Enter') void handlePathSubmit();
             }}
-            aria-label="编辑路径"
+            aria-label={t('shell.picker.pathLabel')}
           />
           <button
             type="button"
@@ -165,7 +184,7 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
             disabled={!draftPath.trim() || state.loading}
             onClick={() => void handlePathSubmit()}
           >
-            {state.loading ? '加载中…' : '前往'}
+            {state.loading ? t('common.loading') : t('shell.picker.go')}
           </button>
         </div>
 
@@ -188,9 +207,9 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
         </div>
 
         <div className={styles.list}>
-          {state.loading && <div className={styles.loading}>加载中…</div>}
+          {state.loading && <div className={styles.loading}>{t('common.loading')}</div>}
           {!state.loading && entries.length === 0 && (
-            <div className={styles.empty}>此文件夹为空</div>
+            <div className={styles.empty}>{t('shell.picker.empty')}</div>
           )}
           {entries.map((entry) => (
             <button
@@ -206,11 +225,15 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
                   handleSelect(entry);
                 }
               }}
-              title={state.listing?.path === '' ? '进入此盘符' : '双击选择此文件夹'}
+              title={
+                state.listing?.path === ''
+                  ? t('shell.picker.enterDrive')
+                  : t('shell.picker.doubleClickSelect')
+              }
             >
               <span className={styles.icon}>📁</span>
               <span className={styles.name}>{entry.name}</span>
-              <span className={styles.hint}>双击选择</span>
+              <span className={styles.hint}>{t('shell.picker.doubleClickHint')}</span>
             </button>
           ))}
         </div>
@@ -220,7 +243,7 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
             <input
               className={styles.input}
               type="text"
-              placeholder="新建文件夹名称"
+              placeholder={t('shell.picker.newFolderPlaceholder')}
               value={state.newFolderName}
               onChange={(e) => setState((prev) => ({ ...prev, newFolderName: e.target.value }))}
               onKeyDown={(e) => {
@@ -233,12 +256,12 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
               onClick={() => handleCreateFolder()}
               disabled={state.creating || !state.newFolderName.trim()}
             >
-              {state.creating ? '创建中…' : '新建'}
+              {state.creating ? t('shell.picker.creating') : t('shell.picker.create')}
             </button>
           </div>
           <div className={styles.actions}>
             <button type="button" className={styles.cancelBtn} onClick={onClose}>
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -246,7 +269,7 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
               disabled={!state.listing || state.listing.path === ''}
               onClick={() => state.listing && onSelect(state.listing.path)}
             >
-              选择当前文件夹
+              {t('shell.picker.selectCurrent')}
             </button>
           </div>
         </div>

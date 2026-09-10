@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../../i18n';
 import type { PermissionMode } from '../../types';
 import { DropdownTrigger } from '../DropdownTrigger';
 import { CheckIcon } from '../icons';
@@ -20,9 +21,10 @@ interface PermissionDropdownProps {
 export function PermissionDropdown({
   mode,
   onChange,
-  ariaLabel = '文件系统权限',
+  ariaLabel,
   placement = 'up',
 }: PermissionDropdownProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const current =
@@ -41,9 +43,7 @@ export function PermissionDropdown({
 
   const select = (next: PermissionMode) => {
     if (next === 'full-access' && mode !== 'full-access') {
-      const confirmed = window.confirm(
-        'Full access 允许 Agent 读取、修改和删除当前用户可访问的宿主文件。网络权限不会因此开放。\n\n确认启用 Full access？',
-      );
+      const confirmed = window.confirm(t('settings.permission.fullAccessConfirm'));
       if (!confirmed) return;
     }
     onChange(next);
@@ -54,8 +54,8 @@ export function PermissionDropdown({
     <div className={styles.root} ref={containerRef} data-open={open || undefined}>
       <DropdownTrigger
         label={current.label}
-        ariaLabel={`${current.label} 权限`}
-        title={`当前文件系统权限：${current.label}`}
+        ariaLabel={t('settings.permission.ariaFor', { label: current.label })}
+        title={t('settings.permission.currentTitle', { label: current.label })}
         danger={mode === 'full-access'}
         open={open}
         onClick={() => setOpen((value) => !value)}
@@ -65,7 +65,7 @@ export function PermissionDropdown({
         <div
           className={`${styles.menu} ${placement === 'down' ? styles.menuDown : ''}`}
           role="listbox"
-          aria-label={ariaLabel}
+          aria-label={ariaLabel ?? t('settings.permission.filesystemAria')}
         >
           {PERMISSION_OPTIONS.map((option) => {
             const selected = mode === option.mode;

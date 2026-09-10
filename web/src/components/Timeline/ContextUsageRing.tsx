@@ -3,8 +3,14 @@
 // 数据来自最近一条 context_usage 事件（终态 Run 亦回放可见）。
 
 import { useId } from 'react';
+import { useI18n } from '../../i18n';
 import type { ContextUsageEvent } from '../../types';
-import { contextGaugeTitle, formatBudgetDerivation, formatContextTokens, gaugeLevel } from './context-gauge';
+import {
+  contextGaugeTitle,
+  formatBudgetDerivation,
+  formatContextTokens,
+  gaugeLevel,
+} from './context-gauge';
 import styles from './Timeline.module.css';
 
 const SIZE = 18;
@@ -14,6 +20,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
   const tooltipId = useId();
+  const { t, language } = useI18n();
   // 锚点优先：有 provider 实际上报的 prompt 侧压力时用它当占用口径，
   // 否则回落启发式估算（与 DSH token-meter 的 pressure 优先一致）。
   const pressure = usage.pressureTokens;
@@ -26,17 +33,29 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
     usage.systemTokens == null
       ? [
           {
-            label: '消息（含系统提示词）',
+            label: t('widgets.contextRing.messagesWithSystem'),
             tokens: usage.messageTokens,
             swatch: styles.swatchMessages,
           },
-          { label: '工具', tokens: usage.toolSchemaTokens, swatch: styles.swatchTools },
+          {
+            label: t('widgets.contextRing.tools'),
+            tokens: usage.toolSchemaTokens,
+            swatch: styles.swatchTools,
+          },
         ]
       : [
-          { label: '系统提示词', tokens: usage.systemTokens, swatch: styles.swatchSystem },
-          { label: '工具', tokens: usage.toolSchemaTokens, swatch: styles.swatchTools },
           {
-            label: '对话消息',
+            label: t('widgets.contextRing.systemPrompt'),
+            tokens: usage.systemTokens,
+            swatch: styles.swatchSystem,
+          },
+          {
+            label: t('widgets.contextRing.tools'),
+            tokens: usage.toolSchemaTokens,
+            swatch: styles.swatchTools,
+          },
+          {
+            label: t('widgets.contextRing.messages'),
             tokens: Math.max(0, usage.messageTokens - usage.systemTokens),
             swatch: styles.swatchMessages,
           },
@@ -53,8 +72,9 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
     <span
       className={styles.gaugeWrap}
       role="img"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: 需键盘聚焦才显示 tooltip（.gaugeWrap:focus-visible）
       tabIndex={0}
-      aria-label={contextGaugeTitle(usage)}
+      aria-label={contextGaugeTitle(usage, language)}
       aria-describedby={tooltipId}
     >
       <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden="true">
@@ -82,7 +102,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
       <span id={tooltipId} role="tooltip" className={styles.gaugeTooltip}>
         <span className={styles.contextHeading}>
           <span>
-            上下文已用 <strong>{percent}%</strong>
+            {t('widgets.contextRing.used')} <strong>{percent}%</strong>
           </span>
           <span>
             ~{formatContextTokens(displayTokens)} / {formatContextTokens(usage.inputBudgetTokens)}
@@ -90,8 +110,10 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
         </span>
         {anchored && (
           <span className={styles.gaugeTooltipDetail} role="note">
-            真实上报 {formatContextTokens(pressure)} · 本次请求预估{' '}
-            {formatContextTokens(usage.estimatedInputTokens)}
+            {t('widgets.contextRing.anchoredDetail', {
+              pressure: formatContextTokens(pressure),
+              estimate: formatContextTokens(usage.estimatedInputTokens),
+            })}
           </span>
         )}
         <span className={styles.contextBar} aria-hidden="true">
@@ -114,14 +136,18 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
         ))}
         {usage.contextWindowTokens > 0 && (
           <span className={styles.gaugeTooltipDetail} role="note">
-            {formatBudgetDerivation(usage)}
+            {formatBudgetDerivation(usage, language)}
           </span>
         )}
         {usage.configSource === 'fallback' && (
-          <span className={styles.gaugeTooltipNotice}>模型能力未知，当前使用保守预算</span>
+          <span className={styles.gaugeTooltipNotice}>
+            {t('widgets.contextRing.fallbackNotice')}
+          </span>
         )}
         {usage.emergencyTrim && (
-          <span className={styles.gaugeTooltipDanger}>已进入紧急上下文压缩区间</span>
+          <span className={styles.gaugeTooltipDanger}>
+            {t('widgets.contextRing.emergencyTrim')}
+          </span>
         )}
       </span>
     </span>

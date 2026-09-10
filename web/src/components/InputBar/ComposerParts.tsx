@@ -8,6 +8,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useI18n } from '../../i18n';
+import type { Translate } from '../../i18n/translate';
 import type {
   ContextUsageEvent,
   ModelProviderView,
@@ -124,16 +126,20 @@ function buildModelGroups(models: ModelProviderView[]): ModelGroup[] {
     }));
 }
 
+// 能力摘要（上下文 / 输出上限）：K 为计数单位，文案跟随界面语言
 function modelCapabilityLabel(
   model: Pick<ModelOption, 'contextWindow' | 'maxOutputTokens'>,
+  t: Translate,
 ): string | null {
   if (model.contextWindow === undefined && model.maxOutputTokens === undefined) return null;
   const parts: string[] = [];
   if (model.contextWindow !== undefined) {
-    parts.push(`${Math.round(model.contextWindow / 1000)}K 上下文`);
+    parts.push(
+      t('composer.model.contextWindow', { value: Math.round(model.contextWindow / 1000) }),
+    );
   }
   if (model.maxOutputTokens !== undefined) {
-    parts.push(`${Math.round(model.maxOutputTokens / 1000)}K 输出`);
+    parts.push(t('composer.model.maxOutput', { value: Math.round(model.maxOutputTokens / 1000) }));
   }
   return parts.join(' · ');
 }
@@ -149,6 +155,7 @@ function ModelButton({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -169,8 +176,8 @@ function ModelButton({
     ? currentModel.model.length > 18
       ? `${currentModel.model.slice(0, 16)}…`
       : currentModel.model
-    : '选择模型';
-  const currentCapability = currentModel ? modelCapabilityLabel(currentModel) : null;
+    : t('composer.model.select');
+  const currentCapability = currentModel ? modelCapabilityLabel(currentModel, t) : null;
 
   return (
     <div className={styles.modelDropdown} ref={containerRef}>
@@ -178,11 +185,19 @@ function ModelButton({
         label={label}
         title={
           currentModel
-            ? `当前模型：${currentModel.providerName} · ${currentModel.model}${currentCapability ? ` · ${currentCapability}` : ''}`
-            : '选择模型'
+            ? `${t('composer.model.currentTitle', {
+                provider: currentModel.providerName,
+                model: currentModel.model,
+              })}${currentCapability ? ` · ${currentCapability}` : ''}`
+            : t('composer.model.select')
         }
         ariaLabel={
-          currentModel ? `${currentModel.providerName} ${currentModel.model} 模型` : '选择模型'
+          currentModel
+            ? t('composer.model.currentAria', {
+                provider: currentModel.providerName,
+                model: currentModel.model,
+              })
+            : t('composer.model.select')
         }
         open={open}
         onClick={() => setOpen((v) => !v)}
@@ -190,7 +205,7 @@ function ModelButton({
       {open && (
         <div className={styles.modelDropdownMenu} role="listbox">
           {groups.length === 0 ? (
-            <div className={styles.modelDropdownEmpty}>请先在设置中配置 API 密钥</div>
+            <div className={styles.modelDropdownEmpty}>{t('composer.model.emptyApiKey')}</div>
           ) : (
             groups.map((group) => (
               <div key={group.providerId} className={styles.modelGroup}>
@@ -202,16 +217,16 @@ function ModelButton({
                     className={styles.modelDropdownItem}
                     role="option"
                     aria-selected={isSelected(group.providerId, model.id)}
-                    title={`${group.providerName} · ${model.id}${modelCapabilityLabel(model) ? ` · ${modelCapabilityLabel(model)}` : ''}`}
+                    title={`${group.providerName} · ${model.id}${modelCapabilityLabel(model, t) ? ` · ${modelCapabilityLabel(model, t)}` : ''}`}
                     onClick={() => {
                       onSelectModel?.(group.providerId, model.id);
                       setOpen(false);
                     }}
                   >
                     <span className={styles.modelDropdownName}>{model.id}</span>
-                    {modelCapabilityLabel(model) && (
+                    {modelCapabilityLabel(model, t) && (
                       <span className={styles.modelDropdownMeta}>
-                        {modelCapabilityLabel(model)}
+                        {modelCapabilityLabel(model, t)}
                       </span>
                     )}
                   </button>
@@ -233,6 +248,7 @@ function SubmitButton({
   onSend,
   onStop,
 }: Omit<ComposerFooterProps, 'variant'>) {
+  const { t } = useI18n();
   if (isRunning) {
     if (canSend) {
       return (
@@ -242,7 +258,9 @@ function SubmitButton({
           shape="circle"
           onClick={onSend}
           title={
-            queuedCount > 0 ? `立即加入发送队列（已有 ${queuedCount} 条）` : '立即加入发送队列'
+            queuedCount > 0
+              ? t('composer.submit.queueWithCount', { count: queuedCount })
+              : t('composer.submit.queue')
           }
         >
           <ArrowUpIcon size={20} />
@@ -257,7 +275,7 @@ function SubmitButton({
         shape="circle"
         onClick={onStop}
         disabled={isStopping}
-        title={isStopping ? '正在停止…' : '停止当前任务'}
+        title={isStopping ? t('composer.submit.stopping') : t('composer.submit.stop')}
       >
         <StopIcon size={16} />
       </IconButton>
@@ -271,7 +289,7 @@ function SubmitButton({
       shape="circle"
       onClick={onSend}
       disabled={!canSend}
-      title="发送（Enter）"
+      title={t('composer.submit.send')}
     >
       <ArrowUpIcon size={20} />
     </IconButton>

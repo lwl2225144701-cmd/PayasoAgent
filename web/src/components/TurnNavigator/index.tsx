@@ -1,5 +1,6 @@
 import type { CSSProperties, MouseEvent, PointerEvent } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useI18n } from '../../i18n';
 import type { HostRun } from '../../types';
 import styles from './TurnNavigator.module.css';
 
@@ -52,6 +53,7 @@ function runAtPointer(runs: HostRun[], rail: HTMLElement, clientY: number): Host
 }
 
 function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProps) {
+  const { t } = useI18n();
   const [previewIndex, setPreviewIndex] = useState<number>(-1);
   const [visibleRunId, setVisibleRunId] = useState<string | null>(activeRunId);
   const slotRef = useRef<HTMLDivElement>(null);
@@ -153,7 +155,7 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
       <nav
         className={styles.rail}
         style={railSize(runs.length)}
-        aria-label="回合导航"
+        aria-label={t('shell.turnNav.label')}
         onClick={navigateAtPointer}
         onPointerMove={previewAtPointer}
         onPointerLeave={() => setPreviewIndex(-1)}
@@ -171,7 +173,10 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
                 <button
                   type="button"
                   aria-current={isActive ? 'true' : undefined}
-                  aria-label={`回合 ${index + 1}：${run.task.slice(0, 30)}`}
+                  aria-label={t('shell.turnNav.mark', {
+                    index: index + 1,
+                    task: run.task.slice(0, 30),
+                  })}
                   className={`${styles.mark} ${isActive ? styles.markActive : ''} ${isPreview ? styles.markPreview : ''}`}
                   onFocus={() => setPreviewIndex(index)}
                   onBlur={() => setPreviewIndex((prev) => (prev === index ? -1 : prev))}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { readFile } from '../../api';
 import { formatBytes } from '../../format';
+import { useI18n } from '../../i18n';
 import type { FileEntry } from '../../types';
 import { CopyButton } from '../CopyButton';
 import { IconButton } from '../IconButton';
@@ -15,19 +16,21 @@ interface FileModalProps {
 }
 
 export function FileModal({ runId, file, onClose }: FileModalProps) {
+  const { t } = useI18n();
   const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // 只记失败事实，文案在渲染时按当前语言取（避免把语言快照进 state）
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setContent(null);
-    setError(null);
+    setFailed(false);
     readFile(runId, file.name)
       .then((resp) => {
         if (!cancelled) setContent(resp.content);
       })
       .catch(() => {
-        if (!cancelled) setError('加载文件内容失败。');
+        if (!cancelled) setFailed(true);
       });
     return () => {
       cancelled = true;
@@ -35,7 +38,7 @@ export function FileModal({ runId, file, onClose }: FileModalProps) {
   }, [runId, file.name]);
 
   return (
-    <Modal onClose={onClose} ariaLabel="文件预览">
+    <Modal onClose={onClose} ariaLabel={t('shell.file.preview')}>
       <div className={styles.header}>
         <div className={styles.headerIcon}>
           <FileIcon size={16} />
@@ -45,24 +48,26 @@ export function FileModal({ runId, file, onClose }: FileModalProps) {
           <span className={styles.meta}>{formatBytes(file.size)}</span>
         </div>
         <div className={styles.headerActions}>
-          {content != null && <CopyButton text={content} label="复制" copiedLabel="已复制" />}
+          {content != null && (
+            <CopyButton text={content} label={t('common.copy')} copiedLabel={t('common.copied')} />
+          )}
           <IconButton
             buttonSize="sm"
             variant="ghost"
             shape="rounded"
             onClick={onClose}
-            title="关闭"
-            aria-label="关闭"
+            title={t('common.close')}
+            aria-label={t('common.close')}
           >
             <CloseIcon size={16} />
           </IconButton>
         </div>
       </div>
       <div className={styles.body}>
-        {error ? (
-          <div className={styles.placeholder}>{error}</div>
+        {failed ? (
+          <div className={styles.placeholder}>{t('shell.file.loadFailed')}</div>
         ) : content === null ? (
-          <div className={styles.placeholder}>加载中…</div>
+          <div className={styles.placeholder}>{t('common.loading')}</div>
         ) : (
           <pre className={styles.content}>{content}</pre>
         )}

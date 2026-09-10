@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { workspaceFileUrl } from '../../api';
-import { formatDurationMs, previewArgs, TOOL_STATUS_LABELS } from '../../format';
+import { formatDurationMs, previewArgs, toolStatusLabel } from '../../format';
+import { useI18n } from '../../i18n';
+import { translate } from '../../i18n/translate';
+import type { LanguageMode } from '../../preferences';
 import {
   ChartIcon,
   ChevronRightIcon,
@@ -30,10 +33,11 @@ interface ToolActionRowProps {
  * error / duration / operationKey / reasoning.
  */
 export function ToolActionRow({ data, runId }: ToolActionRowProps) {
+  const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const toolName = displayToolName(data.tool);
   const argsPreview = previewArgs(data.args);
-  const statusLabel = TOOL_STATUS_LABELS[data.status];
+  const statusLabel = toolStatusLabel(data.status, language);
   const statusClass =
     data.status === 'running'
       ? styles.trRunning
@@ -48,7 +52,11 @@ export function ToolActionRow({ data, runId }: ToolActionRowProps) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         className={styles.toolRowClickable}
-        aria-label={`${toolName}：${argsPreview}，${statusLabel}`}
+        aria-label={t('timeline.tool.ariaLabel', {
+          tool: toolName,
+          args: argsPreview,
+          status: statusLabel,
+        })}
       >
         <span className={styles.toolIcon} aria-hidden="true">
           <ToolIcon tool={data.tool} />
@@ -98,28 +106,28 @@ export function ToolActionRow({ data, runId }: ToolActionRowProps) {
       {open && (
         <div className={styles.toolDetail}>
           {data.args != null && (
-            <DetailRow label="参数">
+            <DetailRow label={t('timeline.tool.args')}>
               <pre className={styles.pre}>
                 {typeof data.args === 'string' ? data.args : JSON.stringify(data.args, null, 2)}
               </pre>
             </DetailRow>
           )}
           {data.result != null && (
-            <DetailRow label="结果">
-              <pre className={styles.pre}>{prettyResult(data.result)}</pre>
+            <DetailRow label={t('timeline.tool.result')}>
+              <pre className={styles.pre}>{prettyResult(data.result, language)}</pre>
             </DetailRow>
           )}
           {data.error != null && (
-            <DetailRow label="错误">
+            <DetailRow label={t('timeline.tool.error')}>
               <pre className={styles.preErr}>
                 {typeof data.error === 'string' ? data.error : String(data.error)}
               </pre>
             </DetailRow>
           )}
           <div className={styles.detailMeta}>
-            <span>{TOOL_STATUS_LABELS[data.status]}</span>
+            <span>{statusLabel}</span>
             {typeof data.durationMs === 'number' && (
-              <span>{formatDurationMs(data.durationMs)}</span>
+              <span>{formatDurationMs(data.durationMs, language)}</span>
             )}
           </div>
         </div>
@@ -158,14 +166,15 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-function prettyResult(result: unknown): string {
+function prettyResult(result: unknown, language: LanguageMode): string {
+  const truncated = (text: string): string =>
+    `${text.slice(0, 1200)}\n\n${translate(language, 'timeline.tool.truncated')}`;
   if (typeof result === 'string') {
-    if (result.length > 1200) return `${result.slice(0, 1200)}\n\n…（已截断，完整内容请查看日志）`;
-    return result;
+    return result.length > 1200 ? truncated(result) : result;
   }
   try {
     const s = JSON.stringify(result, null, 2);
-    return s.length > 1200 ? `${s.slice(0, 1200)}\n\n…（已截断，完整内容请查看日志）` : s;
+    return s.length > 1200 ? truncated(s) : s;
   } catch {
     return String(result);
   }

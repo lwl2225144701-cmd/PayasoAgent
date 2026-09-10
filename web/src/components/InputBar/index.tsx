@@ -8,7 +8,12 @@ import {
   useState,
 } from 'react';
 import { listPromptCommands } from '../../api';
-import { matchBuiltinCommand, mergeCommandCandidates } from '../../commands/builtin-commands';
+import {
+  type CommandCandidate,
+  matchBuiltinCommand,
+  mergeCommandCandidates,
+} from '../../commands/builtin-commands';
+import { useI18n } from '../../i18n';
 import type {
   ContextUsageEvent,
   ModelProviderView,
@@ -25,8 +30,6 @@ import styles from './InputBar.module.css';
 const MAX_ATTACHMENTS = 4;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-// 用户只发图不写字时的兜底任务文案（图片始终作为用户消息附件进入模型上下文）
-const IMAGE_ONLY_TASK = '请分析附带的图片。';
 
 interface PendingAttachment {
   id: string;
@@ -80,7 +83,7 @@ export function InputBar({
   isRunning,
   isStopping,
   disabled,
-  placeholder = '发消息或做任务... / Enter 发送，Shift+Enter 换行',
+  placeholder,
   variant = 'compact',
   workspaceName,
   openingWorkspace,
@@ -99,6 +102,9 @@ export function InputBar({
   onBuiltinCommand,
   headerSlot,
 }: InputBarProps) {
+  const { t } = useI18n();
+  // 未传 placeholder 时用跟随语言的默认占位符（传了就尊重调用方，如 hero 态的定制文案）
+  const activePlaceholder = placeholder ?? t('composer.placeholder');
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -131,8 +137,9 @@ export function InputBar({
   // 内置命令优先，其后是工作区提示词模板
   const firstWord = text.split(/\s/)[0] ?? '';
   const isPromptPrefix = firstWord.startsWith('/');
-  const filteredPrompts: Array<{ name: string; description: string; builtin?: boolean }> =
-    isPromptPrefix ? mergeCommandCandidates(firstWord.slice(1), promptCommands) : [];
+  const filteredPrompts: CommandCandidate[] = isPromptPrefix
+    ? mergeCommandCandidates(firstWord.slice(1), promptCommands)
+    : [];
   // 输入已与唯一候选完全一致 → 收起菜单（否则选中后菜单会一直挂在原命令上）
   const exactCommandTyped =
     filteredPrompts.length === 1 && filteredPrompts[0].name === firstWord.slice(1);
@@ -264,15 +271,23 @@ export function InputBar({
     const rejected: string[] = [];
     for (const file of files) {
       if (attachmentsRef.current.length + accepted.length >= MAX_ATTACHMENTS) {
-        rejected.push(`最多附带 ${MAX_ATTACHMENTS} 张图片`);
+        rejected.push(t('composer.attachment.tooMany', { count: MAX_ATTACHMENTS }));
         break;
       }
       if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-        rejected.push(`${file.name || '剪贴板图片'}：仅支持 PNG / JPEG / WebP / GIF`);
+        rejected.push(
+          t('composer.attachment.unsupportedType', {
+            name: file.name || t('composer.attachment.clipboardName'),
+          }),
+        );
         continue;
       }
       if (file.size > MAX_IMAGE_BYTES) {
-        rejected.push(`${file.name || '剪贴板图片'}：超过 8MB 上限`);
+        rejected.push(
+          t('composer.attachment.tooLarge', {
+            name: file.name || t('composer.attachment.clipboardName'),
+          }),
+        );
         continue;
       }
       // 截图剪贴板通常没有文件名，兜底一个带时间戳的名字（后缀与 MIME 对齐）
@@ -338,7 +353,8 @@ export function InputBar({
     const draftText = text;
     const sentAttachments = attachmentsRef.current;
     const files = sentAttachments.map((item) => item.file);
-    const sentText = trimmed || (files.length > 0 ? IMAGE_ONLY_TASK : '');
+    // 用户只发图不写字时的兜底任务文案（图片始终作为用户消息附件进入模型上下文）
+    const sentText = trimmed || (files.length > 0 ? t('composer.imageOnlyTask') : '');
 
     sendingRef.current = true;
     // 发送后立即清空草稿；object URL 暂不释放，失败还原时预览仍可用
@@ -395,7 +411,7 @@ export function InputBar({
             <button
               type="button"
               className={styles.attachmentRemove}
-              title="移除图片"
+              title={t('composer.attachment.remove')}
               onClick={() => removeAttachment(item.id)}
             >
               <CloseIcon size={11} />
@@ -408,10 +424,7 @@ export function InputBar({
   // 已粘贴图片但当前模型不支持视觉：图片发出去模型也看不到，发送前明确提示
   const visionWarning =
     attachments.length > 0 && visionSupported === false ? (
-      <div className={styles.visionWarning}>
-        当前模型未开启视觉能力，模型看不到图片。请在「设置 →
-        模型」中为该模型打开「视觉」开关，或切换到支持图片的模型。
-      </div>
+      <div className={styles.visionWarning}>{t('composer.visionWarning')}</div>
     ) : null;
 
   if (variant === 'hero') {
@@ -423,10 +436,14 @@ export function InputBar({
             type="button"
             onClick={onOpenWorkspace}
             disabled={openingWorkspace}
-            title={workspaceName ? '更换 Workspace' : '选择 Workspace'}
+            title={workspaceName ? t('composer.workspace.change') : t('composer.workspace.select')}
           >
             <FolderIcon size={17} />
-            <span>{openingWorkspace ? '正在打开…' : (workspaceName ?? '选择 Workspace')}</span>
+            <span>
+              {openingWorkspace
+                ? t('composer.workspace.opening')
+                : (workspaceName ?? t('composer.workspace.select'))}
+            </span>
             <ChevronDownIcon size={13} />
           </button>
         </div>
@@ -443,7 +460,7 @@ export function InputBar({
             onPaste={handlePaste}
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
-            placeholder={placeholder}
+            placeholder={activePlaceholder}
             disabled={disabled}
             autoFocus
           />
@@ -460,9 +477,15 @@ export function InputBar({
                   onClick={() => applyPromptSelection(cmd)}
                 >
                   <span className={styles.promptSuggestName}>/{cmd.name}</span>
-                  {cmd.builtin && <span className={styles.promptSuggestBadge}>内置</span>}
-                  {cmd.description && (
-                    <span className={styles.promptSuggestDesc}>{cmd.description}</span>
+                  {cmd.builtin && (
+                    <span className={styles.promptSuggestBadge}>
+                      {t('composer.command.builtinBadge')}
+                    </span>
+                  )}
+                  {(cmd.descriptionKey ?? cmd.description) && (
+                    <span className={styles.promptSuggestDesc}>
+                      {cmd.descriptionKey ? t(cmd.descriptionKey) : cmd.description}
+                    </span>
                   )}
                 </button>
               ))}
@@ -490,9 +513,9 @@ export function InputBar({
         {attachmentStrip}
         {visionWarning}
         {queuedMessages.length > 0 && (
-          <div className={styles.queuePanel} role="status" aria-label="发送队列">
+          <div className={styles.queuePanel} role="status" aria-label={t('composer.queue.title')}>
             <div className={styles.queueNotice}>
-              已加入发送队列 · {queuedMessages.length} 条消息等待中
+              {t('composer.queue.notice', { count: queuedMessages.length })}
             </div>
             <div className={styles.queueList}>
               {queuedMessages.map((message, index) => (
@@ -508,17 +531,17 @@ export function InputBar({
                       type="button"
                       className={styles.queueAction}
                       onClick={() => onSendQueuedNow?.(message.id)}
-                      title="当前任务结束后优先发送"
+                      title={t('composer.queue.sendNowHint')}
                     >
-                      立即发送
+                      {t('composer.queue.sendNow')}
                     </button>
                     <button
                       type="button"
                       className={`${styles.queueAction} ${styles.queueDelete}`}
                       onClick={() => onDeleteQueued?.(message.id)}
-                      title="从发送队列删除"
+                      title={t('composer.queue.deleteHint')}
                     >
-                      删除
+                      {t('common.delete')}
                     </button>
                   </div>
                 </div>
@@ -535,7 +558,7 @@ export function InputBar({
           onPaste={handlePaste}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
-          placeholder={placeholder}
+          placeholder={activePlaceholder}
           disabled={disabled}
         />
         {promptOpen && filteredPrompts.length > 0 && (
@@ -551,9 +574,15 @@ export function InputBar({
                 onClick={() => applyPromptSelection(cmd)}
               >
                 <span className={styles.promptSuggestName}>/{cmd.name}</span>
-                {cmd.builtin && <span className={styles.promptSuggestBadge}>内置</span>}
-                {cmd.description && (
-                  <span className={styles.promptSuggestDesc}>{cmd.description}</span>
+                {cmd.builtin && (
+                  <span className={styles.promptSuggestBadge}>
+                    {t('composer.command.builtinBadge')}
+                  </span>
+                )}
+                {(cmd.descriptionKey ?? cmd.description) && (
+                  <span className={styles.promptSuggestDesc}>
+                    {cmd.descriptionKey ? t(cmd.descriptionKey) : cmd.description}
+                  </span>
                 )}
               </button>
             ))}

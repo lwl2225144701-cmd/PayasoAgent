@@ -6,6 +6,9 @@
 //   浏览器不支持目标格式编码时（如 Safari 的 webp），以实际产出 type 为准
 // - 任何一步失败 → 回退原始字节（功能不因浏览器差异而不可用）
 
+import { translate } from '../i18n/translate';
+import type { LanguageMode } from '../preferences';
+
 export const CLIENT_PIXEL_TARGET = 2048 * 2048;
 export const CLIENT_BYTES_TARGET = 2 * 1024 * 1024;
 export const CLIENT_QUALITY_LADDER = [0.8, 0.6, 0.45] as const;
@@ -65,7 +68,14 @@ export function alignedAttachmentName(name: string, mimeType: string): string {
   return `${stem || 'image'}.${expectedExt}`;
 }
 
-export async function prepareImageForUpload(file: File): Promise<PreparedUploadImage> {
+/**
+ * 语言是末位可选入参（默认中文）：既有调用点不传也照旧，
+ * 异常文案由调用方按当前界面语言决定，模块内不留隐藏的语言状态。
+ */
+export async function prepareImageForUpload(
+  file: File,
+  language: LanguageMode = 'zh-CN',
+): Promise<PreparedUploadImage> {
   // gif：canvas 重编丢动画，原样上传
   if (file.type === 'image/gif') {
     return { dataBase64: await fileToBase64(file), mimeType: file.type };
@@ -78,7 +88,7 @@ export async function prepareImageForUpload(file: File): Promise<PreparedUploadI
       dims ? dims.height : bitmap.height,
     );
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('canvas 2d 上下文不可用');
+    if (!ctx) throw new Error(translate(language, 'shell.image.canvasUnavailable'));
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
 
@@ -94,7 +104,7 @@ export async function prepareImageForUpload(file: File): Promise<PreparedUploadI
       blob = encoded;
       if (encoded.size <= CLIENT_BYTES_TARGET) break;
     }
-    if (!blob) throw new Error('图片编码失败');
+    if (!blob) throw new Error(translate(language, 'shell.image.encodeFailed'));
     // 浏览器可能不支持目标类型编码而回退（如 webp → png），以实际产出为准
     const mimeType = blob.type || file.type;
     return { dataBase64: await fileToBase64(blob), mimeType };

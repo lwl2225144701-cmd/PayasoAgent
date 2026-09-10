@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { formatRelativeTime } from '../../format';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { useI18n } from '../../i18n';
 import type { HostSession } from '../../types';
 import { ArchiveIcon, MoreIcon, PencilIcon } from '../icons';
 import styles from './SessionItem.module.css';
@@ -27,6 +28,7 @@ export function SessionItem({
   onRename,
   onArchive,
 }: SessionItemProps) {
+  const { t, language } = useI18n();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -93,10 +95,12 @@ export function SessionItem({
           type="button"
           className={styles.body}
           onClick={onClick}
-          aria-label={session.title || '未命名任务'}
+          aria-label={session.title || t('shell.session.untitled')}
         >
-          <span className={`${styles.title} truncate`}>{session.title || '未命名任务'}</span>
-          <span className={styles.time}>{formatRelativeTime(session.updatedAt)}</span>
+          <span className={`${styles.title} truncate`}>
+            {session.title || t('shell.session.untitled')}
+          </span>
+          <span className={styles.time}>{formatRelativeTime(session.updatedAt, language)}</span>
         </button>
       )}
 
@@ -108,7 +112,7 @@ export function SessionItem({
           const rect = e.currentTarget.getBoundingClientRect();
           setMenu({ x: rect.left, y: rect.bottom + 4 });
         }}
-        aria-label={`${session.title} 更多操作`}
+        aria-label={t('shell.action.moreFor', { name: session.title })}
       >
         <MoreIcon size={14} />
       </button>
@@ -132,11 +136,11 @@ export function SessionItem({
               }}
             >
               <PencilIcon size={14} />
-              <span>重命名</span>
+              <span>{t('shell.action.rename')}</span>
             </button>
             <button type="button" className={styles.menuItem} onClick={confirmArchive}>
               <ArchiveIcon size={14} />
-              <span>归档</span>
+              <span>{t('shell.action.archive')}</span>
             </button>
           </div>,
           document.getElementById('payaso-portal-root') ?? document.body,
