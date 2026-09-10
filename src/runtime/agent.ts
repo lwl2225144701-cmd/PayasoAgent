@@ -86,6 +86,21 @@ export class AgentEmptyAnswerError extends Error {
   }
 }
 
+/**
+ * The model emitted a non-empty plan-like response, did not call a tool, and
+ * remained incomplete after the bounded finalization recovery. This is a
+ * failed/stalled run, never a successful completion.
+ */
+export class AgentStalledError extends Error {
+  constructor(reason: string, recoveries: number) {
+    super(
+      `Model stopped before completing the task: ${reason} ` +
+        `(${recoveries} finalization recovery attempt(s) used).`,
+    );
+    this.name = 'AgentStalledError';
+  }
+}
+
 // Agent 核心循环：模型持续产生工具调用时继续执行；停止由模型收尾、取消、
 // 工具/请求错误或 Harness 策略决定，不以固定迭代次数截断。
 // resume: 传入 checkpoint 则从中断点恢复执行（State/Scratchpad/Messages 一并恢复）
@@ -195,6 +210,9 @@ export async function runAgent(
   // v1.8 空回合恢复计数（每次 Run 独立；resume 后从 0 重新计数，避免旧 checkpoint
   // 把恢复额度永久耗尽）。
   let emptyTurnRecoveries = 0;
+  // Finalization guard 恢复计数（每次 Run 独立；只允许有限次，避免模型以计划文本
+  // 无限触发额外请求）。
+  let incompleteTurnRecoveries = 0;
 
   // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
   const save = (status?: string) => {
@@ -352,7 +370,7 @@ export async function runAgent(
 
       // 2. LLM 决策日志：是否选择工具
       if (!assistantMsg.tool_calls?.length) {
-        observer.log('[LLM 决策] 未选择工具 → 生成最终答案');
+        observer.log('[LLM 决策] 未选择工具 → 检查是否为最终答案');
         const answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
 
         // v1.8 空回合不变量：没有工具调用且没有可见内容 → 不是答案。
@@ -379,6 +397,40 @@ export async function runAgent(
             continue;
           }
           throw new AgentEmptyAnswerError(emptyTurnRecoveries);
+        }
+
+        const policy = contextHarness.incompleteTurnPolicy?.(answer);
+        if (policy) {
+          const attempt = incompleteTurnRecoveries + 1;
+          const canRecover = incompleteTurnRecoveries < policy.maxRecoveries;
+          emit({
+            type: 'finalization_guard',
+            reason: policy.reason,
+            attempt,
+            maxAttempts: policy.maxRecoveries,
+            disposition: canRecover ? 'retry' : 'fail',
+          });
+          if (canRecover) {
+            incompleteTurnRecoveries = attempt;
+            observer.log(
+              `[Finalization Guard] 检测到未完成回合，追加提示并重试（${attempt}/${policy.maxRecoveries}）`,
+            );
+            updateState(state, {
+              currentStep: 'finalization_guard',
+              currentError: policy.reason,
+            });
+            observeState('summary');
+            messages.push({
+              role: 'user',
+              content: policy.nudge,
+            });
+            save();
+            continue;
+          }
+          throw new AgentStalledError(
+            policy.reason,
+            incompleteTurnRecoveries,
+          );
         }
 
         // Trace: 最终答案 + 总执行步骤数
@@ -902,7 +954,12 @@ export async function runAgent(
       throw err;
     }
     // State: 失败
-    updateState(state, { status: 'failed', currentStep: 'error' });
+    const stalled = err instanceof AgentStalledError;
+    updateState(state, {
+      status: 'failed',
+      currentStep: stalled ? 'stalled' : 'error',
+      ...(stalled ? { currentError: (err as Error).message } : {}),
+    });
     observeState('summary');
     // Checkpoint: 失败时保存（含错误状态，可 resume）
     save('failed');

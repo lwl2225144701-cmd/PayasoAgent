@@ -27,6 +27,7 @@ import {
 } from '../src/sandbox/shell-scratch.js';
 import {
   resolveShellTimeout,
+  resolveShellToolTimeout,
   SHELL_TIMEOUT_DEFAULT_MS,
   SHELL_TIMEOUT_MAX_MS,
   SHELL_TIMEOUT_MIN_MS,
@@ -270,6 +271,13 @@ await check('resolveShellTimeout：请求被收敛到 [min,max]', () => {
   assert.equal(resolveShellTimeout(1_500.9, policy), 1_500);
 });
 
+await check('resolveShellToolTimeout：后台未指定时使用策略上限', () => {
+  const policy = { defaultMs: 5_000, maxMs: 60_000, minMs: 1_000 };
+  assert.equal(resolveShellToolTimeout(undefined, false, policy), 5_000);
+  assert.equal(resolveShellToolTimeout(undefined, true, policy), 60_000);
+  assert.equal(resolveShellToolTimeout(30_000, true, policy), 30_000);
+});
+
 await check('shellTimeoutPolicy：env 覆盖 + 非法值回落 + default 不超过 max', () => {
   const defaults = shellTimeoutPolicy({});
   assert.equal(defaults.defaultMs, SHELL_TIMEOUT_DEFAULT_MS);
@@ -380,12 +388,12 @@ if (process.platform !== 'darwin') {
     const jobId = started.match(/jobId=(job-\d+)/)?.[1];
     assert.ok(jobId, `缺少 jobId: ${started}`);
 
-    let output = '';
-    for (let attempt = 0; attempt < 40; attempt++) {
-      output = await tool('shellJob', { action: 'output', jobId }, 'workspace-write', readOnlyRoot);
-      if (!output.includes('仍在运行')) break;
-      await sleep(50);
-    }
+    const output = await tool(
+      'shellJob',
+      { action: 'wait', jobId, waitMs: 2_000 },
+      'workspace-write',
+      readOnlyRoot,
+    );
     assert.ok(output.includes('bg-ok'), `后台输出缺失: ${output}`);
   });
 

@@ -2,7 +2,7 @@
 // 用法: npx tsx tests/background-jobs.test.ts
 // 覆盖：
 //   1. 注册表：启动/查询/列表/终止/回收，并发上限，输出裁剪，父信号联动
-//   2. shellJob 工具：list/status/output/kill 的输出与错误语义
+//   2. shellJob 工具：list/wait/status/output/kill 的输出与错误语义
 //   3. 生命周期：Run 终态回收后不再有作业（不留孤儿）
 // 说明：执行器通过端口注入，本套件不依赖 macOS 沙箱（真机 E2E 见 shell-execution）。
 
@@ -15,10 +15,10 @@ import {
   listBackgroundJobs,
   MAX_JOBS_PER_RUN,
   startBackgroundJob,
+  waitForBackgroundJob,
   type BackgroundExecutor,
 } from '../src/sandbox/background-jobs.js';
-import { normalizeToolResult, type ToolContext } from '../src/tools/tools.js';
-import { execute as executeRaw } from '../src/tools/tools.js';
+import { execute as executeRaw, normalizeToolResult, type ToolContext } from '../src/tools/tools.js';
 import '../src/tools/runtime-tools.js';
 
 let passed = 0;
@@ -174,6 +174,30 @@ await test('list 返回本 Run 的作业，作业 id 递增', async () => {
   disposeRunBackgroundJobs(runId);
 });
 
+await test('wait：完成时立即返回终态，超时则返回 running', async () => {
+  const doneRun = 'bg-wait-done';
+  startBackgroundJob({ runId: doneRun, command: 'quick', executor: delayedExecutor(10) });
+  const done = await waitForBackgroundJob(doneRun, 'job-1', 100);
+  assert.equal(done?.status, 'succeeded');
+  disposeRunBackgroundJobs(doneRun);
+
+  const runningRun = 'bg-wait-timeout';
+  startBackgroundJob({ runId: runningRun, command: 'slow', executor: delayedExecutor(100) });
+  const running = await waitForBackgroundJob(runningRun, 'job-1', 5);
+  assert.equal(running?.status, 'running');
+  disposeRunBackgroundJobs(runningRun);
+});
+
+await test('wait：Run 取消时立即中断等待', async () => {
+  const runId = 'bg-wait-abort';
+  const signal = new AbortController();
+  startBackgroundJob({ runId, command: 'slow', executor: abortableExecutor });
+  const waiting = waitForBackgroundJob(runId, 'job-1', 30_000, signal.signal);
+  signal.abort();
+  await assert.rejects(waiting, /Aborted/);
+  disposeRunBackgroundJobs(runId);
+});
+
 await test('父信号（Run 取消）联动终止作业', async () => {
   const runId = 'bg-parent-signal';
   const parent = new AbortController();
@@ -250,6 +274,36 @@ await test('shellJob output：运行中提示、完成后返回输出', async ()
   assert.ok(done.includes('hello-from-job'), done);
   assert.ok(done.includes('[job-1 succeeded]'), done);
   disposeRunBackgroundJobs('tool-output');
+});
+
+await test('shellJob wait：一次等待并返回完成输出，短等待可返回 running', async () => {
+  startBackgroundJob({
+    runId: 'tool-wait-done',
+    command: 'echo waited',
+    executor: delayedExecutor(10, { stdout: 'waited-output' }),
+  });
+  const done = await callShellJob('tool-wait-done', {
+    action: 'wait',
+    jobId: 'job-1',
+    waitMs: 100,
+  });
+  assert.ok(done.includes('[job-1 succeeded]'), done);
+  assert.ok(done.includes('waited-output'), done);
+  disposeRunBackgroundJobs('tool-wait-done');
+
+  startBackgroundJob({
+    runId: 'tool-wait-running',
+    command: 'slow',
+    executor: delayedExecutor(500),
+  });
+  const running = await callShellJob('tool-wait-running', {
+    action: 'wait',
+    jobId: 'job-1',
+    waitMs: 100,
+  });
+  assert.ok(running.includes('[running]'), running);
+  assert.ok(running.includes('再次 wait'), running);
+  disposeRunBackgroundJobs('tool-wait-running');
 });
 
 await test('shellJob kill：终止并报告状态', async () => {

@@ -46,6 +46,15 @@ export interface EmptyTurnPolicy {
   maxRecoveries: number;
 }
 
+/**
+ * Model-facing policy for a non-empty turn that still looks like an unfinished
+ * plan. Kept separate from EmptyTurnPolicy so the two recovery budgets remain
+ * independently auditable.
+ */
+export interface IncompleteTurnPolicy extends EmptyTurnPolicy {
+  reason: string;
+}
+
 export interface PreparedModelTurn {
   messages: ChatMessage[];
   usage: ContextUsage;
@@ -84,6 +93,8 @@ export interface AgentContextHarness {
   // v1.8 空回合不变量：模型既没有工具调用也没有可见内容时，Runtime 依此策略
   // 追加提示并重试；返回 undefined 表示不做恢复（直接按失败处理）。
   emptyTurnPolicy?(): EmptyTurnPolicy;
+  // 文本完成度属于 Harness 策略；缺省/返回 undefined 表示接受此回答。
+  incompleteTurnPolicy?(answer: string): IncompleteTurnPolicy | undefined;
 }
 
 function stripThink(text: string): string {
@@ -450,6 +461,26 @@ export class DefaultContextHarness implements AgentContextHarness {
         'Continue the task now — either call a tool to make progress, or write the complete ' +
         'user-facing answer. Never end a turn with an empty message.',
       maxRecoveries: 2,
+    };
+  }
+
+  incompleteTurnPolicy(answer: string): IncompleteTurnPolicy | undefined {
+    // 仅匹配末尾独立的行动句。前文关键词、引用和代码示例不能作为重试依据。
+    // 这是有界恢复启发式，不是任务完成度证明。
+    const ending = answer.trim().split(/\n|[。！？.!?]/u).at(-1)?.trim() ?? '';
+    if (
+      !/^(?:为了[^，,：:]{1,16}[，,]\s*)?(?:接下来|下一步|再确认|让我(?:再)?|我(?:将|会)|(?:I will|I'll|I’ll|Let me|Next)\b)/iu.test(ending) ||
+      !/(?:检查|执行|验证|运行|抓取|对照|读取|确认|查看|扫描|比较|\b(?:check|verify|compare|run|read|inspect|fetch)\b)/iu.test(ending) ||
+      !/[:：]$/u.test(ending)
+    ) return undefined;
+
+    return {
+      reason: 'assistant ended with an unfinished action statement',
+      nudge:
+        'Your previous turn described another action but did not call a tool. ' +
+        'Continue only if that action is authorized and feasible. Otherwise provide the final ' +
+        'answer with the result or blocker. Do not end with an unfinished promise.',
+      maxRecoveries: 1,
     };
   }
 }

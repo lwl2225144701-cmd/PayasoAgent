@@ -77,6 +77,9 @@ export default function App() {
   const { permissionMode, setPermissionMode, language, setLanguage, fontSize, setFontSize } =
     useGeneralSettings();
   const [runs, setRuns] = useState<HostRun[]>([]);
+  // POST /runs 返回前的本地占位回合：让用户消息与执行状态在点击发送后立即出现，
+  // 不再把首个视觉反馈绑定到 Host 创建/落库耗时。它不进入 runs，也不建立 SSE。
+  const [pendingRun, setPendingRun] = useState<HostRun | null>(null);
   const [sessions, setSessions] = useState<HostSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
@@ -337,6 +340,10 @@ export default function App() {
   const currentSessionRuns = runs
     .filter((run) => run.sessionId === currentSessionId)
     .sort((a, b) => a.turnIndex - b.turnIndex);
+  const displayedSessionRuns =
+    pendingRun?.sessionId === currentSessionId
+      ? [...currentSessionRuns, pendingRun]
+      : currentSessionRuns;
   // Composer 属于整个会话，其上下文预算应始终取会话最新一轮。
   // currentRunId 只表示当前滚动/导航到的历史回合，不能改变 Composer 预算。
   const latestSessionRunId = currentSessionRuns[currentSessionRuns.length - 1]?.runId ?? null;
@@ -375,6 +382,23 @@ export default function App() {
       const trimmed = task.trim();
       if (!trimmed) return true;
       setCompactStatus(null);
+      const pendingRunId = `pending-${crypto.randomUUID()}`;
+      const pendingSessionId = currentSessionId ?? `pending-session-${crypto.randomUUID()}`;
+      const pendingTimestamp = new Date().toISOString();
+      setPendingRun({
+        runId: pendingRunId,
+        sessionId: pendingSessionId,
+        turnIndex: currentSessionRuns.length,
+        task: trimmed,
+        status: 'running',
+        workspace: workspace ?? undefined,
+        providerId: currentModelSelection?.providerId,
+        model: currentModelSelection?.model,
+        createdAt: pendingTimestamp,
+        updatedAt: pendingTimestamp,
+        permissionMode,
+      });
+      setSentRunId(pendingRunId);
       try {
         // 客户端先压像素再转 base64（附件 v2 P2：请求体从 20MB 级降回 ~2MB 级）；
         // 落盘后 Host 只在工作区保留归一化文件，base64 不进入任何持久化状态。
@@ -423,6 +447,7 @@ export default function App() {
         setCurrentSessionId(resp.sessionId);
         setCurrentRunId(resp.runId);
         setSentRunId(resp.runId);
+        setPendingRun(null);
         setRuns((prev) => {
           if (prev.some((r) => r.runId === optimisticRun.runId)) return prev;
           return [...prev, optimisticRun];
@@ -446,6 +471,7 @@ export default function App() {
         setPreferredWorkspaceName(null);
         return true;
       } catch (err) {
+        setPendingRun(null);
         const msg = err instanceof Error ? err.message : String(err);
         console.error('Failed to create run:', err);
         alert(`任务创建失败：${msg}`);
@@ -912,11 +938,12 @@ export default function App() {
                 onNavigate={handleNavigateRun}
               />
               <div ref={conversationContentRef}>
-                {currentSessionRuns.length > 0 ? (
-                  currentSessionRuns.map((run) => (
+                {displayedSessionRuns.length > 0 ? (
+                  displayedSessionRuns.map((run) => (
                     <Timeline
                       key={run.runId}
                       run={run}
+                      optimistic={run.runId === pendingRun?.runId}
                       modelFallback={null}
                       embedded
                       onRunTerminal={handleRunTerminal}
@@ -943,10 +970,14 @@ export default function App() {
           </div>
         ) : (
           <div className={styles.emptyState}>
-            <div className={styles.heroTitleRow}>
-              <span className={styles.emptyLogo} role="img" aria-label="Payaso" />
-              <h1 className={styles.emptyTitle}>路漫漫其修远兮，吾将上下而求索。</h1>
-            </div>
+            {pendingRun ? (
+              <Timeline run={pendingRun} modelFallback={null} embedded optimistic />
+            ) : (
+              <div className={styles.heroTitleRow}>
+                <span className={styles.emptyLogo} role="img" aria-label="Payaso" />
+                <h1 className={styles.emptyTitle}>路漫漫其修远兮，吾将上下而求索。</h1>
+              </div>
+            )}
             <InputBar
               variant="hero"
               onSend={handleCreateRun}

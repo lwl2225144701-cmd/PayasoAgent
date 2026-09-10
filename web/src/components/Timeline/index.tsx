@@ -44,6 +44,8 @@ interface TimelineProps {
   run: HostRun | null;
   modelFallback: string | null;
   embedded?: boolean;
+  /** POST 创建成功前的本地回合，只负责即时反馈，不连接不存在的临时 runId。 */
+  optimistic?: boolean;
   onRunTerminal?: () => void;
   // v1.6 工具链闭环②：准备成功后用户显式重试 —— 以新会话轮次发起
   // （新轮次拥有全新 side-effect 身份空间；Runtime 不自动重放）
@@ -263,6 +265,7 @@ function ExecutionPanel({
 export const Timeline = memo(function Timeline({
   run,
   embedded = false,
+  optimistic = false,
   onRunTerminal,
   onRetryCommand,
   onContextUsage,
@@ -272,9 +275,9 @@ export const Timeline = memo(function Timeline({
   // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
   // 正确的关闭时机交给 useEventStream 内部：收到 run_completed/run_failed/run_stopped/run_interrupted 后主动 close SSE。
   const { events, streamedText } = useEventStream(
-    run?.runId ?? null,
+    optimistic ? null : (run?.runId ?? null),
     true,
-    run?.status === 'running' ? onRunTerminal : undefined,
+    !optimistic && run?.status === 'running' ? onRunTerminal : undefined,
   );
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
   // 产出文件默认收起，只在用户需要时展开，避免长文件列表遮挡对话内容。

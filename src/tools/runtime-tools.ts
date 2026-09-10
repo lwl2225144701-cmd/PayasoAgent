@@ -15,7 +15,7 @@ import { storedPermissionMode } from '../permission-mode.js';
 import { MacOSSandbox, type MacOSSandboxResult, probeSandboxAvailability } from '../sandbox/macos-sandbox.js';
 import { createShellScratch } from '../sandbox/shell-scratch.js';
 import {
-  resolveShellTimeout,
+  resolveShellToolTimeout,
   SHELL_TIMEOUT_DEFAULT_MS,
   SHELL_TIMEOUT_MAX_MS,
   SHELL_TIMEOUT_MIN_MS,
@@ -28,6 +28,7 @@ import {
   killBackgroundJob,
   listBackgroundJobs,
   startBackgroundJob,
+  waitForBackgroundJob,
 } from '../sandbox/background-jobs.js';
 import { TOOL_OUTPUT_MAX_BYTES, utf8ByteLength } from '../tool-output-budget.js';
 import {
@@ -553,10 +554,12 @@ function formatShellResult(result: MacOSSandboxResult, timeoutMs: number): strin
 register({
   name: 'shell',
   description:
-    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 64KB；macOS 走 OS Sandbox，其他平台需审批模式）。` +
-    `默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s，可用 timeoutMs 延长（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）；` +
-    `超时会整树终止并返回 [shell-timeout]。background=true 时立即返回 jobId，用 shellJob 轮询/终止（长测试、构建用）。` +
-    `命令的 HOME/TMPDIR 指向运行时的临时 scratch 目录（可写，不污染 Workspace），因此 npm/npx/git 等需要缓存目录的命令在 Read Only 模式下同样可用。` +
+    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 ${Math.round(TOOL_OUTPUT_MAX_BYTES / 1024)}KB；macOS 走 OS Sandbox，其他平台需审批模式）。` +
+    `前台默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s；background=true 且未传 timeoutMs 时默认 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s；` +
+    `可用 timeoutMs 调整（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）。` +
+    `超时会整树终止并返回 [shell-timeout]。background=true 时立即返回 jobId，用 shellJob wait 等待（长测试、构建用），不要用 shell sleep 轮询。` +
+    `HOME/TMPDIR 是单次 shell 调用的可写 scratch，调用结束即删除，不能跨调用传文件，也不代表 Workspace 可写。` +
+    `非零退出不算验证通过；若 Read Only 权限阻止测试写文件，结果是不确定，不能据此宣称代码无缺陷。` +
     `文件访问服从当前 Read Only/Workspace Write/Full access 权限；网络能力跟随全局 network.mode（默认 on=联网）。`,
   effect: 'non_idempotent',
   // v1.9：按命令细化 effect —— 只读命令（ls/git log/find 等，且不含 shell 组合
@@ -579,12 +582,12 @@ register({
         type: 'number',
         description:
           `可选：本次命令的超时毫秒数（${SHELL_TIMEOUT_MIN_MS}-${SHELL_TIMEOUT_MAX_MS}，超出范围会被收敛）。` +
-          `不传则用运行时默认值。长任务（测试、构建）请显式传入。`,
+          `前台不传使用运行时默认值；后台不传使用运行时上限。`,
       },
       background: {
         type: 'boolean',
         description:
-          '可选：true 时命令在后台运行并立即返回 jobId（不阻塞本轮），用 shellJob 查看状态/输出或终止。适合长测试、构建、安装。',
+          '可选：true 时命令在后台运行并立即返回 jobId（不阻塞本轮），优先用 shellJob wait 等待结果。适合长测试、构建、安装。',
       },
     },
     required: ['command'],
@@ -592,7 +595,11 @@ register({
   execute: async (args, context) => {
     const cmd = String(args.command ?? '').trim();
     if (!cmd) throw new Error('缺少参数 command');
-    const timeoutMs = resolveShellTimeout(args.timeoutMs, shellTimeoutPolicy());
+    const timeoutMs = resolveShellToolTimeout(
+      args.timeoutMs,
+      args.background === true,
+      shellTimeoutPolicy(),
+    );
 
     if (args.background === true) {
       const job = startBackgroundJob({
@@ -605,8 +612,8 @@ register({
       return (
         `[shell-background] jobId=${job.jobId} status=running timeoutMs=${timeoutMs}\n` +
         `命令: ${cmd}\n` +
-        `查看: shellJob {action:"status", jobId:"${job.jobId}"} / {action:"output", jobId:"${job.jobId}"} / {action:"kill", jobId:"${job.jobId}"}\n` +
-        `本轮无需等待，可继续其他工作。`
+        `等待: shellJob {action:"wait", jobId:"${job.jobId}", waitMs:30000}\n` +
+        `也可继续其他工作，稍后再 wait；不要用 shell sleep 轮询。`
       );
     }
 
@@ -620,7 +627,7 @@ register({
 register({
   name: 'shellJob',
   description:
-    '查看/终止 shell 后台作业。action: "list" 列出本 Run 全部作业；"status" 查单个作业状态；"output" 取回已完成作业的输出（运行中会提示仍在运行）；"kill" 终止作业。作业随 Run 结束自动清理。',
+    '等待/查看/终止 shell 后台作业。优先用 "wait" 有界等待，避免反复 status/output 或 shell sleep。action: "list" 列出本 Run 全部作业；"wait" 最多等待 waitMs 后返回最新状态和完成输出；"status" 查状态；"output" 取回已完成输出；"kill" 终止。作业随 Run 结束自动清理。',
   effect: 'idempotent',
   getOperationKey: (args) => `job:${String(args.action ?? '')}:${String(args.jobId ?? '')}`,
   parameters: {
@@ -628,12 +635,16 @@ register({
     properties: {
       action: {
         type: 'string',
-        enum: ['list', 'status', 'output', 'kill'],
-        description: 'list / status / output / kill',
+        enum: ['list', 'wait', 'status', 'output', 'kill'],
+        description: 'list / wait / status / output / kill',
       },
       jobId: {
         type: 'string',
         description: '作业 id（如 job-1）；action=list 时可省略',
+      },
+      waitMs: {
+        type: 'number',
+        description: 'action=wait 时最多等待的毫秒数，默认 30000，范围 100-30000。',
       },
     },
     required: ['action'],
@@ -644,8 +655,8 @@ register({
 
     // 先校验 action：schema 的 enum 已挡住模型的非法值，这里保证直接调用方
     // 也拿到"未知 action"而不是误导性的"作业不存在"。
-    if (!['list', 'status', 'output', 'kill'].includes(action)) {
-      throw new Error(`未知 action: ${action}（可用 list / status / output / kill）`);
+    if (!['list', 'wait', 'status', 'output', 'kill'].includes(action)) {
+      throw new Error(`未知 action: ${action}（可用 list / wait / status / output / kill）`);
     }
 
     if (action === 'list') {
@@ -660,15 +671,29 @@ register({
     }
 
     if (!jobId) throw new Error(`action=${action} 需要参数 jobId`);
-    const job = getBackgroundJob(context.runId, jobId);
+    let job = getBackgroundJob(context.runId, jobId);
     if (!job) throw new Error(`后台作业不存在: ${jobId}（用 shellJob {action:"list"} 查看）`);
+
+    if (action === 'wait') {
+      const requested = Number(args.waitMs);
+      const waitMs = Number.isFinite(requested)
+        ? Math.min(30_000, Math.max(100, Math.floor(requested)))
+        : 30_000;
+      job = await waitForBackgroundJob(context.runId, jobId, waitMs, context.signal);
+      if (!job) throw new Error(`后台作业不存在: ${jobId}`);
+      if (job.status === 'running') {
+        return `${job.jobId} [running] 等待 ${waitMs}ms 后仍在运行；可继续工作，稍后再次 wait。`;
+      }
+      const body = job.output?.trim() ? job.output : '(无输出)';
+      return `[${job.jobId} ${job.status}]\n${body}${job.error ? `\n[error] ${job.error}` : ''}`;
+    }
 
     if (action === 'status') {
       return (
         `${job.jobId} [${job.status}] ${job.command}\n` +
         `启动: ${job.startedAt}${job.finishedAt ? `\n结束: ${job.finishedAt}` : ''}` +
         (job.error ? `\n错误: ${job.error}` : '') +
-        (job.status === 'running' ? '\n（仍在运行；用 action:"output" 取回输出，或 action:"kill" 终止）' : '')
+        (job.status === 'running' ? '\n（仍在运行；优先用 action:"wait" 等待，或 action:"kill" 终止）' : '')
       );
     }
 

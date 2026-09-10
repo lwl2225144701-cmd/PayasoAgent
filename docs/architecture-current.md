@@ -164,7 +164,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","llm_call_started","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -183,8 +183,8 @@ for (i = startIter; ; i++):
   ├─ 1.    chat(messages, getSchemas(), onStreamDelta, modelConfig?)
   │         ├─ SSE delta → Host 批量持久化 → Web 增量显示
   │         └─ 完整组装 assistant/tool_calls 后才进入 Loop
-  │         └─ 无 tool_calls → stripThink → 空内容则走空回合不变量（v1.8）
-  │                            → 非空则 final_answer → status=completed
+  │         └─ 无 tool_calls → stripThink → 空内容走空回合不变量（v1.8）
+  │                            → 非空先过 finalization guard；未完成则有界恢复，否则 final_answer
   └─ 2.    逐个 tool_call（v1.6 Invocation Pipeline：Parse → Validate → Resolve →
         │      Schema Validate（v1.8）→ Side-effect preparation → Execute；
         │      任一前置失败 = 可恢复 invocation error，工具不执行、不创建 side-effect，
@@ -204,7 +204,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 | 不变量 | 实现 | 守住它的测试 |
 | --- | --- | --- |
-| 回合终态必须有可见产出 | 无 tool_calls 且 content 为空 → 按 `Harness.emptyTurnPolicy()` 有界恢复（默认 2 次），用尽抛 `AgentEmptyAnswerError`，绝不 `completed` 空结果 | `tests/empty-turn.test.ts` |
+| 回合终态必须有可见产出 | 无 tool_calls 且 content 为空 → 按 `Harness.emptyTurnPolicy()` 有界恢复（默认 2 次），用尽抛 `AgentEmptyAnswerError`，绝不 `completed` 空结果；高置信度未完成文本按 `incompleteTurnPolicy()` 恢复一次，用尽抛 `AgentStalledError` | `tests/empty-turn.test.ts` |
 | 工具参数必须满足声明 schema | `tools/tool-arguments.ts` 校验未知/缺失/类型/枚举，结构化回传（`INVALID_ARGUMENT_SHAPE`），绝不静默丢弃未知参数 | `tests/tool-argument-validation.test.ts` |
 | 只有瞬时错误才重试 | `runtime/tool-error-classifier.ts` 规则链；未分类默认不重试（fail-safe） | `tests/tool-error-classifier.test.ts` |
 | 工具输出预算单一来源 | `src/tool-output-budget.ts` 同时被 Runtime guard 与 read/grep 等生产者使用，宣称契约 == 执行契约 | `tests/tool-output-budget.test.ts` |
@@ -228,7 +228,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 ### 4.3 关键保证（与测试对应）
 
-* **Tool Output Guard**：`validateResult` 看完整 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果，防止大输出把 Context 撑爆。v1.8 起预算常量与切片算法收敛到 `src/tool-output-budget.ts`，read 自己按同一预算做行感知分页（首尾保留 + 精确续读区间），因此 read 的结果不会再被 guard 二次截断。
+* **Tool Output Guard**：`validateResult` 看工具返回的 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果。普通文本 read 提供行号续读；这不保证所有输出都能恢复：超大文件字节窗口、超长单行和后台 shell 的生产端截断仍需分别处理，Runtime 无法恢复在工具内部已省略的内容。
 
 * **Side-Effect Safety**：`executing → succeeded | uncertain`；`succeeded` 同 key 回放不重跑；`executing/uncertain` 不再自动执行；execute 前必须先持久化 executing。
 

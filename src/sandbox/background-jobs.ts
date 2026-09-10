@@ -57,6 +57,7 @@ interface JobRecord {
   view: BackgroundJobView;
   controller: AbortController;
   killRequested: boolean;
+  waiters: Set<() => void>;
 }
 
 const jobsByRun = new Map<string, Map<string, JobRecord>>();
@@ -106,6 +107,7 @@ export function startBackgroundJob(input: StartBackgroundJobInput): BackgroundJo
     },
     controller,
     killRequested: false,
+    waiters: new Set(),
   };
   jobs.set(jobId, record);
 
@@ -131,6 +133,8 @@ export function startBackgroundJob(input: StartBackgroundJobInput): BackgroundJo
     })
     .finally(() => {
       input.parentSignal?.removeEventListener('abort', abort);
+      for (const notify of record.waiters) notify();
+      record.waiters.clear();
     });
 
   return toPublicView(record);
@@ -145,6 +149,48 @@ export function listBackgroundJobs(runId: string): BackgroundJobView[] {
   const jobs = jobsByRun.get(runId);
   if (!jobs) return [];
   return [...jobs.values()].map(toPublicView);
+}
+
+/**
+ * Wait at most `waitMs` for one job to leave `running`.
+ * The returned view is always current; a timeout is a normal `running` result.
+ */
+export async function waitForBackgroundJob(
+  runId: string,
+  jobId: string,
+  waitMs: number,
+  signal?: AbortSignal,
+): Promise<BackgroundJobView | undefined> {
+  const record = jobsByRun.get(runId)?.get(jobId);
+  if (record?.view.status !== 'running' || waitMs <= 0) {
+    return record ? toPublicView(record) : undefined;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      record.waiters.delete(finish);
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      record.waiters.delete(finish);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(finish, waitMs);
+    record.waiters.add(finish);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+  });
+
+  return toPublicView(record);
 }
 
 /** Abort a job. Returns false when the job does not exist. */

@@ -293,6 +293,7 @@ export function connectSSE(
     'context_compaction',
     'recovery_decision',
     'empty_turn_recovered',
+    'finalization_guard',
     'side_effect_skip',
     'side_effect_uncertain',
     'tool_output_truncated',

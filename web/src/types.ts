@@ -312,6 +312,15 @@ export interface EmptyTurnRecoveredEvent extends TraceEventBase {
   maxAttempts: number;
 }
 
+// Finalization guard：非空但明显未完成的文本回合，按 Harness 策略恢复或失败。
+export interface FinalizationGuardEvent extends TraceEventBase {
+  type: 'finalization_guard';
+  reason: string;
+  attempt: number;
+  maxAttempts: number;
+  disposition: 'retry' | 'fail';
+}
+
 export interface SideEffectSkipEvent extends TraceEventBase {
   type: 'side_effect_skip';
   tool: string;
@@ -426,6 +435,7 @@ export type TraceEvent =
   | ContextCompactionEvent
   | RecoveryDecisionEvent
   | EmptyTurnRecoveredEvent
+  | FinalizationGuardEvent
   | SideEffectSkipEvent
   | SideEffectUncertainEvent
   | ToolOutputTruncatedEvent

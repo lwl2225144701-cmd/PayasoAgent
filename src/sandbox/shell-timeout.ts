@@ -63,3 +63,19 @@ export function resolveShellTimeout(
   if (!Number.isFinite(value) || value <= 0) return policy.defaultMs;
   return Math.min(policy.maxMs, Math.max(policy.minMs, Math.floor(value)));
 }
+
+/**
+ * Shell tool policy: foreground commands use the normal default; background
+ * commands use the configured ceiling when the model did not choose a timeout.
+ * Background mode is specifically for builds/tests that commonly exceed 120s.
+ */
+export function resolveShellToolTimeout(
+  requested: unknown,
+  background: boolean,
+  policy: ShellTimeoutPolicy = shellTimeoutPolicy(),
+): number {
+  if (background && (requested === undefined || requested === null || requested === '')) {
+    return policy.maxMs;
+  }
+  return resolveShellTimeout(requested, policy);
+}

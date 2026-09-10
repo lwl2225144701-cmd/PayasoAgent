@@ -149,6 +149,16 @@ export type TraceEvent =
       maxAttempts: number; // 策略允许的恢复次数上限
     }
   | {
+      // Finalization guard：非空但明显未完成的文本回合，按 Harness 策略恢复或失败。
+      type: 'finalization_guard';
+      step: number;
+      timestamp: string;
+      reason: string;
+      attempt: number;
+      maxAttempts: number;
+      disposition: 'retry' | 'fail';
+    }
+  | {
       type: 'side_effect_skip';
       step: number;
       timestamp: string;
@@ -297,6 +307,13 @@ export type TraceEventInput =
       type: 'empty_turn_recovered';
       attempt: number;
       maxAttempts: number;
+    }
+  | {
+      type: 'finalization_guard';
+      reason: string;
+      attempt: number;
+      maxAttempts: number;
+      disposition: 'retry' | 'fail';
     }
   | {
       type: 'side_effect_skip';
