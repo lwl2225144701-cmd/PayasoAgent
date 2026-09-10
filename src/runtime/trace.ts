@@ -228,6 +228,17 @@ export type TraceEvent =
       total: number;
     }
   | {
+      // v2.2 Plan 收尾审计：Run 以 final_answer 收尾时计划仍有未完成项。
+      // 只留痕，不阻断收尾（"该不该做完"由模型判断，Harness 不把它变成硬约束）。
+      type: 'plan_incomplete_at_finish';
+      step: number;
+      timestamp: string;
+      revision: number;
+      completed: number;
+      total: number;
+      unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
+    }
+  | {
       type: 'error';
       step: number;
       timestamp: string;
@@ -385,6 +396,13 @@ export type TraceEventInput =
       items: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }>;
       completed: number;
       total: number;
+    }
+  | {
+      type: 'plan_incomplete_at_finish';
+      revision: number;
+      completed: number;
+      total: number;
+      unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
     }
   | {
       type: 'error';

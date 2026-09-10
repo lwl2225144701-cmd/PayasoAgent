@@ -254,12 +254,14 @@ const toolContext = {
 
 ## 11. 剩余工作（P2 及以后）
 
-| 项 | 内容 | 说明 |
+| 项 | 内容 | 状态 |
 | --- | --- | --- |
-| P2-1 视觉呼应 | 计划项与 Timeline 里的工具步骤关联高亮 | 纯前端；需防"错误关联"，建议按 `in_progress` 项与当前步骤的时间锚点匹配，宁缺勿错 |
-| P2-2 引导模板 | 把"多步任务先出计划"写进各仓库的 `PAYASO.md` 模板 | 本仓库的 `PAYASO.md` 已说明测试纪律，可加一节；成本极低 |
-| P2-3 收尾策略 | Harness `planPolicy()`：收尾时仍有未完成项 → 审计事件（不强制阻断） | 落点已定（Harness policy），等有真实需求再做 |
+| P2-1 视觉呼应 | 计划变更按 step 落在执行流里（`derivePlanNotes` → `planNote` 弱化说明行） | ✅ 已实现（见下） |
+| P2-2 引导模板 | `PAYASO.md` 增加「任务计划（多步任务）」一节 | ✅ 已实现 |
+| P2-3 收尾审计 | Harness `planReport()` + Runtime `plan_incomplete_at_finish` 事件（只留痕，不阻断） | ✅ 已实现 |
 | 未做・明确不做 | `cancelled` / `blocked` 状态、跨 Run 的会话级计划 | 有真实需求再加 |
+| 未做（有意） | 把"计划没做完"变成硬约束（阻断收尾 / 强制恢复） | 会误伤"先给结论、只要分析"的任务；已按审计事件留痕，需要时再加有界提醒 |
+| 未做（有意） | 计划项与工具调用的**自动连线** | 事件里没有对应关系，自动连线只能靠猜 —— 改成"按 step 落变更说明"，宁缺勿错 |
 | 验收缺口 | 浏览器里看真实 run 的面板逐项变绿 | **被既有问题挡住**：本机 MiniMax-M3 的工具调用全部 `INVALID_ARGUMENT_JSON`（对照实验：calculator 任务 40 次解析失败、0 次成功），修好模型工具调用后才能做这一步验收 |
 
 ***
@@ -285,6 +287,17 @@ const toolContext = {
 * 装饰层里**没有**再调 `save()`：工具成功后紧接着的既有 checkpoint 已包含 `harnessState.plan`，重复写会增加一次快照落盘。
 * 多了一个方案外的 `tests/plan-loop.test.ts`：mock LLM 驱动的真实 Loop 闭环，是"计划真的能跑通"的唯一非人工证据。
 * `tests/helpers/mock-runner.ts` 增加了可选 `observer`（复用既有 `silentRuntimeObserver`），让新套件的输出从 61KB 降到 <1KB。
+
+P2（同批落地）：
+
+* **视觉呼应**：`Timeline/plan-state.ts` 的 `derivePlanNotes` 按 revision 顺序 diff 相邻计划，
+  在**发生变更的那个 step** 上落一行弱化说明（`✅ 完成：X · ▶ 开始：Y（2/3）`、`计划已建立 · 3 项`、
+  `计划已清空`），由 `ExecutionPanel` 的 `planNote` 渲染（与既有 `compactionNote` 同款机制）。
+* **收尾审计**：`harness/plan.ts` 的 `buildPlanReport()` + `AgentContextHarness.planReport?()`；
+  Runtime 在发 `final_answer` 之前若有未完成项则发 `plan_incomplete_at_finish`（只留痕，不阻断）；
+  面板终态也会折叠为「结束时仍有 N 项未完成」。
+* **引导模板**：`PAYASO.md` 增加「任务计划（多步任务）」一节（多步才建、完成即重发全量清单、
+  标题写给用户看、计划可演化）。
 
 真实模型烟雾（`npm run cli`，MiniMax-M3，2026-09-10）：
 

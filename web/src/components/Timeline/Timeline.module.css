@@ -466,6 +466,38 @@
   opacity: 0.7;
 }
 
+/* 计划变更说明：与工具步骤同层，但只做「这一步之后计划变成了什么」的弱化提示。
+   左侧色条按变更类型着色（建立/推进/全部完成/清空），文字自带 ✅/▶ 标记。 */
+.planNote {
+  display: flex;
+  align-items: center;
+  margin: 4px 0 8px;
+  padding: 2px 0 2px 9px;
+  border-left: 2px solid var(--color-border-default);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.planNote_progress {
+  border-left-color: var(--accent-blue);
+}
+
+.planNote_done {
+  border-left-color: var(--color-success);
+}
+
+.planNote_created,
+.planNote_cleared {
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+
+.planNote span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ===== Global running banner (shown only before first tool starts) ===== */
 
 .globalRunning {

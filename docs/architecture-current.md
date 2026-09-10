@@ -165,7 +165,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","error"]
+["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -214,6 +214,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | 搜索不吞掉依赖目录 | grep/glob 共用 `workspace-scan.ts` 的 ignore 策略；`includeIgnored` 显式放行 | `tests/workspace-scan.test.ts` |
 | 项目约定必须被读到 | `workspace-instructions.ts` 按 PAYASO.md → AGENTS.md → CLAUDE.md 合并，skills 兼容三个目录 | `tests/workspace-instructions.test.ts` |
 | 只读 shell 命令不得回放缓存 | `Tool.resolveEffect` + `shell-command-effect.ts`；写命令仍走三态副作用保护 | `tests/shell-command-effect.test.ts` |
+| Plan 不等于硬约束 | `harness/plan.ts` 只管状态与投影；收尾时未完成项只发 `plan_incomplete_at_finish` 审计事件，绝不阻断收尾（`planReport?()` 是可选钩子） | `tests/plan-loop.test.ts` |
 | 原生适配器不得吞掉畸形参数 | `llm/tool-call-arguments.ts` 从 `toolcall_delta` 还原原文，交由 Runtime 统一解析 | `tests/tool-call-arguments.test.ts` |
 | 分片 tool_call 不得丢参数 | `llm.ts` SSE 归一化：空串 `id`/`name` 视为缺省（不覆盖已知身份，转发流与 OpenAI 协议一致）；后续分片按 index 合并 | `tests/tool-call-arguments.test.ts` |
 | scratchpad 不重复 transcript 内容 | `harness/scratchpad-view.ts` 只保留进度/失败/无效/下一步信号（实测 6.3K → <1.5K token） | `tests/scratchpad-view.test.ts` |

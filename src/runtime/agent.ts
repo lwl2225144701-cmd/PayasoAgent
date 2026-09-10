@@ -467,6 +467,22 @@ export async function runAgent(
           );
         }
 
+        // Trace: 计划收尾审计 —— 仍留有未完成项时留痕（不阻断收尾；Harness 只报告）。
+        const planReport = contextHarness.planReport?.();
+        if (planReport && planReport.unfinished.length > 0) {
+          emit({
+            type: 'plan_incomplete_at_finish',
+            revision: planReport.revision,
+            completed: planReport.completed,
+            total: planReport.total,
+            unfinished: planReport.unfinished.map((item) => ({
+              id: item.id,
+              title: item.title,
+              status: item.status === 'in_progress' ? 'in_progress' : 'pending',
+            })),
+          });
+        }
+
         // Trace: 最终答案 + 总执行步骤数
         emit({
           type: 'final_answer',

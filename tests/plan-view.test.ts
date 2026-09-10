@@ -164,6 +164,32 @@ await check('不实现 planPort 的 Harness 仍是合法实现（planPort 必须
   assert.equal(asInterface.planPort, undefined);
 });
 
+// ---- 5. 收尾审计报告 ----
+await check('planReport：报告仍在进行/待办的项，已完成的项不进 unfinished', () => {
+  const harness = createHarness();
+  harness.planPort().apply([
+    { id: 'a', title: '完成项', status: 'completed' },
+    { id: 'b', title: '进行项', status: 'in_progress' },
+    { id: 'c', title: '待办项', status: 'pending' },
+  ]);
+  const report = harness.planReport();
+  assert.equal(report.total, 3);
+  assert.equal(report.completed, 1);
+  assert.equal(report.revision, 1);
+  assert.deepEqual(
+    report.unfinished.map((item) => [item.title, item.status]),
+    [
+      ['进行项', 'in_progress'],
+      ['待办项', 'pending'],
+    ],
+  );
+});
+
+await check('planReport：没有计划时 total=0 且 unfinished 为空（Runtime 据此不发审计事件）', () => {
+  const report = createHarness().planReport();
+  assert.deepEqual(report, { revision: 0, total: 0, completed: 0, unfinished: [] });
+});
+
 console.log(`\nPlan 投影与注入汇总: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);
 console.log('验收：有界投影 / system 注入 / 预算计量 / 跨 resume 不失忆 / planPort 可选 ✓');

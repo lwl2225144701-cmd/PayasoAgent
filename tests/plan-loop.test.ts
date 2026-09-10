@@ -266,6 +266,61 @@ await check('Harness 未提供 planPort：工具 fail-closed，不发事件', ()
   assert.match(String(errors[0].error), /需要 Agent Runtime 提供的计划端口/);
 });
 
+// ---- 5. 收尾审计：计划未做完时留痕（不阻断收尾），做完则不留痕 ----
+const unfinishedHarness = createHarness();
+const unfinished = await runMockAgent({
+  runId: 'plan-loop-unfinished',
+  task: '只做一半',
+  workspaceRoot: WORKSPACE,
+  contextHarness: unfinishedHarness,
+  observer: silentRuntimeObserver,
+  script: [
+    () =>
+      toolCallResponse([
+        {
+          id: 'call-1',
+          name: 'updatePlan',
+          args: {
+            items: [
+              { title: '已完成的项', status: 'completed' },
+              { title: '没做的项', status: 'pending' },
+            ],
+          },
+        },
+      ]),
+    () => textResponse('先到这里。'),
+  ],
+});
+
+await check('收尾时仍有未完成项：发 plan_incomplete_at_finish 审计事件，且不阻断收尾', () => {
+  const audit = unfinished.traces.filter((e) => e.type === 'plan_incomplete_at_finish') as Array<
+    Extract<TraceEvent, { type: 'plan_incomplete_at_finish' }>
+  >;
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].total, 2);
+  assert.equal(audit[0].completed, 1);
+  assert.deepEqual(
+    audit[0].unfinished.map((item) => [item.title, item.status]),
+    [['没做的项', 'pending']],
+  );
+  assert.equal(unfinished.answer, '先到这里。', '审计事件不得改变收尾行为');
+  // 审计事件必须排在 final_answer 之前（同一轮收尾路径内）
+  const types = unfinished.traces.map((event) => event.type);
+  assert.ok(
+    types.indexOf('plan_incomplete_at_finish') < types.indexOf('final_answer'),
+    '审计事件应在 final_answer 之前落盘',
+  );
+});
+
+await check('计划全部完成：不发审计事件', () => {
+  const types = advance.traces.map((event) => event.type);
+  assert.ok(!types.includes('plan_incomplete_at_finish'), '3/3 全部完成时不该留痕');
+});
+
+await check('没有计划（未调用 updatePlan）：不发审计事件', () => {
+  assert.ok(!noPort.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
+});
+
 console.log(`\nPlan 闭环汇总: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);
 console.log('验收：工具 → 状态 → 事件 → 注入 → 越界报错 → 无端口 fail-closed ✓');

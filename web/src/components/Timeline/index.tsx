@@ -36,7 +36,7 @@ import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from 
 import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
 import { PlanPanel } from './PlanPanel';
-import { derivePlan } from './plan-state';
+import { derivePlan, derivePlanNotes, type PlanNote } from './plan-state';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
@@ -154,12 +154,13 @@ function ExecutionPanel({
   const bodyEmpty =
     !thinking &&
     tools.length === 0 &&
-    !groups.some((g) => g.reasoning?.visible || g.compactionNote);
+    !groups.some((g) => g.reasoning?.visible || g.compactionNote || g.planNote);
   const hasDetails =
     Boolean(thinking) ||
     tools.length > 0 ||
     groups.some((group) => group.reasoning?.visible) ||
-    groups.some((group) => group.compactionNote);
+    groups.some((group) => group.compactionNote) ||
+    groups.some((group) => group.planNote);
   const statusTitle = running
     ? '正在执行'
     : status === 'failed'
@@ -242,6 +243,13 @@ function ExecutionPanel({
                 <div className={styles.compactionNote}>
                   <ScissorsIcon size={12} />
                   <span>{group.compactionNote}</span>
+                </div>
+              )}
+              {group.planNote && (
+                <div
+                  className={`${styles.planNote} ${styles[`planNote_${group.planNote.kind}`] ?? ''}`}
+                >
+                  <span>{group.planNote.text}</span>
                 </div>
               )}
               {group.tools.length > 0 && (
@@ -808,6 +816,8 @@ interface ToolStepGroup {
   tools: ToolCallData[];
   /** 上下文压缩（compaction）发生在该 step 时的弱化说明，内务事件不成卡片。 */
   compactionNote?: string | null;
+  /** 计划在该 step 发生变化时的弱化说明（与工具步骤的视觉呼应，不做猜测式连线）。 */
+  planNote?: PlanNote | null;
 }
 
 /**
@@ -913,6 +923,9 @@ function buildStructure(
     }
   }
 
+  // 计划变更说明：按 revision 顺序 diff 出「这一步之后计划变成了什么」，挂到对应 step。
+  const planNotes = derivePlanNotes(events);
+
   const toolSteps: ToolStepGroup[] = [];
   const processedToolsEv: HostEvent[] = [];
   let globalThinkingAcc = events
@@ -958,6 +971,7 @@ function buildStructure(
       compactionEv && compactionEv.type === 'context_compaction'
         ? `上下文已压缩 · ${compactionEv.totalSummarizedMessages} 条早期对话已摘要保留要点`
         : null;
+    const planNote = planNotes.get(step) ?? null;
 
     for (const ev of stepEvents) {
       if (ev.type === 'tool_call' || ev.type === 'tool_result' || ev.type === 'tool_error') {
@@ -966,18 +980,19 @@ function buildStructure(
     }
 
     // Don't emit a step group that has neither reasoning nor tools nor a compaction note.
-    if (tools.length === 0 && !reasoning && !compactionNote) continue;
+    if (tools.length === 0 && !reasoning && !compactionNote && !planNote) continue;
     // Don't emit a step group where reasoning contains only a pure duplicate of final answer with no tools.
     if (
       tools.length === 0 &&
       !compactionNote &&
+      !planNote &&
       reasoning &&
       (!reasoning.visible || isDuplicateOfFinal(reasoning.visible, finalAnswer)) &&
       !reasoning.thinkingDetail
     )
       continue;
 
-    toolSteps.push({ step, reasoning, tools, compactionNote });
+    toolSteps.push({ step, reasoning, tools, compactionNote, planNote });
   }
 
   if (toolSteps.length === 0 && run.status === 'running') {

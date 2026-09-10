@@ -379,6 +379,14 @@ export interface PlanUpdateEvent extends TraceEventBase {
   total: number;
 }
 
+export interface PlanIncompleteAtFinishEvent extends TraceEventBase {
+  type: 'plan_incomplete_at_finish';
+  revision: number;
+  completed: number;
+  total: number;
+  unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
+}
+
 export interface ErrorEvent extends TraceEventBase {
   type: 'error';
   message: string;
@@ -464,6 +472,7 @@ export type TraceEvent =
   | ShellSandboxDeniedEvent
   | ScratchpadUpdateEvent
   | PlanUpdateEvent
+  | PlanIncompleteAtFinishEvent
   | ErrorEvent;
 
 export type LifecycleEvent =

@@ -231,3 +231,27 @@ export function normalizePlan(value: unknown): Plan {
   }
   return { revision, items: items.slice(0, PLAN_MAX_ITEMS) };
 }
+
+/** 收尾审计报告：Run 结束（final_answer）时计划的实际状态。不阻断收尾，只留痕。 */
+export interface PlanReport {
+  revision: number;
+  total: number;
+  completed: number;
+  /** 仍处于 pending / in_progress 的项（标题已裁剪，够写进事件即可）。 */
+  unfinished: Array<{ id: string; title: string; status: PlanItemStatus }>;
+}
+
+export function buildPlanReport(plan: Plan): PlanReport {
+  return {
+    revision: plan.revision,
+    total: plan.items.length,
+    completed: countCompleted(plan),
+    unfinished: plan.items
+      .filter((item) => item.status !== 'completed')
+      .map((item) => ({
+        id: item.id,
+        title: clip(item.title, PLAN_VIEW_TITLE_CHARS),
+        status: item.status,
+      })),
+  };
+}

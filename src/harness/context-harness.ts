@@ -26,7 +26,13 @@ import {
   type ModelContextConfig,
   resolveModelContextConfig,
 } from './model-context.js';
-import { applyPlan, type PlanPort, renderBoundedPlanView } from './plan.js';
+import {
+  applyPlan,
+  buildPlanReport,
+  type PlanPort,
+  type PlanReport,
+  renderBoundedPlanView,
+} from './plan.js';
 import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
 
 export interface ContextCompactionResult {
@@ -85,6 +91,9 @@ export interface AgentContextHarness {
   // `plan_update` 事件（Harness 不碰 trace）；fake Harness 不实现也不影响编译，
   // 此时 updatePlan 工具 fail-closed 报错。
   planPort?(): PlanPort;
+  // v2.2 Plan：收尾审计 —— 回答「Run 结束时计划还剩什么没做完」。只报告不改行为
+  // （刻意不做成"未完成就不许收尾"的硬约束）；Runtime 据此发审计事件。
+  planReport?(): PlanReport;
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage;
   sanitizeFinalAnswer(text: string): string;
   // Optional Harness policy hook. Called after a tool turn and before the
@@ -280,6 +289,10 @@ export class DefaultContextHarness implements AgentContextHarness {
         return applied;
       },
     };
+  }
+
+  planReport(): PlanReport {
+    return buildPlanReport(this.state.plan);
   }
 
   /**

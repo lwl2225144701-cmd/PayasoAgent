@@ -69,3 +69,79 @@ export function derivePlan(events: HostEvent[]): PlanView | null {
   }
   return latest ? toView(latest) : null;
 }
+
+/** 时间线里的计划变更说明（挂在发生变更的那个 step 上）。 */
+export interface PlanNote {
+  step: number;
+  text: string;
+  kind: 'created' | 'progress' | 'done' | 'cleared';
+}
+
+const NOTE_TITLE_CHARS = 40;
+
+function clipTitle(title: string): string {
+  return title.length > NOTE_TITLE_CHARS ? `${title.slice(0, NOTE_TITLE_CHARS - 1)}…` : title;
+}
+
+/**
+ * 计划变更 → 执行流里的弱化说明行。
+ *
+ * 为什么这样做"视觉呼应"而不是把工具调用和计划项连线：事件里**没有**计划项与工具调用的
+ * 对应关系，任何自动连线都是猜测。我们能确定性知道的是"这一步之后计划变成了什么"，
+ * 所以只在对应 step 上落一行说明 —— 宁缺勿错。
+ */
+export function derivePlanNotes(events: HostEvent[]): Map<number, PlanNote> {
+  const updates: PlanUpdateEvent[] = [];
+  for (const event of events) {
+    if (event.type !== 'plan_update') continue;
+    const candidate = event as PlanUpdateEvent;
+    if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) continue;
+    updates.push(candidate);
+  }
+  updates.sort((a, b) => a.revision - b.revision);
+
+  const notes = new Map<number, PlanNote>();
+  let previous: PlanItemView[] = [];
+  for (const update of updates) {
+    const items = sanitizeItems(update.items);
+    const described = describeChange(previous, items);
+    if (described) {
+      const step = Number.isSafeInteger(update.step) ? update.step : 0;
+      notes.set(step, { step, ...described });
+    }
+    previous = items;
+  }
+  return notes;
+}
+
+function describeChange(
+  before: PlanItemView[],
+  after: PlanItemView[],
+): { text: string; kind: PlanNote['kind'] } | null {
+  if (before.length === 0 && after.length === 0) return null;
+  if (before.length === 0) return { text: `计划已建立 · ${after.length} 项`, kind: 'created' };
+  if (after.length === 0) return { text: '计划已清空', kind: 'cleared' };
+
+  const beforeById = new Map(before.map((item) => [item.id, item]));
+  const completed = after.filter(
+    (item) => item.status === 'completed' && beforeById.get(item.id)?.status !== 'completed',
+  );
+  const started = after.find(
+    (item) => item.status === 'in_progress' && beforeById.get(item.id)?.status !== 'in_progress',
+  );
+  const completedCount = after.filter((item) => item.status === 'completed').length;
+  const allDone = completedCount === after.length;
+
+  if (completed.length === 0 && !started) {
+    return { text: `计划已更新 · ${completedCount}/${after.length} 完成`, kind: 'progress' };
+  }
+  const parts: string[] = [];
+  if (completed.length > 0) {
+    parts.push(`✅ 完成：${completed.map((item) => clipTitle(item.title)).join('、')}`);
+  }
+  if (started) parts.push(`▶ 开始：${clipTitle(started.title)}`);
+  return {
+    text: `${parts.join(' · ')}（${completedCount}/${after.length}）`,
+    kind: allDone ? 'done' : 'progress',
+  };
+}

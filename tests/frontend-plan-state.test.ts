@@ -4,7 +4,7 @@
 //   清空计划 → null、坏字段容错
 
 import assert from 'node:assert/strict';
-import { derivePlan } from '../web/src/components/Timeline/plan-state.js';
+import { derivePlan, derivePlanNotes } from '../web/src/components/Timeline/plan-state.js';
 import type { HostEvent, PlanUpdateEvent } from '../web/src/types.js';
 
 let passed = 0;
@@ -143,6 +143,70 @@ check('坏字段容错：缺 title / 未知 status / 非整数 revision 全部�
     ],
   );
   assert.equal(view.total, 2, 'total 以过滤后的清单为准，不信任事件里的计数');
+});
+
+// ---- 计划变更说明（时间线里的视觉呼应）----
+check('derivePlanNotes：建立 / 开始 / 完成 / 全完成 各落一行，挂在对应 step 上', () => {
+  const events = [
+    { ...planEvent(1, THREE), step: 3 },
+    { ...planEvent(2, [{ ...THREE[0] }, { ...THREE[1] }, { ...THREE[2] }]), step: 9 },
+    {
+      ...planEvent(3, [
+        { ...THREE[0] },
+        { ...THREE[1], status: 'completed' as const },
+        { ...THREE[2] },
+      ]),
+      step: 12,
+    },
+  ] as HostEvent[];
+  const notes = derivePlanNotes(events);
+  assert.equal(notes.get(3)?.kind, 'created');
+  assert.match(String(notes.get(3)?.text), /计划已建立 · 3 项/);
+  assert.equal(notes.get(9)?.kind, 'progress');
+  assert.match(String(notes.get(9)?.text), /计划已更新 · 1\/3 完成/);
+  // 第二步完成 + 第三步开始（同一份清单里同时发生）
+  assert.equal(notes.get(12)?.kind, 'progress');
+});
+
+check('derivePlanNotes：完成与开始同现时一行说明两件事，全部完成标记 done', () => {
+  const second = { ...THREE[1], status: 'completed' as const };
+  const third = { ...THREE[2], status: 'in_progress' as const };
+  const events = [
+    { ...planEvent(1, THREE), step: 3 },
+    // 第二步完成 + 第三步开始：同一份清单里同时发生
+    { ...planEvent(2, [{ ...THREE[0] }, second, third]), step: 6 },
+    {
+      ...planEvent(3, [{ ...THREE[0] }, second, { ...third, status: 'completed' as const }]),
+      step: 8,
+    },
+  ] as HostEvent[];
+  const notes = derivePlanNotes(events);
+  assert.equal(notes.get(6)?.kind, 'progress');
+  assert.match(String(notes.get(6)?.text), /✅ 完成：第二步/);
+  assert.match(String(notes.get(6)?.text), /▶ 开始：第三步/);
+  assert.match(String(notes.get(6)?.text), /（2\/3）/);
+  assert.equal(notes.get(8)?.kind, 'done');
+  assert.match(String(notes.get(8)?.text), /（3\/3）/);
+});
+
+check('derivePlanNotes：清空计划单独成行；无计划事件 → 空表', () => {
+  const events = [
+    { ...planEvent(1, THREE), step: 3 },
+    { ...planEvent(2, []), step: 5 },
+  ] as HostEvent[];
+  const notes = derivePlanNotes(events);
+  assert.equal(notes.get(5)?.kind, 'cleared');
+  assert.equal(derivePlanNotes([]).size, 0);
+});
+
+check('derivePlanNotes：乱序回放按 revision 排序，说明不会错位', () => {
+  const events = [
+    { ...planEvent(2, [{ id: 't1', title: 'A', status: 'completed' as const }]), step: 9 },
+    { ...planEvent(1, [{ id: 't1', title: 'A', status: 'pending' as const }]), step: 3 },
+  ] as HostEvent[];
+  const notes = derivePlanNotes(events);
+  assert.equal(notes.get(3)?.kind, 'created');
+  assert.equal(notes.get(9)?.kind, 'done');
 });
 
 console.log(`\n前端计划派生汇总: ${passed} PASS / ${failed} FAIL`);

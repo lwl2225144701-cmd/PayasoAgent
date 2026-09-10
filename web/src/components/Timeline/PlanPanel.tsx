@@ -48,7 +48,7 @@ export const PlanPanel = memo(function PlanPanel({
             style={{ width: `${percent}%` }}
           />
         </span>
-        {!expanded && <span className={styles.summary}>{summarize(plan)}</span>}
+        {!expanded && <span className={styles.summary}>{summarize(plan, running)}</span>}
         <ChevronDownIcon size={14} className={expanded ? styles.chevronOpen : styles.chevron} />
       </button>
 
@@ -69,8 +69,10 @@ export const PlanPanel = memo(function PlanPanel({
   );
 });
 
-function summarize(plan: PlanView): string {
+function summarize(plan: PlanView, running: boolean): string {
   if (plan.allDone) return `全部完成（${plan.total} 项）`;
+  // 终态仍有未完成项：如实说明（对应 trace 里的 plan_incomplete_at_finish 审计事件）。
+  if (!running) return `结束时仍有 ${plan.total - plan.completed} 项未完成`;
   const active = plan.items.find((item) => item.status === 'in_progress');
   return active ? `进行中：${active.title}` : `待办 ${plan.total - plan.completed} 项`;
 }

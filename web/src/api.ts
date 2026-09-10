@@ -313,6 +313,7 @@ export function connectSSE(
     'shell_sandbox_denied',
     'scratchpad_update',
     'plan_update',
+    'plan_incomplete_at_finish',
     'error',
     'approval_requested',
     'approval_resolved',
