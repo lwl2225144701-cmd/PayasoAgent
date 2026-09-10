@@ -1,8 +1,6 @@
-import { type CSSProperties, isValidElement, memo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { type CSSProperties, memo, useState } from 'react';
 import styles from './CollapsibleText.module.css';
-import { MermaidBlock } from './MermaidBlock';
+import { MarkdownText } from './MarkdownText';
 
 // 模型输出的 fenced code 常见三种畸形：
 //   1. fence 标记拼在上一行行尾（如「### 标题 ```mermaid」）→ 解析不出代码块，源码漏成正文
@@ -66,39 +64,7 @@ export const CollapsibleText = memo(function CollapsibleText({
           // 终态后由 settled 分支一次性解析（Mermaid/fence 也在那时处理）。
           <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{display}</div>
         ) : (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              a: ({ children, ...props }) => (
-                <a {...props} target="_blank" rel="noreferrer">
-                  {children}
-                </a>
-              ),
-              // ```mermaid 代码块 → 聊天内渲染成矢量图（剥掉外层 <pre>）
-              pre: ({ node, children, ...props }) => {
-                const first = Array.isArray(children) ? children[0] : children;
-                const className = isValidElement<{ className?: string }>(first)
-                  ? first.props.className
-                  : undefined;
-                if (className && /language-mermaid\b/.test(className)) {
-                  return <>{children}</>;
-                }
-                return <pre {...props}>{children}</pre>;
-              },
-              code: ({ node, className, children, ...props }) => {
-                if (className && /language-mermaid\b/.test(className)) {
-                  return <MermaidBlock chart={String(children).replace(/\n$/, '')} />;
-                }
-                return (
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                );
-              },
-            }}
-          >
-            {normalizeFences(display)}
-          </ReactMarkdown>
+          <MarkdownText text={normalizeFences(display)} />
         )}
       </div>
       {maxChars > 0 && text.length > maxChars && (

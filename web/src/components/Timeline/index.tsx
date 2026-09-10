@@ -33,6 +33,7 @@ import type {
 import { CollapsibleText } from '../CollapsibleText';
 import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
+import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { RunUsage } from './RunUsage';
@@ -509,7 +510,11 @@ export const Timeline = memo(function Timeline({
     >
       <div className={styles.timeline}>
         <article className={styles.userBlock}>
-          <p className={styles.userText}>{run.task}</p>
+          {/* 用户消息与助手正文共用 MarkdownText：手打的 **加粗**、# 标题、列表、代码块
+              都按 Markdown 渲染。这里不做模型输出那套畸形 fence 修复 —— 不改写用户原文。 */}
+          <div className={styles.userText}>
+            <MarkdownText text={run.task} />
+          </div>
           {runStarted?.type === 'run_started' &&
             runStarted.attachments &&
             runStarted.attachments.length > 0 && (

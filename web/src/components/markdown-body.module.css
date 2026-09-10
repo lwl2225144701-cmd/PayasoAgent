@@ -1,0 +1,137 @@
+/* Markdown 渲染后的元素主题（单一来源）——由 MarkdownText 挂载，助手正文与用户气泡共用。
+   这里只描述「元素长什么样」：段落/标题/列表/代码块/引用/表格的间距、字号、配色。
+   容器级排版（字号档位、行高、颜色、换行与对齐）留在各自的容器类里
+   （CollapsibleText 的 .text、Timeline 的 .userText），两者该长得不一样。 */
+
+.markdownBody {
+  min-width: 0;
+}
+
+.markdownBody > :first-child {
+  margin-top: 0;
+}
+
+.markdownBody > :last-child {
+  margin-bottom: 0;
+}
+
+.markdownBody p {
+  margin: 0 0 16px;
+}
+
+.markdownBody h1,
+.markdownBody h2,
+.markdownBody h3,
+.markdownBody h4 {
+  margin: 28px 0 12px;
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+
+.markdownBody h1 {
+  font-size: 1.45em;
+}
+.markdownBody h2 {
+  font-size: 1.22em;
+}
+.markdownBody h3 {
+  font-size: 1.1em;
+}
+.markdownBody h4 {
+  font-size: 1em;
+}
+
+.markdownBody ul,
+.markdownBody ol {
+  margin: 8px 0 16px;
+  padding-left: 24px;
+}
+
+.markdownBody li {
+  margin: 5px 0;
+  padding-left: 3px;
+}
+
+.markdownBody li::marker {
+  color: var(--text-tertiary);
+}
+
+.markdownBody strong {
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.markdownBody a {
+  color: var(--color-brand-hover);
+  text-decoration: none;
+}
+
+.markdownBody a:hover {
+  text-decoration: underline;
+}
+
+.markdownBody code:not(pre code) {
+  padding: 2px 5px;
+  background: var(--color-code);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.markdownBody pre {
+  max-width: 100%;
+  margin: 14px 0 18px;
+  padding: 15px 17px;
+  overflow: auto;
+  background: var(--color-code);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.87em;
+  line-height: 1.65;
+}
+
+.markdownBody pre code {
+  font: inherit;
+}
+
+.markdownBody blockquote {
+  margin: 14px 0 18px;
+  padding: 2px 0 2px 15px;
+  border-left: 3px solid var(--color-brand-border);
+  color: var(--text-secondary);
+}
+
+.markdownBody hr {
+  margin: 24px 0;
+  border: 0;
+  border-top: 1px solid var(--border-light);
+}
+
+.markdownBody table {
+  width: 100%;
+  margin: 14px 0 18px;
+  border-collapse: collapse;
+  font-size: 0.93em;
+}
+
+.markdownBody th,
+.markdownBody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+}
+
+.markdownBody th {
+  background: var(--color-surface-subtle);
+  font-weight: 600;
+}
+
+.markdownBody tbody tr:hover {
+  background: var(--color-brand-soft);
+}

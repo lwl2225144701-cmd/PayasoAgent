@@ -74,6 +74,11 @@
   line-height: 1.55;
   letter-spacing: -0.01em;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  /* 气泡靠右是定位，内容按 Markdown 块正常左对齐（列表/代码块/表格右对齐没法看）。 */
+  text-align: left;
+  /* 用户输入按字面换行：Enter 就是换行（Markdown 软换行此时也按换行渲染）。 */
+  white-space: pre-wrap;
 }
 
 .userBlock .time {
