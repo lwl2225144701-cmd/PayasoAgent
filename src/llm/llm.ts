@@ -435,8 +435,15 @@ function normalizeSseResponse(response: Response, diagnostics: FetchDiagnostics)
       if (!isRecord(rawCall)) continue;
       const call = { ...rawCall };
       const index = typeof call.index === 'number' ? call.index : 0;
-      if (typeof call.id === 'string') toolIds.set(index, call.id);
+      // 兼容端点会把同一个调用拆成多片，后续分片带 `id: ""`（实测 MiniMax-M3：第 1 片
+      // 带 id+name、arguments 为空，第 2/3 片 id 与 name 都是空串，真正的参数只在最后
+      // 一片）。空串不是身份：既不能覆盖已知 id，也不能让分片身份被清空 —— 否则累计
+      // 参数会丢掉，Runtime 只拿到空串 → INVALID_ARGUMENT_JSON。删掉空 id 后，我们
+      // 转发出去的流与 OpenAI 官方协议一致（后续分片省略 id，下游按 index 合并）。
+      if (typeof call.id === 'string' && call.id !== '') toolIds.set(index, call.id);
+      else if (call.id === '') delete call.id;
       const functionPart = isRecord(call.function) ? { ...call.function } : undefined;
+      if (functionPart && functionPart.name === '') delete functionPart.name;
       if (functionPart && typeof functionPart.name === 'string') {
         const previousName = toolNames.get(index) ?? '';
         // A few OpenAI-compatible endpoints split the function name across

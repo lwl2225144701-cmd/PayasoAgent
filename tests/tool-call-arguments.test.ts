@@ -202,6 +202,141 @@ await test('集成：合法的空对象参数保持 {}', async () => {
   assert.equal(message.tool_calls?.[0].function.arguments, '{}');
 });
 
+// ---- 5. 集成：OpenAI 兼容端点把同一个调用拆成多片（实测 MiniMax-M3）----
+// 回归目标：分片的后续片段带 `id: ""` / `name: ""` 空串。空串不是身份 —— 修复前它会
+// 覆盖已知 id，导致累计参数被丢弃，Runtime 只拿到空串 → 全线 INVALID_ARGUMENT_JSON。
+
+interface OpenAiChunk {
+  delta: Record<string, unknown>;
+  finish?: string;
+}
+
+function openAiCompatStream(chunks: OpenAiChunk[]): string {
+  const lines = chunks.map(({ delta, finish }) =>
+    `data: ${JSON.stringify({
+      id: 'chatcmpl_test',
+      object: 'chat.completion.chunk',
+      model: 'MiniMax-M3',
+      choices: [{ index: 0, delta, finish_reason: finish ?? null }],
+    })}\n\n`,
+  );
+  const final = `data: ${JSON.stringify({
+    id: 'chatcmpl_test',
+    object: 'chat.completion.chunk',
+    model: 'MiniMax-M3',
+    choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: 'tool_calls' }],
+    usage: { prompt_tokens: 40, completion_tokens: 12, total_tokens: 52 },
+  })}\n\n`;
+  return `${lines.join('')}${final}data: [DONE]\n\n`;
+}
+
+async function chatViaOpenAiCompat(chunks: OpenAiChunk[]) {
+  globalThis.fetch = (async () =>
+    new Response(openAiCompatStream(chunks), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch;
+  return chat(
+    [{ role: 'user', content: '列出工作区文件' }],
+    [
+      {
+        type: 'function',
+        function: {
+          name: 'ls',
+          description: '列出目录',
+          parameters: {
+            type: 'object',
+            properties: { path: { type: 'string' } },
+            required: ['path'],
+          },
+        },
+      },
+    ],
+    undefined,
+    { baseUrl: 'https://api.minimaxi.com/v1', apiKey: 'sk-test', model: 'MiniMax-M3' },
+  );
+}
+
+await test('集成：分片带空串 id/name 时仍拿到完整参数（MiniMax-M3 实测序列）', async () => {
+  const message = await chatViaOpenAiCompat([
+    {
+      delta: {
+        content: '',
+        role: 'assistant',
+        tool_calls: [
+          { id: 'call_minimax_1', type: 'function', function: { name: 'ls', arguments: '' }, index: 0 },
+        ],
+      },
+    },
+    {
+      delta: {
+        content: '',
+        role: 'assistant',
+        tool_calls: [{ id: '', type: 'function', function: { arguments: '' }, index: 0 }],
+      },
+    },
+    {
+      delta: {
+        content: '',
+        role: 'assistant',
+        tool_calls: [
+          { id: '', type: 'function', function: { arguments: '{"path": "."}' }, index: 0 },
+        ],
+      },
+    },
+  ]);
+  assert.equal(message.tool_calls?.length, 1, '空 id 不得另起一个调用');
+  assert.equal(message.tool_calls?.[0].function.name, 'ls');
+  assert.equal(message.tool_calls?.[0].function.arguments, '{"path": "."}');
+  assert.equal(message.tool_calls?.[0].id, 'call_minimax_1');
+});
+
+await test('集成：后续片段 name 为空串时不覆盖已知函数名', async () => {
+  const message = await chatViaOpenAiCompat([
+    {
+      delta: {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_minimax_2',
+            type: 'function',
+            function: { name: 'shell', arguments: '' },
+            index: 0,
+          },
+        ],
+      },
+    },
+    {
+      delta: {
+        role: 'assistant',
+        tool_calls: [
+          { id: '', type: 'function', function: { name: '', arguments: '{"command": "ls -la"}' }, index: 0 },
+        ],
+      },
+    },
+  ]);
+  assert.equal(message.tool_calls?.[0].function.name, 'shell');
+  assert.equal(message.tool_calls?.[0].function.arguments, '{"command": "ls -la"}');
+});
+
+await test('集成：函数名跨分片拼接仍然有效（cal + culator）', async () => {
+  const message = await chatViaOpenAiCompat([
+    {
+      delta: {
+        role: 'assistant',
+        tool_calls: [{ id: 'call_split', type: 'function', function: { name: 'cal', arguments: '{}' }, index: 0 }],
+      },
+    },
+    {
+      delta: {
+        role: 'assistant',
+        tool_calls: [{ id: '', type: 'function', function: { name: 'culator' }, index: 0 }],
+      },
+    },
+  ]);
+  assert.equal(message.tool_calls?.[0].function.name, 'calculator');
+});
+
 globalThis.fetch = originalFetch;
 
 console.log(`\ntool-call-arguments 测试完成：${passed} 通过 / ${failed} 失败`);

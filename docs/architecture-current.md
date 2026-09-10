@@ -104,6 +104,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tool-output-budget.ts`                       | **工具输出预算单一来源**（16KB / 首 6KB + 尾 4KB，UTF-8 边界安全）；Runtime guard 与 read 等生产者共用
 | `src/runtime/output-guard.ts`                     | Runtime 侧预算执行点（委托 `tool-output-budget.ts`）                                                                                                                                                     |
 | `src/llm/tool-call-arguments.ts`                  | 从 `toolcall_delta` 恢复模型原始参数（原生适配器畸形 JSON 不再被当成 `{}`）
+| `src/llm/llm.ts`（SSE 归一化）                      | 兼容端点把同一调用拆成多片时，空串 `id`/`name` 不得覆盖已知身份（MiniMax-M3 实测：分片带 `id: ""` 会让参数丢失 → 全线 `INVALID_ARGUMENT_JSON`）
 | `src/llm/llm.ts`                                  | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验；`max_tokens` 按当前请求模型逐请求解析）                                             |
 | `src/tools/tools.ts`                              | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey                                                                                                      |
 | `src/tools/filesystem.ts`                         | listDir / readFile / writeFile（含可写区权限与原子写）                                                                                                                                     |
@@ -214,6 +215,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | 项目约定必须被读到 | `workspace-instructions.ts` 按 PAYASO.md → AGENTS.md → CLAUDE.md 合并，skills 兼容三个目录 | `tests/workspace-instructions.test.ts` |
 | 只读 shell 命令不得回放缓存 | `Tool.resolveEffect` + `shell-command-effect.ts`；写命令仍走三态副作用保护 | `tests/shell-command-effect.test.ts` |
 | 原生适配器不得吞掉畸形参数 | `llm/tool-call-arguments.ts` 从 `toolcall_delta` 还原原文，交由 Runtime 统一解析 | `tests/tool-call-arguments.test.ts` |
+| 分片 tool_call 不得丢参数 | `llm.ts` SSE 归一化：空串 `id`/`name` 视为缺省（不覆盖已知身份，转发流与 OpenAI 协议一致）；后续分片按 index 合并 | `tests/tool-call-arguments.test.ts` |
 | scratchpad 不重复 transcript 内容 | `harness/scratchpad-view.ts` 只保留进度/失败/无效/下一步信号（实测 6.3K → <1.5K token） | `tests/scratchpad-view.test.ts` |
 | 后台作业不得成为孤儿 | `sandbox/background-jobs.ts` + `RunManager.finalizeRun` 终态回收 + Run 取消联动 | `tests/background-jobs.test.ts` |
 
