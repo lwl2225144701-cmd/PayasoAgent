@@ -259,6 +259,17 @@ export function openFileInDefaultBrowser(
   return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}/open`, { method: 'POST' });
 }
 
+/**
+ * 一次性取回 Run 的完整事件日志（已终态 Run 的只读快照）。
+ *
+ * 已完成 Run 的事件不会再变，用普通请求取回即可，无需 EventSource 长连接：
+ * 浏览器对同源只有 6 条并发连接，长会话里每个历史回合各占一条 SSE 会互相排队，
+ * 连正在流式的 Run 都拿不到连接。取回顺序与 SSE 回放一致（按 seq 升序）。
+ */
+export function fetchRunEvents(runId: string): Promise<{ events: HostEvent[] }> {
+  return jsonFetch(`/runs/${runId}/events/snapshot`, { cache: 'no-store' });
+}
+
 // SSE 事件连接：订阅所有事件类型，回调收到 HostEvent
 // 返回 cleanup 函数（close）
 export function connectSSE(

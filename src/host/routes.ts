@@ -1237,6 +1237,14 @@ export async function handleRequest(
       // SSE：验证 token（通过 Authorization header，不使用 query）
       checkOrigin(req, port);
       requireAuth(req);
+      // 已完成 Run 的事件不可变，前端用一次性快照取回即可：为每个历史回合维持一条
+      // SSE 会占满浏览器同源 6 条并发额度，长会话打开时被挤成连接队列，
+      // 连正在流式的 live Run 也抢不到连接。
+      if (s.length === 4 && s[3] === 'snapshot') {
+        const events = manager.listRunEvents(runId);
+        return events ? sendJson(res, 200, { events }) : notFound(res);
+      }
+      if (s.length !== 3) return notFound(res);
       return handleSse(req, res, manager, runId);
     }
     case 'resume': {

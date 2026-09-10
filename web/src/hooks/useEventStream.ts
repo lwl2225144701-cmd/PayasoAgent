@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { connectSSE } from '../api';
+import { connectSSE, fetchRunEvents } from '../api';
 import type { HostEvent } from '../types';
 import { mergeStreamingEvents } from './stream-state';
 
@@ -13,21 +13,44 @@ const TERMINAL_TYPES: TerminalEventType[] = [
 ];
 const isTerminal = (ev: HostEvent): boolean => (TERMINAL_TYPES as string[]).includes(ev.type);
 
+/**
+ * 事件获取方式：
+ * - `live`：常驻 SSE，边流边推（Run 处于 running / stopping）。
+ * - `snapshot`：一次性取回（Run 已终态，事件日志不可变）。
+ *
+ * 已终态 Run 刻意**不**走 `?live=0` 的 SSE：Host 回放完会 `sink.end()`，而 EventSource
+ * 在流结束时必然按 retry 自动重连 → 无限刷请求。改用普通请求取回，同时避免占用
+ * 浏览器同源 6 条并发连接——长会话里每个历史回合各占一条 SSE 会互相排队，
+ * 连正在流式的 live Run 都拿不到连接。
+ */
+export type EventStreamMode = 'live' | 'snapshot';
+
+/** 把一批事件里的 assistant 增量拼成全文（streamedText 的数据源）。 */
+function collectDeltaText(events: HostEvent[]): string {
+  let text = '';
+  for (const event of events) {
+    if (event.type === 'assistant_delta') text += event.delta;
+  }
+  return text;
+}
+
 export function useEventStream(
   runId: string | null,
-  live = true,
+  mode: EventStreamMode = 'live',
   onTerminal?: (event: HostEvent) => void,
 ) {
   const [events, setEvents] = useState<HostEvent[]>([]);
   // 增量累计的 assistant_delta 全文：只在有新增 delta 时更新引用（无 delta 的事件
   // 如 context_usage 不会改变其引用），供下游 useMemo/React.memo 跳过无关重建。
   const [streamedText, setStreamedText] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
   // SSE 单连接按 append 顺序广播、重连回放也严格递增，seq 单调 → 只需记住最大已见 seq
   // 即可去重（等价于 Set 且 O(1) 内存；若未来服务端乱序广播，此假设不成立需回退 Set）。
   const lastSeqRef = useRef(0);
   const closeRef = useRef<(() => void) | null>(null);
   const endedRef = useRef(false);
+  // 当前 events 归属于哪个 Run。用于 live → snapshot 翻转时跳过重复取回：
+  // Run 终态后 status 变 completed，但此时 SSE 已把含终态在内的全部事件推完。
+  const loadedRunIdRef = useRef<string | null>(null);
   const onTerminalRef = useRef(onTerminal);
   onTerminalRef.current = onTerminal;
 
@@ -43,17 +66,43 @@ export function useEventStream(
     if (!runId) {
       setEvents([]);
       setStreamedText('');
-      setIsConnected(false);
       lastSeqRef.current = 0;
+      loadedRunIdRef.current = null;
+      return;
+    }
+
+    if (mode === 'snapshot' && loadedRunIdRef.current === runId) {
+      // 事件已经完整在手（由 SSE 推完或上一次快照取回），保持现状即可。
       return;
     }
 
     // 重置状态
     setEvents([]);
     setStreamedText('');
-    setIsConnected(false);
     lastSeqRef.current = 0;
+    loadedRunIdRef.current = null;
 
+    // ---- 已终态 Run：一次性取回 ----
+    if (mode === 'snapshot') {
+      let cancelled = false;
+      void fetchRunEvents(runId)
+        .then(({ events: incoming }) => {
+          if (cancelled) return;
+          setEvents(mergeStreamingEvents([], incoming));
+          const deltaText = collectDeltaText(incoming);
+          if (deltaText) setStreamedText(deltaText);
+          loadedRunIdRef.current = runId;
+        })
+        .catch(() => {
+          // 取回失败不置错：Timeline 仍能用 run.result / run_completed 渲染最终答案，
+          // 只缺工具步骤等由事件派生的细节。
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // ---- live Run：常驻 SSE ----
     let isActive = true;
     let pendingEvents: HostEvent[] = [];
     // 浏览器 DOM 中 setTimeout 与 requestAnimationFrame 的句柄同为 number；
@@ -68,11 +117,8 @@ export function useEventStream(
       setEvents((prev) => mergeStreamingEvents(prev, batch));
       // 增量累计 assistant_delta 全文：仅在有新增 delta 时 setState（引用变化），
       // 纯事件批次（context_usage/tool 等）不会触碰 streamedText，保持引用稳定。
-      let deltaAcc = '';
-      for (const ev of batch) {
-        if (ev.type === 'assistant_delta') deltaAcc += ev.delta;
-      }
-      if (deltaAcc) setStreamedText((prev) => prev + deltaAcc);
+      const deltaText = collectDeltaText(batch);
+      if (deltaText) setStreamedText((prev) => prev + deltaText);
     };
 
     const cancelFlush = (): void => {
@@ -94,41 +140,31 @@ export function useEventStream(
         : window.requestAnimationFrame(flushPending);
     };
 
-    const close = connectSSE(
-      runId,
-      live,
-      (ev, seq) => {
-        if (!isActive || endedRef.current) return;
-        if (seq > 0 && seq <= lastSeqRef.current) return;
-        if (seq > 0) lastSeqRef.current = seq;
-        pendingEvents.push(ev);
-        if (isTerminal(ev)) {
-          // Do not let the terminal close discard deltas received in the same
-          // network turn. Flush them before closing the EventSource.
-          flushPending();
-          // Run 已结束：立刻关闭 EventSource，断开浏览器自动重连链路（无限刷请求的根因之一）
-          endedRef.current = true;
-          if (closeRef.current) {
-            try {
-              closeRef.current();
-            } catch {
-              /* ignore */
-            }
+    const close = connectSSE(runId, true, (ev, seq) => {
+      if (!isActive || endedRef.current) return;
+      if (seq > 0 && seq <= lastSeqRef.current) return;
+      if (seq > 0) lastSeqRef.current = seq;
+      pendingEvents.push(ev);
+      if (isTerminal(ev)) {
+        // Do not let the terminal close discard deltas received in the same
+        // network turn. Flush them before closing the EventSource.
+        flushPending();
+        // Run 已结束：立刻关闭 EventSource，断开浏览器自动重连链路（无限刷请求的根因之一）
+        endedRef.current = true;
+        loadedRunIdRef.current = runId;
+        if (closeRef.current) {
+          try {
+            closeRef.current();
+          } catch {
+            /* ignore */
           }
-          closeRef.current = null;
-          setIsConnected(false);
-          onTerminalRef.current?.(ev);
-          return;
         }
-        scheduleFlush();
-      },
-      () => {
-        if (isActive && !endedRef.current) setIsConnected(true);
-      },
-      () => {
-        if (isActive) setIsConnected(false);
-      },
-    );
+        closeRef.current = null;
+        onTerminalRef.current?.(ev);
+        return;
+      }
+      scheduleFlush();
+    });
 
     closeRef.current = close;
 
@@ -143,7 +179,7 @@ export function useEventStream(
       }
       closeRef.current = null;
     };
-  }, [runId, live]);
+  }, [runId, mode]);
 
-  return { events, streamedText, isConnected };
+  return { events, streamedText };
 }

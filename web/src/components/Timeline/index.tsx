@@ -270,13 +270,16 @@ export const Timeline = memo(function Timeline({
   onRetryCommand,
   onContextUsage,
 }: TimelineProps) {
-  // 注意：这里 live 固定为 true，不能跟随 run.status 变化。
-  // 如果 live 依赖 run.status，轮询把 status 从 running→completed 时会触发 useEventStream useEffect 重跑，
-  // 此时用 live=?live=0 新建连接，后端回放完直接 sink.end() 会让浏览器 EventSource 每 3 秒自动重连 → 无限刷 SSE 请求。
-  // 正确的关闭时机交给 useEventStream 内部：收到 run_completed/run_failed/run_stopped/run_interrupted 后主动 close SSE。
+  // 传输方式按 Run 状态分流：
+  // - live（running/stopping）：常驻 SSE，边流边推。
+  // - snapshot（已终态）：一次性取回。已完成 Run 的事件不可变，用 SSE 会让每个历史回合
+  //   各占一条长连接——浏览器同源只有 6 条并发额度，长会话打开时历史连接会把正在流式的
+  //   Run 挤出队列。且 `?live=0` 的回放结束会让 EventSource 自动重连（无限刷请求），
+  //   所以这里换的是传输方式，不是给 SSE 传 live=false。
+  const isLive = run?.status === 'running' || run?.status === 'stopping';
   const { events, streamedText } = useEventStream(
     optimistic ? null : (run?.runId ?? null),
-    true,
+    isLive ? 'live' : 'snapshot',
     !optimistic && run?.status === 'running' ? onRunTerminal : undefined,
   );
   const [openFile, setOpenFile] = useState<FileEntry | null>(null);
@@ -814,6 +817,28 @@ function deriveRawFinalAnswer(
   return finalAnswer;
 }
 
+type ParsedThink = ReturnType<typeof stripThinkTags>;
+
+// llm_call 事件一旦写入事件流就不可变（对象引用也不再替换），其 think 标签解析结果
+// 可以安全地按事件对象缓存。buildStructure 在流式期间每帧执行，不缓存就会对本回合
+// **全部历史 llm_call** 反复跑全串正则（stripThinkTags 是 3~4 趟 O(文本) 正则）。
+// WeakMap 以事件对象为键：事件被回收时缓存条目自动消失，不存在泄漏。
+const llmCallParseCache = new WeakMap<
+  HostEvent,
+  { response: ParsedThink; reasoning: ParsedThink }
+>();
+
+function parseLlmCallText(llm: LlmCallEvent): { response: ParsedThink; reasoning: ParsedThink } {
+  const cached = llmCallParseCache.get(llm);
+  if (cached) return cached;
+  const parsed = {
+    response: stripThinkTags(llm.response ?? ''),
+    reasoning: stripThinkTags(llm.reasoning ?? ''),
+  };
+  llmCallParseCache.set(llm, parsed);
+  return parsed;
+}
+
 function buildStructure(
   run: HostRun,
   events: HostEvent[],
@@ -890,8 +915,7 @@ function buildStructure(
       const llmCalls = stepEvents.filter((e): e is LlmCallEvent => e.type === 'llm_call');
       const llm = llmCalls[llmCalls.length - 1];
       if (llm) {
-        const parsedResponse = stripThinkTags(llm.response ?? '');
-        const parsedReasoning = stripThinkTags(llm.reasoning ?? '');
+        const { response: parsedResponse, reasoning: parsedReasoning } = parseLlmCallText(llm);
         const thinkingParts = [
           parsedResponse.thinking,
           parsedReasoning.thinking ?? parsedReasoning.visible,

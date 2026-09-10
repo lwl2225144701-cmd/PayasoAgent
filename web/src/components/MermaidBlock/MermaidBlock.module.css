@@ -50,3 +50,11 @@
   font-size: 12px;
   color: var(--color-text-tertiary, #8993a3);
 }
+
+/* 视口外图表的占位：只保留大致高度，不承载任何渲染成本。
+   高度取常见流程图的中间值——真实值未知，过小会让滚动条明显跳变。 */
+.deferred {
+  min-height: 180px;
+  border-radius: 10px;
+  background: var(--color-surface-subtle, rgba(125, 137, 158, 0.06));
+}

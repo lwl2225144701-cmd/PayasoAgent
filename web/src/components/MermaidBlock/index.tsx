@@ -31,6 +31,10 @@ function currentDark(): boolean {
 
 const RENDER_TIMEOUT_MS = 15_000;
 
+// 提前一屏开始渲染：既避免为视口外的图表白白付出 mermaid 布局成本，
+// 又保证用户滚动到时已经画好，不会看到空白占位。
+const RENDER_AHEAD_MARGIN = '600px 0px';
+
 const MERMAID_FONT_FAMILY =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 
@@ -133,6 +137,30 @@ export function MermaidBlock({ chart }: { chart: string }) {
   const [themeTick, setThemeTick] = useState(0);
   const [fontSize, setFontSize] = useState(18);
   const [stackWideChart, setStackWideChart] = useState(false);
+  // 视口门控：mermaid.render 含完整图布局（dagre + DOM 度量），成本远高于 markdown 解析。
+  // 一个长会话里可能同时挂载十几个图表，若挂载即渲染，打开会话就会退化成一条
+  // 串行渲染长队——其中绝大多数用户根本看不到。改为接近视口才渲染。
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const node = chartRef.current;
+    // 无 IntersectionObserver（旧环境/测试）时退化为立即渲染，绝不把内容卡在占位态。
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        // 只需触发一次：一旦渲染，图表就留在 DOM 里，无需再观察。
+        setVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: RENDER_AHEAD_MARGIN },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   // 主题切换（data-theme 属性变化）→ 入队重渲（串行，不打断在跑的渲染）
   useEffect(() => {
@@ -165,6 +193,8 @@ export function MermaidBlock({ chart }: { chart: string }) {
   }, []);
 
   useEffect(() => {
+    // 未进入视口前不渲染：占位视图负责占住高度，避免长会话打开时排队渲染图表。
+    if (!visible) return;
     let cancelled = false;
     let settled = false;
     setSvg(null);
@@ -214,7 +244,7 @@ export function MermaidBlock({ chart }: { chart: string }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [chart, fontSize, rawId, stackWideChart, themeTick]);
+  }, [chart, fontSize, rawId, stackWideChart, themeTick, visible]);
 
   if (failure) {
     // 错误回退：源码照常可读，不吞内容
@@ -222,6 +252,14 @@ export function MermaidBlock({ chart }: { chart: string }) {
       <div ref={chartRef} className={styles.wrap}>
         <pre className={styles.error}>{chart}</pre>
         <p className={styles.note}>{failure}</p>
+      </div>
+    );
+  }
+  if (!visible) {
+    // 尚未接近视口：占位块保留大致高度，让会话总高度与滚动条不至于大幅跳变。
+    return (
+      <div ref={chartRef} className={styles.wrap}>
+        <div className={styles.deferred} aria-hidden="true" />
       </div>
     );
   }

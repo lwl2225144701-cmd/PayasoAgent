@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './App.module.css';
 import {
   archiveSession as apiArchiveSession,
@@ -45,6 +45,7 @@ import { WorkspacePickerModal } from './components/WorkspacePickerModal';
 import { useConversationScroll } from './hooks/useConversationScroll';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import { useThemeMode } from './hooks/useThemeMode';
+import { reconcileRuns } from './run-reconcile';
 import type {
   ContextUsageEvent,
   DefaultModelView,
@@ -161,7 +162,9 @@ export default function App() {
   const refreshRuns = useCallback(async () => {
     try {
       const runResp = await listRuns();
-      setRuns(runResp.runs);
+      // 复用未变化 Run 的对象引用：Timeline 是 memo 组件，直接替换整个数组会让
+      // 本次状态对账把所有历史回合全部重渲（并重建各自的 buildStructure）。
+      setRuns((prev) => reconcileRuns(prev, runResp.runs));
       setOnline(true);
     } catch {
       setOnline(false);
@@ -294,8 +297,10 @@ export default function App() {
   const currentRun = runs.find((r) => r.runId === currentRunId) ?? null;
   const currentSession = sessions.find((s) => s.sessionId === currentSessionId) ?? null;
 
-  // 下拉的当前选择 = 默认模型对 + provider 目录派生；目录未加载或对不上时显示占位
-  const currentModelSelection: ModelSelection | null = (() => {
+  // 下拉的当前选择 = 默认模型对 + provider 目录派生；目录未加载或对不上时显示占位。
+  // 必须 useMemo：每次 render 新建对象会让 createRunNow / handleCreateRun 的回调身份
+  // 一起变化，进而通过 onRetryCommand 把 Timeline 的 memo 击穿（每次 App 重渲都全量重渲）。
+  const currentModelSelection: ModelSelection | null = useMemo(() => {
     if (!defaultModel?.defaultProviderId) return null;
     const provider = models.find((m) => m.id === defaultModel.defaultProviderId);
     if (!provider) return null;
@@ -316,7 +321,7 @@ export default function App() {
         ? { maxOutputTokens: capability.maxOutputTokens }
         : {}),
     };
-  })();
+  }, [defaultModel, models]);
 
   // 当前模型是否支持图片输入：设置显式 true/false 均优先，否则 pi-ai 注册表推断。
   // 三态与后端 run-manager.resolveVision 保持一致——显式 false 可关掉注册表声明。
@@ -337,13 +342,23 @@ export default function App() {
     return false;
   })();
 
-  const currentSessionRuns = runs
-    .filter((run) => run.sessionId === currentSessionId)
-    .sort((a, b) => a.turnIndex - b.turnIndex);
-  const displayedSessionRuns =
-    pendingRun?.sessionId === currentSessionId
-      ? [...currentSessionRuns, pendingRun]
-      : currentSessionRuns;
+  // 会话内 Run 列表需要引用稳定：它同时是 Timeline 列表与 TurnNavigator 的输入，
+  // 每次 render 新建数组会让两者在 App 任意状态变化时都重渲（TurnNavigator 还会
+  // 因此重挂 scroll/resize 监听）。`runs` 本身已由 reconcileRuns 保持引用稳定。
+  const currentSessionRuns = useMemo(
+    () =>
+      runs
+        .filter((run) => run.sessionId === currentSessionId)
+        .sort((a, b) => a.turnIndex - b.turnIndex),
+    [runs, currentSessionId],
+  );
+  const displayedSessionRuns = useMemo(
+    () =>
+      pendingRun?.sessionId === currentSessionId
+        ? [...currentSessionRuns, pendingRun]
+        : currentSessionRuns,
+    [currentSessionRuns, pendingRun, currentSessionId],
+  );
   // Composer 属于整个会话，其上下文预算应始终取会话最新一轮。
   // currentRunId 只表示当前滚动/导航到的历史回合，不能改变 Composer 预算。
   const latestSessionRunId = currentSessionRuns[currentSessionRuns.length - 1]?.runId ?? null;
@@ -354,8 +369,11 @@ export default function App() {
   const queueDispatchingRef = useRef(false);
   const immediateStopRunIdRef = useRef<string | null>(null);
   const [sentRunId, setSentRunId] = useState<string | null>(null);
-  const { scrollRef: conversationScrollRef, contentRef: conversationContentRef } =
-    useConversationScroll(currentSessionId, sentRunId);
+  const {
+    scrollRef: conversationScrollRef,
+    contentRef: conversationContentRef,
+    stopFollowing: stopConversationFollow,
+  } = useConversationScroll(currentSessionId, sentRunId);
 
   // Poll run files (kept for future "附件" row; not displayed inline).
   useEffect(() => {
@@ -733,15 +751,20 @@ export default function App() {
   );
 
   // TurnNavigator：点击/键盘选择某个历史回合 → 切换查看该 run 并滚动到对应 Timeline
-  const handleNavigateRun = useCallback((runId: string) => {
-    setCurrentRunId(runId);
-    // 等当前 Run 渲染后滚动（setState 异步，延迟一帧）
-    requestAnimationFrame(() => {
-      document
-        .getElementById(`run-${runId}`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }, []);
+  const handleNavigateRun = useCallback(
+    (runId: string) => {
+      setCurrentRunId(runId);
+      // 先暂停自动跟随，否则正在流式的回合会在下一帧把视图拉回底部，吃掉这次平滑滚动。
+      stopConversationFollow();
+      // 等当前 Run 渲染后滚动（setState 异步，延迟一帧）
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`run-${runId}`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+    [stopConversationFollow],
+  );
 
   const handleNewTask = useCallback(() => {
     setSendQueue([]);

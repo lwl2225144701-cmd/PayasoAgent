@@ -1444,6 +1444,19 @@ export class RunManager {
     return this.runs.get(runId);
   }
 
+  /**
+   * Run 的完整事件日志快照（只读，供前端一次性取回）。
+   *
+   * 已完成 Run 的事件不可变，前端不需要为它维持 SSE 长连接：SSE 会占用浏览器
+   * 同源 6 条并发额度，长会话（N 个历史回合同时挂载）打开时会退化成连接队列。
+   * 与 `subscribe(runId, sink, 0)` 的回放同源，语义一致。
+   * Run 不存在或所属会话已删除 → null（与 `get` 同一套可见性判定）。
+   */
+  listRunEvents(runId: string): HostEvent[] | null {
+    if (!this.get(runId)) return null;
+    return this.store.listEvents(runId).map((item) => item.event);
+  }
+
   getWorkspaceRoot(runId: string): string | null {
     const active = this.runs.get(runId);
     if (active) {
