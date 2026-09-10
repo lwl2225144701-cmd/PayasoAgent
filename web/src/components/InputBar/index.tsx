@@ -2,6 +2,7 @@ import {
   type ClipboardEvent,
   type CompositionEvent,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useRef,
   useState,
@@ -69,6 +70,8 @@ interface InputBarProps {
   onSelectPermission: (mode: PermissionMode) => void;
   // 内置斜杠命令执行器：发送 /cmd 时被拦截调用（不作为任务发给模型）
   onBuiltinCommand?: (name: string, args: string) => void;
+  // 输入框上方的附加内容（如"当前计划"面板）；宽度与输入框对齐，随输入区一起滚动/固定
+  headerSlot?: ReactNode;
 }
 
 export function InputBar({
@@ -94,6 +97,7 @@ export function InputBar({
   permissionMode,
   onSelectPermission,
   onBuiltinCommand,
+  headerSlot,
 }: InputBarProps) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -481,6 +485,7 @@ export function InputBar({
 
   return (
     <div className={`${styles.inputBar} ${styles.conversationBar}`}>
+      {headerSlot && <div className={styles.inputBarHeader}>{headerSlot}</div>}
       <div className={styles.conversationComposer}>
         {attachmentStrip}
         {visionWarning}

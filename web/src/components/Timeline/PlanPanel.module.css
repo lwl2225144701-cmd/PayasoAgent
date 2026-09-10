@@ -1,9 +1,10 @@
-/* 计划清单面板：用户气泡下方、执行过程上方的一小块进度区。
-   视觉上比最终回答轻，比折叠的执行细节重——它是"当前目标"的唯一入口。 */
+/* 计划清单面板：输入框上方的"当前计划"进度条（会话级临时状态，只属于最新一轮 Run）。
+   视觉上比最终回答轻，比折叠的执行细节重——它是"当前目标"的唯一入口。
+   外边距由宿主容器负责（InputBar.module.css 的 .inputBarHeader），面板自身不加。 */
 
 .panel {
   width: 100%;
-  margin: 2px 0 14px;
+  margin: 0;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
   border-radius: 10px;

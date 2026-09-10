@@ -35,6 +35,8 @@ import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
+import { PlanPanel } from './components/Timeline/PlanPanel';
+import type { PlanView } from './components/Timeline/plan-state';
 import {
   applyCompactUsage,
   type CompactStatusState,
@@ -92,6 +94,10 @@ export default function App() {
   const [compactStatus, setCompactStatus] = useState<CompactStatusState | null>(null);
   // 上下文预算环形指示器数据：Timeline 从 context_usage 事件上抛，输入栏展示
   const [contextUsage, setContextUsage] = useState<ContextUsageEvent | null>(null);
+  // 输入栏上方的"当前计划"：由最新一轮 Run 的 Timeline 上抛（见 onPlan）。
+  // 会话级临时状态——下一轮开始即清空，不在对话流里留痕（历史痕迹由执行流里的
+  // 计划变更说明行承载）。
+  const [activePlan, setActivePlan] = useState<PlanView | null>(null);
   const [online, setOnline] = useState(false);
   const [, setFiles] = useState<FileEntry[]>([]);
   const [viewingFile, setViewingFile] = useState<FileEntry | null>(null);
@@ -400,6 +406,7 @@ export default function App() {
       const trimmed = task.trim();
       if (!trimmed) return true;
       setCompactStatus(null);
+      setActivePlan(null); // 新一轮开始：上一轮的计划不再展示（等本轮自己的计划）
       const pendingRunId = `pending-${crypto.randomUUID()}`;
       const pendingSessionId = currentSessionId ?? `pending-session-${crypto.randomUUID()}`;
       const pendingTimestamp = new Date().toISOString();
@@ -745,6 +752,7 @@ export default function App() {
       setCurrentSessionId(sessionId);
       setCurrentRunId(sessionRuns[0]?.runId ?? null);
       setContextUsage(null); // 切换会话时清空，待新 Timeline 回放后更新
+      setActivePlan(null); // 同上：待新会话最新一轮 Run 回放后重新上抛
       setViewingFile(null);
     },
     [runs],
@@ -768,6 +776,7 @@ export default function App() {
 
   const handleNewTask = useCallback(() => {
     setSendQueue([]);
+    setActivePlan(null);
     setCurrentRunId(null);
     setCurrentSessionId(null);
     setViewingFile(null);
@@ -784,6 +793,7 @@ export default function App() {
     // 后端新建会话并继承该工作区根目录（会话创建后清空偏好）。
     setPreferredWorkspaceName(workspaceName);
     setSendQueue([]);
+    setActivePlan(null);
     // 同步 workspace 显示态：徽标立即显示「pi」而非「选择 Workspace」，
     // 乐观插入的 Run/Session 也带上工作区（否则侧栏先落「未选择工作区」组）
     setWorkspace({ name: workspaceName });
@@ -974,6 +984,13 @@ export default function App() {
                       onContextUsage={
                         run.runId === latestSessionRunId ? setContextUsage : undefined
                       }
+                      // 计划只认"当前这一轮"：乐观 pending 窗口内不接受上一轮的再次上抛，
+                      // 保证点发送后旧计划不会回闪（新 Run 落库后才由它自己上抛）。
+                      onPlan={
+                        run.runId === latestSessionRunId && !pendingRun
+                          ? setActivePlan
+                          : undefined
+                      }
                     />
                   ))
                 ) : (
@@ -1037,6 +1054,11 @@ export default function App() {
             permissionMode={permissionMode}
             onSelectPermission={setPermissionMode}
             onBuiltinCommand={handleBuiltinCommand}
+            headerSlot={
+              activePlan ? (
+                <PlanPanel plan={activePlan} running={latestSessionRun?.status === 'running'} />
+              ) : null
+            }
           />
         )}
       </div>

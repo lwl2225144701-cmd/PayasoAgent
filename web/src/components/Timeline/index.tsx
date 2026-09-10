@@ -35,8 +35,7 @@ import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
-import { PlanPanel } from './PlanPanel';
-import { derivePlan, derivePlanNotes, type PlanNote } from './plan-state';
+import { derivePlan, derivePlanNotes, type PlanNote, type PlanView } from './plan-state';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
@@ -55,6 +54,9 @@ interface TimelineProps {
   onRetryCommand?: (message: string) => void;
   // 上下文预算指示：最新 context_usage 上抛给宿主（输入栏环形指示器数据源）
   onContextUsage?: (usage: ContextUsageEvent | null) => void;
+  // 计划清单上抛给宿主（输入栏上方"当前计划"数据源）。宿主只把它接到最新一轮
+  // Run 上：计划是会话级临时状态，下一轮开始即不再展示。
+  onPlan?: (plan: PlanView | null) => void;
 }
 
 function preparationPhaseLabel(phase: ToolchainPreparationPhase): string {
@@ -283,6 +285,7 @@ export const Timeline = memo(function Timeline({
   onRunTerminal,
   onRetryCommand,
   onContextUsage,
+  onPlan,
 }: TimelineProps) {
   // 传输方式按 Run 状态分流：
   // - live（running/stopping）：常驻 SSE，边流边推。
@@ -370,8 +373,13 @@ export const Timeline = memo(function Timeline({
     return buildStructure(run, events, rawFinalAnswer, finalParsed);
   }, [run, events, rawFinalAnswer, finalParsed]);
 
-  // 计划清单：从事件派生（取 revision 最大的一条），无计划事件 → null 不渲染。
+  // 计划清单：从事件派生（取 revision 最大的一条），无计划事件 → null。
+  // 面板不再画在对话流里：这里只把派生结果上抛给宿主（输入栏上方的"当前计划"），
+  // 且只有最新一轮 Run 会拿到 onPlan —— 下一轮开始后旧计划自然不再展示。
   const plan = useMemo(() => derivePlan(events), [events]);
+  useEffect(() => {
+    onPlan?.(plan);
+  }, [onPlan, plan]);
 
   // ---- v2.0.1 JIT Approval：收集未裁决的批准请求，用户点击后回传 Host ----
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
@@ -680,8 +688,6 @@ export const Timeline = memo(function Timeline({
                 ))}
               </div>
             )}
-            {plan && <PlanPanel plan={plan} running={run.status === 'running'} />}
-
             <ExecutionPanel
               groups={toolSteps}
               thinking={globalThinking}

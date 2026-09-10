@@ -10,7 +10,7 @@
 
 ## 1. 一句话方案
 
-模型通过一个新工具 `updatePlan` **全量提交**任务清单 → **Harness** 持有计划状态、做校验/归一化/有界投影，并随 `ContextHarnessState` 一起进 checkpoint → 计划变化时由 **Runtime** 发一条 `plan_update` trace 事件（携带完整清单）→ Host 照既有链路落库 + SSE 下发 → 前端从事件派生清单，渲染在用户气泡下方。
+模型通过一个新工具 `updatePlan` **全量提交**任务清单 → **Harness** 持有计划状态、做校验/归一化/有界投影，并随 `ContextHarnessState` 一起进 checkpoint → 计划变化时由 **Runtime** 发一条 `plan_update` trace 事件（携带完整清单）→ Host 照既有链路落库 + SSE 下发 → 前端从事件派生清单，渲染在输入栏上方（只属于最新一轮 Run，见 §5）。
 
 三个核心取舍：
 
@@ -178,18 +178,28 @@ const toolContext = {
 | `web/src/types.ts` | `PlanUpdateEvent`（trace 事件的前端镜像） |
 | `web/src/components/Timeline/plan-state.ts`（新） | `derivePlan(events): PlanView \| null`：取 **`revision` 最大**的一条（不是数组最后一条 —— 对 SSE 重连/乱序回放幂等）；无事件 → `null`。纯函数，与 `context-gauge.ts` / `preparation-retry.ts` 同风格，可确定性测试 |
 | `web/src/components/Timeline/PlanPanel.tsx` + `.module.css`（新） | 清单面板：`计划 2/5` + 细进度条 + 每项 ✅ / ● / ○；运行中展开、终态折叠为一行摘要；`memo` 包裹；`<ol aria-live="polite">`，状态用图标 + 文案而非仅颜色 |
-| `web/src/components/Timeline/index.tsx` | 用户气泡下方、`ExecutionPanel` 上方渲染 `<PlanPanel plan={plan} running={run.status === 'running'} />`；**无 plan 不渲染**（零回归） |
+| `web/src/components/Timeline/index.tsx` | 只做派生与上抛：`derivePlan(events)` → `onPlan?.(plan)`（与 `onContextUsage` 同一模式），**不再在对话流里渲染面板** |
+| `web/src/App.tsx` | 只在**最新一轮 Run** 上接 `onPlan`（`run.runId === latestSessionRunId && !pendingRun`），把计划渲染到输入栏上方；新一轮开始与切换会话时清空 |
+| `web/src/components/InputBar/index.tsx` + `.module.css` | `headerSlot` 插槽：渲染在 `.conversationComposer` 上方，宽度同为 `min(860px, 100%)` 保证左右对齐 |
 
-文档流顺序：
+文档流顺序（面板已移出对话流）：
 
 ```
 用户气泡
-  → [计划清单]        ← 新增
-  → 执行过程（ExecutionPanel，可折叠）
+  → 执行过程（ExecutionPanel，可折叠；内部仍有"计划已建立/✅ 完成：…"变更说明行）
   → 最终结果
+──────────────────────────────
+[当前计划]  ← 输入栏上方，只属于最新一轮 Run
+输入框
 ```
 
-为什么不做侧栏 / 独立面板：Timeline 是"回合即文档"的滚动结构，每个历史回合要带自己的计划；侧栏需要额外处理滚动同步、历史回合归属与空态，与既有设计冲突。
+**计划面板的定位（v1.11 调整，取代原"用户气泡下方"方案）**：
+计划是**会话级临时状态**，不是历史回合的组成部分——面板只做"当前目标"的实时指示，
+展示在输入栏上方（`InputBar` 的 `headerSlot`），并在下一轮消息发出时立即清空。
+历史痕迹不丢：每轮执行流里的弱化变更说明行（`derivePlanNotes`：`计划已建立 · N 项`、
+`✅ 完成：…（2/3）`）仍然逐轮保留，且 `plan_update` 事件本身完整落库。
+原方案"每个历史回合各带一份计划面板"因此被取代：同一份会话级计划在多个历史回合里
+重复渲染，越往下滚动越像"过期副本"，而面板要回答的是"现在做到哪了"。
 
 ***
 
@@ -266,7 +276,7 @@ const toolContext = {
 | 写入口 | `AgentContextHarness.planPort?()`（可选）+ `ToolContext.planPort`（工具只见文本）；Runtime 在 `agent.ts` 装饰一层，`changed` 时发 `plan_update` |
 | 工具 | `src/tools/plan-tools.ts` 的 `updatePlan`（`effect: idempotent`，≤12 项 / 标题 ≤160 字符 / 单一 `in_progress`） |
 | 事件 | `trace.ts` 的 `plan_update`（revision + 全量 items + completed/total）；`context_usage` 增可选 `planTokens` |
-| 前端 | `web/src/types.ts`、`api.ts` 白名单、`Timeline/plan-state.ts`（`derivePlan` 取最大 revision）、`Timeline/PlanPanel.tsx` + CSS；挂在用户气泡与 `ExecutionPanel` 之间 |
+| 前端 | `web/src/types.ts`、`api.ts` 白名单、`Timeline/plan-state.ts`（`derivePlan` 取最大 revision）、`Timeline/PlanPanel.tsx` + CSS；由 `Timeline` 上抛、`App` 渲染在输入栏上方（`InputBar` 的 `headerSlot`） |
 | 测试 | `plan-state`(16) / `plan-view`(9) / `plan-loop`(8) / `frontend-plan-state`(8) 四个套件，均已登记进 `tests/run-all.ts`（68 套件） |
 
 与方案的差异（有意为之）：
