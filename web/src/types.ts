@@ -94,14 +94,7 @@ export interface FileEntry {
 // 模型配置 — 对齐后端 ModelProviderView / StoredModelProvider
 // 思考档次：与 pi-ai 的 ThinkingLevel / ModelThinkingLevel 对齐。
 // off = 显式关闭思考；其余为递进档次；未配置（undefined）= 跟随端点默认。
-export type ModelThinkingLevel =
-  | 'off'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max';
+export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface ModelCapabilitySetting {
   contextWindow?: number;
