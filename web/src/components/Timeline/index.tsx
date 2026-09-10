@@ -139,8 +139,9 @@ function ExecutionPanel({
   // 阶段化文案：随等待时间演进，避免静态文字的呆滞感
   const thinkingPhase = elapsed < 6 ? '正在思考' : elapsed < 20 ? '正在分析' : '正在处理复杂任务';
   // 等待模型首 token 的实时秒数（父组件 running 期间每 1.2s tick 一次，随渲染刷新）
+  // 已发出 Provider 请求（llm_request_sent）后从 requestSentAt 起算；否则从 llm_call_started 起算。
   const modelWaitSeconds = modelWait
-    ? Math.max(0, Math.round((Date.now() - Date.parse(modelWait.startedAt)) / 1000))
+    ? Math.max(0, Math.round((Date.now() - Date.parse(modelWait.requestSentAt ?? modelWait.startedAt)) / 1000))
     : 0;
   // 大上下文时提示 prefill 慢的根因与出路（≥100K 才提示，避免噪音）
   const modelWaitTitle =
@@ -200,7 +201,9 @@ function ExecutionPanel({
           {running && (modelWait || tools.length === 0) && (
             <span className={styles.thinkingText} title={modelWaitTitle}>
               {modelWait
-                ? `等待模型响应 · 第 ${modelWait.iteration} 轮 · 已等待 ${modelWaitSeconds}s`
+                ? modelWait.requestSentAt
+                  ? `等待模型首包 · 第 ${modelWait.iteration} 轮 · 已等待 ${modelWaitSeconds}s${modelWait.attempt && modelWait.attempt > 1 ? `（第 ${modelWait.attempt} 次请求）` : ''}`
+                  : `正在准备请求 · 第 ${modelWait.iteration} 轮 · ${modelWaitSeconds}s`
                 : thinkingPhase}
               <span className={styles.thinkDots} aria-hidden="true">
                 <i />

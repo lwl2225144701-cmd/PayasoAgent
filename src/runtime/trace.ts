@@ -35,6 +35,18 @@ export type TraceEvent =
       estimatedInputTokens?: number; // 上下文估算输入 tokens（前端可提示 prefill 规模）
     }
   | {
+      // LLM HTTP 请求真正发出（piFetch 内 globalThis.fetch 调用前）。
+      // 与 llm_call_started 的间隔 = Host 侧上下文整理耗时（toPiContext /
+      // 图片物化 / Provider 模型组装）；与首个 assistant/reasoning_delta 的
+      // 间隔 = 纯 Provider 首包/网络耗时（prefill / 排队 / TLS）。
+      // 用于把 run-stats 的 ttftMs 分解为两段，定位 16–18s 首 token 延迟。
+      type: 'llm_request_sent';
+      step: number;
+      timestamp: string;
+      iteration: number; // 当前迭代（从 1 开始）
+      attempt: number; // 第几次尝试（从 1 开始；重试时每轮请求都发一次）
+    }
+  | {
       type: 'tool_call';
       step: number;
       timestamp: string;
@@ -225,6 +237,11 @@ export type TraceEventInput =
       iteration: number;
       messageCount: number;
       estimatedInputTokens?: number;
+    }
+  | {
+      type: 'llm_request_sent';
+      iteration: number;
+      attempt: number;
     }
   | {
       type: 'tool_call';

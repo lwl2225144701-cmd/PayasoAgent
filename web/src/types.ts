@@ -212,6 +212,14 @@ export interface LlmCallStartedEvent extends TraceEventBase {
   estimatedInputTokens?: number;
 }
 
+// Provider HTTP 请求真正发出（piFetch 内 fetch 调用前）。
+// 与 llm_call_started 的间隔 = Host 侧整理耗时；与首个 delta 的间隔 = Provider 首包/网络。
+export interface LlmRequestSentEvent extends TraceEventBase {
+  type: 'llm_request_sent';
+  iteration: number;
+  attempt: number;
+}
+
 export interface ToolCallEvent extends TraceEventBase {
   type: 'tool_call';
   tool: string;
@@ -424,6 +432,7 @@ export interface StreamingEvent {
 export type TraceEvent =
   | LlmCallEvent
   | LlmCallStartedEvent
+  | LlmRequestSentEvent
   | ToolCallEvent
   | ToolCallInvalidEvent
   | ToolResultEvent

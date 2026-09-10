@@ -494,6 +494,7 @@ async function piFetch(
   init: RequestInit | undefined,
   diagnostics: FetchDiagnostics,
   normalizeOpenAiResponse: boolean,
+  onRequestSent?: () => void,
 ): Promise<Response> {
   diagnostics.attempts++;
   const requestHeaders = new Headers(init?.headers);
@@ -502,6 +503,9 @@ async function piFetch(
     headers[key.toLowerCase() === 'authorization' ? 'Authorization' : key] = value;
   }
   const requestInit = { ...init, headers };
+  // HTTP 请求真正发出的瞬间打点（在发起 fetch 之前调用回调）：
+  // llm_call_started → 此处 = Host 侧整理耗时；此处 → 首个 delta = Provider 首包/网络。
+  onRequestSent?.();
   let response: Response;
   try {
     response = await globalThis.fetch(input, requestInit);
@@ -819,6 +823,7 @@ export async function chat(
   onDelta?: (delta: ChatStreamDelta) => void,
   modelConfig?: ModelConfig,
   signal?: AbortSignal,
+  onRequestSent?: (attempt: number) => void,
 ): Promise<ChatMessage & { usage?: TokenUsage }> {
   const config = resolveEndpointConfig(modelConfig);
   const { models, model } = createConfiguredModel(config);
@@ -838,7 +843,15 @@ export async function chat(
     });
     const stream = models.stream(model, context, {
       signal,
-      fetch: (input, init) => piFetch(input, init, diagnostics, model.api === 'openai-completions'),
+      fetch: (input, init) =>
+        piFetch(
+          input,
+          init,
+          diagnostics,
+          model.api === 'openai-completions',
+          // 每次 HTTP 请求发出都通知（重试时 attempt 递增）。
+          () => onRequestSent?.(attempt + 1),
+        ),
       sessionId: config.sessionId,
       headers: requestHeadersFor(config),
       timeoutMs,

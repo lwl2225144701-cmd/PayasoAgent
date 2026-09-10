@@ -390,5 +390,63 @@ check(
   })(),
 );
 
+// llm_request_sent：请求真正发出后的等待状态（秒数锚点前移到 requestSentAt）
+const requestSent = (over: Record<string, unknown> = {}): HostEvent =>
+  ({
+    ...base,
+    type: 'llm_request_sent',
+    iteration: 2,
+    attempt: 1,
+    ...over,
+  }) as HostEvent;
+check(
+  '最后一条是 llm_request_sent → 返回等待状态（requestSentAt/attempt + 回退 llm_call_started 字段）',
+  (() => {
+    const s = deriveModelWaitState(
+      [llmStart({ timestamp: '2026-09-06T00:00:10.000Z' }), requestSent()],
+      nowAfter,
+    );
+    return (
+      s !== null &&
+      s.iteration === 2 &&
+      s.messageCount === 150 &&
+      s.estimatedInputTokens === 125_000 &&
+      s.requestSentAt === base.timestamp &&
+      s.attempt === 1 &&
+      s.startedAt === '2026-09-06T00:00:10.000Z'
+    );
+  })(),
+);
+check(
+  'llm_request_sent 后跟 assistant_delta → 等待结束（null）',
+  deriveModelWaitState(
+    [
+      llmStart(),
+      requestSent(),
+      {
+        type: 'assistant_delta',
+        runId: 'r',
+        messageId: 'm1',
+        timestamp: base.timestamp,
+        delta: '你',
+      },
+    ],
+    nowAfter,
+  ) === null,
+);
+check(
+  'llm_request_sent 无对应 llm_call_started（异常流）→ 回退自身字段',
+  (() => {
+    const s = deriveModelWaitState([requestSent()], nowAfter);
+    return (
+      s !== null &&
+      s.iteration === 2 &&
+      s.messageCount === 0 &&
+      s.requestSentAt === base.timestamp &&
+      s.startedAt === base.timestamp
+    );
+  })(),
+);
+
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);

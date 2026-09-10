@@ -347,6 +347,15 @@ export async function runAgent(
         opts.onStreamDelta,
         opts.modelConfig,
         opts.signal,
+        // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
+        // 拆成「Host 侧整理」与「Provider 首包/网络」两段。
+        (attempt) => {
+          emit({
+            type: 'llm_request_sent',
+            iteration: i + 1,
+            attempt,
+          });
+        },
       );
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.

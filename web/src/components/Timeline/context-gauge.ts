@@ -2,7 +2,12 @@
 // 纯函数与组件分离，便于 node 测试。所有折叠都是确定性纯函数，供
 // RunUsage / ContextUsageRing / InputBar 环形与测试复用。
 
-import type { ContextUsageEvent, HostEvent, TokenUsage } from '../../types';
+import type {
+  ContextUsageEvent,
+  HostEvent,
+  LlmCallStartedEvent,
+  TokenUsage,
+} from '../../types';
 
 // ---- 用量校验（镜像 host src/llm/token-usage.ts 的 isValidTokenUsage）----
 // web 是独立 Vite 构建，不跨项目引用 host 源码；校验规则必须与 host 保持一致，
@@ -218,15 +223,43 @@ export interface ModelWaitState {
   estimatedInputTokens?: number;
   /** llm_call_started 的时间戳（ISO），UI 据此实时计算已等待秒数 */
   startedAt: string;
+  /** Provider HTTP 请求真正发出的时间戳（ISO）；llm_request_sent 之后才有。 */
+  requestSentAt?: string;
+  /** 请求发出次数（重试时 >1）。 */
+  attempt?: number;
 }
 
 /**
- * 是否正在等待模型首 token：仅当事件流最后一条是 llm_call_started 时成立。
+ * 是否正在等待模型首 token：事件流最后一条是 llm_call_started 或
+ * llm_request_sent（此后无任何后续事件）时成立。
  * 任何后续事件（reasoning/assistant delta、tool_call 等）都意味着等待结束。
  * 运行态由调用方保证（只在 run.status === 'running' 时调用），这里保持纯事件判定。
  */
 export function deriveModelWaitState(events: HostEvent[], now: number): ModelWaitState | null {
   const last = events[events.length - 1];
+  if (last?.type === 'llm_request_sent') {
+    const requestMs = Date.parse(last.timestamp);
+    if (!Number.isFinite(requestMs) || now < requestMs) return null;
+    // 回退找同一个迭代的 llm_call_started（估计输入 tokens 只有它有）。
+    let callStarted: LlmCallStartedEvent | undefined;
+    for (let index = events.length - 2; index >= 0; index--) {
+      const ev = events[index];
+      if (ev.type === 'llm_call_started' && ev.iteration === last.iteration) {
+        callStarted = ev;
+        break;
+      }
+    }
+    return {
+      iteration: last.iteration,
+      messageCount: callStarted?.messageCount ?? 0,
+      ...(callStarted?.estimatedInputTokens === undefined
+        ? {}
+        : { estimatedInputTokens: callStarted.estimatedInputTokens }),
+      startedAt: callStarted?.timestamp ?? last.timestamp,
+      requestSentAt: last.timestamp,
+      attempt: last.attempt,
+    };
+  }
   if (last?.type !== 'llm_call_started') return null;
   const startedMs = Date.parse(last.timestamp);
   if (!Number.isFinite(startedMs) || now < startedMs) return null;

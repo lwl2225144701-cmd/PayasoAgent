@@ -293,6 +293,7 @@ export function connectSSE(
     'reasoning_delta',
     'llm_call',
     'llm_call_started',
+    'llm_request_sent',
     'tool_call',
     'tool_call_invalid',
     'tool_result',
