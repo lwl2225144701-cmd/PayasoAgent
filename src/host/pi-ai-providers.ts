@@ -3,6 +3,7 @@
 
 import type { Api, Model, Provider, ProviderStreams } from '@earendil-works/pi-ai';
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 
 export const PI_AI_MODEL_LIMIT = 50;
 
@@ -35,6 +36,9 @@ export interface PiAiModelInfo {
   contextWindow: number;
   maxOutputTokens: number;
   reasoning: boolean;
+  // 该模型真正支持的思考档次（off 恒在列；xhigh/max 仅注册表显式声明时出现）。
+  // 设置页按此列表渲染档次下拉；自定义端点无注册表，由前端给全量 5 档。
+  thinkingLevels: string[];
   input: string[];
 }
 
@@ -71,6 +75,7 @@ function toModelInfo(model: Model<Api>): PiAiModelInfo {
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxTokens,
     reasoning: model.reasoning,
+    thinkingLevels: getSupportedThinkingLevels(model),
     input: [...model.input],
   };
 }

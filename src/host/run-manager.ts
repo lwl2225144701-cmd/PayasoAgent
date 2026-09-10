@@ -1919,6 +1919,9 @@ export class RunManager {
         ...(selected.maxOutputTokens !== undefined
           ? { maxOutputTokens: selected.maxOutputTokens }
           : {}),
+        ...(selected.thinkingLevel !== undefined
+          ? { thinkingLevel: selected.thinkingLevel }
+          : {}),
       };
     }
 
@@ -1945,6 +1948,7 @@ export class RunManager {
       model,
       ...(full.contextWindow !== undefined ? { contextWindow: full.contextWindow } : {}),
       ...(full.maxOutputTokens !== undefined ? { maxOutputTokens: full.maxOutputTokens } : {}),
+      ...(full.thinkingLevel !== undefined ? { thinkingLevel: full.thinkingLevel } : {}),
     };
   }
 
@@ -1977,6 +1981,7 @@ export class RunManager {
         ...(secret.maxOutputTokens !== undefined
           ? { maxOutputTokens: secret.maxOutputTokens }
           : {}),
+        ...(secret.thinkingLevel !== undefined ? { thinkingLevel: secret.thinkingLevel } : {}),
       };
     }
     return this.resolveModelConfig();

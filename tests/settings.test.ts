@@ -1553,13 +1553,19 @@ async function postJSONWithOrigin(
       baseUrl: 'https://api.cap.com',
       apiKey: 'sk-cap-0001',
       models: ['cap-chat', 'cap-mini'],
-      modelCapabilities: { 'cap-chat': { contextWindow: 131_072, maxOutputTokens: 8_192 } },
+      modelCapabilities: {
+        'cap-chat': { contextWindow: 131_072, maxOutputTokens: 8_192, thinkingLevel: 'high' },
+      },
     },
     201,
   );
   check(
     'cap: 创建回显能力覆盖',
     created.modelCapabilities?.['cap-chat']?.contextWindow === 131_072,
+  );
+  check(
+    'cap: 创建回显思考档次',
+    created.modelCapabilities?.['cap-chat']?.thinkingLevel === 'high',
   );
 
   const listed = await getJSON(`${base}/settings/models`);
@@ -1568,6 +1574,13 @@ async function postJSONWithOrigin(
     listed.models.some(
       (m: any) =>
         m.id === created.id && m.modelCapabilities?.['cap-chat']?.contextWindow === 131_072,
+    ),
+  );
+  check(
+    'cap: GET 列表回显思考档次',
+    listed.models.some(
+      (m: any) =>
+        m.id === created.id && m.modelCapabilities?.['cap-chat']?.thinkingLevel === 'high',
     ),
   );
 
@@ -1580,13 +1593,27 @@ async function postJSONWithOrigin(
   );
   check('cap: 引用目录外模型 400', badCap.message.includes('outside catalog'));
 
+  let badLevel = await patchJSON(
+    `${base}/settings/models/${created.id}`,
+    {
+      modelCapabilities: { 'cap-chat': { thinkingLevel: 'ultra' } },
+    },
+    400,
+  );
+  check('cap: 非法思考档次 400', badLevel.message.includes('thinkingLevel'));
+
   // 2. 凭证读取按 model 携带能力（Run 解析链路使用）
   const secretViaStore = store.getModelProviderSecret(created.id, 'cap-chat');
   check('cap: 凭证携带 contextWindow', secretViaStore?.contextWindow === 131_072);
   check('cap: 凭证携带 maxOutputTokens', secretViaStore?.maxOutputTokens === 8_192);
+  check('cap: 凭证携带思考档次', secretViaStore?.thinkingLevel === 'high');
   check(
     'cap: 未配置的模型不带能力字段',
     store.getModelProviderSecret(created.id, 'cap-mini')?.contextWindow === undefined,
+  );
+  check(
+    'cap: 未配置的模型不带思考档次',
+    store.getModelProviderSecret(created.id, 'cap-mini')?.thinkingLevel === undefined,
   );
 
   // 3. 目录收缩：PATCH models 移除带覆盖的模型 → 覆盖被清理

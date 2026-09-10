@@ -10,7 +10,9 @@ import {
   createProvider,
   type ImageContent,
   type Model,
+  type ModelThinkingLevel,
   type ProviderStreams,
+  type ThinkingLevel,
   type TSchema,
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
@@ -36,6 +38,13 @@ function requestTimeoutMs(): number {
     if (Number.isFinite(value) && value > 0) return value;
   }
   return DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+// 思考档次归一化：'off' 与未配置等价——两者都不介入请求，保持端点默认行为。
+// 返回 undefined 表示"这次请求不配置思考档次"（走与引入该功能前一致的旧路径）。
+function activeThinkingLevel(level: ModelThinkingLevel | undefined): ThinkingLevel | undefined {
+  if (level === undefined || level === 'off') return undefined;
+  return level;
 }
 
 export interface ToolCall {
@@ -99,6 +108,11 @@ export interface ModelConfig {
   // 视觉能力：为 true 时模型 input 声明包含 image，pi-ai 才会把图片块
   // 转成 image_url / 原生多模态协议。Host 按"设置位 || pi-ai 注册表"解析。
   vision?: boolean;
+  // 思考档次（设置页按模型配置；缺省 undefined = 请求不带思考参数）。
+  // pi-ai 内置模型按注册表 thinkingLevelMap 映射厂商参数（如 deepseek
+  // 发 thinking:{type} + reasoning_effort）；自定义 OpenAI 兼容端点发
+  // reasoning_effort（模型 reasoning 默认开启，档次随时可配）。
+  thinkingLevel?: ModelThinkingLevel;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -615,6 +629,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
   contextWindow?: number;
   maxOutputTokens?: number;
   vision: boolean;
+  thinkingLevel?: ModelThinkingLevel;
 } {
   if (modelConfig) {
     if (!modelConfig.baseUrl || !modelConfig.apiKey || !modelConfig.model) {
@@ -637,6 +652,7 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
       contextWindow: modelConfig.contextWindow,
       maxOutputTokens: modelConfig.maxOutputTokens,
       vision: modelConfig.vision === true,
+      ...(modelConfig.thinkingLevel ? { thinkingLevel: modelConfig.thinkingLevel } : {}),
     };
   }
   return {
@@ -736,7 +752,14 @@ function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>)
     api: 'openai-completions',
     provider: config.providerId,
     baseUrl: config.baseUrl,
-    reasoning: false,
+    // 思考能力按"是否配置了档次"打开：配了档次 → true，未配置/off → false。
+    // reasoning 是 pi-ai 的两道闸门之一（false 时任何档次都会被 clamp 成 off），
+    // 同时它也决定 pi-ai 是否主动发"关闭思考"参数：对 deepseek/zai/together/
+    // openrouter 这类按 URL 自动探测的端点，reasoning: true + 未配档次会发出
+    // thinking:{type:"disabled"} / reasoning:{enabled:false} 等显式关闭指令，
+    // 反而把本来默认开思考的模型关掉。故只在用户显式配置档次时才打开——
+    // 未配置的请求与引入该功能前逐字节一致。
+    reasoning: activeThinkingLevel(config.thinkingLevel) !== undefined,
     // 自定义 OpenAI 兼容端点：视觉能力由设置页按模型显式声明（无法从协议探测）。
     input: config.vision ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -747,7 +770,11 @@ function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>)
       maxTokensField: 'max_tokens',
       supportsStore: false,
       supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
+      // 不再硬编码 supportsReasoningEffort: false：pi-ai 的 getCompat 会按
+      // baseUrl 自动探测该能力（model.compat 里缺的字段用 detected 兜底）。
+      // deepseek.com → thinkingFormat 'deepseek' + reasoning_effort 支持；
+      // 通用 OpenAI 兼容 → reasoning_effort；zai/moonshot/grok 等排除名单
+      // 自动探测为 false，但各自原生 thinkingFormat 分支只依赖 model.reasoning。
       // Some of the existing compatible endpoints terminate with [DONE]
       // without a final finish_reason; pi-ai can infer stop/toolUse safely.
       supportsFinishReason: false,
@@ -848,9 +875,19 @@ export async function chat(
     const inline = new InlineThinkEmitter((type, delta) => {
       if (delta) onDelta?.({ messageId, type, delta });
     });
-    const stream = models.stream(model, context, {
+    // 思考档次只在用户显式配置（且非 off）时才介入请求，两条路径：
+    //  - 未配置/off → models.stream：与引入思考档次前逐字节一致。不主动发任何
+    //    思考参数，也不会引入 streamSimple 的两个副作用（anthropic 系 provider
+    //    的 thinking:{type:"disabled"} 字段、maxTokens 按剩余窗口钳制）。
+    //  - 配置了档次 → models.streamSimple：pi-ai 的 provider 无关思考入口，
+    //    reasoning 被 clampThinkingLevel 按模型能力收敛，并按 thinkingFormat/
+    //    thinkingLevelMap 映射成厂商参数（deepseek thinking:{type} +
+    //    reasoning_effort、通用 reasoning_effort、anthropic thinking+budget 等），
+    //    同时封顶思考预算。两者事件流（thinking_delta/toolcall_delta）完全一致。
+    const thinkingLevel = activeThinkingLevel(config.thinkingLevel);
+    const streamOptions = {
       signal,
-      fetch: (input, init) =>
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
         piFetch(
           input,
           init,
@@ -864,7 +901,10 @@ export async function chat(
       timeoutMs,
       maxRetries: 0,
       maxTokens: model.maxTokens,
-    });
+    };
+    const stream = thinkingLevel
+      ? models.streamSimple(model, context, { ...streamOptions, reasoning: thinkingLevel })
+      : models.stream(model, context, streamOptions);
 
     // v1.10：原生适配器（Anthropic/Google…）只暴露已解析的参数对象，畸形 JSON
     // 会被解成 {}；这里累积 toolcall_delta 的原始片段，交给 Runtime 统一解析器。

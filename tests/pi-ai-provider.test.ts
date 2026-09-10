@@ -31,6 +31,38 @@ assert.equal(resolved.model.maxTokens, minimax.models[0].maxOutputTokens);
 assert.equal(resolved.model.provider, 'minimax-cn');
 assert.equal(getPiAiProviderModel('missing-provider', 'missing-model'), undefined);
 
+// 思考档次：catalog 模型应暴露其真正支持的档次列表（off 恒在列）。
+// DeepSeek 注册表声明 minimal/medium/xhigh 不可用，只应有 off/low/high/max。
+{
+  const deepseek = catalog.find((provider) => provider.id === 'deepseek');
+  assert.ok(deepseek, 'DeepSeek should be available in the pi-ai catalog');
+  const reasoningModel = deepseek.models.find((model) => model.reasoning);
+  assert.ok(reasoningModel, 'DeepSeek should expose a reasoning model');
+  assert.ok(
+    Array.isArray(reasoningModel.thinkingLevels) && reasoningModel.thinkingLevels.length > 0,
+    'a reasoning model should expose supported thinking levels',
+  );
+  assert.ok(
+    reasoningModel.thinkingLevels.includes('off'),
+    'supported thinking levels must always include off',
+  );
+  assert.ok(
+    !reasoningModel.thinkingLevels.includes('xhigh') ||
+      deepseek.models.every(
+        (m) => !m.thinkingLevels?.includes('xhigh') || m.reasoning,
+      ),
+    'xhigh should only appear when explicitly declared by the registry',
+  );
+  const nonReasoning = deepseek.models.find((model) => !model.reasoning);
+  if (nonReasoning) {
+    assert.deepEqual(
+      nonReasoning.thinkingLevels,
+      ['off'],
+      'non-reasoning models only support off',
+    );
+  }
+}
+
 // provider 级无 baseUrl 的 provider（如 opencode-go）也必须放出来：
 // 地址写在每个 model 上，由 Host 在保存/调用时按模型解析。目录只暴露能用标准 HTTP API
 // + 现成 https 端点跑通的模型，故 bedrock/azure/vertex/cloudflare 自然落选。

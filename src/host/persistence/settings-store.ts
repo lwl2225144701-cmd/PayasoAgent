@@ -6,15 +6,38 @@ import { createSecretStore, providerSecretKey, type SecretStore } from '../secre
 export type ModelProviderKind = 'builtin' | 'custom';
 export type ModelProviderProbeStatus = 'available' | 'error';
 
-// 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出/视觉支持。
+// 模型级能力元数据：用户按模型供应商文档填写的上下文窗口/最大输出/视觉支持/思考档次。
 // 缺省字段走"内置注册表 → fallback 256K"链路；预算解析优先级见 model-context.ts。
+export type ModelThinkingLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
 export interface ModelCapabilitySetting {
   contextWindow?: number;
   maxOutputTokens?: number;
   // 该模型是否支持图片输入（视觉）。自定义 OpenAI 兼容端点无法从协议探测，
   // 由用户按供应商文档勾选；pi-ai 内置模型另走注册表自动识别。
   vision?: boolean;
+  // 思考档次（可选）。pi-ai 内置模型按注册表 thinkingLevelMap 映射厂商参数；
+  // 自定义 OpenAI 兼容端点发 reasoning_effort。未配置 = 请求不带思考参数。
+  thinkingLevel?: ModelThinkingLevel;
 }
+
+// 合法思考档次枚举（与 pi-ai 的 ThinkingLevel / ModelThinkingLevel 对齐）。
+const MODEL_THINKING_LEVELS: readonly ModelThinkingLevel[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
 
 // Provider metadata（SQLite 持久化）。raw apiKey 不在此结构中：
 // 凭证唯一存放在 SecretStore（macOS Keychain），以 providerSecretKey(id) 引用。
@@ -309,6 +332,14 @@ export class SettingsStore {
         }
         entry.vision = capability.vision;
       }
+      if (capability.thinkingLevel !== undefined) {
+        if (!MODEL_THINKING_LEVELS.includes(capability.thinkingLevel)) {
+          throw new Error(
+            `thinkingLevel must be one of: ${MODEL_THINKING_LEVELS.join(', ')}`,
+          );
+        }
+        entry.thinkingLevel = capability.thinkingLevel;
+      }
       if (Object.keys(entry).length > 0) result[modelId] = entry;
     }
     return Object.keys(result).length > 0 ? result : undefined;
@@ -451,6 +482,7 @@ export class SettingsStore {
     contextWindow?: number;
     maxOutputTokens?: number;
     vision?: boolean;
+    thinkingLevel?: ModelThinkingLevel;
   } | null {
     const provider = this.getAllModels().find((m) => m.id === id);
     if (!provider?.hasApiKey) return null;
@@ -472,6 +504,9 @@ export class SettingsStore {
         ? { maxOutputTokens: capability.maxOutputTokens }
         : {}),
       ...(capability?.vision !== undefined ? { vision: capability.vision } : {}),
+      ...(capability?.thinkingLevel !== undefined
+        ? { thinkingLevel: capability.thinkingLevel }
+        : {}),
     };
   }
 

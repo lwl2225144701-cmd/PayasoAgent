@@ -6,6 +6,7 @@ import { storedPermissionMode } from '../../permission-mode.js';
 import type { HostEvent } from '../run-events.js';
 import { createSecretStore, type SecretStore } from '../secrets/secret-store.js';
 import { SettingsStore } from './settings-store.js';
+import type { ModelThinkingLevel } from './settings-store.js';
 import type {
   CreateModelProviderInput,
   DefaultModelSelection,
@@ -778,6 +779,8 @@ export class SqliteRunStore implements RunStore {
     piProviderId?: string;
     contextWindow?: number;
     maxOutputTokens?: number;
+    vision?: boolean;
+    thinkingLevel?: ModelThinkingLevel;
   } | null {
     // 凭证经 SecretStore（macOS Keychain）读取；metadata 只提供 hasApiKey；
     // model 提供时附带该模型的能力覆盖（设置页配置）

@@ -92,11 +92,24 @@ export interface FileEntry {
 }
 
 // 模型配置 — 对齐后端 ModelProviderView / StoredModelProvider
+// 思考档次：与 pi-ai 的 ThinkingLevel / ModelThinkingLevel 对齐。
+// off = 显式关闭思考；其余为递进档次；未配置（undefined）= 跟随端点默认。
+export type ModelThinkingLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
 export interface ModelCapabilitySetting {
   contextWindow?: number;
   maxOutputTokens?: number;
   /** 模型是否支持图片输入（视觉能力）；显式配置优先于 pi-ai 注册表声明 */
   vision?: boolean;
+  /** 思考档次（可选）；未配置时请求不带思考参数，由端点默认行为决定 */
+  thinkingLevel?: ModelThinkingLevel;
 }
 
 export type ProviderModelCategory =
@@ -114,6 +127,8 @@ export interface ProviderModelInfo {
   maxOutputTokens?: number;
   /** pi-ai 注册表声明的图片输入能力（来自模型 input modalities） */
   vision?: boolean;
+  /** pi-ai 注册表声明该模型支持的思考档次（来自 getSupportedThinkingLevels） */
+  thinkingLevels?: ModelThinkingLevel[];
 }
 
 export interface PiAiModelInfo extends ProviderModelInfo {

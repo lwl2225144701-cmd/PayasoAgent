@@ -4,6 +4,7 @@ import type {
   CreateModelProviderInput,
   DefaultModelSelection,
   ModelProviderView,
+  ModelThinkingLevel,
   UpdateModelProviderInput,
 } from './settings-store.js';
 
@@ -103,7 +104,7 @@ export interface RunStore {
   deleteSession(sessionId: string): number;
   listModelProviders(): ModelProviderView[];
   getModelProvider(id: string): ModelProviderView | null;
-  // model 提供时返回该模型的能力覆盖（contextWindow/maxOutputTokens/vision，来自设置页配置）
+  // model 提供时返回该模型的能力覆盖（contextWindow/maxOutputTokens/vision/thinkingLevel，来自设置页配置）
   getModelProviderSecret(
     id: string,
     model?: string,
@@ -115,6 +116,7 @@ export interface RunStore {
     contextWindow?: number;
     maxOutputTokens?: number;
     vision?: boolean;
+    thinkingLevel?: ModelThinkingLevel;
   } | null;
   getDefaultProviderId(): string;
   getDefaultModelId(): string;

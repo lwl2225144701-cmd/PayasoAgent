@@ -865,6 +865,22 @@
   font-size: 11.5px;
 }
 
+/* 模型目录 tag 内的思考档次下拉（v1.11 思考档次按模型配置） */
+.tagThinkingSelect {
+  width: 96px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+
+.tagThinkingSelect:focus {
+  outline: none;
+  border-color: var(--brand, var(--text-secondary));
+}
+
 .tagWindowInput::placeholder,
 .tagOutputInput::placeholder {
   color: var(--text-muted);

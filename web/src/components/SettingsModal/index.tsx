@@ -14,6 +14,7 @@ import type { ThemeMode } from '../../theme';
 import type {
   CreateModelProviderInput,
   ModelProviderView,
+  ModelThinkingLevel,
   PermissionMode,
   PiAiProviderInfo,
   ProviderModelInfo,
@@ -61,6 +62,65 @@ interface ModelTag {
   maxOutputTokens?: string;
   // 模型支持图片输入（视觉能力）；显式配置优先于 pi-ai 注册表声明
   vision?: boolean;
+  // 思考档次（可选）；undefined = 不设置（请求不带思考参数）
+  thinkingLevel?: ModelThinkingLevel;
+}
+
+// 思考档次下拉选项。只列"能真正发出的档次"：`off` 与"默认（不设置）"在请求层
+// 完全等价（都不介入请求，由端点默认行为决定），故不作为独立选项——避免暗示一个
+// 我们并不会发出的"关闭思考"指令。自定义端点（无注册表）给 5 档：xhigh/max 会被
+// pi-ai clamp 成 high，不提供会静默降级的选项；pi 内置模型按注册表声明显示；
+// 目录未加载（如编辑模式）时用全量档兜底，避免丢掉用户已选的 xhigh/max。
+const CUSTOM_THINKING_LEVELS: Array<{ value: string; label: string }> = [
+  { value: '', label: '默认（不设置）' },
+  { value: 'minimal', label: '最低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+];
+
+const FULL_THINKING_LEVELS: Array<{ value: string; label: string }> = [
+  { value: '', label: '默认（不设置）' },
+  { value: 'minimal', label: '最低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '最高' },
+  { value: 'max', label: '最强' },
+];
+
+const THINKING_LEVEL_LABELS: Record<string, string> = {
+  off: '无思考',
+  minimal: '最低',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '最高',
+  max: '最强',
+};
+
+// 模型在某 Provider 下支持的思考档次下拉（注册表里的 off 已按上述理由剔除）。
+function thinkingLevelOptionsFor(
+  provider: PiAiProviderInfo | undefined,
+  modelId: string,
+  isPiProvider: boolean,
+): Array<{ value: string; label: string }> {
+  const model = provider?.models.find((m) => m.id === modelId);
+  // 目录里找到了该模型：只列它真正支持的档次。非推理模型（注册表只给 off）
+  // 便只剩「默认（不设置）」——不给会静默降级的选项。
+  if (model) {
+    const levels = (model.thinkingLevels ?? []).filter((level) => level !== 'off');
+    return [
+      { value: '', label: '默认（不设置）' },
+      ...levels.map((level) => ({
+        value: level,
+        label: THINKING_LEVEL_LABELS[level] ?? level,
+      })),
+    ];
+  }
+  // pi 内置但目录未加载（编辑模式）→ 全量档兜底，避免丢掉已选值；
+  // 自定义端点（无注册表）→ 5 档。
+  return isPiProvider ? FULL_THINKING_LEVELS : CUSTOM_THINKING_LEVELS;
 }
 
 interface FormState {
@@ -186,6 +246,8 @@ function catalogFromPiAiProvider(provider: PiAiProviderInfo): ProviderModelInfo[
     maxOutputTokens: model.maxOutputTokens,
     // pi-ai 模型 input modalities 含 'image' 即声明视觉能力
     vision: model.input.includes('image'),
+    // pi-ai 注册表声明的思考档次（用于下拉选项，不自动预选）
+    thinkingLevels: model.thinkingLevels,
   }));
 }
 
@@ -371,12 +433,16 @@ export function SettingsModal({
         const window = m.modelCapabilities?.[value]?.contextWindow;
         const output = m.modelCapabilities?.[value]?.maxOutputTokens;
         const vision = m.modelCapabilities?.[value]?.vision === true;
+        const thinkingLevel = m.modelCapabilities?.[value]?.thinkingLevel;
         return {
           id: `${m.id}-${idx}`,
           value,
           contextWindow: window !== undefined ? String(window) : '',
           maxOutputTokens: output !== undefined ? String(output) : '',
           ...(vision ? { vision: true } : {}),
+          // 'off' 与"未设置"行为等价（都不介入请求），归一为空值，避免下拉
+          // 出现无匹配选项的空白显示。
+          ...(thinkingLevel && thinkingLevel !== 'off' ? { thinkingLevel } : {}),
         };
       }),
       newTag: '',
@@ -416,10 +482,18 @@ export function SettingsModal({
       setError('请填写 API 密钥后再保存内置提供方。');
       return;
     }
-    // 按模型能力覆盖：收集填写了上下文窗口/最大输出或开启了视觉能力的模型；
-    // 数值必须为正整数。最大输出留空时由后端按上下文窗口推导（不再固定 4K）。
+    // 按模型能力覆盖：收集填写了上下文窗口/最大输出/思考档次或开启了视觉能力的
+    // 模型；数值必须为正整数。最大输出留空时由后端按上下文窗口推导（不再固定 4K）。
     let modelCapabilities:
-      | Record<string, { contextWindow?: number; maxOutputTokens?: number; vision?: boolean }>
+      | Record<
+          string,
+          {
+            contextWindow?: number;
+            maxOutputTokens?: number;
+            vision?: boolean;
+            thinkingLevel?: ModelThinkingLevel;
+          }
+        >
       | undefined;
     for (const tag of form.tags) {
       const rawWindow = (tag.contextWindow ?? '').trim();
@@ -442,12 +516,20 @@ export function SettingsModal({
         }
         maxOutputTokens = output;
       }
-      if (contextWindow === undefined && maxOutputTokens === undefined && !tag.vision) continue;
+      if (
+        contextWindow === undefined &&
+        maxOutputTokens === undefined &&
+        !tag.vision &&
+        !tag.thinkingLevel
+      ) {
+        continue;
+      }
       modelCapabilities = modelCapabilities ?? {};
       modelCapabilities[tag.value] = {
         ...(contextWindow !== undefined ? { contextWindow } : {}),
         ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
         ...(tag.vision ? { vision: true } : {}),
+        ...(tag.thinkingLevel ? { thinkingLevel: tag.thinkingLevel } : {}),
       };
     }
 
@@ -801,6 +883,37 @@ export function SettingsModal({
                             }))
                           }
                         />
+                        <select
+                          className={styles.tagThinkingSelect}
+                          value={tag.thinkingLevel ?? ''}
+                          title="思考档次（可选）：未设置时不发送任何思考参数，由端点默认行为决定；设置后按厂商协议发送（pi 内置模型按注册表映射，自定义端点发 reasoning_effort）"
+                          onChange={(e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              tags: prev.tags.map((t) =>
+                                t.id === tag.id
+                                  ? {
+                                      ...t,
+                                      thinkingLevel:
+                                        e.target.value === ''
+                                          ? undefined
+                                          : (e.target.value as ModelThinkingLevel),
+                                    }
+                                  : t,
+                              ),
+                            }))
+                          }
+                        >
+                          {thinkingLevelOptionsFor(
+                            piAiProviders.find((p) => p.id === form.piProviderId),
+                            tag.value,
+                            Boolean(form.piProviderId),
+                          ).map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                         <button
                           type="button"
                           role="switch"

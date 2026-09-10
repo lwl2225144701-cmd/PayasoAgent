@@ -315,6 +315,173 @@ try {
     assert.equal(requests[0].model, 'model-from-provider');
   });
 
+  await test('configured thinking level sends reasoning_effort (custom endpoint)', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      });
+    };
+    await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'sk-test',
+      model: 'reasoning-model',
+      thinkingLevel: 'high',
+    });
+    assert.equal(bodies[0].reasoning_effort, 'high');
+  });
+
+  await test('thinking level off sends no reasoning params (custom endpoint)', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      });
+    };
+    await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'sk-test',
+      model: 'reasoning-model',
+      thinkingLevel: 'off',
+    });
+    assert.equal(bodies[0].reasoning_effort, undefined);
+    assert.equal((bodies[0] as Record<string, unknown>).thinking, undefined);
+  });
+
+  await test('unset thinking level sends no reasoning params (custom endpoint)', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      });
+    };
+    await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'sk-test',
+      model: 'reasoning-model',
+    });
+    assert.equal(bodies[0].reasoning_effort, undefined);
+    assert.equal((bodies[0] as Record<string, unknown>).thinking, undefined);
+  });
+
+  // 回归保护：未配置档次时不得主动发"关闭思考"指令。
+  // pi-ai 对 deepseek/zai/together/openrouter 这类按 URL 自动探测的端点，会在
+  // model.reasoning 为 true 且无档次时发出显式关闭参数，等于把本来默认开思考的
+  // 模型关掉——未配置档次的请求必须与引入该功能前一致（一个字段都不发）。
+  await test('unset thinking level leaves detected third-party endpoints untouched', async () => {
+    const cases: Array<[string, string]> = [
+      ['deepseek-url', 'https://api.deepseek.com'],
+      ['zai-url', 'https://open.bigmodel.cn/api/paas/v4'],
+      ['together-url', 'https://api.together.xyz/v1'],
+      ['openrouter-url', 'https://openrouter.ai/api/v1'],
+    ];
+    for (const [label, baseUrl] of cases) {
+      let body: Record<string, unknown> | null = null;
+      globalThis.fetch = async (_input, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+          status: 200,
+        });
+      };
+      await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+        baseUrl,
+        apiKey: 'sk-test',
+        model: 'some-model',
+      });
+      assert.equal(
+        (body as unknown as Record<string, unknown>)?.thinking,
+        undefined,
+        `${label} must not receive a thinking param without a configured level`,
+      );
+      assert.equal(
+        (body as unknown as Record<string, unknown>)?.reasoning,
+        undefined,
+        `${label} must not receive a reasoning param without a configured level`,
+      );
+      assert.equal(
+        (body as unknown as Record<string, unknown>)?.reasoning_effort,
+        undefined,
+        `${label} must not receive reasoning_effort without a configured level`,
+      );
+    }
+  });
+
+  // 回归保护：内置 provider 未配置档次时同样不得多发思考字段
+  // （streamSimple 路径会给 anthropic 系 provider 发 thinking:{type:"disabled"}，
+  // 而 MiniMax 等 Anthropic 兼容端点是否接受该字段未知 → 不能默认带上）。
+  await test('unset thinking level adds no thinking field for anthropic-API providers', async () => {
+    let body: Record<string, unknown> | null = null;
+    globalThis.fetch = async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response('data: {"type":"message_stop"}\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    };
+    try {
+      await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+        providerId: 'minimax-test',
+        piProviderId: 'minimax-cn',
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        apiKey: 'sk-test',
+        model: 'MiniMax-M3',
+      });
+    } catch {
+      // 只要请求体；响应解析失败与本断言无关
+    }
+    assert.ok(body, 'the provider request should have been issued');
+    assert.equal(
+      (body as unknown as Record<string, unknown>).thinking,
+      undefined,
+      'no thinking field may be sent without a configured level',
+    );
+  });
+
+  // 回归保护：内置 DeepSeek provider 配了档次后必须真的发出厂商参数。
+  await test('builtin provider applies the configured thinking level', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    await chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      providerId: 'deepseek-test',
+      piProviderId: 'deepseek',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      model: 'deepseek-v4-flash',
+      thinkingLevel: 'high',
+    });
+    assert.deepEqual(bodies[0].thinking, { type: 'enabled' });
+    assert.equal(bodies[0].reasoning_effort, 'high');
+  });
+
+  // 回归保护：未配置档次时沿用旧 stream 路径，max_tokens 不按剩余窗口钳制
+  // （streamSimple 的 buildBaseOptions 会钳制，极端情况下可压到 1 → 空回答）。
+  await test('unconfigured path does not clamp max_tokens to the remaining window', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+      });
+    };
+    await chat([{ role: 'user', content: 'x'.repeat(4 * 700_000) }], undefined, undefined, {
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'sk-test',
+      model: 'big-context-model',
+      contextWindow: 20_000,
+      maxOutputTokens: 8_000,
+    });
+    assert.equal(bodies[0].max_tokens, 8_000);
+  });
+
   await test('OpenCode Go receives the host session routing header', async () => {
     let sessionHeader: string | null = null;
     globalThis.fetch = async (_input, init) => {
