@@ -32,6 +32,8 @@
 
 * `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出/终止（长测试与构建不阻塞本轮）；HOME/TMPDIR 指向沙箱外**短路径**受管 scratch（macOS 默认 /private/tmp/payaso-shell，Read Only 下仍可写缓存，不污染工作区；短路径保证 tsx 等依赖 TMPDIR 建 Unix socket 的工具可用）；沙箱不可用时拒绝执行（绝不裸跑）
 
+* `updatePlan`：Agent 自述任务清单（全量替换；Harness 持有状态、随 checkpoint 恢复），前端在用户气泡下方实时显示进度
+
 * `loadSkill`：按需加载工作区 skill（`.payaso/skills`、`.claude/skills`、`.pi/skills`）；`calculator` / `getWeather` 为演示工具
 
 * 项目约定：自动加载 `PAYASO.md` / `AGENTS.md` / `CLAUDE.md`（按优先级合并、标注来源、软链去重）
@@ -80,7 +82,7 @@ npm run cli "帮我计算 15*37"   # 命令行单次任务
 
 | 命令                               | 内容                                                                     | 依赖            |
 | -------------------------------- | ---------------------------------------------------------------------- | ------------- |
-| `npm run test:all`               | **64 个确定性套件**（子进程隔离、有界并发，约 17s；失败详情随汇总重打，完整日志落 `.payaso/logs/`）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、Host Auth、Keychain 契约等 | 无 LLM         |
+| `npm run test:all`               | **68 个确定性套件**（子进程隔离、有界并发，约 17s；失败详情随汇总重打，完整日志落 `.payaso/logs/`）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、Host Auth、Keychain 契约等 | 无 LLM         |
 | `npx tsc --noEmit`               | TypeScript 类型检查                                                        | 无             |
 | `npm run build:web`              | 前端生产构建                                                                 | 无             |
 | `npm run test:host`              | Host API 集成测试（真实 HTTP server + 真实 Run）                                 | 需 LLM（`.env`） |

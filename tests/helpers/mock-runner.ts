@@ -14,6 +14,7 @@ import {
 } from '../../src/bootstrap/runtime-bootstrap.js';
 import type { AgentContextHarness } from '../../src/harness/context-harness.js';
 import { runAgent } from '../../src/runtime/agent.js';
+import type { RuntimeObserver } from '../../src/runtime/observer-port.js';
 import type { TraceEvent } from '../../src/runtime/trace.js';
 
 export const MOCK_MODEL_CONFIG = {
@@ -112,6 +113,8 @@ export interface MockRunOptions {
   contextHarness?: AgentContextHarness;
   /** Observes each parsed request body (what the model actually saw). */
   onRequest?: (body: unknown) => void;
+  /** Observer override; defaults to the console observer used by the product. */
+  observer?: RuntimeObserver;
 }
 
 export interface MockRunResult {
@@ -141,6 +144,7 @@ export async function runMockAgent(options: MockRunOptions): Promise<MockRunResu
       signal: new AbortController().signal,
       onTrace: (event) => traces.push(event),
       ...(options.contextHarness ? { contextHarness: options.contextHarness } : {}),
+      ...(options.observer ? { observer: options.observer } : {}),
     });
     return { answer, traces, fetchCalls: scripted.calls };
   } catch (error) {

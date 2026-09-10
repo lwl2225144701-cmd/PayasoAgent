@@ -35,6 +35,8 @@ import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
+import { PlanPanel } from './PlanPanel';
+import { derivePlan } from './plan-state';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
@@ -360,6 +362,9 @@ export const Timeline = memo(function Timeline({
     return buildStructure(run, events, rawFinalAnswer, finalParsed);
   }, [run, events, rawFinalAnswer, finalParsed]);
 
+  // 计划清单：从事件派生（取 revision 最大的一条），无计划事件 → null 不渲染。
+  const plan = useMemo(() => derivePlan(events), [events]);
+
   // ---- v2.0.1 JIT Approval：收集未裁决的批准请求，用户点击后回传 Host ----
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
   const resolvedIdsRef = useRef<Set<string>>(new Set());
@@ -667,6 +672,8 @@ export const Timeline = memo(function Timeline({
                 ))}
               </div>
             )}
+            {plan && <PlanPanel plan={plan} running={run.status === 'running'} />}
+
             <ExecutionPanel
               groups={toolSteps}
               thinking={globalThinking}

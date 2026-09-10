@@ -156,7 +156,7 @@ web/src/
 <!-- docs-contract:tools -->
 
 ```json
-["calculator","getWeather","loadSkill","read","write","edit","grep","glob","ls","shell","shellJob","moveFile","deleteFile"]
+["calculator","getWeather","loadSkill","read","write","edit","grep","glob","ls","shell","shellJob","moveFile","deleteFile","updatePlan"]
 ```
 
 <!-- /docs-contract:tools -->
@@ -164,7 +164,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","error"]
+["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -177,7 +177,7 @@ web/src/
 
 ```
 for (i = startIter; ; i++):
-  ├─ 0.    注入有界 Scratchpad + 已有 Conversation Summary 到 system
+  ├─ 0.    注入有界 Plan（Harness 持有，v2.2）+ 有界 Scratchpad + 已有 Conversation Summary 到 system
   ├─ 0.5   超过输入预算 80% → 按完整旧轮增量摘要，压至约 65%
   │         canonical transcript 不删除；Harness state 随 checkpoint 恢复
   ├─ 1.    chat(messages, getSchemas(), onStreamDelta, modelConfig?)
@@ -224,6 +224,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | State      | runId/status/iteration/统计/lastError | ✔ checkpoint | ✗            | ✗       |
 | Scratchpad | completed/failed/invalid/nextStep   | ✔ checkpoint | ✔（有界投影）     | 仅模型视图截断 |
 | Harness Summary | 旧完整轮的结构化增量摘要               | ✔ checkpoint | ✔（注入 system） | 增量替换旧前缀 |
+| Harness Plan | Agent 自述任务清单（pending/in_progress/completed） | ✔ checkpoint（随 harnessState） | ✔（有界投影 ≤300 tok） | 不受影响 |
 | Messages   | 完整 canonical ChatML 历史               | ✔ checkpoint | ✔（最近完整轮）   | 原文不删除   |
 
 ### 4.3 关键保证（与测试对应）
@@ -310,7 +311,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 64 个确定性套件（无 LLM，有界并发，约 17s）
+npm run test:all          # 68 个确定性套件（无 LLM，有界并发，约 17s）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）
@@ -342,7 +343,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 64 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 64 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 68 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 68 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

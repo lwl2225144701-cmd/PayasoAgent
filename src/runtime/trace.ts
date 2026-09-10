@@ -128,6 +128,8 @@ export type TraceEvent =
       systemTokens?: number;
       toolSchemaTokens: number;
       scratchpadTokens: number;
+      // v2.2 Plan：计划投影注入 system 的估算 token（旧事件无此字段）。
+      planTokens?: number;
       estimatedInputTokens: number;
       // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
       // 用于环形/压力的真实锚点；无上报（如首轮）时缺省走估算。
@@ -213,6 +215,17 @@ export type TraceEvent =
       currentStep: string; // 当前/最近执行步骤
       completedSteps: number; // 已完成步骤数
       lastResult: string; // 最近一次工具结果
+    }
+  | {
+      // v2.2 Plan：Agent 自述的任务清单发生真实变更（Harness 持有状态，Runtime 发事件）。
+      // 携带**全量**清单：前端"取 revision 最大的一条"即可重建，SSE 重连/快照回放天然收敛。
+      type: 'plan_update';
+      step: number;
+      timestamp: string;
+      revision: number; // 单调递增；同 revision 不重复发
+      items: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }>;
+      completed: number;
+      total: number;
     }
   | {
       type: 'error';
@@ -301,6 +314,8 @@ export type TraceEventInput =
       systemTokens?: number;
       toolSchemaTokens: number;
       scratchpadTokens: number;
+      // v2.2 Plan：计划投影注入 system 的估算 token（旧事件无此字段）。
+      planTokens?: number;
       estimatedInputTokens: number;
       // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
       // 用于环形/压力的真实锚点；无上报（如首轮）时缺省走估算。
@@ -363,6 +378,13 @@ export type TraceEventInput =
       currentStep: string;
       completedSteps: number;
       lastResult: string;
+    }
+  | {
+      type: 'plan_update';
+      revision: number;
+      items: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }>;
+      completed: number;
+      total: number;
     }
   | {
       type: 'error';

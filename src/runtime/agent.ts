@@ -2,6 +2,7 @@
 
 import { type AgentContextHarness, DefaultContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
+import { countCompleted } from '../harness/plan.js';
 import {
   type ChatMessage,
   type ChatStreamDelta,
@@ -29,6 +30,7 @@ import {
   RequiredRuntimeToolUnavailableError,
   resolveToolEffect,
   type ToolCallError,
+  type ToolContext,
   type ToolImage,
   type ToolSandboxEvent,
   toolNotFoundError,
@@ -156,7 +158,8 @@ export async function runAgent(
   }
   // 视觉能力随模型配置固化：read 等读图工具据此决定返回图片块还是文本占位。
   const visionEnabled = opts.modelConfig?.vision === true;
-  const toolContext = {
+  // 先装配 Runtime 已就绪的部分；planPort 需要等 Harness 创建后再接（见下）。
+  const toolContext: ToolContext = {
     runId,
     workspaceRoot,
     permissionMode,
@@ -195,6 +198,27 @@ export async function runAgent(
     });
   contextHarness.restoreState(resume?.harnessState ?? opts.previousHarnessState);
   const modelContext = contextHarness.modelContext;
+  // v2.2 Plan：计划状态由 Harness 持有（随 harnessState 进 checkpoint）。Runtime 只把
+  // 写入口装饰成"语义 → plan_update 事件"：Harness 不碰 trace，工具只见文本。
+  const planPort = contextHarness.planPort?.();
+  if (planPort) {
+    toolContext.planPort = {
+      apply: (items) => {
+        const applied = planPort.apply(items);
+        if (applied.changed) {
+          emit({
+            type: 'plan_update',
+            revision: applied.plan.revision,
+            items: applied.plan.items,
+            completed: countCompleted(applied.plan),
+            total: applied.plan.items.length,
+          });
+          // 不在这里额外 save()：工具成功后紧接着就有一次 checkpoint（含 harnessState）。
+        }
+        return applied.resultText;
+      },
+    };
+  }
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
@@ -299,6 +323,7 @@ export async function runAgent(
         systemTokens: ctx.usage.systemTokens,
         toolSchemaTokens: ctx.usage.toolSchemaTokens,
         scratchpadTokens: ctx.scratchpadTokens,
+        planTokens: ctx.planTokens,
         estimatedInputTokens: ctx.usage.estimatedInputTokens,
         ...(lastRequestUsage === undefined
           ? {}

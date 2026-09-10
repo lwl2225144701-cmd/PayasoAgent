@@ -93,6 +93,22 @@ export function projectInstructionsPrompt(content: string): string {
   return `<project_instructions>\n${trimmed}\n</project_instructions>`;
 }
 
+// Plan segment — 什么时候该建计划、什么时候该更新（软引导，短）。
+// 为什么放在 Harness：计划是"模型看到什么"的一部分，与 scratchpad 投影同层；
+// 不放进内核提示词，也不做成硬约束（简单任务多一次工具调用是纯开销）。
+export function planningSystemPrompt(): string {
+  return [
+    '## Task Plan',
+    '',
+    'For work that needs three or more steps, publish the task list with `updatePlan` **before** you start, then keep it current:',
+    '',
+    '- mark the item you are working on as `in_progress`, and flip it to `completed` the moment it is done',
+    '- keep at most one item `in_progress`; revise titles, add or drop items as the work evolves',
+    '- write titles for the user ("run the deterministic suite"), not tool-call details',
+    '- skip `updatePlan` for single-step work — the user already sees which tools you call',
+  ].join('\n');
+}
+
 // Build initial segment definitions for the InstructionComposer.
 // Static/per-run segments are built once; dynamic segments are updated per turn.
 export function buildBaseSegments(options: {
@@ -139,6 +155,14 @@ export function buildBaseSegments(options: {
     content: permissionSystemPrompt(options.permissionMode),
     budgetTokens: 128,
     mutability: 'per_run',
+  });
+
+  segments.push({
+    id: 'workflow.plan',
+    priority: 55,
+    content: planningSystemPrompt(),
+    budgetTokens: 256,
+    mutability: 'static',
   });
 
   segments.push({

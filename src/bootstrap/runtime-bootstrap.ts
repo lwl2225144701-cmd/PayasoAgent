@@ -2,6 +2,7 @@
 // Importing concrete tools belongs to Host/CLI/test bootstrap, not Agent Loop.
 import '../tools/builtin-tools.js';
 import '../tools/filesystem.js';
+import '../tools/plan-tools.js';
 import '../tools/runtime-tools.js';
 
 import path from 'node:path';

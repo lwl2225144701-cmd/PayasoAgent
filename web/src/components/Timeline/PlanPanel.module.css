@@ -1,0 +1,138 @@
+/* 计划清单面板：用户气泡下方、执行过程上方的一小块进度区。
+   视觉上比最终回答轻，比折叠的执行细节重——它是"当前目标"的唯一入口。 */
+
+.panel {
+  width: 100%;
+  margin: 2px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-surface-subtle) 60%, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.bar {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-border-default) 70%, transparent);
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-blue);
+  transition: width 0.2s ease;
+}
+
+.barFillDone {
+  background: var(--color-success);
+}
+
+.summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+
+.chevron,
+.chevronOpen {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.list {
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.mark {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.itemTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.statusText {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 状态同时用标记形状 + 文案表达（不只靠颜色）；完成项弱化、进行中项强调。 */
+.pending .mark,
+.pending .statusText {
+  color: var(--text-tertiary);
+}
+
+.in_progress .mark {
+  color: var(--accent-blue);
+}
+
+.in_progress .itemTitle {
+  font-weight: 600;
+}
+
+.completed .mark {
+  color: var(--color-success);
+}
+
+.completed .itemTitle {
+  color: var(--text-secondary);
+}

@@ -4,6 +4,7 @@
 // - 工具只接收"相对路径"参数；文件类工具必须相对 context.workspaceRoot 解析真实路径。
 // - 模型决定"做什么"，Runtime 决定"在哪里执行"。
 
+import type { PlanItemInput } from '../harness/plan.js';
 import type { ToolSchema } from '../llm/llm.js';
 import type { NetworkMode } from '../network-mode.js';
 import { getNetworkMode } from '../network-mode.js';
@@ -30,6 +31,9 @@ export interface ToolContext {
   signal?: AbortSignal;
   // Runtime-only observation hook; never included in an LLM Tool Schema.
   onSandboxEvent?: (event: ToolSandboxEvent) => void;
+  // v2.2 Plan：计划写入口（Runtime 装饰 Harness 端口后注入）。工具只见文本：
+  // 计划状态与"是否变更"不出 Harness/Runtime 边界；LLM 不可见、不可传。
+  planPort?: { apply(items: PlanItemInput[]): string };
   // Startup-discovered, path-free capability snapshot. Runtime-only: the LLM
   // cannot supply or upgrade it, and concrete tools cannot widen the policy.
   toolchain?: RuntimeToolchainCapabilities;

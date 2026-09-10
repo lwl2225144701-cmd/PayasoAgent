@@ -26,6 +26,7 @@ import {
   type ModelContextConfig,
   resolveModelContextConfig,
 } from './model-context.js';
+import { applyPlan, type PlanPort, renderBoundedPlanView } from './plan.js';
 import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
 
 export interface ContextCompactionResult {
@@ -60,6 +61,8 @@ export interface PreparedModelTurn {
   usage: ContextUsage;
   scratchpadTokens: number;
   scratchpadTruncated: boolean;
+  /** 计划投影注入 system 消耗的估算 token（有界，见 planViewText）。 */
+  planTokens: number;
   compaction?: ContextCompactionResult;
 }
 
@@ -78,6 +81,10 @@ export interface AgentContextHarness {
   ): Promise<PreparedModelTurn>;
   restoreState(state: ContextHarnessState | undefined): void;
   snapshotState(): ContextHarnessState;
+  // v2.2 Plan：Harness 持有的任务清单写入口。Runtime 只负责把返回的 changed 变成
+  // `plan_update` 事件（Harness 不碰 trace）；fake Harness 不实现也不影响编译，
+  // 此时 updatePlan 工具 fail-closed 报错。
+  planPort?(): PlanPort;
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage;
   sanitizeFinalAnswer(text: string): string;
   // Optional Harness policy hook. Called after a tool turn and before the
@@ -263,6 +270,32 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.state = normalizeContextHarnessState(state);
   }
 
+  // v2.2 Plan：计划状态与语义都在 Harness（见 plan.ts）。这里只做"改状态 + 回文本"，
+  // 不发事件、不落盘——那是 Runtime 的职责（changed → plan_update → checkpoint）。
+  planPort(): PlanPort {
+    return {
+      apply: (items) => {
+        const applied = applyPlan(this.state.plan, items);
+        if (applied.changed) this.state.plan = applied.plan;
+        return applied;
+      },
+    };
+  }
+
+  /**
+   * 计划注入 system 的有界投影（空计划返回空串，保证视图与旧行为逐字节一致）。
+   * 预算：窗口的 0.5%，夹在 128–300 token；再加 truncateToTokens 兜底。
+   */
+  private planViewText(): string {
+    const bounded = renderBoundedPlanView(this.state.plan);
+    if (!bounded.text) return '';
+    const maxPlanTokens = Math.max(
+      128,
+      Math.min(300, Math.floor(this.modelContext.maxInputTokens * 0.005)),
+    );
+    return `\n\n${this.truncateToTokens(bounded.text, maxPlanTokens)}`;
+  }
+
   // 动态段每轮刷新：网络模式、工具链能力、环境信息在下一轮 system 消息
   // 中保持准确。scratchpad 和 summary 通过 buildModelView 追加到 system 末尾。
   private systemPromptText(): string {
@@ -292,7 +325,11 @@ export class DefaultContextHarness implements AgentContextHarness {
     return `${text.slice(0, low)}${marker}`;
   }
 
-  private buildModelView(transcript: ChatMessage[], scratchpadText: string): ChatMessage[] {
+  private buildModelView(
+    transcript: ChatMessage[],
+    scratchpadText: string,
+    planText = this.planViewText(),
+  ): ChatMessage[] {
     const modelView = transcript.map((message) => ({ ...message }));
     const systemIndex = modelView.findIndex((message) => message.role === 'system');
     const summaryText = this.state.conversationSummary
@@ -300,7 +337,8 @@ export class DefaultContextHarness implements AgentContextHarness {
       : '';
     const systemMessage: ChatMessage = {
       role: 'system',
-      content: `${this.systemPromptText()}\n\n${scratchpadText}${summaryText}`,
+      // 顺序：内核指令 → 计划（目标层）→ scratchpad（执行层）→ 旧轮摘要。
+      content: `${this.systemPromptText()}${planText}\n\n${scratchpadText}${summaryText}`,
     };
     if (systemIndex >= 0) {
       const maxSummarizable = Math.max(
@@ -333,7 +371,9 @@ export class DefaultContextHarness implements AgentContextHarness {
     );
     const boundedScratchpad = renderBoundedScratchpadView(scratchpad);
     const scratchpadText = this.truncateToTokens(boundedScratchpad.text, maxScratchpadTokens);
-    let modelView = this.buildModelView(transcript, scratchpadText);
+    // 计划投影与本轮视图共用同一份文本：预算计量必须和实际注入的是同一个字符串。
+    const planText = this.planViewText();
+    let modelView = this.buildModelView(transcript, scratchpadText, planText);
     let processed = this.contextManager.process(modelView, tools);
     let compaction: ContextCompactionResult | undefined;
 
@@ -356,7 +396,7 @@ export class DefaultContextHarness implements AgentContextHarness {
           totalSummarizedMessages: compacted.totalSummarizedMessages,
           summaryTokens: compacted.summaryTokens,
         };
-        modelView = this.buildModelView(transcript, scratchpadText);
+        modelView = this.buildModelView(transcript, scratchpadText, planText);
         processed = this.contextManager.process(modelView, tools);
       }
       // 摘要失败或无可压缩历史 → 保留确定性轮边界裁剪结果（fail-soft）；
@@ -380,6 +420,7 @@ export class DefaultContextHarness implements AgentContextHarness {
       usage: processed.usage,
       scratchpadTokens: estimateTextTokens(scratchpadText),
       scratchpadTruncated: boundedScratchpad.truncated || scratchpadText !== boundedScratchpad.text,
+      planTokens: estimateTextTokens(planText),
       compaction,
     };
   }

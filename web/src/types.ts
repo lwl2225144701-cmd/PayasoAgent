@@ -291,6 +291,8 @@ export interface ContextUsageEvent extends TraceEventBase {
   systemTokens?: number;
   toolSchemaTokens: number;
   scratchpadTokens: number;
+  /** Plan 投影注入 system 的估算 token（旧事件无此字段）。 */
+  planTokens?: number;
   estimatedInputTokens: number;
   // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
   // 环形指示器的真实压力锚点；首轮或 provider 未上报时缺省。
@@ -365,6 +367,16 @@ export interface ScratchpadUpdateEvent extends TraceEventBase {
   currentStep: string;
   completedSteps: number;
   lastResult: string;
+}
+
+export interface PlanUpdateEvent extends TraceEventBase {
+  type: 'plan_update';
+  /** 单调递增：前端取 revision 最大的一条即可重建，对乱序/重放幂等。 */
+  revision: number;
+  /** 全量清单（不是增量）。 */
+  items: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }>;
+  completed: number;
+  total: number;
 }
 
 export interface ErrorEvent extends TraceEventBase {
@@ -451,6 +463,7 @@ export type TraceEvent =
   | ShellSandboxStartedEvent
   | ShellSandboxDeniedEvent
   | ScratchpadUpdateEvent
+  | PlanUpdateEvent
   | ErrorEvent;
 
 export type LifecycleEvent =

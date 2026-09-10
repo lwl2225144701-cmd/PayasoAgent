@@ -13,6 +13,7 @@ import path from 'node:path';
 import { getSchemas } from '../src/tools/tools.js';
 import '../src/tools/builtin-tools.js';
 import '../src/tools/filesystem.js';
+import '../src/tools/plan-tools.js';
 import '../src/tools/runtime-tools.js';
 
 const PROJECT_ROOT = process.cwd();
