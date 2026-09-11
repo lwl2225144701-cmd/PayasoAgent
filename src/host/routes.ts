@@ -267,7 +267,10 @@ function serveStatic(res: ServerResponse, urlPath: string): void {
         'Content-Type': contentType,
         'Content-Length': content.length,
         'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
+        'Cache-Control':
+          ext === '.html' || rel === 'manifest.json'
+            ? 'no-cache'
+            : 'public, max-age=31536000, immutable',
       });
       res.end(content);
       return;
