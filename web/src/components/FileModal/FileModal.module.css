@@ -65,6 +65,14 @@
   word-break: break-word;
 }
 
+/* Markdown 预览容器：元素级的间距/配色/代码块/表格主题由 markdown-body.module.css
+   统一提供（与聊天正文同源），这里只定基础字号、行高与颜色。 */
+.markdown {
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
 .placeholder {
   color: var(--text-tertiary);
   font-size: var(--font-size-sm);

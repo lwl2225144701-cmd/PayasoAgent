@@ -19,6 +19,10 @@
 
 .modal {
   position: relative;
+  /* 遮罩是 <button>，而 button 的 UA 默认样式是 text-align: center —— 不挡住的话
+     整个模态内容都会继承居中（实测：文件预览的 Markdown 整段被居中，很难读）。
+     需要居中的地方各自显式声明（如 .placeholder / 各对话框自己的 text-align: center）。 */
+  text-align: left;
   width: min(860px, calc(100vw - 48px));
   height: min(760px, calc(100vh - 48px));
   max-width: 100%;
