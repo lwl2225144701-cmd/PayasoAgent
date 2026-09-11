@@ -93,6 +93,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-context-gauge', file: 'tests/frontend-context-gauge.test.ts' },
   { name: 'frontend-enter-key', file: 'tests/frontend-enter-key.test.ts' },
   { name: 'frontend-sse-contract', file: 'tests/frontend-sse-contract.test.ts' },
+  { name: 'frontend-run-events', file: 'tests/frontend-run-events.test.ts' },
   { name: 'frontend-plan-state', file: 'tests/frontend-plan-state.test.ts' },
   { name: 'frontend-thinking-level', file: 'tests/frontend-thinking-level.test.ts' },
   { name: 'frontend-i18n-coverage', file: 'tests/frontend-i18n-coverage.test.ts' },

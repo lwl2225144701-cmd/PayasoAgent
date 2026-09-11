@@ -260,6 +260,16 @@ export function openFileInDefaultBrowser(
 }
 
 /**
+ * 在途快照请求的合并表。
+ *
+ * React StrictMode 在开发构建下会「挂载 → 卸载 → 再挂载」，组件 effect 因此执行两次，
+ * 同一个 Run 的快照会被请求两遍（终态 Run 的事件可达数百 KB，长会话下是成倍的浪费）。
+ * 这里只合并**在途**请求：请求一落定立刻从表中移除，所以不存在拿到陈旧数据的可能，
+ * 生产构建（StrictMode 不双执行）行为完全不变。
+ */
+const inFlightRunEvents = new Map<string, Promise<{ events: HostEvent[] }>>();
+
+/**
  * 一次性取回 Run 的完整事件日志（已终态 Run 的只读快照）。
  *
  * 已完成 Run 的事件不会再变，用普通请求取回即可，无需 EventSource 长连接：
@@ -267,7 +277,15 @@ export function openFileInDefaultBrowser(
  * 连正在流式的 Run 都拿不到连接。取回顺序与 SSE 回放一致（按 seq 升序）。
  */
 export function fetchRunEvents(runId: string): Promise<{ events: HostEvent[] }> {
-  return jsonFetch(`/runs/${runId}/events/snapshot`, { cache: 'no-store' });
+  const inFlight = inFlightRunEvents.get(runId);
+  if (inFlight) return inFlight;
+  const request = jsonFetch<{ events: HostEvent[] }>(`/runs/${runId}/events/snapshot`, {
+    cache: 'no-store',
+  }).finally(() => {
+    inFlightRunEvents.delete(runId);
+  });
+  inFlightRunEvents.set(runId, request);
+  return request;
 }
 
 // SSE 事件连接：订阅所有事件类型，回调收到 HostEvent
