@@ -7,6 +7,13 @@
   min-width: 0;
 }
 
+/* 超长尾部的降级渲染（见 MarkdownText 的 TAIL_PARSE_LIMIT）：等价于「未解析的纯文本」，
+   等这段被空行定型后会自动换成 Markdown。 */
+.markdownBody .plainTail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .markdownBody > :first-child {
   margin-top: 0;
 }
