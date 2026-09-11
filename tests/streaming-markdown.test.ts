@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { splitStreamingMarkdown } from '../web/src/components/streaming-markdown.js';
+import {
+  normalizeFences,
+  splitStreamingMarkdown,
+} from '../web/src/components/streaming-markdown.js';
 
 // 契约：流式分块是「实时 Markdown 渲染」的性能前提。
 // 它必须保证三件事：
@@ -206,6 +209,74 @@ cases.push({
     }
   },
 });
+
+// ---- normalizeFences：畸形 fence 修复 ----
+//
+// 这组用例来自一次真实事故（2026-09-11）：模型在行内写 `` ``` `` 想表示反引号本身，
+// 旧实现把其中的 ``` 提升成行首 fence，规则 2 随即把该行剩余内容当「杂文」删掉，
+// 规则 3 又把闭合 fence 补到**文档末尾** —— 该行后半句丢失，其后十余行全部渲染成
+// 代码块。库内 86 条 final_answer 中，旧实现有 2 条的渲染因此丢内容（各丢掉一个标题）。
+//
+// 因此这里的第一条不变量是：**行内反引号写法必须原样返回，一个字符都不能改。**
+
+const fenceCases: Case[] = [
+  {
+    name: '【事故回归】行内 `` ``` `` 原样返回，不提升、不删字、不补 fence',
+    run: () => {
+      const src = [
+        '- 配套修复：① 流式代码块泄漏 `` ``` `` 开始行；② 合并快照的在途重复请求。',
+        '',
+        '### 后续小节',
+        '',
+        '正文段落。',
+      ].join('\n');
+      assert.equal(normalizeFences(src), src, '行内反引号写法被改写了');
+    },
+  },
+  {
+    name: '【事故回归】行内写法不会吞掉后续小节（不产生行首 fence）',
+    run: () => {
+      const src = '- 泄漏 `` ``` `` 说明\n\n### 小节标题\n\n正文。\n';
+      const out = normalizeFences(src);
+      const startFences = (out.match(/^[ \t]*```/gm) ?? []).length;
+      assert.equal(startFences, 0, `凭空造出了 ${startFences} 个行首 fence`);
+      assert.ok(out.includes('### 小节标题'), '后续小节被吞掉了');
+      assert.ok(out.includes('说明'), '该行剩余内容被删掉了');
+    },
+  },
+  {
+    name: '拼在行尾的 fence 被推到独立行（原有修复能力不能退化）',
+    run: () => {
+      const out = normalizeFences('### 标题 ```mermaid\ngraph TD\nA-->B\n```\n');
+      assert.ok(out.includes('\n```mermaid'), `未提升：${JSON.stringify(out)}`);
+      assert.ok(!/### 标题 ```/.test(out), '行尾仍与 fence 粘连');
+    },
+  },
+  {
+    name: 'fence 行尾的杂文被清理（原有修复能力不能退化）',
+    run: () => {
+      const out = normalizeFences('### 标题 ```mermaid 后面还跟了字\ngraph TD\n```\n');
+      assert.ok(out.includes('```mermaid\n'), `杂文未清理：${JSON.stringify(out)}`);
+      assert.ok(!out.includes('后面还跟了字'), '杂文仍残留');
+    },
+  },
+  {
+    name: '真正被截断的未闭合 fence 补上闭合（原有修复能力不能退化）',
+    run: () => {
+      const out = normalizeFences('前言\n\n```js\nconst a = 1;\n');
+      assert.equal((out.match(/^[ \t]*```/gm) ?? []).length % 2, 0, '未补齐闭合 fence');
+    },
+  },
+  {
+    name: '未闭合的行内写法不补闭合（补了反而会吞内容）',
+    run: () => {
+      const src = '结尾是 `` ``` 的行内片段，没有配对。\n';
+      assert.equal(normalizeFences(src), src);
+    },
+  },
+];
+
+cases.push(...fenceCases);
 
 for (const item of cases) {
   item.run();

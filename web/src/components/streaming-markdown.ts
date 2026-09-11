@@ -17,16 +17,34 @@
  *   2. fence 行尾带杂文（```mermaid 后面还跟了字）
  *   3. 开合数量不成对 → 后续内容整体被吞进代码块
  * 渲染前统一修复，让 GFM 解析器拿到规整输入。
+ *
+ * ⚠️ 修复本身必须「宁可少修，不可多修」。曾出过真实事故：模型写 `` ``` `` 想表示反引号
+ * 本身（行内写法），旧实现把其中的 ``` 提升成行首 fence，规则 2 随即把该行剩余内容当
+ * 杂文删掉，规则 3 又把闭合 fence 补到**文档末尾** —— 该行后半句丢失，其后十余行全部
+ * 渲染成代码块。所以下面加了两道闸：只有 run 数量成对、且本行其后不再出现反引号时，
+ * 才认为它是「拼在行尾的真 fence」。
  */
 export function normalizeFences(md: string): string {
-  // 1. 行中出现的 ``` 标记推到独立行
-  let out = md.replace(/([^\n`])(```+)/g, (_m, prev: string, fence: string) => `${prev}\n${fence}`);
+  // 3+ 反引号 run 的总数。奇数 ⇒ 文档里有一个「孤立」run（例如行内 `` ``` ``），
+  // 它一旦被提升成行首 fence 就会凭空开启代码块。此时整段跳过规则 1。
+  const paired = ((md.match(/```+/g) ?? []).length & 1) === 0;
+
+  // 1. 行尾粘连的 fence 推到独立行（如「### 标题 ```mermaid」）。
+  //    要求本行内其后不再出现反引号：`` ``` `` 这类行内写法后面还有反引号，不是 fence，
+  //    不应改写（CommonMark 对行内反引号本就能正确处理）。
+  let out = md;
+  if (paired) {
+    out = out.replace(
+      /([^\n`])(```+)([^`\n]*)$/gm,
+      (_m, prev: string, fence: string, rest: string) => `${prev}\n${fence}${rest}`,
+    );
+  }
   // 2. fence 行只保留语言标签（```lang 后面的杂文丢弃）
   out = out.replace(
     /^(```+)([\w+-]*)[ \t]+.*$/gm,
     (_m, fence: string, lang: string) => `${fence}${lang}`,
   );
-  // 3. 奇数个 fence → 补一个闭合，解除"吞内容"级联
+  // 3. 奇数个行首 fence → 补一个闭合，解除"吞内容"级联
   const openings = (out.match(/^[ \t]*```/gm) ?? []).length;
   if (openings % 2 === 1) out += '\n```';
   return out;
