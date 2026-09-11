@@ -55,42 +55,50 @@ import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
 import { ModelService } from './model-service.js';
 import { EventStreamService } from './event-stream-service.js';
 
-import { expandPromptCommand, scanPromptCommands, type PromptCommand } from './prompt-command.js';
+import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
 export { expandPromptCommand } from './prompt-command.js';
 
 import { createDefaultRunStore } from './persistence/sqlite-store.js';
 import {
   type CreateModelProviderInput,
   isTerminalRunStatus,
-  type ModelProviderView,
   type RunStore,
   type StoredRun,
-  type StoredRunStatus,
   type StoredSession,
   type TerminalRunStatus,
   type UpdateModelProviderInput,
 } from './persistence/store.js';
-import { getPiAiProviderModel } from './pi-ai-providers.js';
-import {
-  type HostAttachment,
-  type HostEvent,
-  type StreamingEvent,
-  sseEncode,
+import type {
+  HostAttachment,
+  HostEvent,
+  StreamingEvent,
 } from './run-events.js';
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from './workspace.js';
+import type {
+  CleanupError,
+  CreateRunAttachmentInput,
+  HostRun,
+  HostRunStatus,
+  HostSession,
+  SseSink,
+} from './run-types.js';
+import {
+  publicActiveView,
+  publicSessionView,
+  publicStoredView,
+  sessionTitle,
+} from './run-views.js';
+export type {
+  CleanupError,
+  CreateRunAttachmentInput,
+  HostRun,
+  HostRunStatus,
+  HostSession,
+  SseSink,
+} from './run-types.js';
 
 // 创建 Run 时随消息上传的图片附件（routes 已做 MIME/大小/数量校验；
 // P1 起 routes 还会先经 attachment-normalize 归一化并附带尺寸元数据）。
-export interface CreateRunAttachmentInput {
-  name: string;
-  mimeType: string;
-  dataBase64: string;
-  /** 归一化后尺寸（attachment-normalize 产出；缺省 = 未归一化） */
-  width?: number;
-  height?: number;
-  /** 归一化前原图尺寸，如 "5000x3000" */
-  originalDimensions?: string;
-}
 
 // 附件在工作区内的落盘目录（相对 workspaceRoot）。
 const ATTACHMENT_DIR = 'input/attachments';
@@ -108,39 +116,6 @@ interface PendingToolchainPreparation {
   controller: AbortController;
   state: ToolchainPreparationState;
   cancelRequested: boolean;
-}
-
-export type HostRunStatus = StoredRunStatus;
-
-export interface HostRun {
-  runId: string;
-  sessionId: string;
-  turnIndex: number;
-  task: string;
-  status: HostRunStatus;
-  createdAt: string;
-  updatedAt: string;
-  result?: string;
-  error?: string;
-  workspace?: { name: string };
-  model?: string;
-  providerId?: string;
-  baseUrl?: string;
-  permissionMode: PermissionMode;
-}
-
-export interface HostSession {
-  sessionId: string;
-  title: string;
-  workspace?: { name: string };
-  createdAt: string;
-  updatedAt: string;
-}
-
-// purge 文件清理失败的结构化描述；不包含文件系统路径，可安全返回前端
-export interface CleanupError {
-  runId: string;
-  target: 'checkpoint' | 'sandbox';
 }
 
 interface InternalRun extends HostRun {
@@ -161,11 +136,6 @@ interface InternalRun extends HostRun {
   agentPromise?: Promise<void>;
 }
 
-export interface SseSink {
-  write: (chunk: string) => void;
-  end: () => void;
-  closed: () => boolean;
-}
 
 const INTERRUPTED_ERROR = 'Host restarted before the Run completed';
 const DEFAULT_RUN_TIMEOUT_MS = 15 * 60_000;
@@ -676,7 +646,7 @@ export class RunManager {
       }
       session = {
         sessionId: crypto.randomUUID(),
-        title: this.sessionTitle(task),
+        title: sessionTitle(task),
         workspaceRoot: workspace?.rootPath ?? getRunWorkspaceRoot(runId),
         workspaceName: workspace?.name ?? '',
         createdAt: now,
@@ -1090,16 +1060,16 @@ export class RunManager {
   }
 
   list(): HostRun[] {
-    return this.store.listRuns().map((run) => this.publicStoredView(run));
+    return this.store.listRuns().map((run) => publicStoredView(run));
   }
 
   listSessions(): HostSession[] {
-    return this.store.listSessions().map((session) => this.publicSessionView(session));
+    return this.store.listSessions().map((session) => publicSessionView(session));
   }
 
   getSession(sessionId: string): HostSession | null {
     const session = this.store.getSession(sessionId);
-    return session ? this.publicSessionView(session) : null;
+    return session ? publicSessionView(session) : null;
   }
 
   findSessionByWorkspaceName(
@@ -1118,7 +1088,7 @@ export class RunManager {
 
   listSessionRuns(sessionId: string): HostRun[] | null {
     if (!this.store.getSession(sessionId)) return null;
-    return this.store.listRunsBySession(sessionId).map((run) => this.publicStoredView(run));
+    return this.store.listRunsBySession(sessionId).map((run) => publicStoredView(run));
   }
 
   /** 会话级统计投影：折叠每个 Run 的持久化事件并聚合（顶栏 stats strip 数据源）。 */
@@ -1266,7 +1236,7 @@ export class RunManager {
       },
       {
         name: 'runs.jsonl',
-        data: runs.map((run) => JSON.stringify(this.publicStoredView(run))).join('\n'),
+        data: runs.map((run) => JSON.stringify(publicStoredView(run))).join('\n'),
       },
       {
         name: 'meta.json',
@@ -1304,10 +1274,10 @@ export class RunManager {
 
   get(runId: string): HostRun | null {
     const active = this.runs.get(runId);
-    if (active && !this.isSessionDeleted(active.sessionId)) return this.publicView(active);
+    if (active && !this.isSessionDeleted(active.sessionId)) return publicActiveView(active);
     const stored = this.store.getRun(runId);
     return stored && !this.isSessionDeleted(stored.sessionId)
-      ? this.publicStoredView(stored)
+      ? publicStoredView(stored)
       : null;
   }
 
@@ -1570,58 +1540,6 @@ export class RunManager {
       providerId: run.providerId,
       baseUrl: run.baseUrl,
     };
-  }
-
-  private publicView(run: InternalRun): HostRun {
-    return {
-      runId: run.runId,
-      sessionId: run.sessionId,
-      turnIndex: run.turnIndex,
-      task: run.task,
-      status: run.status,
-      createdAt: run.createdAt,
-      updatedAt: run.updatedAt,
-      result: run.result,
-      error: run.error,
-      workspace: run.workspace,
-      model: run.model,
-      providerId: run.providerId,
-      baseUrl: run.baseUrl,
-      permissionMode: run.permissionMode,
-    };
-  }
-
-  private publicStoredView(run: StoredRun): HostRun {
-    return {
-      runId: run.runId,
-      sessionId: run.sessionId,
-      turnIndex: run.turnIndex,
-      task: run.task,
-      status: run.status,
-      createdAt: run.createdAt,
-      updatedAt: run.updatedAt,
-      result: run.result,
-      error: run.error,
-      workspace: run.workspaceName ? { name: run.workspaceName } : undefined,
-      model: run.model,
-      providerId: run.providerId,
-      baseUrl: run.baseUrl,
-      permissionMode: storedPermissionMode(run.permissionMode),
-    };
-  }
-
-  private publicSessionView(session: StoredSession): HostSession {
-    return {
-      sessionId: session.sessionId,
-      title: session.title,
-      workspace: session.workspaceName ? { name: session.workspaceName } : undefined,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
-    };
-  }
-
-  private sessionTitle(task: string): string {
-    return task.replace(/\s+/g, ' ').trim().slice(0, 80) || '未命名任务';
   }
 
   private conversationHistory(runs: StoredRun[]): {

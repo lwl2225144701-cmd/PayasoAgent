@@ -17,7 +17,6 @@ import {
 } from './static-handler.js';
 import {
   MAX_ATTACHMENT_BODY_BYTES,
-  MAX_BODY_BYTES,
   SAFE_RUN_ID,
   SAFE_SESSION_ID,
   RequestBodyTooLargeError,
