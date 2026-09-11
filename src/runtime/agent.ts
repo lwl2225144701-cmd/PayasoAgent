@@ -1,8 +1,8 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
-import { type AgentContextHarness, DefaultContextHarness } from '../harness/context-harness.js';
+import type { AgentContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
-import { countCompleted } from '../harness/plan.js';
+import { createAgentContext } from './agent-context.js';
 import {
   type ChatMessage,
   type ChatStreamDelta,
@@ -19,7 +19,6 @@ import {
 } from '../sandbox/toolchain-preparation.js';
 import {
   execute,
-  formatToolCallError,
   getSchemas,
   getTool,
   invalidToolArgumentsError,
@@ -29,8 +28,6 @@ import {
   parseToolArguments,
   RequiredRuntimeToolUnavailableError,
   resolveToolEffect,
-  type ToolCallError,
-  type ToolContext,
   type ToolImage,
   type ToolSandboxEvent,
   toolNotFoundError,
@@ -42,26 +39,24 @@ import { type ApprovalPort, resolveApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
 import type { AgentExecutionContext } from './contracts.js';
 import { materializeMessagesForModel } from './image-materialize.js';
-import { protectRuntimeObserver, type RuntimeObserver } from './observer-port.js';
+import type { RuntimeObserver } from './observer-port.js';
 import { guardToolOutput } from './output-guard.js';
 import {
   clearFailure,
   completeStep,
-  createScratchpad,
   isBlocked,
   recordFailure,
   recordInvalid,
   setNextStep,
 } from './scratchpad.js';
 import {
-  createSideEffectGuard,
   markExecuted,
   operationIdentity,
   resolveOperation,
 } from './side-effect.js';
-import { createState, updateState } from './state.js';
+import { updateState } from './state.js';
 import { classifyToolError } from './tool-error-classifier.js';
-import { addEvent, createTrace, type TraceEvent, type TraceEventInput } from './trace.js';
+import type { TraceEvent } from './trace.js';
 
 const MAX_RETRY = 2; // 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）
 
@@ -158,75 +153,35 @@ export async function runAgent(
   }
   // 视觉能力随模型配置固化：read 等读图工具据此决定返回图片块还是文本占位。
   const visionEnabled = opts.modelConfig?.vision === true;
-  // 先装配 Runtime 已就绪的部分；planPort 需要等 Harness 创建后再接（见下）。
-  const toolContext: ToolContext = {
+
+  // 装配：State / Harness / Scratchpad / Trace / Checkpoint / 观测闭包
+  // 全部由 createAgentContext 完成（唯一 owner），主循环只消费解构出的符号。
+  const {
+    toolContext,
+    state,
+    scratchpad,
+    sideEffectGuard,
+    messages,
+    contextHarness,
+    modelContext,
+    observer,
+    startIter,
+    emit,
+    save,
+    observeState,
+    observeScratchpad,
+    observeTrace,
+    pushToolCallError,
+  } = createAgentContext({
     runId,
+    task,
     workspaceRoot,
     permissionMode,
-    networkMode: getNetworkMode(),
-    approvalPort: resolveApprovalPort(opts.approvalPort),
     toolchain,
-    vision: visionEnabled,
-  };
-  const observer = protectRuntimeObserver(opts.observer);
-  const emit = (input: TraceEventInput): TraceEvent => {
-    const event = addEvent(trace, input);
-    observer.traceEvent(structuredClone(event));
-    return event;
-  };
-
-  // State: 新建或从 checkpoint 恢复
-  const state = resume ? resume.state : createState(task, runId);
-  const trace = createTrace(runId, opts.onTrace);
-  const observeState = (detail: 'summary' | 'full'): void => {
-    observer.state(structuredClone(state), detail);
-  };
-  const observeScratchpad = (): void => {
-    observer.scratchpad(structuredClone(scratchpad));
-  };
-  const observeTrace = (): void => {
-    observer.trace({ run_id: trace.run_id, events: structuredClone(trace.events) });
-  };
-  // Context Harness：决定模型看到的指令、历史视图、Scratchpad 视图与预算。
-  // Runtime 只持有完整 transcript，并消费 prepareTurn() 的临时模型视图。
-  const contextHarness: AgentContextHarness =
-    opts.contextHarness ??
-    new DefaultContextHarness({
-      permissionMode,
-      modelConfig: opts.modelConfig,
-      toolchain,
-    });
-  contextHarness.restoreState(resume?.harnessState ?? opts.previousHarnessState);
-  const modelContext = contextHarness.modelContext;
-  // v2.2 Plan：计划状态由 Harness 持有（随 harnessState 进 checkpoint）。Runtime 只把
-  // 写入口装饰成"语义 → plan_update 事件"：Harness 不碰 trace，工具只见文本。
-  const planPort = contextHarness.planPort?.();
-  if (planPort) {
-    toolContext.planPort = {
-      apply: (items) => {
-        const applied = planPort.apply(items);
-        if (applied.changed) {
-          emit({
-            type: 'plan_update',
-            revision: applied.plan.revision,
-            items: applied.plan.items,
-            completed: countCompleted(applied.plan),
-            total: applied.plan.items.length,
-          });
-          // 不在这里额外 save()：工具成功后紧接着就有一次 checkpoint（含 harnessState）。
-        }
-        return applied.resultText;
-      },
-    };
-  }
-  const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
-  // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
-  const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
-  const messages: ChatMessage[] = resume
-    ? resume.messages
-    : contextHarness.createTranscript(task, opts.conversationHistory, opts.attachments);
-  // 恢复时从上一轮重试（该轮可能未完成）；否则从 0 开始
-  const startIter = resume ? Math.max(0, resume.iteration - 1) : 0;
+    visionEnabled,
+    resume,
+    opts,
+  });
 
   // 真实用量锚点（Adapter/投影思想）：记录最近一次 provider 上报的用量，
   // 供下一轮 context_usage 携带 prompt 侧真实压力（pressureTokens）校准估算。
@@ -237,54 +192,6 @@ export async function runAgent(
   // Finalization guard 恢复计数（每次 Run 独立；只允许有限次，避免模型以计划文本
   // 无限触发额外请求）。
   let incompleteTurnRecoveries = 0;
-
-  // Checkpoint 保存（tool_result / tool_error / 完成 / 失败时调用）
-  const save = (status?: string) => {
-    const file = opts.checkpointWriter.save({
-      runId,
-      task: state.task,
-      status: status ?? state.status,
-      iteration: state.iteration,
-      scratchpad,
-      messages,
-      state,
-      workspaceRoot,
-      permissionMode,
-      sideEffects: sideEffectGuard.snapshot(),
-      harnessState: contextHarness.snapshotState(),
-    });
-    observer.log(`[Checkpoint] saved → ${file}`);
-  };
-
-  if (resume) {
-    observer.log(
-      `[恢复] 从 checkpoint 继续: runId=${resume.runId} 已完成 ${scratchpad.completedSteps.length} 步, 重跑迭代 ${startIter + 1}`,
-    );
-  }
-
-  // v1.6 Tool Call Pipeline：invocation error（malformed JSON / 非 object 参数 /
-  // 未知工具）→ 标准化 tool error result（保留 tool_call_id 关联）+ trace +
-  // checkpoint。工具不执行、不创建 side-effect operation，由模型下一轮自行修正。
-  const pushToolCallError = (toolCallId: string, toolName: string, error: ToolCallError): void => {
-    updateState(state, {
-      currentStep: 'tool_call_invalid',
-      currentError: `${error.code}: ${error.message}`,
-    });
-    observeState('summary');
-    emit({
-      type: 'tool_call_invalid',
-      toolCallId,
-      tool: toolName,
-      code: error.code,
-    });
-    observer.log(`[Tool Call Invalid] ${toolName}: ${error.code}`);
-    messages.push({
-      role: 'tool',
-      tool_call_id: toolCallId,
-      content: formatToolCallError(error),
-    });
-    save();
-  };
 
   try {
     // No fixed iteration cap: a turn continues while the model keeps
