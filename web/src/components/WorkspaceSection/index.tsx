@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useI18n } from '../../i18n';
+import { portalRoot } from '../../portal-root';
 import type { HostSession, WorkspaceView } from '../../types';
 import { Collapse } from '../Collapse';
 import { IconButton } from '../IconButton';
@@ -155,7 +156,7 @@ function WorkspaceMenu({
         <span>{t('shell.workspace.delete')}</span>
       </button>
     </div>,
-    document.getElementById('payaso-portal-root') ?? document.body,
+    portalRoot(),
   );
 }
 

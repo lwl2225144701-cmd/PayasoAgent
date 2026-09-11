@@ -4,6 +4,7 @@ import { formatRelativeTime } from '../../format';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useI18n } from '../../i18n';
+import { portalRoot } from '../../portal-root';
 import type { HostSession } from '../../types';
 import { ArchiveIcon, MoreIcon, PencilIcon } from '../icons';
 import styles from './SessionItem.module.css';
@@ -143,7 +144,7 @@ export function SessionItem({
               <span>{t('shell.action.archive')}</span>
             </button>
           </div>,
-          document.getElementById('payaso-portal-root') ?? document.body,
+          portalRoot(),
         )}
     </div>
   );
