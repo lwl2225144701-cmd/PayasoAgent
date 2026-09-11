@@ -23,3 +23,17 @@
 .copied {
   color: var(--accent-blue);
 }
+
+/* 纯图标模式：去掉文字后收紧内边距，让按钮在消息页脚行里不抢视线。
+   默认偏低对比度，悬停/聚焦时提亮——与页脚的时间戳同处一个视觉层级。 */
+.iconOnly {
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  line-height: 0;
+}
+
+.iconOnly:hover,
+.iconOnly:focus-visible {
+  color: var(--text-primary);
+}

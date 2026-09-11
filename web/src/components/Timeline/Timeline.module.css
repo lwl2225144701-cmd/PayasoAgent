@@ -81,8 +81,19 @@
   white-space: pre-wrap;
 }
 
-.userBlock .time {
+/* 用户消息页脚：时间戳 + 复制按钮同处一行，整体靠右（气泡本身右对齐）。
+   间距统一由这一行给出 —— 原来挂在 .userBlock .time 上的 margin 已由这里接管。 */
+.userMeta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
   margin-top: 9px;
+}
+
+/* 抵消 .time 的基础 margin-top，否则时间戳会相对图标偏移 */
+.userMeta .time {
+  margin-top: 0;
 }
 
 /* AI content stays document-like: no chat bubble, card, or filled container. */

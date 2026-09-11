@@ -34,6 +34,7 @@ import type {
   TraceImage,
 } from '../../types';
 import { CollapsibleText } from '../CollapsibleText';
+import { CopyButton } from '../CopyButton';
 import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { MarkdownText } from '../MarkdownText';
@@ -594,9 +595,13 @@ export const Timeline = memo(function Timeline({
                 ))}
               </div>
             )}
-          <time className={styles.time}>
-            {formatTime(runStarted?.timestamp ?? run.createdAt, language)}
-          </time>
+          <div className={styles.userMeta}>
+            <time className={styles.time}>
+              {formatTime(runStarted?.timestamp ?? run.createdAt, language)}
+            </time>
+            {/* 复制用户自己发出的原文：与时间戳同一页脚行、低调的纯图标按钮 */}
+            <CopyButton text={run.task} iconOnly />
+          </div>
         </article>
 
         {hasAnyWork ? (
