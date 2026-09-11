@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   permission: 'payaso.permissionMode',
   language: 'payaso.languageMode',
   fontSize: 'payaso.conversationFontSize',
+  lastSession: 'payaso.lastSessionId',
 } as const;
 
 const DEFAULT_PERMISSION_MODE: PermissionMode = 'workspace-write';
@@ -49,6 +50,14 @@ function write(key: string, value: string): void {
   }
 }
 
+function remove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // 同上：存储被禁用时不能影响本次会话内的行为。
+  }
+}
+
 export function readPermissionMode(): PermissionMode {
   const value = read(STORAGE_KEYS.permission);
   return isPermissionMode(value) ? value : DEFAULT_PERMISSION_MODE;
@@ -79,6 +88,25 @@ export function saveConversationFontSize(size: ConversationFontSize): void {
 export function applyConversationFontSize(size: ConversationFontSize): void {
   document.documentElement.dataset.conversationFontSize = String(size);
   document.documentElement.style.setProperty('--conversation-font-size', `${size}px`);
+}
+
+/**
+ * 上次打开的会话 id —— 刷新浏览器后回到同一个会话。
+ *
+ * 只存 id，不存会话内容：会话是否仍然存在由启动时用服务端清单校验，
+ * 记录失效（被删/归档）时调用方会写回 null 清掉它。
+ */
+export function readLastSessionId(): string | null {
+  const value = read(STORAGE_KEYS.lastSession);
+  return value && value.trim() !== '' ? value : null;
+}
+
+export function saveLastSessionId(sessionId: string | null): void {
+  if (sessionId) {
+    write(STORAGE_KEYS.lastSession, sessionId);
+  } else {
+    remove(STORAGE_KEYS.lastSession);
+  }
 }
 
 export { DEFAULT_FONT_SIZE, MAX_CONVERSATION_FONT_SIZE, MIN_CONVERSATION_FONT_SIZE };

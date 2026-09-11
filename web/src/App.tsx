@@ -50,6 +50,7 @@ import { useThemeMode } from './hooks/useThemeMode';
 import { I18nProvider } from './i18n';
 import { translate, translator } from './i18n/translate';
 import type { LanguageMode } from './preferences';
+import { readLastSessionId, saveLastSessionId } from './preferences';
 import { reconcileRuns } from './run-reconcile';
 import type {
   ContextUsageEvent,
@@ -90,7 +91,11 @@ export default function App() {
   // 不再把首个视觉反馈绑定到 Host 创建/落库耗时。它不进入 runs，也不建立 SSE。
   const [pendingRun, setPendingRun] = useState<HostRun | null>(null);
   const [sessions, setSessions] = useState<HostSession[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  // 刷新后回到上次打开的会话：先用本地记录做初始值（避免闪一下 landing），
+  // 启动时再用服务端会话清单校验一次，失效则清空回到 landing。
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(() =>
+    readLastSessionId(),
+  );
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   // 会话级统计投影（顶栏 stats strip；会话切换/回合终态时刷新）
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
@@ -171,15 +176,17 @@ export default function App() {
     [showToast, t],
   );
 
-  const refreshRuns = useCallback(async () => {
+  const refreshRuns = useCallback(async (): Promise<HostRun[]> => {
     try {
       const runResp = await listRuns();
       // 复用未变化 Run 的对象引用：Timeline 是 memo 组件，直接替换整个数组会让
       // 本次状态对账把所有历史回合全部重渲（并重建各自的 buildStructure）。
       setRuns((prev) => reconcileRuns(prev, runResp.runs));
       setOnline(true);
+      return runResp.runs;
     } catch {
       setOnline(false);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -271,8 +278,28 @@ export default function App() {
   );
 
   useEffect(() => {
-    void refreshRuns();
-    void refreshSessions();
+    // 刷新后恢复上次打开的会话。初始 state 已用本地记录填好（避免闪 landing），
+    // 这里等 Runs / 会话清单到位后再校验一次：
+    //   - 会话已不存在（被删/归档）→ 清空回到 landing；
+    //   - 仍然存在 → 把当前回合对准最新一轮，与点击侧栏进入该会话的效果一致。
+    void Promise.all([refreshRuns(), refreshSessions()])
+      .then(([runList, sessionList]) => {
+        const restored = readLastSessionId();
+        if (!restored) return;
+        if (!sessionList.some((session) => session.sessionId === restored)) {
+          setCurrentSessionId(null);
+          return;
+        }
+        const latest = runList
+          .filter((run) => run.sessionId === restored)
+          .sort((a, b) => b.turnIndex - a.turnIndex)[0];
+        setCurrentSessionId(restored);
+        if (latest) setCurrentRunId(latest.runId);
+      })
+      .catch(() => {
+        // 只在「拿到清单且确认会话不存在」时才清空 —— 拉取失败属于无证据，
+        // 不能因此把用户踢回 landing 并抹掉本地记录（那会让下次刷新也恢复不了）。
+      });
     getWorkspace()
       .then((resp) => setWorkspace(resp.workspace))
       .catch(() => {});
@@ -283,6 +310,12 @@ export default function App() {
     void refreshPiProviders();
     void refreshDefaultModel();
   }, [refreshRuns, refreshSessions, refreshModels, refreshPiProviders, refreshDefaultModel]);
+
+  // 当前会话镜像到本地记录：选会话 / 新建会话 / 回到 landing 都会经由此处落盘，
+  // 不必在每个 setCurrentSessionId 调用点各写一遍（避免漏写导致恢复不一致）。
+  useEffect(() => {
+    saveLastSessionId(currentSessionId);
+  }, [currentSessionId]);
 
   // 窄视口下自动折叠 Sidebar；用户手动切换后不再自动干预本次会话
   useEffect(() => {
