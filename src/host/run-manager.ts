@@ -53,6 +53,7 @@ import {
 } from './workspace-instructions.js';
 import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
 import { ModelService } from './model-service.js';
+import { EventStreamService } from './event-stream-service.js';
 
 import { expandPromptCommand, scanPromptCommands, type PromptCommand } from './prompt-command.js';
 export { expandPromptCommand } from './prompt-command.js';
@@ -185,7 +186,6 @@ function isCancellable(status: HostRunStatus): boolean {
 
 export class RunManager {
   private runs = new Map<string, InternalRun>();
-  private subscribers = new Map<string, Set<SseSink>>();
   private lifecycle: 'open' | 'closing' | 'closed' = 'open';
   private closePromise?: Promise<void>;
   // v2.0.1 JIT Approval：in-flight 批准请求（requestId → 裁决入口 + 超时定时器）
@@ -208,6 +208,7 @@ export class RunManager {
     private readonly toolchainCapabilitiesProvider: () => RuntimeToolchainCapabilities = getRuntimeToolchainCapabilities,
   ) {
     this.modelService = new ModelService({ store: this.store });
+    this.eventStreamService = new EventStreamService({ store: this.store });
     // A process restart cannot leave persisted rows pretending to execute.
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
     const now = new Date().toISOString();
@@ -229,6 +230,7 @@ export class RunManager {
     }
   }
 
+  private readonly eventStreamService: EventStreamService;
   private readonly modelService: ModelService;
 
   private isSessionDeleted(sessionId: string): boolean {
@@ -272,16 +274,7 @@ export class RunManager {
       this.pendingToolchainPreparations.clear();
 
       // 关闭所有 SSE 连接
-      for (const sinks of this.subscribers.values()) {
-        for (const sink of sinks) {
-          try {
-            sink.end();
-          } catch {
-            /* ignore shutdown write failures */
-          }
-        }
-      }
-      this.subscribers.clear();
+      this.eventStreamService.closeAll();
 
       // 关闭持久层（只关闭一次）
       try {
@@ -902,17 +895,7 @@ export class RunManager {
     const cleanupErrors: CleanupError[] = [];
     for (const run of runs) {
       this.runs.delete(run.runId);
-      const sinks = this.subscribers.get(run.runId);
-      if (sinks) {
-        for (const sink of sinks) {
-          try {
-            sink.end();
-          } catch {
-            /* ignore shutdown write failures */
-          }
-        }
-        this.subscribers.delete(run.runId);
-      }
+      this.eventStreamService.closeRun(run.runId);
       cleanupErrors.push(...this.cleanupRun(run.runId));
     }
     return { purged, cleanupErrors };
@@ -964,17 +947,7 @@ export class RunManager {
     const cleanupErrors: CleanupError[] = [];
     for (const run of runs) {
       this.runs.delete(run.runId);
-      const sinks = this.subscribers.get(run.runId);
-      if (sinks) {
-        for (const sink of sinks) {
-          try {
-            sink.end();
-          } catch {
-            /* ignore shutdown write failures */
-          }
-        }
-        this.subscribers.delete(run.runId);
-      }
+      this.eventStreamService.closeRun(run.runId);
       cleanupErrors.push(...this.cleanupRun(run.runId));
     }
     return { deleted, cleanupErrors };
@@ -1112,18 +1085,8 @@ export class RunManager {
   // v1.6：仅发布已在持久层落库的事件（memory + SSE）；durability 优先于 delivery
   private publishEvent(run: InternalRun, event: HostEvent, seq: number): void {
     run.events.push(event);
-    const sinks = this.subscribers.get(run.runId);
-    if (!sinks) return;
-    const chunk = sseEncode(seq, event);
-    for (const sink of sinks) {
-      if (!sink.closed()) {
-        try {
-          sink.write(chunk);
-        } catch {
-          /* isolate one broken SSE client */
-        }
-      }
-    }
+    // 推流交给 EventStreamService（管理 live sink 生命周期）
+    this.eventStreamService.publish(run.runId, seq, event);
   }
 
   list(): HostRun[] {
@@ -1388,26 +1351,11 @@ export class RunManager {
   }
 
   subscribe(runId: string, sink: SseSink, afterSeq = 0, live = true): boolean {
-    if (!this.store.getRun(runId)) return false;
-    let set = this.subscribers.get(runId);
-    if (!set) {
-      set = new Set();
-      this.subscribers.set(runId, set);
-    }
-    for (const item of this.store.listEvents(runId)) {
-      if (item.seq <= afterSeq) continue;
-      if (!sink.closed()) sink.write(sseEncode(item.seq, item.event));
-    }
-    if (!live) {
-      sink.end();
-      return true;
-    }
-    set.add(sink);
-    return true;
+    return this.eventStreamService.subscribe(runId, sink, afterSeq, live);
   }
 
   unsubscribe(runId: string, sink: SseSink): void {
-    this.subscribers.get(runId)?.delete(sink);
+    this.eventStreamService.unsubscribe(runId, sink);
   }
 
   private async waitForRunTerminal(runId: string, timeoutMs: number): Promise<void> {
@@ -1593,18 +1541,7 @@ export class RunManager {
       return;
     }
     run.events.push(event);
-    const sinks = this.subscribers.get(run.runId);
-    if (!sinks) return;
-    const chunk = sseEncode(seq, event);
-    for (const sink of sinks) {
-      if (!sink.closed()) {
-        try {
-          sink.write(chunk);
-        } catch {
-          /* isolate one broken SSE client */
-        }
-      }
-    }
+    this.eventStreamService.publish(run.runId, seq, event);
   }
 
   private persistRunSafely(run: InternalRun): void {
