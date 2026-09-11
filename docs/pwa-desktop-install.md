@@ -1,12 +1,12 @@
 # PayasoAgent PWA 桌面入口方案
 
-状态：**已实施（2026-09-11，待提交）**。目标：用户先手动启动 PayasoAgent Host，再从桌面、启动台或
+状态：**已实施并安装验收通过（2026-09-11，已推送 GitHub）**。目标：用户先手动启动 PayasoAgent Host，再从桌面、启动台或
 任务栏点击 PayasoAgent 图标，以独立窗口打开 `http://localhost:4500`。
 
 实施验证结果：`npm run build:web` 通过；启动 Host 后 `/manifest.json` 200 +
 `application/json; charset=utf-8`、两张图标 200 + 实际字节尺寸 192×192 / 512×512；
 `npx tsc --noEmit` 无错误；`npm run test:all` 75 套件全绿（16.7s）。
-唯一待人工执行的验收是 §6 的真实 Chrome 安装步骤。
+真实 Chrome 安装验收（§6）已由用户完成：地址栏安装图标出现，安装成功。
 
 ---
 
@@ -179,6 +179,10 @@ http://localhost:4500 ≠ http://127.0.0.1:4500 ≠ http://localhost:4501
 4. 点击地址栏安装图标并选择“安装 PayasoAgent”；
 5. 确认后生成独立窗口及桌面/启动台/任务栏入口；
 6. 在独立窗口发送一条消息，确认功能正常。
+
+验收记录（2026-09-11）：用户已完成真实安装 —— 地址栏出现安装图标并成功安装为独立窗口应用。
+Chrome 的 installability 检测（manifest 字段完整性、图标尺寸、standalone、安全上下文）全部
+真实通过。
 
 日常启动：
 
