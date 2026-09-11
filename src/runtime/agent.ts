@@ -3,6 +3,7 @@
 import type { AgentContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
 import { createAgentContext } from './agent-context.js';
+import { decideEmptyTurn, decideIncompleteTurn } from './turn-policy.js';
 import {
   type ChatMessage,
   type ChatStreamDelta,
@@ -316,60 +317,63 @@ export async function runAgent(
 
         // v1.8 空回合不变量：没有工具调用且没有可见内容 → 不是答案。
         // 按 Harness 策略追加提示并重试（有界）；用尽后 fail loudly。
+        // 预算判定归 TurnPolicy（纯函数）；副作用留在主循环。
         if (answer.trim() === '') {
-          const policy = contextHarness.emptyTurnPolicy?.();
-          if (policy && emptyTurnRecoveries < policy.maxRecoveries) {
-            emptyTurnRecoveries++;
+          const decision = decideEmptyTurn(contextHarness.emptyTurnPolicy?.(), emptyTurnRecoveries);
+          if (decision.kind === 'recover') {
+            emptyTurnRecoveries = decision.attempt;
             observer.log(
-              `[空回合] 模型未产生可见输出，按 Harness 策略追加提示（${emptyTurnRecoveries}/${policy.maxRecoveries}）`,
+              `[空回合] 模型未产生可见输出，按 Harness 策略追加提示（${decision.attempt}/${decision.maxAttempts}）`,
             );
             emit({
               type: 'empty_turn_recovered',
-              attempt: emptyTurnRecoveries,
-              maxAttempts: policy.maxRecoveries,
+              attempt: decision.attempt,
+              maxAttempts: decision.maxAttempts,
             });
             updateState(state, {
               currentStep: 'empty_turn_recovery',
               currentError: 'empty assistant turn',
             });
             observeState('summary');
-            messages.push({ role: 'user', content: policy.nudge });
+            messages.push({ role: 'user', content: decision.nudge });
             save();
             continue;
           }
           throw new AgentEmptyAnswerError(emptyTurnRecoveries);
         }
 
-        const policy = contextHarness.incompleteTurnPolicy?.(answer);
-        if (policy) {
-          const attempt = incompleteTurnRecoveries + 1;
-          const canRecover = incompleteTurnRecoveries < policy.maxRecoveries;
+        const incompleteDecision = decideIncompleteTurn(
+          contextHarness.incompleteTurnPolicy?.(answer),
+          incompleteTurnRecoveries,
+        );
+        if (incompleteDecision.kind === 'recover' || incompleteDecision.kind === 'fail') {
+          const attempt = incompleteDecision.attempt;
           emit({
             type: 'finalization_guard',
-            reason: policy.reason,
+            reason: incompleteDecision.reason ?? '',
             attempt,
-            maxAttempts: policy.maxRecoveries,
-            disposition: canRecover ? 'retry' : 'fail',
+            maxAttempts: incompleteDecision.maxAttempts,
+            disposition: incompleteDecision.kind === 'recover' ? 'retry' : 'fail',
           });
-          if (canRecover) {
+          if (incompleteDecision.kind === 'recover') {
             incompleteTurnRecoveries = attempt;
             observer.log(
-              `[Finalization Guard] 检测到未完成回合，追加提示并重试（${attempt}/${policy.maxRecoveries}）`,
+              `[Finalization Guard] 检测到未完成回合，追加提示并重试（${attempt}/${incompleteDecision.maxAttempts}）`,
             );
             updateState(state, {
               currentStep: 'finalization_guard',
-              currentError: policy.reason,
+              currentError: incompleteDecision.reason ?? '',
             });
             observeState('summary');
             messages.push({
               role: 'user',
-              content: policy.nudge,
+              content: incompleteDecision.nudge,
             });
             save();
             continue;
           }
           throw new AgentStalledError(
-            policy.reason,
+            incompleteDecision.reason ?? 'incomplete turn',
             incompleteTurnRecoveries,
           );
         }
