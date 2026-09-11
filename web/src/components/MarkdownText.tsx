@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MermaidBlock } from './MermaidBlock';
 import styles from './markdown-body.module.css';
-import { normalizeFences, splitStreamingMarkdown } from './streaming-markdown';
+import { normalizeFences, remarkCjkStrong, splitStreamingMarkdown } from './streaming-markdown';
 
 /**
  * 裸渲染器：只做 Markdown 解析与元素映射，不套容器。
@@ -13,10 +13,17 @@ import { normalizeFences, splitStreamingMarkdown } from './streaming-markdown';
  * `> :last-child{margin-bottom:0}` 会对每个块都生效，段间距会被整片吃掉。
  * 共用一个容器还能让流式与终态的 DOM 结构完全一致——定型瞬间不会因结构变化而重排。
  */
-export const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
+export const MarkdownContent = memo(function MarkdownContent({
+  text,
+  modelOutput = false,
+}: {
+  text: string;
+  /** 仅模型输出启用 CJK Markdown 容错；用户输入与文件预览保持标准 CommonMark。 */
+  modelOutput?: boolean;
+}) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={modelOutput ? [remarkGfm, remarkCjkStrong] : [remarkGfm]}
       components={{
         a: ({ children, ...props }) => (
           <a {...props} target="_blank" rel="noreferrer">
@@ -66,17 +73,23 @@ export const MarkdownContent = memo(function MarkdownContent({ text }: { text: s
  * memo：react-markdown 每次渲染都会对整条文本全量 parse。Run 运行期 Timeline
  * 每秒 tick 一次，text 未变时必须跳过重解析（用户消息文本终身不变，收益更直接）。
  */
-export const MarkdownText = memo(function MarkdownText({ text }: { text: string }) {
+export const MarkdownText = memo(function MarkdownText({
+  text,
+  modelOutput = false,
+}: {
+  text: string;
+  modelOutput?: boolean;
+}) {
   return (
     <div className={styles.markdownBody}>
-      <MarkdownContent text={text} />
+      <MarkdownContent text={text} modelOutput={modelOutput} />
     </div>
   );
 });
 
 /** 单个已定型块：先做 fence 修复再渲染。memo 让未变化的块连修复都跳过。 */
 const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
-  return <MarkdownContent text={normalizeFences(text)} />;
+  return <MarkdownContent text={normalizeFences(text)} modelOutput />;
 });
 
 /**

@@ -140,7 +140,7 @@ const TAIL_PARSE_LIMIT = 6000;
 
 ## 7. 测试契约
 
-`tests/streaming-markdown.test.ts`（17 项，已注册进 `run-all.ts`）：
+`tests/streaming-markdown.test.ts`（25 项，已注册进 `run-all.ts`）：
 
 - fence 内部空行**不**切块（核心）；
 - 未闭合 fence → 前缀冻结成块、fence 源码单独返回、**不泄漏进 Markdown**；
@@ -185,7 +185,9 @@ const TAIL_PARSE_LIMIT = 6000;
 
 因此契约修正为**可实现、可回归**的形式：
 
-> 1. Markdown 结构**闭合并收到后**，原始 `**`、标题标记等不再残留；
+> 1. Markdown 结构**闭合并收到后**，原始 `**`、标题标记等不再残留；模型常见的
+>    `**内容）**状态` CJK 紧邻写法由渲染层兼容（标准 CommonMark 不把这里的末尾 `**`
+>    识别为关闭标记）；
 > 2. 未闭合的代码 fence / Mermaid fence **不显示 fence 标记**，也不触发错误渲染。
 
 第 2 条已由 `tests/streaming-markdown.test.ts` 锁定（`openFence` 只返回正文、且绝不进入

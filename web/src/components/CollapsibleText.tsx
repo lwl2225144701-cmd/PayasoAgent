@@ -48,7 +48,7 @@ export const CollapsibleText = memo(function CollapsibleText({
           // 必须保持原样，否则会被当成完整图表渲染）。
           <StreamingMarkdown text={display} />
         ) : (
-          <MarkdownText text={normalizeFences(display)} />
+          <MarkdownText text={normalizeFences(display)} modelOutput />
         )}
       </div>
       {maxChars > 0 && text.length > maxChars && (

@@ -50,6 +50,53 @@ export function normalizeFences(md: string): string {
   return out;
 }
 
+/**
+ * CommonMark 不会把 `**内容）**状态` 末尾的 `**` 识别为关闭标记：关闭标记前是标点、
+ * 后面又紧邻文字。这里只修复解析后仍残留在普通 text 节点里的这一种 CJK 邻接形态，
+ * 不改 Markdown 源文，也不会进入 code / inlineCode 节点。
+ */
+interface MarkdownAstNode {
+  type: string;
+  value?: string;
+  children?: MarkdownAstNode[];
+}
+
+const CJK_ADJACENT_STRONG = /\*\*([^*\n]+?\p{P})\*\*(?=[\p{L}\p{N}])/gu;
+
+function repairCjkStrong(node: MarkdownAstNode): void {
+  if (!node.children) return;
+
+  const children: MarkdownAstNode[] = [];
+  for (const child of node.children) {
+    if (child.type !== 'text' || typeof child.value !== 'string') {
+      repairCjkStrong(child);
+      children.push(child);
+      continue;
+    }
+
+    let cursor = 0;
+    let matched = false;
+    for (const match of child.value.matchAll(CJK_ADJACENT_STRONG)) {
+      const start = match.index;
+      if (start > cursor) children.push({ type: 'text', value: child.value.slice(cursor, start) });
+      children.push({ type: 'strong', children: [{ type: 'text', value: match[1] }] });
+      cursor = start + match[0].length;
+      matched = true;
+    }
+    if (!matched) {
+      children.push(child);
+    } else if (cursor < child.value.length) {
+      children.push({ type: 'text', value: child.value.slice(cursor) });
+    }
+  }
+  node.children = children;
+}
+
+/** remark 插件：补齐 CommonMark 对 CJK 紧邻强调标记的一个窄兼容边界。 */
+export function remarkCjkStrong() {
+  return (tree: MarkdownAstNode): void => repairCjkStrong(tree);
+}
+
 export interface StreamingMarkdownSplit {
   /** 已定型的块：内容不会再变，解析结果可以安全 memo 掉 */
   blocks: string[];

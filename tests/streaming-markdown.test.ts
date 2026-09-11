@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeFences,
+  remarkCjkStrong,
   splitStreamingMarkdown,
 } from '../web/src/components/streaming-markdown.js';
 
@@ -207,6 +208,43 @@ cases.push({
     for (const block of split.blocks) {
       assert.equal(block.includes('A-->'), false, `块里混入了未完成的 mermaid：${block}`);
     }
+  },
+});
+
+cases.push({
+  name: 'CJK 标点后关闭加粗且紧邻汉字 → 修复残留的字面 **',
+  run: () => {
+    const tree = {
+      type: 'root',
+      children: [
+        {
+          type: 'paragraph',
+          children: [{ type: 'text', value: '文档当前是**设计稿（未实施）**状态。' }],
+        },
+      ],
+    };
+    remarkCjkStrong()(tree);
+    assert.deepEqual(tree.children[0].children, [
+      { type: 'text', value: '文档当前是' },
+      { type: 'strong', children: [{ type: 'text', value: '设计稿（未实施）' }] },
+      { type: 'text', value: '状态。' },
+    ]);
+  },
+});
+
+cases.push({
+  name: 'CJK 加粗兼容不改写 code / inlineCode',
+  run: () => {
+    const tree = {
+      type: 'root',
+      children: [
+        { type: 'code', value: '文档当前是**设计稿（未实施）**状态。' },
+        { type: 'inlineCode', value: '**设计稿（未实施）**状态' },
+      ],
+    };
+    const before = structuredClone(tree);
+    remarkCjkStrong()(tree);
+    assert.deepEqual(tree, before);
   },
 });
 
