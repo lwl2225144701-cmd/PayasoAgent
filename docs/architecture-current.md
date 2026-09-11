@@ -10,7 +10,7 @@
 >
 > * `.trae/documents/minimal-web-ui_plan.md` —— Web UI 实现方案（已按此落地）
 >
-> **版本锚点**：`CURRENT_VERSION = v1.6 + 多 Provider 模型配置 + Run 模型绑定 Context Budget + True Cancellation + Shell Network Isolation + SecretStore/Keychain`。
+> **版本锚点**：`CURRENT_VERSION = v2.2`（多 Provider 模型配置 + Run 模型绑定 Context Budget + True Cancellation + Shell Network Isolation + SecretStore/Keychain + v1.8 内核不变量 + v1.9 P1 能力 + v1.10 P2 能力 + v2.0 Network Control + v2.1 工具链准备 + v2.2 Plan）。
 
 ***
 
@@ -314,7 +314,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 68 个确定性套件（无 LLM，有界并发，约 17s）
+npm run test:all          # 82 个确定性套件（无 LLM，有界并发，约 17s）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）
@@ -346,7 +346,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 68 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 68 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 82 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 82 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

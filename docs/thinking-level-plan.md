@@ -154,7 +154,7 @@
 ## 5. 验收
 
 - `npx tsc --noEmit` 通过；
-- `npm run test:all`（68 个确定性套件）全绿，新增用例在 `settings` / `pi-ai-provider` / `llm` 套件内；
+- `npm run test:all`（82 个确定性套件）全绿，新增用例在 `settings` / `pi-ai-provider` / `llm` 套件内；
 - `npm run build:web` 通过；
 - 手动：设置页给 DeepSeek 内置 Provider 的某模型选「高」→ 保存 → 发起任务，抓请求体确认
   `thinking:{type:"enabled"}` + `reasoning_effort:"high"`；未选时请求体无思考参数。

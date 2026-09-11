@@ -6,7 +6,7 @@
 
 * **安全优先**：shell 在 macOS seatbelt 沙箱内执行（fail-closed），API 密钥存 macOS Keychain 不落库
 
-* **当前版本：v1.10**
+* **当前版本：v2.2**
 
 > 完整架构与契约（工具清单、Trace 事件、API、安全边界）以 [docs/architecture-current.md](docs/architecture-current.md) 为唯一权威文档。
 
@@ -85,7 +85,7 @@ npm run cli "帮我计算 15*37"   # 命令行单次任务
 
 | 命令                               | 内容                                                                     | 依赖            |
 | -------------------------------- | ---------------------------------------------------------------------- | ------------- |
-| `npm run test:all`               | **68 个确定性套件**（子进程隔离、有界并发，约 17s；失败详情随汇总重打，完整日志落 `.payaso/logs/`）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、Host Auth、Keychain 契约等 | 无 LLM         |
+| `npm run test:all`               | **82 个确定性套件**（子进程隔离、有界并发，约 17s；失败详情随汇总重打，完整日志落 `.payaso/logs/`）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、Host Auth、Keychain 契约等 | 无 LLM         |
 | `npx tsc --noEmit`               | TypeScript 类型检查                                                        | 无             |
 | `npm run build:web`              | 前端生产构建                                                                 | 无             |
 | `npm run test:host`              | Host API 集成测试（真实 HTTP server + 真实 Run）                                 | 需 LLM（`.env`） |

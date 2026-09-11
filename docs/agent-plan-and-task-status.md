@@ -277,7 +277,7 @@ const toolContext = {
 | 工具 | `src/tools/plan-tools.ts` 的 `updatePlan`（`effect: idempotent`，≤12 项 / 标题 ≤160 字符 / 单一 `in_progress`） |
 | 事件 | `trace.ts` 的 `plan_update`（revision + 全量 items + completed/total）；`context_usage` 增可选 `planTokens` |
 | 前端 | `web/src/types.ts`、`api.ts` 白名单、`Timeline/plan-state.ts`（`derivePlan` 取最大 revision）、`Timeline/PlanPanel.tsx` + CSS；由 `Timeline` 上抛、`App` 渲染在输入栏上方（`InputBar` 的 `headerSlot`） |
-| 测试 | `plan-state`(16) / `plan-view`(9) / `plan-loop`(8) / `frontend-plan-state`(8) 四个套件，均已登记进 `tests/run-all.ts`（68 套件） |
+| 测试 | `plan-state`(16) / `plan-view`(9) / `plan-loop`(8) / `frontend-plan-state`(8) 四个套件，均已登记进 `tests/run-all.ts`（82 套件） |
 
 与方案的差异（有意为之）：
 

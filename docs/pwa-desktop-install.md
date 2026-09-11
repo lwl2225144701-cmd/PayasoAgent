@@ -5,7 +5,7 @@
 
 实施验证结果：`npm run build:web` 通过；启动 Host 后 `/manifest.json` 200 +
 `application/json; charset=utf-8`、两张图标 200 + 实际字节尺寸 192×192 / 512×512；
-`npx tsc --noEmit` 无错误；`npm run test:all` 75 套件全绿（16.7s）。
+`npx tsc --noEmit` 无错误；`npm run test:all` 82 套件全绿（16.7s）。
 真实 Chrome 安装验收（§6）已由用户完成：地址栏安装图标出现，安装成功。
 
 ---
