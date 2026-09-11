@@ -22,7 +22,7 @@ import {
   loadCheckpoint,
 } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
-import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
+import type { ApprovalPort } from '../runtime/approval-port.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
 import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
@@ -47,6 +47,7 @@ import {
 import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
 import { ModelService } from './model-service.js';
 import { EventStreamService } from './event-stream-service.js';
+import { ApprovalCoordinator } from './approval-coordinator.js';
 import { PLAN_DIRECTIVE, SessionService } from './session-service.js';
 
 import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
@@ -145,11 +146,6 @@ export class RunManager {
   private runs = new Map<string, InternalRun>();
   private lifecycle: 'open' | 'closing' | 'closed' = 'open';
   private closePromise?: Promise<void>;
-  // v2.0.1 JIT Approval：in-flight 批准请求（requestId → 裁决入口 + 超时定时器）
-  private pendingApprovals = new Map<
-    string,
-    { resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout>; runId: string }
-  >();
   // macOS toolchain preparation requests are separate from network approval.
   // They are user-facing, bounded, and resolve to a fixed installer plan.
   private pendingToolchainPreparations = new Map<string, PendingToolchainPreparation>();
@@ -170,6 +166,12 @@ export class RunManager {
       store: this.store,
       models: this.modelService,
       host: this,
+    });
+    this.approvalCoordinator = new ApprovalCoordinator({
+      emit: (runId, event) => {
+        const run = this.runs.get(runId);
+        if (run) this.record(run, event);
+      },
     });
     // A process restart cannot leave persisted rows pretending to execute.
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
@@ -195,6 +197,7 @@ export class RunManager {
   private readonly eventStreamService: EventStreamService;
   private readonly modelService: ModelService;
   private readonly sessionService: SessionService;
+  private readonly approvalCoordinator: ApprovalCoordinator;
 
   private isSessionDeleted(sessionId: string): boolean {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
@@ -255,61 +258,15 @@ export class RunManager {
   // ---- v2.0.1 JIT Approval：Host 注入给 Runtime 的批准端口 ----
   // request() 把批准请求推给前端（SSE approval_requested），挂起等待用户裁决；
   // resolveApproval() 由 HTTP 端点（POST /runs/:id/approval）回传结果。
-  // 超时（APPROVAL_TIMEOUT_MS）未裁决 → 自动拒绝（fail-closed，Run 不无限挂起）。
+  // 超时未裁决 → 自动拒绝（fail-closed，Run 不无限挂起）。规则归 ApprovalCoordinator。
   approvalPort(): ApprovalPort {
-    return {
-      request: (req: NetworkApprovalRequest) => this.requestApproval(req),
-    };
+    return this.approvalCoordinator.approvalPort();
   }
 
-  // 加载/恢复 Run 时需要新建端口的场景：同一实例共享 pendingApprovals 状态
   resolveApproval(runId: string, requestId: string, approved: boolean): boolean {
-    const pending = this.pendingApprovals.get(requestId);
-    if (!pending) return false;
-    if (pending.runId !== runId) return false;
-    clearTimeout(pending.timer);
-    this.pendingApprovals.delete(requestId);
-    pending.resolve(approved);
-    // 广播裁决事件（审计）
-    const run = this.runs.get(runId);
-    if (run) {
-      this.record(run, {
-        type: 'approval_resolved',
-        runId,
-        requestId,
-        approved,
-        timestamp: new Date().toISOString(),
-      });
-    }
-    return true;
+    return this.approvalCoordinator.resolve(runId, requestId, approved);
   }
 
-  private requestApproval(req: NetworkApprovalRequest): Promise<boolean> {
-    const runId = req.runId;
-    const requestId = crypto.randomUUID();
-    return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        // 超时未裁决 → 自动拒绝
-        if (this.pendingApprovals.delete(requestId)) {
-          resolve(false);
-        }
-      }, APPROVAL_TIMEOUT_MS);
-      timer.unref?.();
-      this.pendingApprovals.set(requestId, { resolve, timer, runId });
-      // 推给前端（不持久化：批准请求是瞬态 UI 交互，重放无意义；拒绝后 Run 自会恢复）
-      const run = this.runs.get(runId);
-      if (run) {
-        this.record(run, {
-          type: 'approval_requested',
-          runId,
-          requestId,
-          toolName: req.toolName,
-          args: req.args,
-          timestamp: req.timestamp,
-        });
-      }
-    });
-  }
 
   // ---- macOS Toolchain Preparation：固定白名单 + 用户明确批准 ----
   toolchainPreparationPort(): ToolchainPreparationPort {
