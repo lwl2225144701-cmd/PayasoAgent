@@ -149,14 +149,30 @@ flowchart LR
 
 ## 4. 实施顺序
 
-1. **基线**：补齐关键顺序测试，运行类型检查、lint 和完整测试。
-2. **Routes**：先提公共约束，再逐个迁移资源域 handler。
-3. **RunManager 外围服务**：依次拆 Model、Session、Event、Approval、Toolchain、Prompt。
-4. **Run 生命周期**：最后从 RunManager 提取 create/resume/stop/finalize。
-5. **Agent**：先拆 Context 和 TurnPolicy，最后提取 ToolInvocationProcessManager。
-6. **收尾**：检查循环依赖、删除重复逻辑、更新架构文档。
+1. **基线**：补齐关键顺序测试，运行类型检查、lint 和完整测试。 ✅
+2. **Routes**：先提公共约束，再逐个迁移资源域 handler。 ✅
+3. **RunManager 外围服务**：依次拆 Model、Session、Event、Approval、Toolchain、Prompt。 ✅
+4. **Run 生命周期**：最后从 RunManager 提取 create/resume/stop/finalize。 ✅
+5. **Agent**：先拆 Context 和 TurnPolicy，最后提取 ToolInvocationProcessManager。 ✅
+6. **收尾**：检查循环依赖、删除重复逻辑、更新架构文档。 ✅
 
-每一步单独提交；测试失败时不进入下一步。
+每一步单独提交；测试失败时不进入下一步。实施提交记录：
+
+| 提交 | 内容 |
+| --- | --- |
+| `08e33b6` | 拆分 routes.ts 为分发骨架 + 资源域 handler |
+| `e5a8124` | 拆出 PromptCommand 纯函数模块与 ModelService 组合服务 |
+| `3ae69c6` | 拆出 EventStreamService 组合服务 |
+| `c1c7704` | 完成 run-types/run-views 抽取（视图投影纯函数化） |
+| `2bfac94` | 拆出 SessionService 组合服务 |
+| `a6c1809` | 拆出 ApprovalCoordinator 组合服务 |
+| `b784a04` | 拆出 ToolchainPreparationCoordinator 组合服务 |
+| `92b2702` | RunManager 门面化，拆出 RunLifecycleService |
+| `4f4ef73` | 拆出 AgentContext 装配模块 |
+| `b56dee0` | 拆出 TurnPolicy 纯函数模块 |
+| `0f939f2` | 拆出 ToolInvocationProcessManager |
+
+完成时的规模：`routes.ts` 1,359 → 63 行；`run-manager.ts` 1,989 → 407 行；`agent.ts` 1,022 → 452 行。三个入口只保留分发骨架、门面与主循环；每类可变状态（活跃 Run 容器、会话元数据、批准请求、工具链安装合并表）有唯一 owner；无新增循环依赖。
 
 ## 5. 不变量与验收
 

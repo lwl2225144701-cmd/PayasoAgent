@@ -49,13 +49,21 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
                 │ fetch / EventSource(SSE)
 ┌───────────────▼─────────────────────────────────────────────┐
 │ Host (src/host/, node:http, 端口 4500, 仅 127.0.0.1)         │
-│  server.ts → routes.ts → RunManager → runAgent(后台)         │
+│  server.ts → routes.ts(分发+域 handler) → RunManager(门面)     │
+│    ├─ run-lifecycle-service.ts   Run 生命周期                 │
+│    ├─ session-service.ts         Session/Workspace CRUD 等    │
+│    ├─ model-service.ts           Provider/模型配置解析          │
+│    ├─ event-stream-service.ts    事件/SSE 回放推送             │
+│    ├─ approval-coordinator.ts    JIT 网络审批                  │
+│    └─ toolchain-preparation-coordinator.ts  工具链准备          │
 │  persistence/(SQLite) · run-events.ts · workspace.ts         │
 └───────────────┬─────────────────────────────────────────────┘
                 │ runAgent(task, checkpoint?, opts)
 ┌───────────────▼─────────────────────────────────────────────┐
 │ Runtime Kernel (src/runtime/ + src/llm/ + src/tools/)        │
-│  agent.ts: Agent Loop（连续迭代/重试/恢复/防死循环）           │
+│  agent.ts: Agent Loop 主循环（迭代/收尾/停止决策）              │
+│  agent-context.ts 装配 · turn-policy.ts 回合策略 ·             │
+│  tool-invocation/process-manager.ts 工具调用管道               │
 │  state.ts · scratchpad.ts · checkpoint-port.ts · observer-port.ts │
 │  trace.ts · side-effect.ts · output-guard.ts                  │
 │  llm.ts: OpenAI 兼容 chat/completions(fetch,无 SDK)          │
@@ -84,7 +92,10 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | 文件                                                | 职责                                                                                                                                                                             |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/cli.ts`                                      | CLI 入口：`npm run cli "任务"` / `--resume <runId>` / `--run-id <id>`                                                                                                               |
-| `src/runtime/agent.ts`                            | Agent Loop 主循环：连续迭代、重试/恢复、防死循环、Side-Effect 集成、决定 Checkpoint 提交时机；不设固定迭代上限                                                                                                              |
+| `src/runtime/agent.ts`                            | Agent Loop 主循环：迭代控制、收尾/停止决策、Checkpoint 提交时机；不设固定迭代上限；装配/策略/工具管道分别委托以下三模块 |
+| `src/runtime/agent-context.ts`                    | 一次执行装配（State/Harness/Scratchpad/Trace/Checkpoint/SideEffectGuard/messages/观测闭包），唯一 owner |
+| `src/runtime/turn-policy.ts`                      | 回合收尾策略纯函数（空回合有界恢复、未完成收尾判定、停止决策） |
+| `src/runtime/tool-invocation/process-manager.ts`  | 一次工具调用的封闭管道：parse→resolve→schema 校验→JIT 审批→side-effect 判定→防死循环→execute→结果校验→output guard→有界重试→失败恢复（授权/Intent/执行/校验/Checkpoint/Abort 顺序不可重排） |                                                                                                              |
 | `src/runtime/state.ts`                            | AgentState：status / iteration / currentStep / 工具统计 / pendingAction / lastToolError                                                                                             |
 | `src/runtime/scratchpad.ts`                       | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪                                                                                                    |
 | `src/harness/context-harness.ts`                  | Harness 入口：生成当轮临时模型视图，统一指令、历史、Scratchpad 与响应清理                                                                                                                              |
@@ -125,8 +136,19 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/toolchain-preparation.ts`            | 缺失 Git/Node/npm 的固定准备计划与用户批准端口；不接受模型安装命令或路径                                                                                                                        |
 | `src/sandbox/macos-toolchain-preparer.ts`         | 用户批准后的 macOS Homebrew 固定 argv 安装器；安装过程只回传检查/安装/验证阶段，成功后刷新未来 Sandbox 快照，失败/取消均为可恢复结果                                                                                               |
 | `src/host/server.ts`                              | node:http 服务器 + 统一错误兜底                                                                                                                                                         |
-| `src/host/routes.ts`                              | 路由分发：/sessions、/runs、/workspace、静态文件 + SPA fallback                                                                                                                            |
-| `src/host/run-manager.ts`                         | Session 连续上下文 + 活跃 Run + SQLite 历史/事件 + SSE；启动时 running/stopping→interrupted；创建 Run 时快照 provider/baseUrl/model（原子元组）并绑定模型能力；终态统一走 finalizeRun 原子管线（status+event 同一事务，幂等，失败不广播）；为无界 Runtime 提供默认 15 分钟总运行时限保险丝（`AGENT_RUN_TIMEOUT_MS` 可覆盖） |
+| `src/host/routes.ts`                              | 路由分发骨架：入口、资源域分发、静态兜底；域逻辑在 `routes/` 下 handler 与 route-context |
+| `src/host/routes/route-context.ts`                | 统一鉴权、Body、响应与错误处理（HTTP Guards） |
+| `src/host/routes/*-handler.ts`                    | Runtime / Settings / Workspace / Sessions / Runs 各资源域 handler |
+| `src/host/routes/static-handler.ts`               | 静态资源与 SPA fallback |                                                                                                                            |
+| `src/host/run-manager.ts`                         | Host 产品层门面：组装组合服务并保留对外公开 API；open/closing/closed 状态机；启动时 running/stopping→interrupted |
+| `src/host/run-lifecycle-service.ts`              | 活跃 Run 容器唯一 owner：createInSession/resume/stop/startAgent/finalizeRun（status+event 同一事务，幂等，失败不广播）；15 分钟运行时限保险丝（`AGENT_RUN_TIMEOUT_MS` 可覆盖）；close 支撑 abort/await |
+| `src/host/session-service.ts`                    | Session/Workspace CRUD、归档/删除守卫、/compact、/export、goal/plan/feedback；会话元数据 KV 键唯一 owner |
+| `src/host/model-service.ts`                      | Provider 目录、默认模型、模型配置解析（原子元组、视觉推断、Run 快照 fail-closed） |
+| `src/host/event-stream-service.ts`               | 事件序号、持久化、SSE 回放与 live 推送 |
+| `src/host/approval-coordinator.ts`               | JIT 网络审批：requestId 归属校验、超时 fail-closed 拒绝、裁决审计事件 |
+| `src/host/toolchain-preparation-coordinator.ts`  | macOS 工具链准备：固定白名单、网络能力独立门控、同 package 共享安装合并、能力快照刷新 |
+| `src/host/run-types.ts`                          | Run/Session 公开类型契约（含 isCancellable 判定） |
+| `src/host/run-views.ts`                          | 持久层对象 → 对外 API 投影纯函数（唯一 owner） | |
 | `src/host/run-events.ts`                          | HostEvent 类型 + SSE 编码                                                                                                                                                          |
 | `src/host/workspace.ts`                           | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM）                                                                                                                           |
 | `src/host/persistence/store.ts`                   | 薄 RunStore 接口（Session/Run CRUD + Event append/list）                                                                                                                            |
@@ -198,6 +220,9 @@ for (i = startIter; ; i++):
               └─ throw   → non_idempotent markUncertain / 其余 recordFailure+分类决策
   └─ 工具轮结束后可由 Harness.shouldStopAfterTurn 请求优雅停止；Host 另有总运行时限保险丝
 ```
+
+> 实现归属：装配在 `agent-context.ts`，回合收尾判定（空回合/未完成收尾）在 `turn-policy.ts`，
+> 2. 的逐个 tool_call 封闭管道在 `tool-invocation/process-manager.ts`；`agent.ts` 只保留迭代编排。
 
 Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**重试上限（v1.8 起由 `tool-error-classifier.ts` 判定，确定性错误只执行一次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。Host 侧默认以 15 分钟总运行时限（可由 `AGENT_RUN_TIMEOUT_MS` 覆盖）作为最后保险丝；超时会 abort Runtime 并将 Run 原子落为 `failed`。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > 窗口 fallback 256K + 输出预留按窗口推导（v1.8：窗口 8%，夹在 4K–32K；不再固定 4K）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
 
