@@ -9,6 +9,11 @@ import type { StoredRunStatus } from './persistence/store.js';
 
 export type HostRunStatus = StoredRunStatus;
 
+// 可取消状态：running（执行中）/ stopping（已请求停止、abort 已发出、执行未退出）
+export function isCancellable(status: HostRunStatus): boolean {
+  return status === 'running' || status === 'stopping';
+}
+
 export interface HostRun {
   runId: string;
   sessionId: string;

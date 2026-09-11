@@ -9,10 +9,7 @@ import {
   createDefaultRuntimeServices,
 } from '../bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../harness/context-harness.js';
-import {
-  type ContextHarnessState,
-  normalizeContextHarnessState,
-} from '../harness/context-state.js';
+import type { ContextHarnessState } from '../harness/context-state.js';
 import type { ChatMessage, ChatStreamDelta, MessageImage, ModelConfig } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import {
@@ -23,11 +20,9 @@ import {
 import {
   checkpointPath,
   loadCheckpoint,
-  saveCheckpoint,
 } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import type { ApprovalPort, NetworkApprovalRequest } from '../runtime/approval-port.js';
-import type { Checkpoint } from '../runtime/checkpoint-port.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
 import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
@@ -43,10 +38,8 @@ import type {
   ToolchainPreparationRunner,
 } from '../sandbox/toolchain-preparation.js';
 import { getToolchainPreparationPlan } from '../sandbox/toolchain-preparation.js';
-import { getSchemas } from '../tools/tools.js';
 import { isAbortError } from '../util/abort.js';
-import { aggregateSessionStats, deriveRunStats, type SessionStats } from './run-stats.js';
-import { createZip, type ZipEntry } from './zip.js';
+import type { SessionStats } from './run-stats.js';
 import {
   readProjectInstructions,
   scanWorkspaceSkills,
@@ -54,6 +47,7 @@ import {
 import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
 import { ModelService } from './model-service.js';
 import { EventStreamService } from './event-stream-service.js';
+import { PLAN_DIRECTIVE, SessionService } from './session-service.js';
 
 import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
 export { expandPromptCommand } from './prompt-command.js';
@@ -73,18 +67,17 @@ import type {
   HostEvent,
   StreamingEvent,
 } from './run-events.js';
-import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from './workspace.js';
+import { getWorkspace } from './workspace.js';
 import type {
   CleanupError,
   CreateRunAttachmentInput,
   HostRun,
-  HostRunStatus,
   HostSession,
   SseSink,
 } from './run-types.js';
+import { isCancellable } from './run-types.js';
 import {
   publicActiveView,
-  publicSessionView,
   publicStoredView,
   sessionTitle,
 } from './run-views.js';
@@ -92,7 +85,6 @@ export type {
   CleanupError,
   CreateRunAttachmentInput,
   HostRun,
-  HostRunStatus,
   HostSession,
   SseSink,
 } from './run-types.js';
@@ -149,11 +141,6 @@ function runTimeoutMs(): number {
   return DEFAULT_RUN_TIMEOUT_MS;
 }
 
-// 可取消状态：running（执行中）/ stopping（已请求停止、abort 已发出、执行未退出）
-function isCancellable(status: HostRunStatus): boolean {
-  return status === 'running' || status === 'stopping';
-}
-
 export class RunManager {
   private runs = new Map<string, InternalRun>();
   private lifecycle: 'open' | 'closing' | 'closed' = 'open';
@@ -179,6 +166,11 @@ export class RunManager {
   ) {
     this.modelService = new ModelService({ store: this.store });
     this.eventStreamService = new EventStreamService({ store: this.store });
+    this.sessionService = new SessionService({
+      store: this.store,
+      models: this.modelService,
+      host: this,
+    });
     // A process restart cannot leave persisted rows pretending to execute.
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
     const now = new Date().toISOString();
@@ -202,6 +194,7 @@ export class RunManager {
 
   private readonly eventStreamService: EventStreamService;
   private readonly modelService: ModelService;
+  private readonly sessionService: SessionService;
 
   private isSessionDeleted(sessionId: string): boolean {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
@@ -658,15 +651,14 @@ export class RunManager {
     const { messages: conversationHistory, harnessState: previousHarnessState } =
       this.conversationHistory(previousRuns);
     // /plan 模式：会话级标记 → 本轮强制只读 + 任务注入方案指令（覆盖用户所选档）。
-    const planMode =
-      this.store.getSessionMeta(session.sessionId, RunManager.META_PLAN_MODE) === '1';
+    const planMode = this.sessionService.getSessionPlanMode(session.sessionId);
     let permissionMode: PermissionMode = opts?.permissionMode ?? DEFAULT_PERMISSION_MODE;
     if (planMode) permissionMode = 'read-only';
     // Prompt 命令展开：/cmd ... → 完整用户消息。未匹配则原样使用。
     const promptCommands = scanPromptCommands(session.workspaceRoot, permissionMode);
     const expandedTask = expandPromptCommand(task, promptCommands) ?? task;
     // Agent 实际收到的任务：plan 指令前缀 + 展开后的任务（run.task 仅作展示）。
-    const agentTask = planMode ? `${RunManager.PLAN_DIRECTIVE}\n\n${expandedTask}` : expandedTask;
+    const agentTask = planMode ? `${PLAN_DIRECTIVE}\n\n${expandedTask}` : expandedTask;
     const run: InternalRun = {
       runId,
       sessionId: session.sessionId,
@@ -784,144 +776,63 @@ export class RunManager {
     return true;
   }
 
-  renameWorkspace(fromName: string, toName: string): { updated: number } {
-    if (toName === fromName) return { updated: 0 };
-    const updated = this.store.renameSessionsWorkspace(fromName, toName);
-    if (updated === 0) throw new Error(`Workspace not found: ${fromName}`);
-    // Keep in-memory active Runs pointing at the same Workspace label.
+  // ---- Session / Workspace 委托（组合服务 SessionService；对外 API 不变）----
+
+  // SessionServiceHost：活跃 Run 容器窄访问（容器归 RunManager 所有）。
+  listActiveRuns() {
+    return [...this.runs.values()].map((run) => ({
+      runId: run.runId,
+      sessionId: run.sessionId,
+      status: run.status,
+      workspaceRoot: run.workspaceRoot,
+      workspace: run.workspace,
+    }));
+  }
+
+  removeActiveRun(runId: string): CleanupError[] {
+    this.runs.delete(runId);
+    this.eventStreamService.closeRun(runId);
+    return this.cleanupRun(runId);
+  }
+
+  renameActiveRunWorkspace(fromName: string, toName: string): void {
     for (const run of this.runs.values()) {
       if (run.workspace?.name === fromName) run.workspace = { name: toName };
     }
-    renameWorkspaceLabel(toName);
-    return { updated };
+  }
+
+  renameWorkspace(fromName: string, toName: string): { updated: number } {
+    return this.sessionService.renameWorkspace(fromName, toName);
   }
 
   deleteWorkspace(sessionId: string): { deleted: number; updatedAt: string } {
-    const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error('Workspace not found');
-    const workspaceRoot = session.workspaceRoot;
-
-    for (const run of this.runs.values()) {
-      if (isCancellable(run.status) && run.workspaceRoot === workspaceRoot) {
-        throw new Error('Workspace has a running Run');
-      }
-    }
-    const runningInStore = this.store
-      .listRuns({ includeDeleted: true })
-      .some((r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status));
-    if (runningInStore) throw new Error('Workspace has a running Run');
-
-    const now = new Date().toISOString();
-    const deleted = this.store.softDeleteWorkspace(workspaceRoot, now);
-
-    if (getWorkspace()?.rootPath === workspaceRoot) {
-      clearWorkspace();
-    }
-    return { deleted, updatedAt: now };
+    return this.sessionService.deleteWorkspace(sessionId);
   }
 
   restoreWorkspace(sessionId: string): { restored: number; updatedAt: string } {
-    const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error('Workspace not found');
-    const workspaceRoot = session.workspaceRoot;
-
-    if (!fs.existsSync(workspaceRoot)) {
-      throw new Error('Workspace path no longer exists');
-    }
-    const stat = fs.statSync(workspaceRoot);
-    if (!stat.isDirectory()) {
-      throw new Error('Workspace path is no longer a directory');
-    }
-    const real = fs.realpathSync.native(workspaceRoot);
-    if (real !== workspaceRoot) {
-      throw new Error('Workspace path has changed');
-    }
-
-    const now = new Date().toISOString();
-    const restored = this.store.restoreWorkspace(workspaceRoot, now);
-    return { restored, updatedAt: now };
+    return this.sessionService.restoreWorkspace(sessionId);
   }
 
   purgeWorkspace(sessionId: string): { purged: number; cleanupErrors: CleanupError[] } {
-    const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error('Workspace not found');
-    const workspaceRoot = session.workspaceRoot;
-
-    if (!session.deletedAt) {
-      throw new Error('Workspace has not been deleted');
-    }
-
-    const hasRunning = this.store
-      .listRuns({ includeDeleted: true })
-      .some((r) => r.workspaceRoot === workspaceRoot && isCancellable(r.status));
-    if (hasRunning) throw new Error('Workspace has a running Run');
-
-    const runs = this.store
-      .listRuns({ includeDeleted: true })
-      .filter((r) => r.workspaceRoot === workspaceRoot);
-
-    // 先清理数据库，再清理文件；数据库失败则 checkpoint 仍在，避免半完成状态
-    const purged = this.store.purgeWorkspace(workspaceRoot);
-    const cleanupErrors: CleanupError[] = [];
-    for (const run of runs) {
-      this.runs.delete(run.runId);
-      this.eventStreamService.closeRun(run.runId);
-      cleanupErrors.push(...this.cleanupRun(run.runId));
-    }
-    return { purged, cleanupErrors };
+    return this.sessionService.purgeWorkspace(sessionId);
   }
 
   renameSession(sessionId: string, title: string): { updatedAt: string; title: string } {
-    this.store.renameSession(sessionId, title);
-    const now = new Date().toISOString();
-    return { updatedAt: now, title };
+    return this.sessionService.renameSession(sessionId, title);
   }
 
   archiveSession(sessionId: string): { archived: number; updatedAt: string } {
-    const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error('Session not found');
-    if (session.deletedAt) throw new Error('Session already archived');
-
-    const hasRunning = [...this.runs.values()].some(
-      (r) => r.sessionId === sessionId && isCancellable(r.status),
-    );
-    if (hasRunning) throw new Error('Session has a running Run');
-
-    const now = new Date().toISOString();
-    const archived = this.store.archiveSession(sessionId, now);
-    return { archived, updatedAt: now };
+    return this.sessionService.archiveSession(sessionId);
   }
 
   restoreSession(sessionId: string): { restored: number; updatedAt: string } {
-    const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error('Session not found');
-    if (!session.deletedAt) throw new Error('Session is not archived');
-
-    const now = new Date().toISOString();
-    const restored = this.store.restoreSession(sessionId, now);
-    return { restored, updatedAt: now };
+    return this.sessionService.restoreSession(sessionId);
   }
 
   deleteSession(sessionId: string): { deleted: number; cleanupErrors: CleanupError[] } {
-    const session = this.store.getSession(sessionId, { includeDeleted: true });
-    if (!session) throw new Error('Session not found');
-    if (!session.deletedAt) throw new Error('Session has not been archived');
-
-    const hasRunning = this.store
-      .listRuns({ includeDeleted: true })
-      .some((r) => r.sessionId === sessionId && isCancellable(r.status));
-    if (hasRunning) throw new Error('Session has a running Run');
-
-    const runs = this.store.listRunsBySession(sessionId, { includeDeleted: true });
-    const deleted = this.store.deleteSession(sessionId);
-    const cleanupErrors: CleanupError[] = [];
-    for (const run of runs) {
-      this.runs.delete(run.runId);
-      this.eventStreamService.closeRun(run.runId);
-      cleanupErrors.push(...this.cleanupRun(run.runId));
-    }
-    return { deleted, cleanupErrors };
+    return this.sessionService.deleteSession(sessionId);
   }
+
 
   private cleanupRun(runId: string): CleanupError[] {
     const errors: CleanupError[] = [];
@@ -1064,63 +975,28 @@ export class RunManager {
   }
 
   listSessions(): HostSession[] {
-    return this.store.listSessions().map((session) => publicSessionView(session));
+    return this.sessionService.listSessions();
   }
 
   getSession(sessionId: string): HostSession | null {
-    const session = this.store.getSession(sessionId);
-    return session ? publicSessionView(session) : null;
+    return this.sessionService.getSession(sessionId);
   }
 
   findSessionByWorkspaceName(
     name: string,
     opts?: { includeDeleted?: boolean },
   ): StoredSession | null {
-    const sessions = this.store.listSessions(opts).filter((s) => s.workspaceName === name);
-    if (sessions.length === 0) return null;
-    const roots = new Set(sessions.map((s) => s.workspaceRoot));
-    if (roots.size > 1) {
-      throw new Error(`Workspace name "${name}" matches multiple roots`);
-    }
-    sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return sessions[0];
+    return this.sessionService.findSessionByWorkspaceName(name, opts);
   }
 
   listSessionRuns(sessionId: string): HostRun[] | null {
-    if (!this.store.getSession(sessionId)) return null;
-    return this.store.listRunsBySession(sessionId).map((run) => publicStoredView(run));
+    return this.sessionService.listSessionRuns(sessionId);
   }
 
-  /** 会话级统计投影：折叠每个 Run 的持久化事件并聚合（顶栏 stats strip 数据源）。 */
   sessionStats(sessionId: string): SessionStats | null {
-    if (!this.store.getSession(sessionId)) return null;
-    const runs = this.store.listRunsBySession(sessionId);
-    const stats = runs.map((run) => {
-      const events = this.store.listEvents(run.runId).map((item) => item.event);
-      return deriveRunStats(events, run.createdAt, run.updatedAt);
-    });
-    return aggregateSessionStats(stats, runs.length);
+    return this.sessionService.sessionStats(sessionId);
   }
 
-  // ---- 内置会话命令（/compact /export /feedback /goal /plan）----
-  // 全部落在 session_meta KV 上：一次建表支撑多个命令，键由本类统一管理。
-
-  private static readonly META_PLAN_MODE = 'plan_mode';
-  private static readonly META_GOAL = 'goal';
-  private static readonly META_FEEDBACK_PREFIX = 'feedback:';
-
-  /** /plan 模式注入的任务前缀：只读权限 + 仅产出方案，等用户确认后再实施。 */
-  private static readonly PLAN_DIRECTIVE =
-    '[Plan 模式] 当前会话处于计划模式：只做调研、分析与方案设计，不要执行任何写入或修改类操作。' +
-    '最终输出一份可执行计划（步骤、涉及文件、风险与验证方式），等待用户确认后再实施。';
-
-  /**
-   * /compact：立即对会话执行一次轮边界压缩（不走「下一轮生效」的延迟路径）。
-   * 从最新 Run 往前找第一个带 checkpoint 的（与 conversationHistory 的回退一致），
-   * 以 target=0 压缩**全部**可压缩历史（不按预算只裁一部分）——摘要后把新
-   * Harness 状态写回同一 checkpoint，下一个 Run 即以压缩后视图启动。
-   * 有运行中 Run 时拒绝（避免 checkpoint 写入竞争）。
-   */
   async compactSession(sessionId: string): Promise<{
     summarizedMessages: number;
     totalSummarizedMessages: number;
@@ -1136,141 +1012,33 @@ export class RunManager {
       usageRatio: number;
     };
   } | null> {
-    if (!this.store.getSession(sessionId)) return null;
-    if (this.store.listRunsBySession(sessionId).some((run) => isCancellable(run.status))) {
-      throw new Error('会话有正在执行的 Run，请先停止再压缩');
-    }
-    const runs = this.store.listRunsBySession(sessionId);
-    let checkpointSource: StoredRun | undefined;
-    let checkpoint: Checkpoint | null = null;
-    for (const run of [...runs].reverse()) {
-      const candidate = loadCheckpoint(run.runId);
-      if (candidate && candidate.messages.length > 0) {
-        checkpointSource = run;
-        checkpoint = candidate;
-        break;
-      }
-    }
-    if (!checkpointSource || !checkpoint) {
-      return {
-        summarizedMessages: 0,
-        totalSummarizedMessages: 0,
-        compactedTokens: 0,
-        reason: 'no_checkpoint' as const,
-      };
-    }
-    const harness = new DefaultContextHarness({
-      permissionMode: storedPermissionMode(checkpointSource.permissionMode),
-      modelConfig: this.modelService.resolveModelConfig(checkpointSource.providerId, checkpointSource.model),
-    });
-    harness.restoreState(normalizeContextHarnessState(checkpoint.harnessState));
-    // target=0：立即压缩不按预算裁一部分，而是压缩全部可压缩历史轮
-    const compacted = await harness.compactConversation(checkpoint.messages, getSchemas(), 0);
-    if (!compacted) {
-      return {
-        summarizedMessages: 0,
-        totalSummarizedMessages: 0,
-        compactedTokens: 0,
-        reason: 'nothing_compactable' as const,
-      };
-    }
-    saveCheckpoint({ ...checkpoint, harnessState: harness.snapshotState() });
-    return {
-      summarizedMessages: compacted.summarizedMessages,
-      totalSummarizedMessages: compacted.totalSummarizedMessages,
-      compactedTokens: compacted.compactedTokens,
-      usage: harness.estimateViewUsage(checkpoint.messages, getSchemas()),
-    };
+    return this.sessionService.compactSession(sessionId);
   }
 
   getSessionGoal(sessionId: string): string | null {
-    return this.store.getSessionMeta(sessionId, RunManager.META_GOAL);
+    return this.sessionService.getSessionGoal(sessionId);
   }
 
   setSessionGoal(sessionId: string, goal: string): boolean {
-    if (!this.store.getSession(sessionId)) return false;
-    const trimmed = goal.trim();
-    if (!trimmed) this.store.deleteSessionMeta(sessionId, RunManager.META_GOAL);
-    else this.store.setSessionMeta(sessionId, RunManager.META_GOAL, trimmed);
-    return true;
+    return this.sessionService.setSessionGoal(sessionId, goal);
   }
 
   getSessionPlanMode(sessionId: string): boolean {
-    return this.store.getSessionMeta(sessionId, RunManager.META_PLAN_MODE) === '1';
+    return this.sessionService.getSessionPlanMode(sessionId);
   }
 
   setSessionPlanMode(sessionId: string, enabled: boolean): boolean {
-    if (!this.store.getSession(sessionId)) return false;
-    this.store.setSessionMeta(sessionId, RunManager.META_PLAN_MODE, enabled ? '1' : '0');
-    return true;
+    return this.sessionService.setSessionPlanMode(sessionId, enabled);
   }
 
   addSessionFeedback(sessionId: string, comment: string): boolean {
-    if (!this.store.getSession(sessionId)) return false;
-    const key = `${RunManager.META_FEEDBACK_PREFIX}${Date.now()}`;
-    this.store.setSessionMeta(sessionId, key, comment.trim());
-    return true;
+    return this.sessionService.addSessionFeedback(sessionId, comment);
   }
 
-  /** /export：把会话（元数据 + Runs + 每轮事件 + 命令元数据）打成 ZIP 字节。 */
   buildSessionExport(sessionId: string): { fileName: string; bytes: Uint8Array } | null {
-    const session = this.store.getSession(sessionId);
-    if (!session) return null;
-    const runs = this.store.listRunsBySession(sessionId);
-
-    const entries: ZipEntry[] = [
-      {
-        name: 'session.json',
-        data: JSON.stringify(
-          {
-            sessionId: session.sessionId,
-            title: session.title,
-            workspaceName: session.workspaceName,
-            createdAt: session.createdAt,
-            updatedAt: session.updatedAt,
-            exportedAt: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      },
-      {
-        name: 'runs.jsonl',
-        data: runs.map((run) => JSON.stringify(publicStoredView(run))).join('\n'),
-      },
-      {
-        name: 'meta.json',
-        data: JSON.stringify(
-          {
-            goal: this.store.getSessionMeta(sessionId, RunManager.META_GOAL),
-            planMode: this.getSessionPlanMode(sessionId),
-            feedback: this.store
-              .listSessionMeta(sessionId, RunManager.META_FEEDBACK_PREFIX)
-              .map((item) => ({
-                at: item.key.slice(RunManager.META_FEEDBACK_PREFIX.length),
-                comment: item.value,
-              })),
-          },
-          null,
-          2,
-        ),
-      },
-    ];
-    for (const run of runs) {
-      const lines = this.store
-        .listEvents(run.runId)
-        .map((item) => JSON.stringify(item.event))
-        .join('\n');
-      entries.push({
-        name: `events/${String(run.turnIndex).padStart(3, '0')}-${run.runId}.jsonl`,
-        data: lines,
-      });
-    }
-    return {
-      fileName: `payaso-session-${sessionId.slice(0, 8)}.zip`,
-      bytes: createZip(entries),
-    };
+    return this.sessionService.buildSessionExport(sessionId);
   }
+
 
   get(runId: string): HostRun | null {
     const active = this.runs.get(runId);
