@@ -119,7 +119,7 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { tex
           <MarkdownBlock text={tail} />
         )
       ) : null}
-      {openFence ? (
+      {openFence !== null ? (
         <pre>
           <code>{openFence}</code>
         </pre>

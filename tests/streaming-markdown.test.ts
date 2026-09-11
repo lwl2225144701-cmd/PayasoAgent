@@ -15,7 +15,7 @@ const cases: Case[] = [
     name: '空文本 → 无块、无尾部、无未闭合 fence',
     run: () => {
       const split = splitStreamingMarkdown('');
-      assert.deepEqual(split, { blocks: [], tail: '', openFence: '' });
+      assert.deepEqual(split, { blocks: [], tail: '', openFence: null });
     },
   },
   {
@@ -56,7 +56,8 @@ const cases: Case[] = [
       const split = splitStreamingMarkdown('前言\n\n```mermaid\ngraph TD\nA-->B');
       assert.deepEqual(split.blocks, ['前言']);
       assert.equal(split.tail, '');
-      assert.equal(split.openFence, '```mermaid\ngraph TD\nA-->B');
+      // 关键：必须是正文，不含 ``` 开始行（否则用户会在代码块里看到字面的 ```mermaid）
+      assert.equal(split.openFence, 'graph TD\nA-->B');
     },
   },
   {
@@ -64,14 +65,31 @@ const cases: Case[] = [
     run: () => {
       const split = splitStreamingMarkdown('```js\nconst a');
       assert.deepEqual(split.blocks, []);
-      assert.equal(split.openFence, '```js\nconst a');
+      assert.equal(split.openFence, 'const a');
+    },
+  },
+  {
+    name: '未闭合 fence 的正文不含 ``` 开始行（否则代码块里会出现字面量）',
+    run: () => {
+      const split = splitStreamingMarkdown('```ts\nconst a = 1;');
+      assert.equal(split.openFence, 'const a = 1;');
+      assert.equal(split.openFence?.includes('```'), false, '开始行泄漏进了正文');
+    },
+  },
+  {
+    name: 'fence 刚开启、正文为空 → openFence 是空串而非 null（区分「无 fence」）',
+    run: () => {
+      const split = splitStreamingMarkdown('甲\n\n```ts');
+      assert.deepEqual(split.blocks, ['甲']);
+      assert.equal(split.openFence, '');
+      assert.notEqual(split.openFence, null);
     },
   },
   {
     name: 'fence 闭合后不再是 openFence',
     run: () => {
       const split = splitStreamingMarkdown('```js\ncode\n```\ntail');
-      assert.equal(split.openFence, '');
+      assert.equal(split.openFence, null);
       assert.deepEqual(split.blocks, []);
       assert.equal(split.tail, '```js\ncode\n```\ntail');
     },
@@ -82,7 +100,7 @@ const cases: Case[] = [
       const split = splitStreamingMarkdown('~~~\ncode\n\nmore\n~~~\n\n尾声');
       assert.deepEqual(split.blocks, ['~~~\ncode\n\nmore\n~~~']);
       assert.equal(split.tail, '尾声');
-      assert.equal(split.openFence, '');
+      assert.equal(split.openFence, null);
     },
   },
   {
@@ -91,7 +109,7 @@ const cases: Case[] = [
       const split = splitStreamingMarkdown('````\ncode\n```\n还有内容\n\n后续');
       // 3 个反引号闭合不了 4 个反引号的 fence → 仍在 fence 内，空行不切块
       assert.deepEqual(split.blocks, []);
-      assert.equal(split.openFence, '````\ncode\n```\n还有内容\n\n后续');
+      assert.equal(split.openFence, 'code\n```\n还有内容\n\n后续');
     },
   },
   {
@@ -109,7 +127,7 @@ const cases: Case[] = [
       // 不被当作 fence → 空行正常切块
       assert.deepEqual(split.blocks, ['    ```js']);
       assert.equal(split.tail, '甲');
-      assert.equal(split.openFence, '');
+      assert.equal(split.openFence, null);
     },
   },
   {
@@ -181,7 +199,7 @@ cases.push({
   run: () => {
     const partial = document.slice(0, document.indexOf('A-->B') + 3);
     const split = splitStreamingMarkdown(partial);
-    assert.equal(split.openFence.startsWith('```mermaid'), true);
+    assert.equal(split.openFence?.startsWith('graph TD'), true);
     // mermaid 源码绝不能出现在已定型块里
     for (const block of split.blocks) {
       assert.equal(block.includes('A-->'), false, `块里混入了未完成的 mermaid：${block}`);

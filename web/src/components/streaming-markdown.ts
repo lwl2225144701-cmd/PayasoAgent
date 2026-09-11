@@ -38,13 +38,18 @@ export interface StreamingMarkdownSplit {
   /** 仍在写入的普通 Markdown 尾部；尾部停在未闭合 fence 内时为空串 */
   tail: string;
   /**
-   * 未闭合的 fenced code 源码（含开始行）；空串表示尾部不在 fence 内。
+   * 未闭合 fenced code 的**代码正文**（不含 ``` 开始行）；`null` 表示尾部不在 fence 内。
    *
-   * 必须与 tail 分开：这段内容不能交给 Markdown 解析器。否则 normalizeFences 会补上
-   * 闭合 fence，把一个「流到一半的 mermaid」当成完整图表交给 MermaidBlock 渲染 ——
-   * 必然语法报错，用户会看到错误提示闪烁。按纯源码渲染成代码块既正确又便宜。
+   * 必须是正文而非整段源码：开始行渲染出来就是字面的 ` ```ts `，用户会在代码块里看到它。
+   *
+   * 也不能与 tail 合并后交给 Markdown 解析器：normalizeFences 会给奇数个 fence 补上闭合
+   * 标记，把一个「流到一半的 mermaid」当成完整图表交给 MermaidBlock —— 必然语法报错，
+   * 用户会看到错误提示闪烁。按纯源码渲染成代码块既正确又便宜。
+   *
+   * 用 `null` 而非空串表示「没有未闭合 fence」：fence 刚开启、正文还没到字符时正文也是空串，
+   * 两者必须区分。
    */
-  openFence: string;
+  openFence: string | null;
 }
 
 function isBlank(line: string): boolean {
@@ -102,6 +107,8 @@ export function splitStreamingMarkdown(text: string): StreamingMarkdownSplit {
   let fenceChar = '';
   let fenceLength = 0;
   let fenceStart = -1;
+  // 未闭合 fence 的正文起点（开始行之后），与 fenceStart 同生共死
+  let fenceBodyStart = -1;
   let pos = 0;
 
   while (pos < text.length) {
@@ -114,6 +121,7 @@ export function splitStreamingMarkdown(text: string): StreamingMarkdownSplit {
         fenceChar = '';
         fenceLength = 0;
         fenceStart = -1;
+        fenceBodyStart = -1;
       }
     } else if (isBlank(line)) {
       // 空行且不在 fence 内 → 当前块定型（块本身不含作为分隔符的空行）
@@ -126,6 +134,7 @@ export function splitStreamingMarkdown(text: string): StreamingMarkdownSplit {
         fenceChar = opened[0];
         fenceLength = opened[1];
         fenceStart = pos;
+        fenceBodyStart = lineEnd + 1;
       }
     }
     pos = lineEnd + 1;
@@ -133,13 +142,13 @@ export function splitStreamingMarkdown(text: string): StreamingMarkdownSplit {
 
   if (fenceStart >= 0) {
     // 文本停在未闭合 fence 内：fence 之前的内容已经冻结（不可能再被插入内容），
-    // 直接当作已定型块；fence 本身走源码渲染。
+    // 直接当作已定型块；fence 正文走源码渲染（不含 ``` 开始行）。
     // 注：fence 闭合后这段冻结前缀会和代码块并入同一个块，导致该块重解析一次——
     // 一次性成本，渲染结果相同。
     const frozen = text.slice(blockStart, fenceStart).trimEnd();
     if (frozen) blocks.push(frozen);
-    return { blocks, tail: '', openFence: text.slice(fenceStart) };
+    return { blocks, tail: '', openFence: text.slice(fenceBodyStart) };
   }
 
-  return { blocks, tail: text.slice(blockStart), openFence: '' };
+  return { blocks, tail: text.slice(blockStart), openFence: null };
 }

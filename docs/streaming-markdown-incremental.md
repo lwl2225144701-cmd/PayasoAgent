@@ -42,7 +42,14 @@
 |---|---|---|
 | `blocks` | 已定型块（空行终止、且不在 fence 内） | **0** —— 文本不变则 memo 跳过整个解析 |
 | `tail` | 仍在写入的当前块 | O(尾部)，与累计长度无关 |
-| `openFence` | 尾部停在未闭合 fenced code 内时的源码 | 0 —— 按纯代码渲染，不做 Markdown 解析 |
+| `openFence` | 未闭合 fenced code 的**代码正文**（不含 ` ``` ` 开始行）；`null` = 不在 fence 内 | 0 —— 按纯代码渲染，不做 Markdown 解析 |
+
+`openFence` 的两个语义细节（都有测试锁定）：
+
+- **必须是正文，不含开始行**。最初实现返回的是从开始行起的整段源码，渲染出来就是字面的
+  ` ```ts ` —— 用户会在代码块里看到它。已修正。
+- **用 `null` 而非空串表示「没有未闭合 fence」**：fence 刚开启、正文还没到字符时正文也是
+  空串，两者必须区分。
 
 总成本从 O(文本 × 帧数) 变为 **O(文本) + 每帧 O(尾部)**。
 
@@ -133,7 +140,7 @@ const TAIL_PARSE_LIMIT = 6000;
 
 ## 7. 测试契约
 
-`tests/streaming-markdown.test.ts`（15 项，已注册进 `run-all.ts`）：
+`tests/streaming-markdown.test.ts`（17 项，已注册进 `run-all.ts`）：
 
 - fence 内部空行**不**切块（核心）；
 - 未闭合 fence → 前缀冻结成块、fence 源码单独返回、**不泄漏进 Markdown**；
