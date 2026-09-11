@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
@@ -10,6 +10,7 @@ import { ChevronDownIcon, FolderIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon 
 import { Modal } from '../Modal';
 import { SessionItem } from '../SessionItem';
 import styles from './WorkspaceSection.module.css';
+import { isWorkspaceGroupExpanded, type WorkspaceGroup } from './workspace-expansion';
 
 interface WorkspaceSectionProps {
   sessions: HostSession[];
@@ -23,11 +24,6 @@ interface WorkspaceSectionProps {
   onDeleteWorkspace: (name: string) => Promise<void>;
   onRenameSession: (sessionId: string, title: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
-}
-
-interface WorkspaceGroup {
-  name: string;
-  sessions: HostSession[];
 }
 
 interface MenuState {
@@ -188,6 +184,25 @@ export function WorkspaceSection({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // ---- 分组展开：派生自动判定 + 用户显式覆盖（判定规则见 workspace-expansion.ts）----
+  //
+  // 不用 Collapse 的 defaultExpanded：它只在**挂载那一刻**生效，而「当前会话属于哪个
+  // 工作区」在刷新场景是等会话清单回来才知道的 —— 结果是当前会话所在分组一直收着，
+  // 用户看不到自己在哪。改成受控后，判定随数据变化自动重算。
+  const [groupOverrides, setGroupOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const currentWorkspaceName = workspace?.name ?? NO_WORKSPACE_GROUP;
+
+  const isGroupExpanded = (group: WorkspaceGroup): boolean =>
+    isWorkspaceGroupExpanded(group, {
+      currentSessionId,
+      currentWorkspaceName,
+      overrides: groupOverrides,
+    });
+
+  const handleToggleGroup = useCallback((name: string, next: boolean) => {
+    setGroupOverrides((prev) => new Map(prev).set(name, next));
+  }, []);
+
   const isFallbackWorkspace = (name: string) => name === NO_WORKSPACE_GROUP;
   // 分组名可能是内部哨兵，展示前统一翻成当前语言
   const groupLabel = (name: string) =>
@@ -254,7 +269,6 @@ export function WorkspaceSection({
       ) : (
         <nav className={styles.tree} aria-label={t('shell.workspace.tree')}>
           {groups.map((group) => {
-            const isCurrentWorkspace = group.name === (workspace?.name ?? NO_WORKSPACE_GROUP);
             const fallback = isFallbackWorkspace(group.name);
             return (
               <Collapse
@@ -266,7 +280,8 @@ export function WorkspaceSection({
                     onNewTask={fallback ? () => {} : () => onNewTaskInWorkspace(group.name)}
                   />
                 }
-                defaultExpanded={isCurrentWorkspace}
+                expanded={isGroupExpanded(group)}
+                onToggle={(next) => handleToggleGroup(group.name, next)}
                 headerClassName={styles.headerButton}
                 arrow={false}
                 contentClassName={styles.folderContent}
