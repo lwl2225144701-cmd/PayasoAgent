@@ -52,105 +52,10 @@ import {
   scanWorkspaceSkills,
 } from './workspace-instructions.js';
 import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
+import { ModelService } from './model-service.js';
 
-// ---- Prompt 命令注册表 ----
-interface PromptCommand {
-  name: string;
-  description: string;
-  template: string;
-}
-
-function scanPromptCommands(workspaceRoot: string, permissionMode: string): PromptCommand[] {
-  if (permissionMode === 'read-only') return [];
-  const promptsDir = path.join(workspaceRoot, '.payaso', 'prompts');
-  let files: string[];
-  try {
-    files = fs
-      .readdirSync(promptsDir)
-      .filter((f) => f.endsWith('.md'))
-      .map((f) => f.slice(0, -3));
-  } catch {
-    return [];
-  }
-  const commands: PromptCommand[] = [];
-  for (const name of files) {
-    if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) continue;
-    try {
-      const filePath = path.join(promptsDir, `${name}.md`);
-      const stat = fs.statSync(filePath);
-      if (!stat.isFile()) continue;
-      if (stat.size > 64 * 1024) continue;
-      const content = fs.readFileSync(filePath, 'utf8');
-      const fm = parsePromptFrontmatter(content);
-      const body = stripFrontmatter(content);
-      commands.push({
-        name: fm.name || name,
-        description: fm.description || '',
-        template: body.trim(),
-      });
-    } catch {
-      /* 单个命令损坏不影响整体 */
-    }
-  }
-  return commands.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function parsePromptFrontmatter(content: string): { name?: string; description?: string } {
-  if (!content.startsWith('---\n')) return {};
-  const end = content.indexOf('\n---', 4);
-  if (end < 0) return {};
-  const block = content.slice(4, end);
-  const result: Record<string, string> = {};
-  for (const line of block.split('\n')) {
-    const match = line.match(/^([a-z][a-z0-9-]*):\s*(.*)$/);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
-    result[match[1]] = value;
-  }
-  return { name: result.name, description: result.description };
-}
-
-function stripFrontmatter(content: string): string {
-  if (!content.startsWith('---\n')) return content;
-  const end = content.indexOf('\n---', 4);
-  if (end < 0) return content;
-  const markerEnd = content.indexOf('\n', end + 4);
-  return markerEnd < 0 ? '' : content.slice(markerEnd + 1);
-}
-
-// 参数插值：支持 $1 $2 ... / $@ / ${1:-default}
-function interpolatePrompt(template: string, args: string[]): string {
-  let result = template;
-  // 先处理 ${N:-default} 形式
-  result = result.replace(/\$\{(\d+):-([^}]*)\}/g, (_, n, def) => {
-    const idx = Number(n) - 1;
-    return idx >= 0 && idx < args.length ? args[idx] : def;
-  });
-  // 再处理 $N 形式（避免和 ${N:-} 冲突，先长后短）
-  result = result.replace(/\$(\d+)/g, (_, n) => {
-    const idx = Number(n) - 1;
-    return idx >= 0 && idx < args.length ? args[idx] : '';
-  });
-  // 最后处理 $@
-  result = result.replace(/\$@/g, args.join(' '));
-  return result;
-}
-
-// 展开 /cmd 命令：匹配成功返回展开后的 user message，失败返回 null。
-export function expandPromptCommand(task: string, commands: PromptCommand[]): string | null {
-  if (!task.startsWith('/')) return null;
-  const firstLine = task.split('\n')[0];
-  const parts = firstLine.trim().split(/\s+/);
-  const cmdName = parts[0].slice(1);
-  const args = parts.slice(1);
-  const cmd = commands.find((c) => c.name === cmdName);
-  if (!cmd) return null;
-  const body = task.slice(firstLine.length + 1); // 去掉第一行后的内容（追加到 $@ 尾部更灵活——这里直接追加到模板末尾）
-  const expanded = interpolatePrompt(cmd.template, args) + (body ? `\n${body}` : '');
-  return expanded.trim();
-}
+import { expandPromptCommand, scanPromptCommands, type PromptCommand } from './prompt-command.js';
+export { expandPromptCommand } from './prompt-command.js';
 
 import { createDefaultRunStore } from './persistence/sqlite-store.js';
 import {
@@ -302,6 +207,7 @@ export class RunManager {
     // v1.6 闭环④a：能力快照提供方可注入（测试确定性；生产用真实启动发现）
     private readonly toolchainCapabilitiesProvider: () => RuntimeToolchainCapabilities = getRuntimeToolchainCapabilities,
   ) {
+    this.modelService = new ModelService({ store: this.store });
     // A process restart cannot leave persisted rows pretending to execute.
     // Do not auto-resume: checkpoint recovery remains an explicit user action.
     const now = new Date().toISOString();
@@ -322,6 +228,8 @@ export class RunManager {
       });
     }
   }
+
+  private readonly modelService: ModelService;
 
   private isSessionDeleted(sessionId: string): boolean {
     const session = this.store.getSession(sessionId, { includeDeleted: true });
@@ -749,7 +657,7 @@ export class RunManager {
     // creating a session/run. This prevents a fast send immediately after a
     // dropdown change from racing the asynchronous default-model save, and it
     // avoids leaving an orphan session when the selection is invalid.
-    const resolved = this.resolveModelConfig(opts?.providerId, opts?.model);
+    const resolved = this.modelService.resolveModelConfig(opts?.providerId, opts?.model);
     // 视觉强校验（在 session 落库之前拒绝，不产生孤儿会话）：模型配置已显式
     // 解析且视觉未开启 → 拒绝带图请求（400）。前端发前已警告；env 兜底模型
     // 能力未知，保持宽容不拒（物化阶段仍会剥图并注明）。
@@ -1320,7 +1228,7 @@ export class RunManager {
     }
     const harness = new DefaultContextHarness({
       permissionMode: storedPermissionMode(checkpointSource.permissionMode),
-      modelConfig: this.resolveModelConfig(checkpointSource.providerId, checkpointSource.model),
+      modelConfig: this.modelService.resolveModelConfig(checkpointSource.providerId, checkpointSource.model),
     });
     harness.restoreState(normalizeContextHarnessState(checkpoint.harnessState));
     // target=0：立即压缩不按预算裁一部分，而是压缩全部可压缩历史轮
@@ -1589,7 +1497,7 @@ export class RunManager {
     run.agentPromise = (async () => {
       let modelConfig: ModelConfig | undefined;
       try {
-        modelConfig = this.modelConfigForRun(run);
+        modelConfig = this.modelService.modelConfigForRun(run);
       } catch (err) {
         this.failRun(run, (err as Error).message);
         return;
@@ -1816,45 +1724,46 @@ export class RunManager {
     return { messages, harnessState };
   }
 
+  // ---- Model / Provider 委托（组合服务 ModelService；对外 API 不变）----
   listModelProviders() {
-    return this.store.listModelProviders();
+    return this.modelService.listModelProviders();
   }
 
   getModelProvider(id: string) {
-    return this.store.getModelProvider(id);
+    return this.modelService.getModelProvider(id);
   }
 
   // 密钥只在服务端使用（如代拉 /models 目录），绝不进入 API 响应
   getModelProviderSecret(id: string, model?: string) {
-    return this.store.getModelProviderSecret(id, model);
+    return this.modelService.getModelProviderSecret(id, model);
   }
 
   addModelProvider(input: CreateModelProviderInput) {
-    return this.store.addModelProvider(input);
+    return this.modelService.addModelProvider(input);
   }
 
   updateModelProvider(id: string, input: UpdateModelProviderInput) {
-    return this.store.updateModelProvider(id, input);
+    return this.modelService.updateModelProvider(id, input);
   }
 
   deleteModelProvider(id: string) {
-    return this.store.deleteModelProvider(id);
+    return this.modelService.deleteModelProvider(id);
   }
 
   getDefaultProviderId(): string {
-    return this.store.getDefaultProviderId();
+    return this.modelService.getDefaultProviderId();
   }
 
   getDefaultModelId(): string {
-    return this.store.getDefaultModelId();
+    return this.modelService.getDefaultModelId();
   }
 
   setDefaultModel(providerId: string, modelId?: string): { providerId: string; modelId: string } {
-    return this.store.setDefaultModel(providerId, modelId);
+    return this.modelService.setDefaultModel(providerId, modelId);
   }
 
   recordModelProbe(id: string, result: { status: 'available' | 'error'; error?: string }) {
-    return this.store.recordModelProbe(id, result);
+    return this.modelService.recordModelProbe(id, result);
   }
 
   // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）
@@ -1863,127 +1772,6 @@ export class RunManager {
     apiKey: string;
     model: string;
   }): { providerId: string; modelId: string } | null {
-    return this.store.importEnvFallback(input);
-  }
-
-  // 视觉能力解析：设置页显式勾选优先；pi-ai 内置 Provider 再兜底查注册表
-  // （注册表的 model.input 是权威能力声明）；自定义 OpenAI 兼容端点无法从
-  // 协议探测，缺省 false —— 由用户按供应商文档在设置页勾选。
-  private resolveVision(
-    piProviderId: string | undefined,
-    model: string,
-    explicit?: boolean,
-  ): boolean {
-    // 三态：显式 true/false 均优先（false 可关掉注册表声明的视觉），
-    // 缺省才走 pi-ai 注册表推断（非 pi-ai 路径无注册表 → false）。
-    if (explicit === true) return true;
-    if (explicit === false) return false;
-    if (piProviderId) {
-      return getPiAiProviderModel(piProviderId, model)?.model.input.includes('image') ?? false;
-    }
-    return false;
-  }
-
-  // 原子解析模型配置：要么返回完整可用的 {providerId, baseUrl, apiKey, model}，
-  // 要么返回 undefined（调用方整组回退环境配置）。绝不返回残缺元组：
-  // 默认 Provider 只有配置了密钥且有模型时才参与选中，否则跳过（而不是拿着空密钥命中）。
-  private resolveModelConfig(
-    requestedProviderId?: string,
-    requestedModelId?: string,
-  ): ModelConfig | undefined {
-    if (requestedProviderId !== undefined || requestedModelId !== undefined) {
-      if (!requestedProviderId || !requestedModelId) {
-        throw new Error('providerId and model must be provided together');
-      }
-      const provider = this.store.getModelProvider(requestedProviderId);
-      if (!provider?.hasApiKey) {
-        throw new Error(`Provider ${requestedProviderId} is not configured`);
-      }
-      if (!provider.models.includes(requestedModelId)) {
-        throw new Error(`Model ${requestedModelId} is not in provider catalog`);
-      }
-      const selected = this.store.getModelProviderSecret(requestedProviderId, requestedModelId);
-      if (!selected?.apiKey || !selected.baseUrl) {
-        throw new Error(`Provider ${requestedProviderId} is not available`);
-      }
-      return {
-        providerId: requestedProviderId,
-        ...(selected.piProviderId ? { piProviderId: selected.piProviderId } : {}),
-        ...(this.resolveVision(selected.piProviderId, requestedModelId, selected.vision)
-          ? { vision: true }
-          : {}),
-        baseUrl: selected.baseUrl,
-        apiKey: selected.apiKey,
-        model: requestedModelId,
-        ...(selected.contextWindow !== undefined ? { contextWindow: selected.contextWindow } : {}),
-        ...(selected.maxOutputTokens !== undefined
-          ? { maxOutputTokens: selected.maxOutputTokens }
-          : {}),
-        ...(selected.thinkingLevel !== undefined
-          ? { thinkingLevel: selected.thinkingLevel }
-          : {}),
-      };
-    }
-
-    const providers = this.store.listModelProviders();
-    const usable = (p: ModelProviderView): boolean => p.hasApiKey && p.models.length > 0;
-    const defaultId = this.store.getDefaultProviderId();
-    const byDefault = providers.find((p) => p.id === defaultId && usable(p));
-    const configured = byDefault ?? providers.find(usable);
-    if (!configured) return undefined;
-    const defaultModelId = this.store.getDefaultModelId();
-    const model =
-      defaultId === configured.id && defaultModelId && configured.models.includes(defaultModelId)
-        ? defaultModelId
-        : configured.models[0];
-    if (!model) return undefined;
-    // 凭证按最终选定的模型读取（附带设置页按模型配置的能力覆盖）
-    const full = this.store.getModelProviderSecret(configured.id, model);
-    if (!full?.apiKey || !full.baseUrl) return undefined;
-    return {
-      providerId: configured.id,
-      ...(full.piProviderId ? { piProviderId: full.piProviderId } : {}),
-      baseUrl: full.baseUrl,
-      apiKey: full.apiKey,
-      model,
-      ...(full.contextWindow !== undefined ? { contextWindow: full.contextWindow } : {}),
-      ...(full.maxOutputTokens !== undefined ? { maxOutputTokens: full.maxOutputTokens } : {}),
-      ...(full.thinkingLevel !== undefined ? { thinkingLevel: full.thinkingLevel } : {}),
-    };
-  }
-
-  // Run 快照绑定了 provider/model 时，必须仍能组成完整元组（密钥可能事后被清除）；
-  // 组不出来就 fail-closed 抛错，由 startAgent 落为 failed Run。
-  // 安全语义：Resume 必须使用当前完整配置（当前 baseUrl + 当前 Secret），
-  // 禁止历史 baseUrl 与当前 Secret 混用；模型也必须在当前 provider 目录中。
-  private modelConfigForRun(run: InternalRun): ModelConfig | undefined {
-    if (run.providerId && run.model) {
-      const secret = this.store.getModelProviderSecret(run.providerId, run.model);
-      const provider = this.store.getModelProvider(run.providerId);
-      if (!secret?.apiKey || !provider) {
-        throw new Error(`Provider ${run.providerId} is not available for run ${run.runId}`);
-      }
-      if (!provider.models.includes(run.model)) {
-        throw new Error(`Model ${run.model} is no longer in provider ${run.providerId} catalog`);
-      }
-      return {
-        providerId: run.providerId,
-        ...(secret.piProviderId ? { piProviderId: secret.piProviderId } : {}),
-        sessionId: run.sessionId,
-        ...(this.resolveVision(secret.piProviderId, run.model, secret.vision)
-          ? { vision: true }
-          : {}),
-        baseUrl: secret.baseUrl,
-        apiKey: secret.apiKey,
-        model: run.model,
-        // 设置页按模型配置的能力覆盖（缺省走注册表/fallback）
-        ...(secret.contextWindow !== undefined ? { contextWindow: secret.contextWindow } : {}),
-        ...(secret.maxOutputTokens !== undefined
-          ? { maxOutputTokens: secret.maxOutputTokens }
-          : {}),
-        ...(secret.thinkingLevel !== undefined ? { thinkingLevel: secret.thinkingLevel } : {}),
-      };
-    }
-    return this.resolveModelConfig();
+    return this.modelService.importEnvModelProvider(input);
   }
 }
