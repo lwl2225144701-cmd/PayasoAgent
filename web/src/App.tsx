@@ -56,7 +56,6 @@ import { reconcileRuns } from './run-reconcile';
 import type {
   ContextUsageEvent,
   DefaultModelView,
-  DirectoryListing,
   DirectoryPickerCapability,
   FileEntry,
   HostRun,
@@ -120,10 +119,8 @@ export default function App() {
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerCapability, setPickerCapability] = useState<DirectoryPickerCapability | null>(null);
-  const [pickerError, setPickerError] = useState<string | null>(null);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerCreating, setPickerCreating] = useState(false);
-  const [pickerListing, setPickerListing] = useState<DirectoryListing | null>(null);
+  // 目录选择器的 error/loading/creating/listing 状态由 WorkspacePickerModal 自己持有，
+  // 这里不再放同名 state（曾用 `_` 前缀压 biome 告警，实为死代码，直接删）。
   const [resumingRun, setResumingRun] = useState(false);
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -928,7 +925,6 @@ export default function App() {
   const handleOpenWorkspace = useCallback(async () => {
     if (openingWorkspace) return;
     setOpeningWorkspace(true);
-    setPickerError(null);
     try {
       if (pickerCapability?.kind === 'browse') {
         setPickerOpen(true);
@@ -938,11 +934,12 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to open workspace:', err);
-      setPickerError(err instanceof Error ? err.message : t('app.openWorkspaceFailed'));
+      // 与网页选择器失败同一条路径：报错走 toast（此前的 pickerError state 只写不读）
+      showToast(err instanceof Error ? err.message : t('app.openWorkspaceFailed'));
     } finally {
       setOpeningWorkspace(false);
     }
-  }, [openingWorkspace, pickerCapability, t]);
+  }, [openingWorkspace, pickerCapability, showToast, t]);
 
   // 网页内目录选择器确认后采纳：与 native picker 等价地切换 Host 当前
   // Workspace（Host 侧走 canonicalizeWorkspaceRoot 校验，不弹系统窗口）。
@@ -954,7 +951,6 @@ export default function App() {
         setPickerOpen(false);
       } catch (err) {
         console.error('Failed to select workspace:', err);
-        setPickerError(err instanceof Error ? err.message : t('app.selectWorkspaceFailed'));
         showToast(err instanceof Error ? err.message : t('app.selectWorkspaceFailed'));
       }
     },
