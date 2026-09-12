@@ -194,16 +194,17 @@ try {
     assert.equal(calls, 3);
   });
 
-  await test('headers arrived, slow body aborts at total timeout (no retry)', async () => {
-    process.env.LLM_REQUEST_TIMEOUT_MS = '60';
+  await test('headers arrived but stream stalls → idle watchdog aborts (no retry)', async () => {
+    // 低于策略下限（1s）的配置会被抬起：既验证下限收敛，也保证用例快速确定性。
+    process.env.PAYASO_LLM_IDLE_TIMEOUT_MS = '500';
     let calls = 0;
     globalThis.fetch = async (_input, init) => {
       calls++;
       const signal = init?.signal;
       const stream = new ReadableStream({
         start(readController) {
-          // Body never completes on its own (simulates a long generation); the
-          // abort signal interrupts it at the total request timeout.
+          // Body never produces data on its own (simulates a stalled generation);
+          // the stream idle watchdog interrupts it when no event arrives.
           const finish = setTimeout(() => {
             try {
               readController.close();
@@ -230,16 +231,54 @@ try {
     try {
       await assert.rejects(
         () => chat([{ role: 'user', content: 'hello' }]),
-        /timed out after 60ms/,
+        /no stream data for 1000ms/,
       );
-      assert.equal(calls, 1); // total timeout must NOT be retried
+      assert.equal(calls, 1); // idle timeout must NOT be retried
     } finally {
-      delete process.env.LLM_REQUEST_TIMEOUT_MS;
+      delete process.env.PAYASO_LLM_IDLE_TIMEOUT_MS;
     }
   });
 
-  await test('total timeout before any response does not retry', async () => {
-    process.env.LLM_REQUEST_TIMEOUT_MS = '50';
+  await test('continuous output renews idle budget (slow long stream never trips watchdog)', async () => {
+    process.env.PAYASO_LLM_IDLE_TIMEOUT_MS = '40';
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(readController) {
+          // 每个 delta 间隔 20ms < idle 40ms：持续输出必须不断续期，绝不能超时。
+          for (const ch of 'slow-stream') {
+            readController.enqueue(
+              encoder.encode(`data: {"choices":[{"delta":{"content":"${ch}"}}]}\n\n`),
+            );
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          readController.enqueue(
+            encoder.encode(
+              'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+            ),
+          );
+          readController.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    };
+    try {
+      const message = await chat([{ role: 'user', content: 'hello' }]);
+      assert.ok(message.content.includes('slow-stream'), `content=${message.content}`);
+      assert.equal(calls, 1);
+    } finally {
+      delete process.env.PAYASO_LLM_IDLE_TIMEOUT_MS;
+    }
+  });
+
+  await test('connect hang before any response aborts at connect timeout (no retry)', async () => {
+    // 低于策略下限（1s）的配置会被抬起：既验证下限收敛，也保证用例快速确定性。
+    process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = '500';
     let calls = 0;
     globalThis.fetch = async (_input, init) => {
       calls++;
@@ -253,11 +292,11 @@ try {
     try {
       await assert.rejects(
         () => chat([{ role: 'user', content: 'hello' }]),
-        /timed out after 50ms/,
+        /no response received within 1000ms/,
       );
-      assert.equal(calls, 1); // total timeout must NOT be retried
+      assert.equal(calls, 1); // connect timeout must NOT be retried
     } finally {
-      delete process.env.LLM_REQUEST_TIMEOUT_MS;
+      delete process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
     }
   });
 

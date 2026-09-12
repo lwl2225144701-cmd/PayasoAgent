@@ -13,8 +13,8 @@ import {
   isSandboxPathInside,
   type SandboxPolicy,
 } from './sandbox-policy.js';
-import { getMacOSToolchain } from './toolchain-manager.js';
 import { SHELL_TIMEOUT_DEFAULT_MS } from './shell-timeout.js';
+import { getMacOSToolchain } from './toolchain-manager.js';
 
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const SHELL = '/bin/sh';
@@ -77,6 +77,8 @@ export interface MacOSSandboxRunOptions {
   // True cancellation (v1.6)：Run 的 AbortSignal；abort 时终止整个进程组并 reject AbortError
   signal?: AbortSignal;
   onEvent?: (event: MacOSSandboxEvent) => void;
+  // v2.3 增量输出：stdout/stderr 数据到达即回调（后台作业滚动词法缓冲用）。
+  onOutput?: (text: string) => void;
 }
 
 // 终止整个进程组：detached spawn 使 child 成为进程组长（pgid = pid），
@@ -191,7 +193,7 @@ function isPermissionDenied(stderr: string): boolean {
 function outputLimit(value: string): string {
   if (Buffer.byteLength(value, 'utf8') <= MAX_SHELL_OUTPUT) return value;
   const buf = Buffer.from(value, 'utf8');
-  return buf.subarray(0, MAX_SHELL_OUTPUT).toString('utf8') + '\n...[输出已截断]';
+  return `${buf.subarray(0, MAX_SHELL_OUTPUT).toString('utf8')}\n...[输出已截断]`;
 }
 
 export class MacOSSandbox {
@@ -328,9 +330,11 @@ export class MacOSSandbox {
 
       child.stdout?.on('data', (chunk: Buffer) => {
         if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
+        options.onOutput?.(String(chunk));
       });
       child.stderr?.on('data', (chunk: Buffer) => {
         if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
+        options.onOutput?.(String(chunk));
       });
 
       child.on('error', (err) => {

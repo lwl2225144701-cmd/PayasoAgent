@@ -171,6 +171,8 @@ export interface ShellRunOptions {
   signal?: AbortSignal;
   /** 测试注入 platform（决定 detached / taskkill 分支），默认 process.platform */
   platform?: NodeJS.Platform;
+  // v2.3 增量输出：stdout/stderr 数据到达即回调（后台作业滚动词法缓冲用）。
+  onOutput?: (text: string) => void;
 }
 
 /**
@@ -238,9 +240,11 @@ export function runUncontainedShell(
 
     child.stdout?.on('data', (chunk: Buffer) => {
       if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
+      options.onOutput?.(String(chunk));
     });
     child.stderr?.on('data', (chunk: Buffer) => {
       if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
+      options.onOutput?.(String(chunk));
     });
 
     child.on('error', (err) => {

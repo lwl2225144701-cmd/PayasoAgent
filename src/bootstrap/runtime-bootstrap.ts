@@ -21,6 +21,7 @@ import { getRuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js
 
 export interface AgentExecutionContextInput {
   runId: string;
+  sessionId?: string;
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
   projectInstructions?: string;
@@ -54,6 +55,7 @@ export function createAgentExecutionContext(
       : canonicalizeWorkspaceRoot(requestedRoot);
   return {
     runId: input.runId,
+    sessionId: input.sessionId,
     workspaceRoot,
     permissionMode: input.permissionMode ?? DEFAULT_PERMISSION_MODE,
     toolchain: getRuntimeToolchainCapabilities(),

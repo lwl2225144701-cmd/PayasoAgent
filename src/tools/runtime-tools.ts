@@ -12,7 +12,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getNetworkMode } from '../network-mode.js';
 import { storedPermissionMode } from '../permission-mode.js';
-import { MacOSSandbox, type MacOSSandboxResult, probeSandboxAvailability } from '../sandbox/macos-sandbox.js';
+import { toolTimeoutPolicy } from '../runtime/tool-invocation/process-manager.js';
+import {
+  getBackgroundJob,
+  killBackgroundJob,
+  listBackgroundJobs,
+  readBackgroundJobOutput,
+  startBackgroundJob,
+  waitForBackgroundJob,
+} from '../sandbox/background-jobs.js';
+import {
+  MacOSSandbox,
+  type MacOSSandboxResult,
+  probeSandboxAvailability,
+} from '../sandbox/macos-sandbox.js';
+import { classifyShellCommand } from '../sandbox/shell-command-effect.js';
+import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
 import { createShellScratch } from '../sandbox/shell-scratch.js';
 import {
   resolveShellToolTimeout,
@@ -21,32 +36,22 @@ import {
   SHELL_TIMEOUT_MIN_MS,
   shellTimeoutPolicy,
 } from '../sandbox/shell-timeout.js';
-import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
-import { classifyShellCommand } from '../sandbox/shell-command-effect.js';
-import {
-  getBackgroundJob,
-  killBackgroundJob,
-  listBackgroundJobs,
-  startBackgroundJob,
-  waitForBackgroundJob,
-} from '../sandbox/background-jobs.js';
 import { TOOL_OUTPUT_MAX_BYTES, utf8ByteLength } from '../tool-output-budget.js';
 import {
   assertWritableZone,
   canonicalPathKey,
   isProbablyBinary,
-  MAX_READ_BYTES,
   resolveAuthorizedPath,
 } from './filesystem.js';
 import { compileGlob } from './glob-pattern.js';
-import { resolveSkillRelativePath } from '../host/workspace-instructions.js';
 import {
   RequiredRuntimeToolUnavailableError,
   register,
   registerAlias,
   type ToolContext,
 } from './tools.js';
-import { scanWorkspaceFiles, SEARCH_MAX_FILE_BYTES } from './workspace-scan.js';
+import { SEARCH_MAX_FILE_BYTES, scanWorkspaceFiles } from './workspace-scan.js';
+import { resolveSkillRelativePath } from './workspace-skill-path.js';
 
 // ---- ① grep（正则 + 默认忽略依赖/构建目录）----
 // v1.9：pattern 现在是正则（JavaScript 语法）。旧的字面量子串搜索仍然可用
@@ -180,7 +185,8 @@ register({
       );
     }
     if (matchCount >= maxResults) notes.push(`[grep 提示] 已达 maxResults=${maxResults} 上限。`);
-    if (skippedLarge > 0) notes.push(`[grep 提示] 跳过 ${skippedLarge} 个超过 ${SEARCH_MAX_FILE_BYTES} 字节的文件。`);
+    if (skippedLarge > 0)
+      notes.push(`[grep 提示] 跳过 ${skippedLarge} 个超过 ${SEARCH_MAX_FILE_BYTES} 字节的文件。`);
     if (scan.truncated) notes.push('[grep 提示] 文件数达到扫描上限，结果可能不完整。');
     return [...lines, ...notes].join('\n');
   },
@@ -456,6 +462,7 @@ async function executeContainedShell(
   command: string,
   context: ToolContext,
   timeoutMs: number,
+  onOutput?: (text: string) => void,
 ): Promise<MacOSSandboxResult> {
   const workspaceRoot = context.workspaceRoot;
   const permissionMode = storedPermissionMode(context.permissionMode);
@@ -490,6 +497,7 @@ async function executeContainedShell(
         tmpdir: scratch.path,
         timeoutMs,
         signal: context.signal,
+        onOutput,
         onEvent: (event) => {
           if (event === 'started') {
             context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
@@ -523,6 +531,7 @@ async function executeContainedShell(
         tmpdir: scratch.path,
         timeoutMs,
         signal: context.signal,
+        onOutput,
       });
     }
     if (result.denied) {
@@ -573,6 +582,10 @@ register({
   // v2.0 Network Control：shell 具备网络能力。第一版保守策略——不对 curl/wget/git
   // 做命令识别；network.mode=off 时整个 shell 被统一拒绝（tools.ts execute 检查）。
   capabilities: { network: true },
+  // v2.3 工具级 deadline：必须晚于 shell 自身的 command timeout 触发，否则命令级
+  // 超时的 [shell-timeout] 结构化结果会被外层 TOOL_TIMEOUT 吞掉。外层 deadline
+  // 只兜底执行器自身卡死（sandbox-exec 挂起等），正常命令由其内部定时器接管。
+  timeoutMs: () => Math.max(toolTimeoutPolicy().maxMs, shellTimeoutPolicy().maxMs + 30_000),
   getOperationKey: (args) =>
     `cmd:${String(args.command ?? '').trim()}:bg:${args.background === true}`,
   parameters: {
@@ -605,10 +618,11 @@ register({
     if (args.background === true) {
       const job = startBackgroundJob({
         runId: context.runId,
+        sessionId: context.sessionId,
         command: cmd,
-        parentSignal: context.signal,
-        executor: (signal) =>
-          executeContainedShell(cmd, { ...context, signal }, timeoutMs),
+        parentSignal: context.runSignal ?? context.signal,
+        executor: (signal, onOutput) =>
+          executeContainedShell(cmd, { ...context, signal }, timeoutMs, onOutput),
       });
       return (
         `[shell-background] jobId=${job.jobId} status=running timeoutMs=${timeoutMs}\n` +
@@ -624,11 +638,18 @@ register({
 });
 
 // ---- ⑤.5 shellJob（后台作业控制）----
-// 只读查询 + 幂等终止；作业生命周期由 Host 在 Run 终态统一回收。
+// Session 级的只读查询 + 幂等终止（v2.3 会话所有权）：作业不随单个 Run 结束
+// 销毁；Session 删除 / Host 关闭时统一清理。作业 settle 后进入会话通知队列，
+// Agent Loop 在迭代边界把完成通知注入模型视图（唤醒上限由 Loop 持有）。
+// action:"output" 支持 offset 增量读取（运行中可轮询新输出，不重读全文）。
+function sessionKey(context: ToolContext): string {
+  return context.sessionId ?? `run-${context.runId}`;
+}
+
 register({
   name: 'shellJob',
   description:
-    '等待/查看/终止 shell 后台作业。优先用 "wait" 有界等待，避免反复 status/output 或 shell sleep。action: "list" 列出本 Run 全部作业；"wait" 最多等待 waitMs 后返回最新状态和完成输出；"status" 查状态；"output" 取回已完成输出；"kill" 终止。作业随 Run 结束自动清理。',
+    '等待/查看/终止 shell 后台作业。优先用 "wait" 有界等待，避免反复 status/output 或 shell sleep。action: "list" 列出本会话全部作业（含之前 Run 启动的）；"wait" 最多等待 waitMs 后返回最新状态和完成输出；"status" 查状态；"output" 取回输出（运行中可带 offset 增量读取）；"kill" 终止。作业随会话存在：完成时 Agent 会收到通知，也可主动 wait 获取结果。',
   effect: 'idempotent',
   getOperationKey: (args) => `job:${String(args.action ?? '')}:${String(args.jobId ?? '')}`,
   parameters: {
@@ -647,10 +668,16 @@ register({
         type: 'number',
         description: 'action=wait 时最多等待的毫秒数，默认 30000，范围 100-30000。',
       },
+      offset: {
+        type: 'number',
+        description:
+          'action=output 时的读取起点（上次输出提示的 nextOffset 字符偏移）；省略从 0 开始。运行中增量轮询用。',
+      },
     },
     required: ['action'],
   },
   execute: async (args, context) => {
+    const key = sessionKey(context);
     const action = String(args.action ?? '').trim();
     const jobId = String(args.jobId ?? '').trim();
 
@@ -661,8 +688,8 @@ register({
     }
 
     if (action === 'list') {
-      const jobs = listBackgroundJobs(context.runId);
-      if (jobs.length === 0) return '当前 Run 没有后台作业。';
+      const jobs = listBackgroundJobs(key);
+      if (jobs.length === 0) return '当前会话没有后台作业（含之前 Run 启动的）。';
       return jobs
         .map(
           (job) =>
@@ -672,7 +699,7 @@ register({
     }
 
     if (!jobId) throw new Error(`action=${action} 需要参数 jobId`);
-    let job = getBackgroundJob(context.runId, jobId);
+    let job = getBackgroundJob(key, jobId);
     if (!job) throw new Error(`后台作业不存在: ${jobId}（用 shellJob {action:"list"} 查看）`);
 
     if (action === 'wait') {
@@ -680,7 +707,7 @@ register({
       const waitMs = Number.isFinite(requested)
         ? Math.min(30_000, Math.max(100, Math.floor(requested)))
         : 30_000;
-      job = await waitForBackgroundJob(context.runId, jobId, waitMs, context.signal);
+      job = await waitForBackgroundJob(key, jobId, waitMs, context.signal);
       if (!job) throw new Error(`后台作业不存在: ${jobId}`);
       if (job.status === 'running') {
         return `${job.jobId} [running] 等待 ${waitMs}ms 后仍在运行；可继续工作，稍后再次 wait。`;
@@ -694,22 +721,38 @@ register({
         `${job.jobId} [${job.status}] ${job.command}\n` +
         `启动: ${job.startedAt}${job.finishedAt ? `\n结束: ${job.finishedAt}` : ''}` +
         (job.error ? `\n错误: ${job.error}` : '') +
-        (job.status === 'running' ? '\n（仍在运行；优先用 action:"wait" 等待，或 action:"kill" 终止）' : '')
+        (job.status === 'running'
+          ? '\n（仍在运行；优先用 action:"wait" 等待，或 action:"kill" 终止）'
+          : '')
       );
     }
 
     if (action === 'output') {
+      const requestedOffset = Number(args.offset);
+      const offset =
+        Number.isFinite(requestedOffset) && requestedOffset > 0 ? Math.floor(requestedOffset) : 0;
       if (job.status === 'running') {
-        return `${job.jobId} 仍在运行中，暂无输出（完成后用 action:"output" 取回）。`;
+        // v2.3 增量输出：运行中按 offset 增量读取，不重读全文（长构建轮询友好）。
+        const partial = readBackgroundJobOutput(key, jobId, offset);
+        const text = partial?.text?.trim() ?? '';
+        if (!text) {
+          return `${job.jobId} 仍在运行中，暂无新输出（完成时会收到通知，或稍后用 offset 增量轮询）。`;
+        }
+        const nextOffset = partial?.nextOffset ?? 0;
+        return (
+          `${job.jobId} [running] 部分输出（自 offset=${offset}）：\n${text}\n` +
+          `[提示] 下次用 offset=${nextOffset} 增量读取` +
+          `${partial?.truncated ? '（输出缓冲已达上限，早期内容可能被滚动丢弃，请以完成后的完整输出为准）' : ''}。`
+        );
       }
       const body = job.output?.trim() ? job.output : '(无输出)';
       return `[${job.jobId} ${job.status}]\n${body}${job.error ? `\n[error] ${job.error}` : ''}`;
     }
 
     if (action === 'kill') {
-      const existed = killBackgroundJob(context.runId, jobId);
+      const existed = killBackgroundJob(key, jobId);
       if (!existed) throw new Error(`后台作业不存在: ${jobId}`);
-      const after = getBackgroundJob(context.runId, jobId);
+      const after = getBackgroundJob(key, jobId);
       return `已请求终止 ${jobId}（当前状态: ${after?.status ?? 'unknown'}）。`;
     }
 
@@ -754,7 +797,7 @@ register({
       // 上限 32KB，超过的截断（transcript 还有输出卫士二次保险）
       const content = fs.readFileSync(fullPath, 'utf8');
       if (content.length > 32 * 1024) {
-        return content.slice(0, 32 * 1024) + '\n...[skill content truncated]';
+        return `${content.slice(0, 32 * 1024)}\n...[skill content truncated]`;
       }
       return content;
     } catch (err) {

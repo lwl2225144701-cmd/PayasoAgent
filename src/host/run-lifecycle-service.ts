@@ -22,57 +22,36 @@ import {
   type PermissionMode,
   storedPermissionMode,
 } from '../permission-mode.js';
-import {
-  checkpointPath,
-  loadCheckpoint,
-} from '../persistence/file-checkpoint-store.js';
+import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
-import { disposeRunBackgroundJobs } from '../sandbox/background-jobs.js';
 import { isAbortError } from '../util/abort.js';
-import { getWorkspace } from './workspace.js';
-import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
-import {
-  readProjectInstructions,
-  scanWorkspaceSkills,
-} from './workspace-instructions.js';
-import { PLAN_DIRECTIVE } from './session-service.js';
-import { publicActiveView, publicStoredView, sessionTitle } from './run-views.js';
-import { isCancellable, type CleanupError, type HostRun } from './run-types.js';
-import type {
-  HostAttachment,
-  HostEvent,
-  StreamingEvent,
-} from './run-events.js';
-import type { ModelService } from './model-service.js';
-import type { SessionService } from './session-service.js';
 import type { ApprovalCoordinator } from './approval-coordinator.js';
-import type { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
 import type { EventStreamService } from './event-stream-service.js';
+import type { ModelService } from './model-service.js';
 import {
+  isTerminalRunStatus,
+  type RunStore,
   type StoredRun,
   type StoredSession,
   type TerminalRunStatus,
-  isTerminalRunStatus,
-  type RunStore,
 } from './persistence/store.js';
+import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
+import type { HostAttachment, HostEvent, StreamingEvent } from './run-events.js';
 import type { CreateRunAttachmentInput } from './run-types.js';
+import { type CleanupError, type HostRun, isCancellable } from './run-types.js';
+import { publicActiveView, publicStoredView, sessionTitle } from './run-views.js';
+import type { SessionService } from './session-service.js';
+import { PLAN_DIRECTIVE } from './session-service.js';
+import type { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
+import { getWorkspace } from './workspace.js';
+import { readProjectInstructions, scanWorkspaceSkills } from './workspace-instructions.js';
 
 // 附件在工作区内的落盘目录（相对 workspaceRoot）。
 const ATTACHMENT_DIR = 'input/attachments';
 
 const INTERRUPTED_ERROR = 'Host restarted before the Run completed';
-const DEFAULT_RUN_TIMEOUT_MS = 15 * 60_000;
-
-function runTimeoutMs(): number {
-  const raw = process.env.AGENT_RUN_TIMEOUT_MS;
-  if (raw && raw.trim() !== '') {
-    const value = Number(raw);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  return DEFAULT_RUN_TIMEOUT_MS;
-}
 
 export interface InternalRun extends HostRun {
   events: HostEvent[];
@@ -83,10 +62,6 @@ export interface InternalRun extends HostRun {
   // True cancellation (v1.6)：每个活跃 Run 独立的 AbortController；
   // startAgent 时创建，stop() 触发 abort，Run 真正退出后由 Host 落 stopped。
   abortController?: AbortController;
-  // Host resource fuse for the unbounded Runtime loop. Keep timeout separate
-  // from an explicit user stop so the terminal reason remains observable.
-  abortReason?: 'user' | 'timeout';
-  runTimeoutTimer?: ReturnType<typeof setTimeout>;
   // v1.6.1：执行链 promise 句柄（fire-and-forget 任务的引用）。
   // close() 用它等待执行链真正结束（而非仅状态变终态），避免 Store 关闭后 agent 仍在写库。
   agentPromise?: Promise<void>;
@@ -346,10 +321,6 @@ export class RunLifecycleService {
     // legacy fallback flag：主机制是 abortController.abort()；
     // 覆盖「abort 之后 agent 才 resolve」的完成竞态判定。
     run.cancelled = true;
-    // Do not overwrite a timeout reason if the user clicks Stop while the
-    // Host fuse is already aborting the Run; terminal status should retain
-    // the first abort cause.
-    run.abortReason ??= 'user';
     if (run.status === 'running') {
       if (run.abortController) {
         this.markStopping(run);
@@ -409,12 +380,8 @@ export class RunLifecycleService {
       );
       return false;
     }
-    if (run.runTimeoutTimer) {
-      clearTimeout(run.runTimeoutTimer);
-      run.runTimeoutTimer = undefined;
-    }
-    // v1.10：Run 进入终态即回收后台作业，绝不留下孤儿进程（幂等）。
-    disposeRunBackgroundJobs(run.runId);
+    // v2.3 Background Job 升级为 Session 级所有权：Run 进入终态不再回收
+    // 后台作业——作业随 Session 存在（Session 删除 / Host 关闭时统一清理）。
     // 提交成功后才应用到内存并发布（memory 不会提前显示未持久化的终态）
     run.status = status;
     run.updatedAt = timestamp;
@@ -725,13 +692,6 @@ export class RunLifecycleService {
     // True cancellation (v1.6)：每次执行一个独立 AbortController（resume 也一样）。
     const abortController = new AbortController();
     run.abortController = abortController;
-    const timeoutMs = runTimeoutMs();
-    run.runTimeoutTimer = setTimeout(() => {
-      if (run.status !== 'running' || run.abortReason) return;
-      run.abortReason = 'timeout';
-      this.markStopping(run);
-    }, timeoutMs);
-    run.runTimeoutTimer.unref?.();
 
     // Run 已经持久化为 running，任何启动失败都必须落为 failed + run_failed，
     // 不允许同步 throw 留下永远 running 的僵尸 Run（模型解析失败也走同一条路）。
@@ -748,6 +708,7 @@ export class RunLifecycleService {
         const skills = scanWorkspaceSkills(run.workspaceRoot, run.permissionMode);
         const executionContext = createAgentExecutionContext({
           runId: run.runId,
+          sessionId: run.sessionId,
           workspaceRoot: run.workspaceRoot,
           permissionMode: run.permissionMode,
           projectInstructions,
@@ -782,10 +743,6 @@ export class RunLifecycleService {
           },
         });
         flushDelta();
-        if (run.abortReason === 'timeout') {
-          this.failRun(run, `Run exceeded host time limit of ${timeoutMs}ms`);
-          return;
-        }
         // stop() 之后 agent 才正常 resolve 的竞态：用户意图是停止 → stopped
         if (run.cancelled || abortController.signal.aborted) {
           this.finish(run);
@@ -795,10 +752,6 @@ export class RunLifecycleService {
         this.finalizeRun(run, 'completed', { result });
       } catch (err) {
         flushDelta();
-        if (run.abortReason === 'timeout') {
-          this.failRun(run, `Run exceeded host time limit of ${timeoutMs}ms`);
-          return;
-        }
         if (err instanceof AgentStopRequestedError) {
           this.finish(run);
           return;

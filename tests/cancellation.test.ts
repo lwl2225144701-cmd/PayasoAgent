@@ -30,7 +30,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.error(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.error(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
 
@@ -76,7 +76,7 @@ const MODEL_CONFIG = {
 };
 
 // ---- 测试工具（本套件子进程内注册）----
-const probeCtx: { signal?: AbortSignal; runId?: string } = {};
+const probeCtx: { signal?: AbortSignal; runSignal?: AbortSignal; runId?: string } = {};
 let probeAbortsCaller: (() => void) | null = null;
 register({
   name: 'abort-probe',
@@ -85,6 +85,7 @@ register({
   parameters: { type: 'object', properties: {} },
   execute: async (_args, ctx: ToolContext) => {
     probeCtx.signal = ctx.signal;
+    probeCtx.runSignal = ctx.runSignal;
     probeCtx.runId = ctx.runId;
     probeAbortsCaller?.();
     return 'probe ok';
@@ -167,8 +168,13 @@ try {
       `answer=${answer}, calls=${calls}`,
     );
     check(
-      "Case4: tool received the run's exact AbortSignal",
-      probeCtx.signal === controller.signal,
+      // v2.3 工具级超时：context.signal 是 Run 信号派生的 deadline 信号（工具到期需被
+      // 中止）；Run 原信号以 runSignal 原样保留，用于长生命周期取消（后台作业）。
+      // 取消传播本身由 Case5a（shell 进程组随 abort 终止）与 Case6 覆盖。
+      "Case4: tool received the run's exact signal as runSignal (deadline signal derived)",
+      probeCtx.runSignal === controller.signal &&
+        probeCtx.signal !== undefined &&
+        probeCtx.signal !== controller.signal,
     );
     check('Case4: tool received the runId via ToolContext', probeCtx.runId === 'cancel-probe');
     cleanupCheckpoint('cancel-probe');
@@ -205,9 +211,9 @@ try {
   // ---- Case 8: non-idempotent abort → operation marked uncertain ----
   {
     const controller = new AbortController();
-    let calls = 0;
+    let _calls = 0;
     globalThis.fetch = (async () => {
-      calls++;
+      _calls++;
       return toolCallResponse('call-non-idem', 'abort-non-idem', '{}');
     }) as typeof fetch;
 

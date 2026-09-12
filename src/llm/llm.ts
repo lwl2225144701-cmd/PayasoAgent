@@ -18,6 +18,7 @@ import {
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { resolveModelContextConfig } from '../harness/model-context.js';
 import { asProviderStreams, getPiAiProviderModel } from '../host/pi-ai-providers.js';
+import { createIdleWatchdog, positiveIntMs, TimeoutAbortError } from '../util/timeout.js';
 import { normalizeTokenUsage, type TokenUsage } from './token-usage.js';
 import {
   mergeRawArguments,
@@ -29,15 +30,35 @@ const BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const API_KEY = process.env.OPENAI_API_KEY || '';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const MAX_RETRIES = 2;
-const DEFAULT_REQUEST_TIMEOUT_MS = 240_000;
 
-function requestTimeoutMs(): number {
-  const raw = process.env.LLM_REQUEST_TIMEOUT_MS;
-  if (raw && raw.trim() !== '') {
-    const value = Number(raw);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  return DEFAULT_REQUEST_TIMEOUT_MS;
+// ---- 分层超时策略（docs/long-task-timeout-plan.md 步骤 2）----
+// LLM 层不再设"单请求总时限"（那会掐断持续输出中的长生成），改为两个边界：
+// - connectMs：HTTP 请求发出到响应头返回（覆盖 TCP/TLS/排队挂死）
+// - idleMs：流式事件之间的最大空档（prefill 首 token 等待也计入；收到数据即续期，
+//   持续输出永不触发）
+// 缺省为正数、非法 env 值回退缺省（fail-closed，绝不因配置错误放开限制）。
+const DEFAULT_LLM_CONNECT_TIMEOUT_MS = 30_000;
+const DEFAULT_LLM_IDLE_TIMEOUT_MS = 120_000;
+const LLM_TIMEOUT_MIN_MS = 1_000;
+
+export interface LlmTimeoutPolicy {
+  connectMs: number;
+  idleMs: number;
+}
+
+export function llmTimeoutPolicy(
+  env: Record<string, string | undefined> = process.env,
+): LlmTimeoutPolicy {
+  return {
+    connectMs: Math.max(
+      positiveIntMs(env.PAYASO_LLM_CONNECT_TIMEOUT_MS) ?? DEFAULT_LLM_CONNECT_TIMEOUT_MS,
+      LLM_TIMEOUT_MIN_MS,
+    ),
+    idleMs: Math.max(
+      positiveIntMs(env.PAYASO_LLM_IDLE_TIMEOUT_MS) ?? DEFAULT_LLM_IDLE_TIMEOUT_MS,
+      LLM_TIMEOUT_MIN_MS,
+    ),
+  };
 }
 
 // 思考档次归一化：'off' 与未配置等价——两者都不介入请求，保持端点默认行为。
@@ -394,6 +415,10 @@ interface FetchDiagnostics {
   body?: string;
   toolNamesById?: Map<string, string>;
   toolArgumentsById?: Map<string, string>;
+  // v2.3 分层超时：连接超时需要在 fetch 边界中止"本次 HTTP 尝试"的控制权，
+  // 由 chat() 每次 attempt 注入；undefined = 不启用连接超时（防御性兼容）。
+  timeoutController?: AbortController;
+  connectTimeoutMs?: number;
 }
 
 function normalizeSseResponse(response: Response, diagnostics: FetchDiagnostics): Response {
@@ -527,12 +552,28 @@ async function piFetch(
   // HTTP 请求真正发出的瞬间打点（在发起 fetch 之前调用回调）：
   // llm_call_started → 此处 = Host 侧整理耗时；此处 → 首个 delta = Provider 首包/网络。
   onRequestSent?.();
+  // v2.3 连接超时：响应头返回（fetch resolve）前无任何数据 → 中止本次 HTTP 尝试。
+  const connectMs = diagnostics.connectTimeoutMs;
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
+  if (connectMs !== undefined && diagnostics.timeoutController) {
+    connectTimer = setTimeout(() => {
+      diagnostics.timeoutController?.abort(
+        new TimeoutAbortError(
+          'llm-connect',
+          `LLM request timed out: no response received within ${connectMs}ms`,
+        ),
+      );
+    }, connectMs);
+    connectTimer.unref?.();
+  }
   let response: Response;
   try {
     response = await globalThis.fetch(input, requestInit);
   } catch (error) {
     diagnostics.error = error instanceof Error ? error : new Error(String(error));
     throw error;
+  } finally {
+    if (connectTimer) clearTimeout(connectTimer);
   }
   if (!response.ok) {
     diagnostics.status = response.status;
@@ -831,13 +872,12 @@ function retryDelay(attempt: number): Promise<void> {
 function formatTransportError(
   result: AssistantMessage,
   diagnostics: FetchDiagnostics,
-  timeoutMs: number,
   totalAttempts: number,
 ): Error {
   if (diagnostics.error) {
     const message = diagnostics.error.message;
     if (isAbortOrTimeoutMessage(message)) {
-      return new Error(`LLM request timed out after ${timeoutMs}ms`);
+      return new Error('LLM request failed: transport timeout');
     }
     if (message.startsWith('LLM API malformed response:')) return diagnostics.error;
     return new Error(`LLM API request failed after ${totalAttempts} attempts: ${message}`);
@@ -846,7 +886,7 @@ function formatTransportError(
     return new Error(`LLM API error: ${diagnostics.status} ${diagnostics.body ?? ''}`.trim());
   }
   if (result.errorMessage === 'Request timed out.') {
-    return new Error(`LLM request timed out after ${timeoutMs}ms`);
+    return new Error('LLM request timed out (provider reported)');
   }
   return new Error(result.errorMessage ?? 'LLM request failed');
 }
@@ -863,7 +903,7 @@ export async function chat(
   const { models, model } = createConfiguredModel(config);
   const context = toPiContext(messages, tools, config.providerId, config.model, model.api);
   const messageId = crypto.randomUUID();
-  const timeoutMs = requestTimeoutMs();
+  const policy = llmTimeoutPolicy();
   let totalAttempts = 0;
 
   // pi-ai's stream owns one request lifecycle. Keep its internal retry count at
@@ -871,7 +911,40 @@ export async function chat(
   // retried, while transient HTTP/network errors still get two retries.
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const diagnostics: FetchDiagnostics = { attempts: 0 };
+
+    // v2.3 分层超时：每次尝试一个派生 AbortController——
+    // - 用户取消 → 以标准 AbortError 传播（与引入前语义逐字节一致）
+    // - 连接/空闲超时 → 以 TimeoutAbortError 标记来源，绝不当作用户取消
+    const timeoutController = new AbortController();
+    const onUserAbort = (): void => {
+      timeoutController.abort(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal) {
+      if (signal.aborted) onUserAbort();
+      else signal.addEventListener('abort', onUserAbort, { once: true });
+    }
+    const diagnostics: FetchDiagnostics = {
+      attempts: 0,
+      timeoutController,
+      connectTimeoutMs: policy.connectMs,
+    };
+    // 流空闲看门狗：每个事件续期；prefill 首 token 漫长等待与中途停滞都会触发。
+    const idleWatchdog = createIdleWatchdog(policy.idleMs, () => {
+      timeoutController.abort(
+        new TimeoutAbortError(
+          'llm-idle',
+          `LLM request timed out: no stream data for ${policy.idleMs}ms ` +
+            '(continuous output renews the idle budget; only a stall trips it)',
+        ),
+      );
+    });
+    // 统一把"本次尝试被中止"翻译成可区分语义的错误。
+    const abortError = (): Error => {
+      const reason = timeoutController.signal.reason;
+      if (reason instanceof TimeoutAbortError) return new Error(reason.message);
+      return new DOMException('Aborted', 'AbortError');
+    };
+
     const inline = new InlineThinkEmitter((type, delta) => {
       if (delta) onDelta?.({ messageId, type, delta });
     });
@@ -886,7 +959,9 @@ export async function chat(
     //    同时封顶思考预算。两者事件流（thinking_delta/toolcall_delta）完全一致。
     const thinkingLevel = activeThinkingLevel(config.thinkingLevel);
     const streamOptions = {
-      signal,
+      // 传派生信号而非用户信号：连接/空闲超时能真实中止在途 fetch；
+      // 用户取消经由派生控制器仍以 AbortError 抵达（语义不变）。
+      signal: timeoutController.signal,
       fetch: (input: RequestInfo | URL, init?: RequestInit) =>
         piFetch(
           input,
@@ -898,7 +973,8 @@ export async function chat(
         ),
       sessionId: config.sessionId,
       headers: requestHeadersFor(config),
-      timeoutMs,
+      // v2.3 分层超时：不再传统一 timeoutMs。单请求总时限会掐断持续输出中的
+      // 长生成；连接与空闲两个边界已由本层接管。
       maxRetries: 0,
       maxTokens: model.maxTokens,
     };
@@ -906,47 +982,54 @@ export async function chat(
       ? models.streamSimple(model, context, { ...streamOptions, reasoning: thinkingLevel })
       : models.stream(model, context, streamOptions);
 
-    // v1.10：原生适配器（Anthropic/Google…）只暴露已解析的参数对象，畸形 JSON
-    // 会被解成 {}；这里累积 toolcall_delta 的原始片段，交给 Runtime 统一解析器。
-    const rawArguments = new ToolArgumentAccumulator();
-    for await (const event of stream) {
-      if (event.type === 'text_delta') inline.push(event.delta);
-      if (event.type === 'thinking_delta') {
-        onDelta?.({ messageId, type: 'reasoning_delta', delta: event.delta });
+    try {
+      // v1.10：原生适配器（Anthropic/Google…）只暴露已解析的参数对象，畸形 JSON
+      // 会被解成 {}；这里累积 toolcall_delta 的原始片段，交给 Runtime 统一解析器。
+      const rawArguments = new ToolArgumentAccumulator();
+      for await (const event of stream) {
+        idleWatchdog.poke();
+        if (event.type === 'text_delta') inline.push(event.delta);
+        if (event.type === 'thinking_delta') {
+          onDelta?.({ messageId, type: 'reasoning_delta', delta: event.delta });
+        }
+        if (event.type === 'toolcall_delta') rawArguments.push(event.contentIndex, event.delta);
+        if (event.type === 'error' && event.reason === 'aborted') {
+          throw abortError();
+        }
       }
-      if (event.type === 'toolcall_delta') rawArguments.push(event.contentIndex, event.delta);
-      if (event.type === 'error' && event.reason === 'aborted') {
-        throw new DOMException('Aborted', 'AbortError');
-      }
-    }
-    inline.push('', true);
+      inline.push('', true);
 
-    const result = await stream.result();
-    totalAttempts += diagnostics.attempts;
-    if (result.stopReason === 'aborted' || signal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
+      const result = await stream.result();
+      totalAttempts += diagnostics.attempts;
+      if (result.stopReason === 'aborted' || timeoutController.signal.aborted) {
+        throw abortError();
+      }
+      if (result.stopReason !== 'error') {
+        // 恢复被适配器丢弃的原始参数：只在解码结果为空且原文非 "{}" 时接管。
+        diagnostics.toolArgumentsById = mergeRawArguments(
+          diagnostics.toolArgumentsById,
+          rawArgumentsByToolCallId(result.content, rawArguments.snapshot()),
+        );
+        const message = toLegacyMessage(
+          result,
+          diagnostics.toolNamesById,
+          diagnostics.toolArgumentsById,
+        );
+        // 运行时 usage 可能缺失/损坏（第三方兼容端点）。normalizeTokenUsage
+        // 宁缺勿错：任一桶异常即整体拒绝，绝不因统计字段让整次调用失败。
+        const usage = normalizeTokenUsage(result.usage);
+        return Object.assign(message, usage === undefined ? {} : { usage });
+      }
+      if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
+        await retryDelay(attempt);
+        continue;
+      }
+      throw formatTransportError(result, diagnostics, totalAttempts);
+    } finally {
+      // 无论成功、失败还是被中止：清理本尝试的空闲看门狗与用户取消监听。
+      idleWatchdog.dispose();
+      signal?.removeEventListener('abort', onUserAbort);
     }
-    if (result.stopReason !== 'error') {
-      // 恢复被适配器丢弃的原始参数：只在解码结果为空且原文非 "{}" 时接管。
-      diagnostics.toolArgumentsById = mergeRawArguments(
-        diagnostics.toolArgumentsById,
-        rawArgumentsByToolCallId(result.content, rawArguments.snapshot()),
-      );
-      const message = toLegacyMessage(
-        result,
-        diagnostics.toolNamesById,
-        diagnostics.toolArgumentsById,
-      );
-      // 运行时 usage 可能缺失/损坏（第三方兼容端点）。normalizeTokenUsage
-      // 宁缺勿错：任一桶异常即整体拒绝，绝不因统计字段让整次调用失败。
-      const usage = normalizeTokenUsage(result.usage);
-      return Object.assign(message, usage === undefined ? {} : { usage });
-    }
-    if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
-      await retryDelay(attempt);
-      continue;
-    }
-    throw formatTransportError(result, diagnostics, timeoutMs, totalAttempts);
   }
 
   throw new Error('LLM request failed');

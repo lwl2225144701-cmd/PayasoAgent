@@ -9,8 +9,12 @@
 // 边界：只消费注入的 ToolInvocationContext（由 runAgent 装配），不反向依赖
 // agent.ts；本模块不拥有可变状态（State/Scratchpad/Messages 均为引用传入）。
 
+import type { AgentContextHarness } from '../../harness/context-harness.js';
 import type { ChatMessage } from '../../llm/llm.js';
 import { getNetworkMode } from '../../network-mode.js';
+import type { ToolchainPreparationPort } from '../../sandbox/toolchain-preparation.js';
+import { getToolchainPreparationPlan } from '../../sandbox/toolchain-preparation.js';
+import { formatToolArgumentIssues, validateToolArguments } from '../../tools/tool-arguments.js';
 import {
   execute,
   getTool,
@@ -21,28 +25,33 @@ import {
   parseToolArguments,
   RequiredRuntimeToolUnavailableError,
   resolveToolEffect,
-  toolNotFoundError,
-  validateToolResult,
+  type Tool,
   type ToolCallError,
   type ToolContext,
   type ToolImage,
   type ToolSandboxEvent,
+  toolNotFoundError,
+  validateToolResult,
 } from '../../tools/tools.js';
-import { formatToolArgumentIssues, validateToolArguments } from '../../tools/tool-arguments.js';
-import { getToolchainPreparationPlan } from '../../sandbox/toolchain-preparation.js';
 import { isAbortError } from '../../util/abort.js';
-import { resolveApprovalPort, type ApprovalPort } from '../approval-port.js';
-import type { ToolchainPreparationPort } from '../../sandbox/toolchain-preparation.js';
+import {
+  clampTimeoutMs,
+  createDeadline,
+  positiveIntMs,
+  TimeoutAbortError,
+  type TimeoutPolicy,
+} from '../../util/timeout.js';
+import { type ApprovalPort, resolveApprovalPort } from '../approval-port.js';
 import type { RuntimeObserver } from '../observer-port.js';
-import type { AgentContextHarness } from '../../harness/context-harness.js';
+import { guardToolOutput } from '../output-guard.js';
 import {
   clearFailure,
   completeStep,
   isBlocked,
   recordFailure,
   recordInvalid,
-  setNextStep,
   type Scratchpad,
+  setNextStep,
 } from '../scratchpad.js';
 import {
   markExecuted,
@@ -50,13 +59,43 @@ import {
   resolveOperation,
   type SideEffectGuard,
 } from '../side-effect.js';
-import { updateState, type AgentState } from '../state.js';
+import { type AgentState, updateState } from '../state.js';
 import { classifyToolError } from '../tool-error-classifier.js';
-import { guardToolOutput } from '../output-guard.js';
 import type { TraceEventInput } from '../trace.js';
+import { ToolInvocationStateMachine } from './state-machine.js';
 
 /** 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）。 */
 export const MAX_RETRY = 2;
+
+// ---- v2.3 工具级超时预算（docs/long-task-timeout-plan.md 步骤 3）----
+// 超时由"声明预算的工具"负责，不由 Agent Loop 统一计时：
+// - Tool.timeoutMs 声明自己的 deadline（函数形式可参考运行时策略，如 shell）；
+// - 未声明 → 全局策略默认（env 可覆盖）；
+// - 到期以 TimeoutAbortError 中止本次调用，返回结构化 TOOL_TIMEOUT（不重试）；
+// - 用户取消仍以标准 AbortError 传播，两者语义永不混淆。
+const TOOL_TIMEOUT_DEFAULT_MS = 300_000;
+const TOOL_TIMEOUT_MIN_MS = 1_000;
+const TOOL_TIMEOUT_MAX_MS = 3_600_000;
+
+export function toolTimeoutPolicy(
+  env: Record<string, string | undefined> = process.env,
+): TimeoutPolicy {
+  const maxMs = Math.max(
+    positiveIntMs(env.PAYASO_TOOL_TIMEOUT_MAX_MS) ?? TOOL_TIMEOUT_MAX_MS,
+    TOOL_TIMEOUT_MIN_MS,
+  );
+  const defaultMs = Math.max(
+    positiveIntMs(env.PAYASO_TOOL_TIMEOUT_MS) ?? TOOL_TIMEOUT_DEFAULT_MS,
+    TOOL_TIMEOUT_MIN_MS,
+  );
+  return { defaultMs, minMs: TOOL_TIMEOUT_MIN_MS, maxMs: Math.max(maxMs, defaultMs) };
+}
+
+/** 解析一次工具调用的 deadline：声明值（可能随 context 变化）收敛进全局策略。 */
+export function resolveToolTimeoutMs(tool: Tool, context: ToolContext): number {
+  const declared = typeof tool.timeoutMs === 'function' ? tool.timeoutMs(context) : tool.timeoutMs;
+  return clampTimeoutMs(declared, toolTimeoutPolicy());
+}
 
 export interface ToolInvocationContext {
   runId: string;
@@ -87,7 +126,11 @@ interface ToolCallShape {
  * 返回即表示该 call 处理完毕（成功 / 无效 / 拒绝 / 恢复消息已回传 LLM）；
  * 仅在 abort 时向上抛出（由 Host 落 stopped，不写恢复消息）。
  */
-export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallShape): Promise<void> {
+export async function invokeToolCall(
+  ctx: ToolInvocationContext,
+  call: ToolCallShape,
+): Promise<void> {
+  const lifecycle = new ToolInvocationStateMachine();
   const {
     runId,
     toolContext,
@@ -111,24 +154,29 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
   // 工具绝不执行、side-effect 绝不创建，结构化错误回传模型修正。
   const parsed = parseToolArguments(call.function.arguments);
   if (!parsed.ok) {
+    lifecycle.transition('invalid');
     pushToolCallError(call.id, toolName, parsed.error);
     return;
   }
+  lifecycle.transition('parsed');
   const args = parsed.args;
 
   // v1.6 Pipeline ③：Resolve —— 未知工具同样是 invocation error，
   // 直接回传错误结果，不进入 execution retry（模型修正 ≠ 瞬态重试）。
   const toolDef = getTool(toolName);
   if (!toolDef) {
+    lifecycle.transition('invalid');
     pushToolCallError(call.id, toolName, toolNotFoundError(toolName));
     return;
   }
+  lifecycle.transition('resolved');
 
   // v1.8 Pipeline ③.5：Schema 校验 —— 声明的 Tool schema 是契约。
   // 未知参数/缺必填/类型错一律显式回传（绝不静默丢弃），否则模型会带着
   // 被忽略的意图继续跑（例如它以为传了 timeout 就延长了超时）。
   const argumentCheck = validateToolArguments(toolDef.parameters, args);
   if (!argumentCheck.ok) {
+    lifecycle.transition('invalid');
     pushToolCallError(
       call.id,
       toolName,
@@ -136,6 +184,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
     );
     return;
   }
+  lifecycle.transition('validated');
 
   // v1.9：副作用类别按本次调用解析（shell 只读命令不再被回放缓存结果）。
   // 后续所有 effect 判定统一使用 effect，不再直接读 toolDef.effect。
@@ -144,6 +193,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
   // v2.0.1 JIT Approval：ask 模式 + 网络工具 → 执行前即时授权。
   // 批准通过才继续（不创建 side-effect）；拒绝/超时走 NetworkDenied 语义。
   if (needsNetworkApproval(toolDef, getNetworkMode())) {
+    lifecycle.transition('authorization_pending');
     const approved = await resolveApprovalPort(ctx.approvalPort).request({
       runId,
       toolName,
@@ -151,6 +201,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       timestamp: new Date().toISOString(),
     });
     if (!approved) {
+      lifecycle.transition('denied');
       const deniedMsg =
         `Tool "${toolName}" requires network access but approval was not granted (network.mode=ask). ` +
         `Ask the user to approve this network call or switch network mode to "on".`;
@@ -183,11 +234,14 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       });
       return; // 不执行本工具，继续处理剩余 tool_calls / 下一轮 LLM
     }
+    lifecycle.transition('authorized');
     // 批准通过 → 继续执行。审计口径：
     // - tool_call 事件带 network:"ask"（请求发起时的模式）
     // - 拒绝路径已由上方 tool_error(network:"denied") 记录
     // - 批准耗时由 tool_result 的 durationMs 统一覆盖（执行含批准等待）
   }
+  if (lifecycle.state.phase === 'validated') lifecycle.transition('authorized');
+  lifecycle.transition('effect_checked');
 
   // 规范化输入：calculator 用表达式原文；其余工具用规范化 JSON（消除 LLM 序列化空白差异，
   // 否则同参数换空格写法可绕过 isBlocked 的防重调/防死循环判定）
@@ -202,6 +256,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
     // 注入 ToolContext（runId + workspaceRoot）供路径工具归一化 identity；LLM 不可覆盖
     const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext, effect);
     if (disposition.kind === 'replay') {
+      lifecycle.transition('replayed');
       observer.log(
         `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`,
       );
@@ -215,6 +270,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       return;
     }
     if (disposition.kind === 'uncertain') {
+      lifecycle.transition('uncertain');
       const uncertainMsg =
         `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, toolContext)}）` +
         `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
@@ -232,6 +288,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
 
   // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
   if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
+    lifecycle.transition('blocked');
     const blockMsg = `工具 ${toolName} 参数 "${input}" 已产生无效结果或失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明原因。`;
     observer.log(`[Blocked] ${blockMsg}`);
 
@@ -281,24 +338,41 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
   // v1.3.2：non_idempotent 开始执行前先持久化 executing 状态；
   //   persist(executing) 失败 → 禁止 execute，作为 Runtime 错误处理（防止无保护的副作用执行）。
   if (effect === 'non_idempotent') {
+    lifecycle.transition('intent_persisting');
     const opKey = operationIdentity(toolDef, args, toolContext);
     sideEffectGuard.begin(opKey);
     try {
       save();
     } catch (persistErr) {
+      lifecycle.transition('failed');
       const persistMsg = `[Side-Effect Persist Failed] 无法持久化 operation executing 状态（${opKey}），禁止执行 non_idempotent 工具: ${(persistErr as Error).message}`;
       observer.log(persistMsg);
       throw new Error(persistMsg);
     }
+    lifecycle.transition('intent_persisted');
   }
   const effectiveRetries = effect === 'non_idempotent' ? 0 : MAX_RETRY;
+  // v2.3 工具级超时（docs/long-task-timeout-plan.md 步骤 3）：每次调用一个派生
+  // deadline。Tool 声明 / 全局策略的预算内未 settle → 以 TimeoutAbortError 中止
+  // 本次调用并返回结构化 TOOL_TIMEOUT；用户取消经由父信号仍以标准 AbortError
+  // 传播（语义与 v1.6 取消路径一致）。execute settle 即释放 timer 与上游监听。
+  const deadlineMs = resolveToolTimeoutMs(toolDef, toolContext);
+  const deadline = createDeadline(
+    signal,
+    deadlineMs,
+    () => new TimeoutAbortError('tool', `Tool "${toolName}" exceeded its ${deadlineMs}ms budget`),
+  );
   for (let attempt = 1; attempt <= effectiveRetries + 1; attempt++) {
     try {
+      lifecycle.transition('executing');
       const start = performance.now();
       // ToolContext 由 Runtime 注入：runId/workspaceRoot 均不可见、不可通过 args 覆盖
       const rawResult = await execute(toolName, args, {
         ...toolContext,
-        signal,
+        // 本次调用的 deadline 信号：工具需监听并尽快终止；
+        // runSignal 保留原始 Run 取消信号（后台作业等长生命周期用途）。
+        signal: deadline.signal,
+        runSignal: toolContext.runSignal ?? signal,
         onSandboxEvent: (event: ToolSandboxEvent) => {
           if (event.type === 'shell_sandbox_started') {
             emit({
@@ -313,7 +387,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
             });
           }
         },
-      });
+      }).finally(() => deadline.dispose());
       const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
       // 多模态结果归一：文本部分走 validation/guard/状态；图片引用
@@ -390,6 +464,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
         });
         // Checkpoint: 结果无效时保存
         save();
+        lifecycle.transition('invalid_result');
         return; // 工具本身未抛错，无需重试
       }
 
@@ -425,6 +500,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       });
       // Checkpoint: 工具成功后保存
       save();
+      lifecycle.transition('succeeded');
       return; // 成功，跳出重试
     } catch (err) {
       // v2.0 Network Capability Check 拒绝：网络工具在网络关闭时被 policy 拦截。
@@ -434,6 +510,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       // - 审计：tool_error 事件带 network:"denied"，明确记录拒绝
       // - 将明确错误返回 LLM，由其决定换方法或请用户开启网络
       if (err instanceof NetworkDeniedError) {
+        lifecycle.transition('denied');
         const deniedMsg = err.message;
         observer.log(`[Network Denied] ${toolName}: ${deniedMsg}`);
         // 审计（拒绝也进 Trace；网络字段清晰标识被拦）
@@ -460,6 +537,45 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
         return; // 政策性拒绝，不重试
       }
 
+      // v2.3 工具级超时：deadline 在预算内到点（execute 仍挂在途）。
+      // 与用户取消严格区分：不进 AbortError 终态，而是结构化 TOOL_TIMEOUT
+      // 回传模型（不重试——同参数重试通常只是再烧一轮预算）。
+      if (deadline.signal.aborted && deadline.signal.reason instanceof TimeoutAbortError) {
+        if (effect === 'non_idempotent') {
+          sideEffectGuard.markUncertain(operationIdentity(toolDef, args, toolContext));
+          lifecycle.transition('uncertain');
+        } else {
+          lifecycle.transition('timed_out');
+        }
+        const timeoutMsg =
+          `TOOL_TIMEOUT: 工具 ${toolName} 在 ${deadlineMs}ms 预算内未完成，Runtime 已停止等待。` +
+          `这不是业务失败：若该操作需要更长时间（长构建/大数据处理），请改用后台执行（shell background=true 或 shellJob），` +
+          `或拆分任务后重试；不建议用相同参数立即重试。`;
+        observer.log(`[Tool 超时] ${toolName} 超过 ${deadlineMs}ms 预算，返回 TOOL_TIMEOUT`);
+        emit({
+          type: 'tool_error',
+          tool: toolName,
+          error: timeoutMsg,
+          attempt,
+          exhausted: true,
+          network: getNetworkMode(),
+          timeout: 'tool',
+        });
+        updateState(state, {
+          currentStep: 'tool_timeout',
+          currentError: timeoutMsg,
+          lastToolError: { tool: toolName, input, error: timeoutMsg, retries: attempt },
+        });
+        observeState('summary');
+        save();
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: timeoutMsg,
+        });
+        return; // 本 call 处理完毕（不重试），外层循环继续 → LLM 重新决策
+      }
+
       let msg = (err as Error).message;
       observer.log(`[Tool 错误] ${toolName}: ${msg}`);
 
@@ -468,6 +584,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       // The Host may pause here for explicit approval and run a fixed,
       // allowlisted macOS installer outside the Shell sandbox.
       if (err instanceof RequiredRuntimeToolUnavailableError) {
+        lifecycle.transition('dependency_preparation');
         const plan = getToolchainPreparationPlan(err.toolName);
         if (plan !== undefined && ctx.toolchainPreparationPort) {
           try {
@@ -511,6 +628,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       // 不记 failedSteps（uncertain 才是中止时唯一的真实语义）。
       // checkpoint 保留现场后向上抛出，由 Host 落 stopped。
       if (isAbortError(err)) {
+        lifecycle.transition(effect === 'non_idempotent' ? 'uncertain' : 'aborted');
         save();
         throw err;
       }
@@ -545,14 +663,13 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
       save();
 
       if (!willRetry) {
+        lifecycle.transition(effect === 'non_idempotent' ? 'uncertain' : 'failed');
         // 失败恢复：将错误（含"为什么不再重试"）作为消息返回 LLM，由其决策
         const exhaustedByRetries = attempt > effectiveRetries;
         const failureNote = exhaustedByRetries
           ? `重试 ${effectiveRetries} 次仍失败`
           : `该错误为确定性失败（${classification.reason}），未重试`;
-        observer.log(
-          `[恢复] 工具 ${toolName} ${failureNote}，将错误返回 LLM 由其决策`,
-        );
+        observer.log(`[恢复] 工具 ${toolName} ${failureNote}，将错误返回 LLM 由其决策`);
         updateState(state, {
           failedToolCalls: state.failedToolCalls + 1,
         });
@@ -568,6 +685,7 @@ export async function invokeToolCall(ctx: ToolInvocationContext, call: ToolCallS
         });
         return; // 跳出重试，外层循环继续 → LLM 重新决策
       }
+      lifecycle.transition('retry_wait');
       observer.log(
         `[重试 ${attempt}/${effectiveRetries}] 工具 ${toolName} 失败（${classification.reason}），正在重试...`,
       );

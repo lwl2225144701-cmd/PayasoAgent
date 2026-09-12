@@ -1,7 +1,7 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM），统一统计 PASS/FAIL
 // 用法: tsx tests/run-all.ts                        （或 npm run test:all）
 //      PAYASO_TEST_CONCURRENCY=8 tsx tests/run-all.ts   （覆盖默认并发）
-// 覆盖: 82 个无 LLM 套件，含 Runtime/bootstrap 边界、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
+// 覆盖: 87 个无 LLM 套件，含 Runtime/bootstrap 边界、静态依赖边界、工具调用状态机、三档文件系统权限、macOS seatbelt 沙箱、Workspace 生命周期与软删除回收站、
 //   Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、
 //   Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、
 //   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、工具链能力刷新与显式重试、docs contract、
@@ -41,6 +41,8 @@ const NAME_WIDTH = 26;
 
 const SUITES: { name: string; file: string }[] = [
   { name: 'runtime-boundary', file: 'tests/runtime-boundary.test.ts' },
+  { name: 'architecture-boundaries', file: 'tests/architecture-boundaries.test.ts' },
+  { name: 'tool-invocation-state-machine', file: 'tests/tool-invocation-state-machine.test.ts' },
   { name: 'runtime-loop', file: 'tests/runtime-loop.test.ts' },
   { name: 'host-timeout', file: 'tests/host-timeout.test.ts' },
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
@@ -115,6 +117,11 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'tool-call-arguments', file: 'tests/tool-call-arguments.test.ts' },
   { name: 'scratchpad-view', file: 'tests/scratchpad-view.test.ts' },
   { name: 'background-jobs', file: 'tests/background-jobs.test.ts' },
+  // v2.3 长任务与分层超时（docs/long-task-timeout-plan.md）：统一超时原语 / 工具级
+  // TOOL_TIMEOUT / 后台作业 Session 所有权与完成通知（LLM 看门狗用例并入 llm.test.ts）
+  { name: 'timeout-primitives', file: 'tests/timeout-primitives.test.ts' },
+  { name: 'tool-timeout', file: 'tests/tool-timeout.test.ts' },
+  { name: 'job-notification', file: 'tests/job-notification.test.ts' },
   // v2.2 Plan（Harness 持有的任务清单：状态机 / 投影注入 / 工具→事件闭环）
   { name: 'plan-state', file: 'tests/plan-state.test.ts' },
   { name: 'plan-view', file: 'tests/plan-view.test.ts' },

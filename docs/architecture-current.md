@@ -63,7 +63,8 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 │ Runtime Kernel (src/runtime/ + src/llm/ + src/tools/)        │
 │  agent.ts: Agent Loop 主循环（迭代/收尾/停止决策）              │
 │  agent-context.ts 装配 · turn-policy.ts 回合策略 ·             │
-│  tool-invocation/process-manager.ts 工具调用管道               │
+│  tool-invocation/process-manager.ts + state-machine.ts         │
+│  工具调用协调器 + 显式状态机                                   │
 │  state.ts · scratchpad.ts · checkpoint-port.ts · observer-port.ts │
 │  trace.ts · side-effect.ts · output-guard.ts                  │
 │  llm.ts: OpenAI 兼容 chat/completions(fetch,无 SDK)          │
@@ -96,6 +97,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/runtime/agent-context.ts`                    | 一次执行装配（State/Harness/Scratchpad/Trace/Checkpoint/SideEffectGuard/messages/观测闭包），唯一 owner |
 | `src/runtime/turn-policy.ts`                      | 回合收尾策略纯函数（空回合有界恢复、未完成收尾判定、停止决策） |
 | `src/runtime/tool-invocation/process-manager.ts`  | 一次工具调用的封闭管道：parse→resolve→schema 校验→JIT 审批→side-effect 判定→防死循环→execute→结果校验→output guard→有界重试→失败恢复（授权/Intent/执行/校验/Checkpoint/Abort 顺序不可重排） |                                                                                                              |
+| `src/runtime/tool-invocation/state-machine.ts`    | 工具调用阶段与合法转换的纯状态机；终态封闭，非法跳转立即失败，ProcessManager 只协调副作用 |                                                                                                              |
 | `src/runtime/state.ts`                            | AgentState：status / iteration / currentStep / 工具统计 / pendingAction / lastToolError                                                                                             |
 | `src/runtime/scratchpad.ts`                       | 工作记忆：completedSteps / failedSteps / invalidSteps / nextStep，随 system 注入不被裁剪                                                                                                    |
 | `src/harness/context-harness.ts`                  | Harness 入口：生成当轮临时模型视图，统一指令、历史、Scratchpad 与响应清理                                                                                                                              |
@@ -124,7 +126,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tools/glob-pattern.ts`                       | glob → RegExp 编译器（* / ? / ** / **/ / {a,b}，元字符按字面量）
 | `src/host/workspace-instructions.ts`              | 项目指令发现链（PAYASO.md/AGENTS.md/CLAUDE.md）+ skills 目录（.payaso/.claude/.pi）
 | `src/sandbox/shell-command-effect.ts`             | shell 命令级副作用分类（只读命令免回放；不确定即 non_idempotent）
-| `src/sandbox/background-jobs.ts`                  | 后台作业注册表（执行器端口注入、并发上限、输出预算、Run 终态回收）
+| `src/sandbox/background-jobs.ts`                  | 后台作业注册表（执行器端口注入、并发上限、输出预算；v2.3 起 Session 级所有权 + 增量输出 + 完成通知） |
 | `src/runtime/tool-error-classifier.ts`            | 工具错误分类（默认不重试；瞬时错误白名单）
 | `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
@@ -141,7 +143,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/host/routes/*-handler.ts`                    | Runtime / Settings / Workspace / Sessions / Runs 各资源域 handler |
 | `src/host/routes/static-handler.ts`               | 静态资源与 SPA fallback |                                                                                                                            |
 | `src/host/run-manager.ts`                         | Host 产品层门面：组装组合服务并保留对外公开 API；open/closing/closed 状态机；启动时 running/stopping→interrupted |
-| `src/host/run-lifecycle-service.ts`              | 活跃 Run 容器唯一 owner：createInSession/resume/stop/startAgent/finalizeRun（status+event 同一事务，幂等，失败不广播）；15 分钟运行时限保险丝（`AGENT_RUN_TIMEOUT_MS` 可覆盖）；close 支撑 abort/await |
+| `src/host/run-lifecycle-service.ts`              | 活跃 Run 容器唯一 owner：createInSession/resume/stop/startAgent/finalizeRun（status+event 同一事务，幂等，失败不广播）；close 支撑 abort/await。v2.3 起不再设固定总运行时限（分层超时见 2.x） |
 | `src/host/session-service.ts`                    | Session/Workspace CRUD、归档/删除守卫、/compact、/export、goal/plan/feedback；会话元数据 KV 键唯一 owner |
 | `src/host/model-service.ts`                      | Provider 目录、默认模型、模型配置解析（原子元组、视觉推断、Run 快照 fail-closed） |
 | `src/host/event-stream-service.ts`               | 事件序号、持久化、SSE 回放与 live 推送 |
@@ -187,7 +189,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","error"]
+["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","background_job_notified","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -224,7 +226,15 @@ for (i = startIter; ; i++):
 > 实现归属：装配在 `agent-context.ts`，回合收尾判定（空回合/未完成收尾）在 `turn-policy.ts`，
 > 2. 的逐个 tool_call 封闭管道在 `tool-invocation/process-manager.ts`；`agent.ts` 只保留迭代编排。
 
-Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**重试上限（v1.8 起由 `tool-error-classifier.ts` 判定，确定性错误只执行一次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。Host 侧默认以 15 分钟总运行时限（可由 `AGENT_RUN_TIMEOUT_MS` 覆盖）作为最后保险丝；超时会 abort Runtime 并将 Run 原子落为 `failed`。上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > 窗口 fallback 256K + 输出预留按窗口推导（v1.8：窗口 8%，夹在 4K–32K；不再固定 4K）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
+Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**重试上限（v1.8 起由 `tool-error-classifier.ts` 判定，确定性错误只执行一次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。
+
+**超时是分层的，不由 Agent Loop 统一计时（v2.3，docs/long-task-timeout-plan.md）**：
+- LLM：连接超时（`PAYASO_LLM_CONNECT_TIMEOUT_MS`，默认 30s）+ 流空闲看门狗（`PAYASO_LLM_IDLE_TIMEOUT_MS`，默认 120s）——持续输出不断续期，只有停滞才触发；超时不重试。
+- 普通工具：Tool 声明自己的超时预算（缺省 `PAYASO_TOOL_TIMEOUT_MS` 默认 5 分钟），由 `ToolInvocationProcessManager` 以 deadline 包裹 execute；到期返回结构化 `TOOL_TIMEOUT`（不重试、非业务失败）。
+- Shell 前台：保留命令级有界超时 + 进程树硬终止（`PAYASO_SHELL_TIMEOUT_MS` / `_MAX_MS`）。
+- 后台作业：无普通执行超时（Session 级所有权，作业随会话存在）。
+- 用户取消以标准 AbortError 沿 Run 信号传播；层超时以 `TimeoutAbortError` 标记来源（`timeoutOf()` 可识别）。
+上下文预算由 `model-context.ts` 按**当前 Run 实际选中模型**解析（`resolveModelContextConfig({ model })`，source=`run_model`）：**模型设置按模型配置的能力覆盖（contextWindow/maxOutputTokens）** > 内置模型表 > 窗口 fallback 256K + 输出预留按窗口推导（v1.8：窗口 8%，夹在 4K–32K；不再固定 4K）；仅在无显式 modelConfig（CLI/legacy）时走环境变量路径。
 
 ### 4.1.1 v1.8 内核不变量（可测试的硬约束）
 
@@ -243,7 +253,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | 原生适配器不得吞掉畸形参数 | `llm/tool-call-arguments.ts` 从 `toolcall_delta` 还原原文，交由 Runtime 统一解析 | `tests/tool-call-arguments.test.ts` |
 | 分片 tool_call 不得丢参数 | `llm.ts` SSE 归一化：空串 `id`/`name` 视为缺省（不覆盖已知身份，转发流与 OpenAI 协议一致）；后续分片按 index 合并 | `tests/tool-call-arguments.test.ts` |
 | scratchpad 不重复 transcript 内容 | `harness/scratchpad-view.ts` 只保留进度/失败/无效/下一步信号（实测 6.3K → <1.5K token） | `tests/scratchpad-view.test.ts` |
-| 后台作业不得成为孤儿 | `sandbox/background-jobs.ts` + `RunManager.finalizeRun` 终态回收 + Run 取消联动 | `tests/background-jobs.test.ts` |
+| 后台作业不得成为孤儿 | `sandbox/background-jobs.ts`（Session 级所有权 + 父信号联动）+ `SessionService.deleteSession` / `RunManager.close` 统一回收 | `tests/background-jobs.test.ts` |
 
 ### 4.2 三层状态职责
 
@@ -339,7 +349,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 82 个确定性套件（无 LLM，有界并发，约 17s）
+npm run test:all          # 84 个确定性套件（无 LLM，有界并发，约 17s）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）
@@ -371,7 +381,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 82 套件（无真实 LLM；含 Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 82 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 84 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 84 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

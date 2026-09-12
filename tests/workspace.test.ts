@@ -68,7 +68,7 @@ function test(name: string, fn: () => void | Promise<void>): void {
 }
 
 function quote(value: string): string {
-  return "'" + value.replaceAll("'", "'\\''") + "'";
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function denied(tool: string, args: Record<string, unknown>, context = ctxA): Promise<void> {
@@ -248,10 +248,10 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void
 
 test('Host stop 状态机：running→stopping→stopped，重复 stop 幂等（Case 2/3）', async () => {
   const originalFetch = globalThis.fetch;
-  const originalTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
+  const originalTimeout = process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
   // LLM 永不自行返回；abort 时以 AbortError 拒绝（真实取消路径）。
   // 保留较短超时作为兜底，避免异常路径下子进程被默认长超时拖住。
-  process.env.LLM_REQUEST_TIMEOUT_MS = '2000';
+  process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = '2000';
   const fetchSignals: AbortSignal[] = [];
   globalThis.fetch = async (_input, init) =>
     new Promise<Response>((_resolve, reject) => {
@@ -302,8 +302,8 @@ test('Host stop 状态机：running→stopping→stopped，重复 stop 幂等（
     assert.ok(fetchSignals.length > 0 && fetchSignals.every((s) => s.aborted));
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;
-    else process.env.LLM_REQUEST_TIMEOUT_MS = originalTimeout;
+    if (originalTimeout === undefined) delete process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+    else process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = originalTimeout;
   }
 });
 
@@ -338,8 +338,8 @@ test('Host resume 拒绝对同一 running runId 启动第二个 Agent', () => {
   }
   seed.close();
   const originalFetch = globalThis.fetch;
-  const originalTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
-  process.env.LLM_REQUEST_TIMEOUT_MS = '250';
+  const originalTimeout = process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+  process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = '250';
   globalThis.fetch = async (_input, init) =>
     new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener(
@@ -357,8 +357,8 @@ test('Host resume 拒绝对同一 running runId 启动第二个 Agent', () => {
     assert.equal(manager.get(runId)?.status, 'running');
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;
-    else process.env.LLM_REQUEST_TIMEOUT_MS = originalTimeout;
+    if (originalTimeout === undefined) delete process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+    else process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = originalTimeout;
     fs.rmSync(checkpointPath(runId), { force: true });
   }
 });
@@ -442,11 +442,11 @@ test('Workspace 外文件攻击：../、绝对路径、symlink 的读写删除�
 test('Run A/B 真实隔离：绝对路径、../ 与 symlink 均不能跨 Workspace', async () => {
   await execute('writeFile', { path: 'a-only.txt', content: 'A' }, ctxA);
   await execute('writeFile', { path: 'b-write.txt', content: 'B' }, ctxB);
-  await denied('readFile', { path: canonicalB + '/b-only.txt' }, ctxA);
+  await denied('readFile', { path: `${canonicalB}/b-only.txt` }, ctxA);
   await denied('readFile', { path: '../workspace-B/b-only.txt' }, ctxA);
   fs.symlinkSync(path.join(rootB, 'b-only.txt'), path.join(rootA, 'b-link'));
   await denied('readFile', { path: 'b-link' }, ctxA);
-  await denied('readFile', { path: canonicalA + '/a-only.txt' }, ctxB);
+  await denied('readFile', { path: `${canonicalA}/a-only.txt` }, ctxB);
   assert.equal(fs.readFileSync(path.join(rootA, 'a-only.txt'), 'utf8'), 'A');
   assert.equal(fs.readFileSync(path.join(rootB, 'b-write.txt'), 'utf8'), 'B');
 });
@@ -474,10 +474,10 @@ if (process.platform === 'darwin') {
       await assert.rejects(() => execute('shell', { command: 'pwd' }, ctxA), /unavailable/i);
       return;
     }
-    await denied('shell', { command: 'cat ' + quote(outsideFile) });
-    await denied('shell', { command: 'printf HACKED > ' + quote(outsideFile) });
-    await denied('shell', { command: 'rm -f ' + quote(outsideFile) });
-    await denied('shell', { command: 'sh -c ' + quote('cat ' + quote(outsideFile)) });
+    await denied('shell', { command: `cat ${quote(outsideFile)}` });
+    await denied('shell', { command: `printf HACKED > ${quote(outsideFile)}` });
+    await denied('shell', { command: `rm -f ${quote(outsideFile)}` });
+    await denied('shell', { command: `sh -c ${quote(`cat ${quote(outsideFile)}`)}` });
     assert.equal(fs.readFileSync(outsideFile, 'utf8'), 'OUTSIDE-UNCHANGED');
   });
 }

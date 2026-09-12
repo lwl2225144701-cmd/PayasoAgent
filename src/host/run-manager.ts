@@ -4,8 +4,9 @@
 // 边界：每类可变状态有唯一 owner —— 活跃 Run 容器归 RunLifecycleService，
 // Session/Workspace 规则归 SessionService；本类只做委托与装配。
 
-import { createDefaultRunStore } from './persistence/sqlite-store.js';
-import type { RunStore } from './persistence/store.js';
+import type { ApprovalPort } from '../runtime/approval-port.js';
+import { disposeAllBackgroundJobs } from '../sandbox/background-jobs.js';
+import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
 import {
   getRuntimeToolchainCapabilities,
   type RuntimeToolchainCapabilities,
@@ -14,27 +15,26 @@ import type {
   ToolchainPreparationPort,
   ToolchainPreparationRunner,
 } from '../sandbox/toolchain-preparation.js';
-import { prepareMacOSToolchain } from '../sandbox/macos-toolchain-preparer.js';
-import type { ApprovalPort } from '../runtime/approval-port.js';
-import { ModelService } from './model-service.js';
-import { EventStreamService } from './event-stream-service.js';
 import { ApprovalCoordinator } from './approval-coordinator.js';
-import { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
-import { SessionService } from './session-service.js';
-import { RunLifecycleService, type InternalRun } from './run-lifecycle-service.js';
-
+import { EventStreamService } from './event-stream-service.js';
+import { ModelService } from './model-service.js';
+import { createDefaultRunStore } from './persistence/sqlite-store.js';
+import type { RunStore } from './persistence/store.js';
 import { scanPromptCommands } from './prompt-command.js';
+import { type InternalRun, RunLifecycleService } from './run-lifecycle-service.js';
+import { SessionService } from './session-service.js';
+import { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
+
 export { expandPromptCommand } from './prompt-command.js';
-import { getWorkspace } from './workspace.js';
-import {
-  DEFAULT_PERMISSION_MODE,
-  type PermissionMode,
-} from '../permission-mode.js';
+
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '../permission-mode.js';
 import type {
   CreateModelProviderInput,
   StoredSession,
   UpdateModelProviderInput,
 } from './persistence/store.js';
+import type { HostEvent } from './run-events.js';
+import type { SessionStats } from './run-stats.js';
 import type {
   CleanupError,
   CreateRunAttachmentInput,
@@ -42,9 +42,9 @@ import type {
   HostSession,
   SseSink,
 } from './run-types.js';
-import type { HostEvent } from './run-events.js';
-import type { SessionStats } from './run-stats.js';
+import { getWorkspace } from './workspace.js';
 
+export type { InternalRun } from './run-lifecycle-service.js';
 export type {
   CleanupError,
   CreateRunAttachmentInput,
@@ -52,7 +52,6 @@ export type {
   HostSession,
   SseSink,
 } from './run-types.js';
-export type { InternalRun } from './run-lifecycle-service.js';
 
 export class RunManager {
   private lifecycle: 'open' | 'closing' | 'closed' = 'open';
@@ -120,6 +119,9 @@ export class RunManager {
       this.runLifecycle.abortActiveRuns();
       this.toolchainCoordinator.abortAll();
       await this.runLifecycle.awaitActiveRunsSettled();
+      // v2.3 Background Job（Session 级所有权）：Host 关闭即回收全部作业（幂等），
+      // 绝不留下孤儿进程。
+      disposeAllBackgroundJobs();
 
       // 关闭所有 SSE 连接
       this.eventStreamService.closeAll();

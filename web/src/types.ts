@@ -395,6 +395,15 @@ export interface PlanIncompleteAtFinishEvent extends TraceEventBase {
   unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
 }
 
+/**
+ * v2.3 后台任务完成通知：Agent Loop 在迭代边界把会话完成队列注入模型视图。
+ * 只作观测（前端不新增恢复/继续交互）；未消费的通知仍留在会话队列。
+ */
+export interface BackgroundJobNotifiedEvent extends TraceEventBase {
+  type: 'background_job_notified';
+  jobs: Array<{ jobId: string; status: string }>;
+}
+
 export interface ErrorEvent extends TraceEventBase {
   type: 'error';
   message: string;
@@ -481,6 +490,7 @@ export type TraceEvent =
   | ScratchpadUpdateEvent
   | PlanUpdateEvent
   | PlanIncompleteAtFinishEvent
+  | BackgroundJobNotifiedEvent
   | ErrorEvent;
 
 export type LifecycleEvent =

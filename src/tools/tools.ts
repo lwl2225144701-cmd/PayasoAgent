@@ -15,6 +15,9 @@ import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
   runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
+  // Background Job 的 Session 级所有权：作业注册表按 sessionId 建索引，
+  // 不随单个 Run 结束销毁。缺省（CLI/旧测试）回退到 runId 派生键。
+  sessionId?: string;
   workspaceRoot: string; // Host/Runtime 授权并 canonicalize 的真实工作根，LLM 不可见不可覆盖
   // Host 在 Run 创建时固化的文件系统能力；缺省仅用于兼容旧 CLI/测试调用。
   // Agent Tool Schema 不包含此字段，LLM 无法自行升级。
@@ -26,9 +29,15 @@ export interface ToolContext {
   // v2.0.1 JIT Approval：网络访问即时授权端口（Host 注入；缺省 = 拒绝）。
   // ask 模式下由 Agent pipeline 在执行前调用 request()；工具本身不感知批准。
   approvalPort?: ApprovalPort;
-  // True cancellation (v1.6)：Run 的 AbortSignal；长任务工具（shell 及未来 browser/computer）
-  // 必须监听并尽快终止，读类/原子文件工具可忽略。与 runId 一样由 Runtime 注入，LLM 不可见。
+  // True cancellation (v1.6)：Run 的 AbortSignal 派生的本次调用 deadline 信号；
+  // 长任务工具（shell 及未来 browser/computer）必须监听并尽快终止，读类/原子
+  // 文件工具可忽略。与 runId 一样由 Runtime 注入，LLM 不可见。
+  // 工具级超时（v2.3）到期时由该信号携带 TimeoutAbortError 中止。
   signal?: AbortSignal;
+  // 原始 Run 取消信号（不经本次调用的工具级 deadline 派生）。仅当工作需要
+  // 比"本次调用"更长生命周期的取消时使用——典型是 shell 后台作业的父信号：
+  // 用户停止 Run 仍要传播取消，但工具调用的 deadline 不能顺手杀死后台作业。
+  runSignal?: AbortSignal;
   // Runtime-only observation hook; never included in an LLM Tool Schema.
   onSandboxEvent?: (event: ToolSandboxEvent) => void;
   // v2.2 Plan：计划写入口（Runtime 装饰 Harness 端口后注入）。工具只见文本：
@@ -99,6 +108,12 @@ export interface Tool {
   // v1.5 融合身份机制：getOperationKey 可选接收 ToolContext（运行时注入，含 runId/workspaceRoot），
   //   路径类工具用它做路径归一化（canonicalPathKey），使 ./work/a.txt 与 work/a.txt 归一为同一 key 且不暴露宿主绝对路径。
   getOperationKey?: (args: Record<string, unknown>, context?: ToolContext) => string;
+  // v2.3 工具级超时预算：Tool 声明自己的执行 deadline（毫秒），由
+  // ToolInvocationProcessManager 在 execute 外包一层有界等待；到期以
+  // TimeoutAbortError 中止本调用并返回结构化 TOOL_TIMEOUT 结果（不重试）。
+  // 缺省走全局策略（PAYASO_TOOL_TIMEOUT_MS，默认 5 分钟）。函数形式用于
+  // 依赖运行时策略的工具（如 shell 的预算必须大于其内部 command timeout）。
+  timeoutMs?: number | ((context: ToolContext) => number);
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
   // v1.2: 可选的业务结果有效性校验。无此字段则默认结果有效。
   // execute 负责"能不能执行成功"；validateResult 负责"结果能不能继续被 Agent 使用"。
@@ -235,7 +250,7 @@ export function validateToolResult(
   result: unknown,
 ): { valid: boolean; reason?: string } {
   const tool = registry.get(name);
-  if (!tool || !tool.validateResult) return { valid: true };
+  if (!tool?.validateResult) return { valid: true };
   const r = tool.validateResult(result);
   if (typeof r === 'boolean') return { valid: r };
   return r;

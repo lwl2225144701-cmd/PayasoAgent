@@ -103,6 +103,9 @@ export type TraceEvent =
       exhausted: boolean; // 是否已达到重试上限
       // v2.0 审计：执行时的全局网络模式；网络拒绝 = "denied"（工具未执行）
       network?: 'on' | 'off' | 'ask' | 'denied';
+      // v2.3 工具级超时：本次失败由 Tool 声明/全局策略的 deadline 触发
+      // （区别于业务错误与网络拒绝；TOOL_TIMEOUT 结构化结果随之回传模型）。
+      timeout?: 'tool';
     }
   | {
       type: 'context_trim';
@@ -239,6 +242,13 @@ export type TraceEvent =
       unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
     }
   | {
+      // v2.3 后台任务完成通知：Agent Loop 在迭代边界抽取会话通知队列并注入模型视图。
+      type: 'background_job_notified';
+      step: number;
+      timestamp: string;
+      jobs: Array<{ jobId: string; status: string }>;
+    }
+  | {
       type: 'error';
       step: number;
       timestamp: string;
@@ -305,6 +315,7 @@ export type TraceEventInput =
       attempt: number;
       exhausted: boolean;
       network?: 'on' | 'off' | 'ask' | 'denied';
+      timeout?: 'tool';
     }
   | {
       type: 'context_trim';
@@ -403,6 +414,10 @@ export type TraceEventInput =
       completed: number;
       total: number;
       unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
+    }
+  | {
+      type: 'background_job_notified';
+      jobs: Array<{ jobId: string; status: string }>;
     }
   | {
       type: 'error';

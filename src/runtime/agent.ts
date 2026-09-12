@@ -2,9 +2,6 @@
 
 import type { AgentContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
-import { createAgentContext } from './agent-context.js';
-import { decideEmptyTurn, decideIncompleteTurn } from './turn-policy.js';
-import { invokeToolCall } from './tool-invocation/process-manager.js';
 import {
   type ChatMessage,
   type ChatStreamDelta,
@@ -14,16 +11,20 @@ import {
 } from '../llm/llm.js';
 import { promptSideTokens, type TokenUsage } from '../llm/token-usage.js';
 import { storedPermissionMode } from '../permission-mode.js';
+import { drainJobCompletionNotifications } from '../sandbox/background-jobs.js';
 import type { ToolchainPreparationPort } from '../sandbox/toolchain-preparation.js';
 import { getSchemas } from '../tools/tools.js';
 import { throwIfAborted } from '../util/abort.js';
+import { createAgentContext } from './agent-context.js';
 import type { ApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
 import type { AgentExecutionContext } from './contracts.js';
 import { materializeMessagesForModel } from './image-materialize.js';
 import type { RuntimeObserver } from './observer-port.js';
 import { updateState } from './state.js';
+import { invokeToolCall } from './tool-invocation/process-manager.js';
 import type { TraceEvent } from './trace.js';
+import { decideEmptyTurn, decideIncompleteTurn } from './turn-policy.js';
 
 // Harness may request a graceful stop after the current tool turn. This is
 // intentionally distinct from an execution error: Host turns it into the
@@ -139,6 +140,7 @@ export async function runAgent(
     pushToolCallError,
   } = createAgentContext({
     runId,
+    sessionId: executionContext.sessionId,
     task,
     workspaceRoot,
     permissionMode,
@@ -158,6 +160,38 @@ export async function runAgent(
   // 无限触发额外请求）。
   let incompleteTurnRecoveries = 0;
 
+  // ---- v2.3 Background Job 完成通知（docs/long-task-timeout-plan.md 步骤 5）----
+  // 作业归属 Session；本 Run 在迭代边界抽取会话的完成通知并注入模型视图。
+  // 连续唤醒有上限（每轮 Run 独立计数）：通知风暴下模型既不被锁死在通知循环里，
+  // 未消费的通知也仍留在会话队列（后续 Run / 显式 list 可继续消费）。
+  const jobSessionKey = executionContext.sessionId ?? `run-${runId}`;
+  const MAX_JOB_COMPLETION_WAKEUPS = 3;
+  let jobCompletionWakeups = 0;
+  const injectJobNotifications = (): boolean => {
+    if (jobCompletionWakeups >= MAX_JOB_COMPLETION_WAKEUPS) {
+      // 上限已到：不 drain——通知留在会话队列，不丢。
+      return false;
+    }
+    const completed = drainJobCompletionNotifications(jobSessionKey);
+    if (completed.length === 0) return false;
+    const names = completed.map((n) => `${n.jobId} (${n.status})`).join('、');
+    const notice =
+      `[后台任务通知] 以下后台任务已完成：${names}。` +
+      `如当前任务仍在等待它们的结果，请用 shellJob {action:"output", jobId:"<作业id>"} 读取输出后继续；` +
+      `如已不再需要，请忽略本条通知。`;
+    messages.push({ role: 'user', content: notice });
+    emit({
+      type: 'background_job_notified',
+      jobs: completed.map((n) => ({ jobId: n.jobId, status: n.status })),
+    });
+    observer.log(
+      `[后台任务通知] ${names} → 已注入模型视图（连续唤醒 ${jobCompletionWakeups + 1}/${MAX_JOB_COMPLETION_WAKEUPS}）`,
+    );
+    save();
+    jobCompletionWakeups++;
+    return true;
+  };
+
   try {
     // No fixed iteration cap: a turn continues while the model keeps
     // producing tool calls. Cancellation, tool safety, and the optional
@@ -166,6 +200,10 @@ export async function runAgent(
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
       throwIfAborted(opts.signal);
+      // v2.3 后台任务完成通知：迭代边界注入（本轮 LLM 调用即看到）。
+      // 注意：计数只在"模型做出真实进展（执行工具调用）"时重置——绝不能在这里
+      // 因为顶部抽空就清零，否则上一轮收尾注入的计数会被立即抹掉，上限形同虚设。
+      injectJobNotifications();
       observer.log(`\n--- 迭代 ${i + 1} ---`);
 
       // State: 进入循环，更新迭代次数
@@ -276,6 +314,11 @@ export async function runAgent(
 
       // 2. LLM 决策日志：是否选择工具
       if (!assistantMsg.tool_calls?.length) {
+        // v2.3 完成通知竞态：模型"询一句、准备收尾"的 LLM 调用进行期间作业完成——
+        // 先注入通知并继续（"读取结果后再回答"），而不是让 Run 以旧结论直接结束。
+        if (injectJobNotifications()) {
+          continue;
+        }
         observer.log('[LLM 决策] 未选择工具 → 检查是否为最终答案');
         const answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
 
@@ -414,6 +457,9 @@ export async function runAgent(
         );
       }
 
+      // v2.3 连续唤醒计数重置：本迭代确实执行了工具（模型在做真实工作），
+      // 之后的完成通知重新允许唤醒（不再视作"连续空转被通知锁死"的状态）。
+      jobCompletionWakeups = 0;
 
       // Harness owns context policy. It may stop cleanly after a completed
       // tool turn (for example before the next turn would exceed its budget).

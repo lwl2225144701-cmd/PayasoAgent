@@ -5,6 +5,9 @@ import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.
 // this value but never derives a Workspace root or permission capability.
 export interface AgentExecutionContext {
   runId: string;
+  // Background Job（Session 级所有权）的会话键；Host 注入持久会话 id，
+  // CLI/测试未注入时 Runtime 回退到 runId 派生键。
+  sessionId?: string;
   workspaceRoot: string;
   permissionMode: PermissionMode;
   // Host/bootstrap-owned startup snapshot; contains no host paths.

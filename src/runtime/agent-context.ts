@@ -8,32 +8,31 @@
 import { type AgentContextHarness, DefaultContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
 import { countCompleted } from '../harness/plan.js';
-import type {
-  ChatMessage,
-  MessageImage,
-  ModelConfig,
-} from '../llm/llm.js';
+import type { ChatMessage, MessageImage, ModelConfig } from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
-import { formatToolCallError, type ToolContext, type ToolCallError } from '../tools/tools.js';
+import type { ToolchainPreparationPort } from '../sandbox/toolchain-preparation.js';
+import { formatToolCallError, type ToolCallError, type ToolContext } from '../tools/tools.js';
 import type { ApprovalPort } from './approval-port.js';
 import { resolveApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
 import type { AgentExecutionContext } from './contracts.js';
 import { protectRuntimeObserver, type RuntimeObserver } from './observer-port.js';
+import { createScratchpad, type Scratchpad } from './scratchpad.js';
+import { createSideEffectGuard, type SideEffectGuard } from './side-effect.js';
+import { type AgentState, createState, updateState } from './state.js';
 import {
-  createScratchpad,
-  type Scratchpad,
-} from './scratchpad.js';
-import {
-  createSideEffectGuard,
-  type SideEffectGuard,
-} from './side-effect.js';
-import { createState, updateState, type AgentState } from './state.js';
-import { createTrace, addEvent, type Trace, type TraceEvent, type TraceEventInput } from './trace.js';
-import type { ToolchainPreparationPort } from '../sandbox/toolchain-preparation.js';
+  addEvent,
+  createTrace,
+  type Trace,
+  type TraceEvent,
+  type TraceEventInput,
+} from './trace.js';
 
 export interface AgentContextDeps {
   runId: string;
+  // Background Job 的 Session 级所有权：工具上下文携带 sessionId 供作业注册表
+  // 按会话建索引（不随 Run 结束销毁）。缺省（CLI/旧测试）回退 runId 派生键。
+  sessionId?: string;
   task: string;
   workspaceRoot: string;
   permissionMode: AgentExecutionContext['permissionMode'];
@@ -52,6 +51,8 @@ export interface AgentContextDeps {
     previousHarnessState?: ContextHarnessState;
     approvalPort?: ApprovalPort;
     toolchainPreparationPort?: ToolchainPreparationPort;
+    // 原始 Run 取消信号（工具级 deadline 由其派生；工具上下文同时直传原信号）。
+    signal?: AbortSignal;
   };
 }
 
@@ -76,19 +77,31 @@ export interface AgentContext {
 }
 
 export function createAgentContext(deps: AgentContextDeps): AgentContext {
-  const { runId, task, workspaceRoot, permissionMode, toolchain, visionEnabled, resume } = deps;
+  const {
+    runId,
+    sessionId,
+    task,
+    workspaceRoot,
+    permissionMode,
+    toolchain,
+    visionEnabled,
+    resume,
+  } = deps;
   const opts = deps.opts;
 
   // 视觉能力随模型配置固化：read 等读图工具据此决定返回图片块还是文本占位。
   // 先装配 Runtime 已就绪的部分；planPort 需要等 Harness 创建后再接（见下）。
   const toolContext: ToolContext = {
     runId,
+    sessionId,
     workspaceRoot,
     permissionMode,
     networkMode: getNetworkMode(),
     approvalPort: resolveApprovalPort(opts.approvalPort),
     toolchain,
     vision: visionEnabled,
+    // 原始 Run 取消信号：后台作业等长生命周期用途（用户停止仍传播取消）。
+    runSignal: opts.signal,
   };
   const observer = protectRuntimeObserver(opts.observer);
 

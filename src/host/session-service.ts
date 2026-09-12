@@ -11,21 +11,19 @@
 import fs from 'node:fs';
 import { DefaultContextHarness } from '../harness/context-harness.js';
 import { normalizeContextHarnessState } from '../harness/context-state.js';
-import {
-  loadCheckpoint,
-  saveCheckpoint,
-} from '../persistence/file-checkpoint-store.js';
-import type { Checkpoint } from '../runtime/checkpoint-port.js';
-import { getSchemas } from '../tools/tools.js';
 import { storedPermissionMode } from '../permission-mode.js';
+import { loadCheckpoint, saveCheckpoint } from '../persistence/file-checkpoint-store.js';
+import type { Checkpoint } from '../runtime/checkpoint-port.js';
+import { disposeSessionBackgroundJobs } from '../sandbox/background-jobs.js';
+import { getSchemas } from '../tools/tools.js';
+import type { ModelService } from './model-service.js';
 import type { RunStore, StoredRun, StoredSession } from './persistence/store.js';
 import { aggregateSessionStats, deriveRunStats, type SessionStats } from './run-stats.js';
-import type { ModelService } from './model-service.js';
-import { createZip, type ZipEntry } from './zip.js';
 import type { CleanupError, HostRun, HostRunStatus, HostSession } from './run-types.js';
 import { isCancellable } from './run-types.js';
 import { publicSessionView, publicStoredView } from './run-views.js';
 import { clearWorkspace, getWorkspace, renameWorkspaceLabel } from './workspace.js';
+import { createZip, type ZipEntry } from './zip.js';
 
 // 会话元数据 KV 键（一次建表支撑多个命令，键由本服务统一管理）
 const META_PLAN_MODE = 'plan_mode';
@@ -171,9 +169,9 @@ export class SessionService {
     if (!session) throw new Error('Session not found');
     if (session.deletedAt) throw new Error('Session already archived');
 
-    const hasRunning = this.host.listActiveRuns().some(
-      (r) => r.sessionId === sessionId && isCancellable(r.status),
-    );
+    const hasRunning = this.host
+      .listActiveRuns()
+      .some((r) => r.sessionId === sessionId && isCancellable(r.status));
     if (hasRunning) throw new Error('Session has a running Run');
 
     const now = new Date().toISOString();
@@ -203,6 +201,9 @@ export class SessionService {
 
     const runs = this.store.listRunsBySession(sessionId, { includeDeleted: true });
     const deleted = this.store.deleteSession(sessionId);
+    // v2.3 Background Job（Session 级所有权）：Session 删除即统一回收其作业，
+    // 绝不留下孤儿进程（注册表按 sessionId 索引；幂等）。
+    disposeSessionBackgroundJobs(sessionId);
     const cleanupErrors: CleanupError[] = [];
     for (const run of runs) {
       cleanupErrors.push(...this.host.removeActiveRun(run.runId));
@@ -386,12 +387,10 @@ export class SessionService {
           {
             goal: this.store.getSessionMeta(sessionId, META_GOAL),
             planMode: this.getSessionPlanMode(sessionId),
-            feedback: this.store
-              .listSessionMeta(sessionId, META_FEEDBACK_PREFIX)
-              .map((item) => ({
-                at: item.key.slice(META_FEEDBACK_PREFIX.length),
-                comment: item.value,
-              })),
+            feedback: this.store.listSessionMeta(sessionId, META_FEEDBACK_PREFIX).map((item) => ({
+              at: item.key.slice(META_FEEDBACK_PREFIX.length),
+              comment: item.value,
+            })),
           },
           null,
           2,
