@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PayasoAgent v2.2 ToolInvocation ProcessManager 编排全景",
+    "quality_profile": "showcase",
+    "viewBox": [1600, 1050]
+  },
+  "lanes": [
+    { "id": "pipeline", "label": "进管管线" },
+    { "id": "gates", "label": "三道安全门" },
+    { "id": "intent", "label": "意图保护" },
+    { "id": "execute", "label": "执行" },
+    { "id": "fail", "label": "失败面" },
+    { "id": "result", "label": "结果面" }
+  ],
+  "phases": [
+    { "id": "ph1", "label": "进管三关", "fromCol": 0, "toCol": 1 },
+    { "id": "ph2", "label": "安全门 / 执行 / 结果", "fromCol": 2, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["pipe", "schema", "jit", "se_gate", "block", "exec"],
+  "nodes": [
+    { "id": "pipe", "lane": "pipeline", "col": 0, "type": "backend", "label": "Parse+Resolve", "sublabel": "参数·工具查找" },
+    { "id": "schema", "lane": "pipeline", "col": 1, "type": "security", "label": "Schema校验", "sublabel": "违规显式回传" },
+    { "id": "jit", "lane": "gates", "col": 2, "type": "security", "label": "JIT审批", "sublabel": "ask+网络" },
+    { "id": "se_gate", "lane": "gates", "col": 3, "type": "security", "label": "副作用门", "sublabel": "回放拦截" },
+    { "id": "block", "lane": "gates", "col": 5, "type": "security", "label": "防死循环", "sublabel": "超限禁调" },
+    { "id": "intent", "lane": "intent", "col": 3, "type": "database", "label": "begin+save", "sublabel": "executing落盘" },
+    { "id": "retry", "lane": "execute", "col": 3, "type": "messagebus", "label": "有界重试", "sublabel": "仅瞬态" },
+    { "id": "exec", "lane": "execute", "col": 5, "type": "backend", "label": "execute()", "sublabel": "deadline沙箱" },
+    { "id": "recover", "lane": "fail", "col": 1, "type": "external", "label": "恢复回传", "sublabel": "错误→LLM" },
+    { "id": "classify", "lane": "fail", "col": 3, "type": "security", "label": "错误分类", "sublabel": "瞬时才重试" },
+    { "id": "check", "lane": "result", "col": 4, "type": "security", "label": "校验+Guard", "sublabel": "受限入库" },
+    { "id": "done", "lane": "result", "col": 5, "type": "cloud", "label": "记账返回", "sublabel": "state+sp+save" }
+  ],
+  "edges": [
+    { "id": "e1", "from": "pipe", "to": "schema", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "straight" },
+    { "id": "e2", "from": "schema", "to": "jit", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "e3", "from": "jit", "to": "se_gate", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "straight" },
+    { "id": "e4", "from": "se_gate", "to": "block", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "straight" },
+    { "id": "e5", "from": "block", "to": "exec", "label": "幂等直通", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e6", "from": "block", "to": "intent", "label": "写操作", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e7", "from": "intent", "to": "exec", "label": "落盘成功", "variant": "emphasis", "fromSide": "bottom", "toSide": "left" },
+    { "id": "e8", "from": "exec", "to": "check", "label": "成功", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 2 },
+    { "id": "e9", "from": "check", "to": "done", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "straight" },
+    { "id": "e10", "from": "exec", "to": "classify", "label": "异常", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e11", "from": "classify", "to": "retry", "variant": "default", "role": "branch", "fromSide": "top", "toSide": "bottom", "route": "straight" },
+    { "id": "e12", "from": "retry", "to": "exec", "label": "重试", "variant": "default", "role": "branch", "fromSide": "right", "toSide": "left", "route": "straight" },
+    { "id": "e13", "from": "classify", "to": "recover", "label": "耗尽", "variant": "security", "role": "error" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "进管三关（invocation error）", "items": ["parseToolArguments：malformed 绝不执行、不建副作用", "getTool 未知工具 → 结构化错误回传模型自修正", "Schema 校验：未知/缺失/类型错显式回传，绝不静默丢弃", "三关失败均走 pushToolCallError，不进执行重试（模型修正≠瞬态重试）"] },
+    { "dot": "rose", "title": "三道安全门", "items": ["JIT审批(ask+网络)：拒绝→denied 审计，不建副作用、不重试", "副作用门(仅 non_idempotent)：succeeded→replayed 回放；executing/uncertain→拦截不伪造", "resolveToolEffect 按本次调用解析：shell 只读命令不再被回放缓存", "防死循环：canonical input 相同 tool+参数失败>MAX_RETRY(2)→blocked"] },
+    { "dot": "violet", "title": "意图保护与 deadline", "items": ["non_idempotent：begin+save(executing) 失败→禁止 execute 直接 throw", "effectiveRetries：幂等=2 / non_idempotent=0（首次失败即 uncertain 交 LLM）", "v2.3 deadline：Tool.timeoutMs 或全局默认；TimeoutAbortError≠用户 AbortError", "shell 沙箱事件经 onSandboxEvent 全程入 trace"] },
+    { "dot": "emerald", "title": "结果面与失败面", "items": ["执行成功≠结果有效：validateResult 看完整 raw；guard 后一切入库内容受限", "invalid_result：不进 completedSteps、单独计数、恢复消息回传", "classifyToolError：确定性错误（缺文件/越界/参数非法/策略拒绝）不重试", "abort 终态：save 保现场后 throw，Host 落 stopped——不重试不写恢复消息", "dep_prep 闭环：缺可执行→Host 受控安装+refreshToolchain，原命令不自动重试"] }
+  ]
+}

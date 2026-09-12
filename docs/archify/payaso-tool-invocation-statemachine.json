@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PayasoAgent v2.2 ToolInvocation 状态机（ALLOWED_TRANSITIONS）",
+    "quality_profile": "showcase",
+    "viewBox": [1600, 1050]
+  },
+  "lanes": [
+    { "id": "precheck", "label": "入站解析" },
+    { "id": "gate", "label": "授权门" },
+    { "id": "effect", "label": "效果门" },
+    { "id": "durable", "label": "持久化与恢复" },
+    { "id": "execute", "label": "执行" },
+    { "id": "exit", "label": "终态（封闭集）", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "ph1", "label": "解析准入", "fromCol": 0, "toCol": 1 },
+    { "id": "ph2", "label": "授权/效果门", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "ph3", "label": "执行/终态", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["received", "parse", "validated", "authorized", "effect_checked", "executing", "succeeded"],
+  "nodes": [
+    { "id": "received", "lane": "precheck", "col": 0, "type": "external", "label": "received", "sublabel": "tool_call入站" },
+    { "id": "parse", "lane": "precheck", "col": 1, "type": "backend", "label": "parse", "sublabel": "参数+工具解析" },
+    { "id": "validated", "lane": "precheck", "col": 3, "type": "security", "label": "validated", "sublabel": "schema校验" },
+    { "id": "auth_pending", "lane": "gate", "col": 1, "type": "messagebus", "label": "auth_pending", "sublabel": "审批等待" },
+    { "id": "authorized", "lane": "gate", "col": 3, "type": "security", "label": "authorized", "sublabel": "批准" },
+    { "id": "effect_checked", "lane": "effect", "col": 3, "type": "security", "label": "effect_checked", "sublabel": "副作用分类" },
+    { "id": "dep_prepare", "lane": "durable", "col": 0, "type": "backend", "label": "dep_prepare", "sublabel": "工具链安装" },
+    { "id": "retry_wait", "lane": "durable", "col": 1, "type": "messagebus", "label": "retry_wait", "sublabel": "退避等待" },
+    { "id": "intent_persist", "lane": "durable", "col": 4, "type": "database", "label": "intent_persist", "sublabel": "ing→ed" },
+    { "id": "effect_unknown", "lane": "durable", "col": 5, "type": "cloud", "label": "effect_unknown", "sublabel": "3态终局" },
+    { "id": "executing", "lane": "execute", "col": 3, "type": "backend", "label": "executing", "sublabel": "invokeToolCall" },
+    { "id": "denied", "lane": "exit", "col": 0, "type": "security", "label": "denied", "sublabel": "审批拒绝" },
+    { "id": "aborted", "lane": "exit", "col": 1, "type": "security", "label": "aborted", "sublabel": "取消信号" },
+    { "id": "failed", "lane": "exit", "col": 3, "type": "security", "label": "failed", "sublabel": "+超时" },
+    { "id": "succeeded", "lane": "exit", "col": 5, "type": "cloud", "label": "succeeded", "sublabel": "唯一成功" }
+  ],
+  "edges": [
+    { "id": "e1", "from": "received", "to": "parse", "variant": "emphasis" },
+    { "id": "e2", "from": "parse", "to": "validated", "label": "validate()", "variant": "emphasis" },
+    { "id": "e3", "from": "validated", "to": "authorized", "label": "自动允许", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 2 },
+    { "id": "e4", "from": "validated", "to": "auth_pending", "label": "需审批", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e5", "from": "auth_pending", "to": "authorized", "label": "approve", "variant": "emphasis" },
+    { "id": "e6", "from": "authorized", "to": "effect_checked", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "e7", "from": "effect_checked", "to": "intent_persist", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "e8", "from": "effect_checked", "to": "executing", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "e9", "from": "effect_checked", "to": "effect_unknown", "variant": "security", "role": "error", "fromSide": "right", "toSide": "top", "route": "drop" },
+    { "id": "e10", "from": "intent_persist", "to": "executing", "label": "persisted", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e11", "from": "executing", "to": "dep_prepare", "variant": "default", "role": "branch", "fromSide": "top", "toSide": "right" },
+    { "id": "e12", "from": "dep_prepare", "to": "retry_wait", "variant": "default", "role": "branch", "fromSide": "right", "toSide": "left", "route": "straight" },
+    { "id": "e13", "from": "retry_wait", "to": "executing", "label": "retry", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "left", "labelDy": 24 },
+    { "id": "e14", "from": "executing", "to": "succeeded", "label": "ok", "variant": "emphasis", "fromSide": "right", "toSide": "top" },
+    { "id": "e15", "from": "executing", "to": "failed", "label": "执行失败", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e17", "from": "auth_pending", "to": "denied", "label": "deny", "variant": "security", "role": "error", "fromSide": "left", "toSide": "left", "route": "return-left", "labelSegment": 1 },
+    { "id": "e18", "from": "executing", "to": "aborted", "label": "取消", "variant": "security", "role": "error", "fromSide": "left", "toSide": "top", "route": "drop", "labelSegment": 2 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "22 phase 封闭转移表", "items": ["12非终态 + 10终态；终态出边为空集（图仅绘制主链）", "transitionToolInvocation()：非法转移抛 Illegal transition", "history 追加式记录完整路径，纯函数可独立测试", "ProcessManager 拥有副作用，本模块只拥有合法顺序"] },
+    { "dot": "rose", "title": "图上未绘制的合法转移", "items": ["invalid ← received/parsed/resolved/validated 任一段失败", "aborted ← 7个非终态均可直达（万能逃生门），图中仅绘 executing 例", "effect_checked 还可直达 failed/aborted；intent 落盘失败也入 failed", "denied 亦可从 executing 到达（执行期撤权）"] },
+    { "dot": "violet", "title": "分组终态", "items": ["effect_unknown = uncertain + blocked(未知副作用) + replayed(幂等回放)", "failed 组另含 timed_out / invalid_result（仅 executing 可达）", "终态封闭：一旦进入不再转出", "invalid_result：执行完成但结果校验无效"] },
+    { "dot": "emerald", "title": "崩溃安全与恢复环", "items": ["intent_persisting→persisted：先落盘写意图再执行", "崩溃后已persisted未确认效果 → uncertain，绝不盲目重放", "唯一重入环 executing→dep_preparation→retry_wait→executing", "retry_wait 仅3出边：executing/failed/aborted，受工具级 deadline 约束"] }
+  ]
+}

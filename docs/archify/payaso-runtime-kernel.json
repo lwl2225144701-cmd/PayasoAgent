@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PayasoAgent v2.2 Runtime Kernel 模块架构",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/lwl2225144701-cmd/PayasoAgent.git",
+      "revision": "c38b22bc31b6d561814edf684ab4a69bd4e06e32"
+    },
+    "viewBox": [1480, 780]
+  },
+  "components": [
+    { "id": "agent-loop", "type": "backend", "label": "Agent Loop", "sublabel": "agent.ts — 迭代控制 · 收尾/停止决策 · Checkpoint 提交", "tag": "runAgent()", "pos": [60, 40], "size": [280, 90], "sources": [{ "path": "src/runtime/agent.ts" }] },
+    { "id": "tool-process-manager", "type": "backend", "label": "ToolInvocation ProcessManager", "sublabel": "process-manager.ts — 封闭管道：parse→resolve→schema 校验→side-effect→execute→output guard→重试", "tag": "invokeToolCall()", "pos": [420, 200], "size": [360, 90], "sources": [{ "path": "src/runtime/tool-invocation/process-manager.ts" }] },
+    { "id": "tool-state-machine", "type": "backend", "label": "ToolInvocation StateMachine", "sublabel": "state-machine.ts — 21 阶段 / 合法转换 / 终态封闭", "tag": "ToolInvocationPhase", "pos": [860, 200], "size": [280, 70], "sources": [{ "path": "src/runtime/tool-invocation/state-machine.ts" }] },
+    { "id": "harness", "type": "backend", "label": "Harness", "sublabel": "ContextHarness · ContextManager · Plan · Summary · 模型投影", "tag": "外部模块", "pos": [1180, 200], "size": [240, 70], "sources": [{ "path": "src/harness/context-harness.ts" }] }
+  ],
+  "connections": [
+    { "id": "c-loop-toolpm", "from": "agent-loop", "to": "tool-process-manager", "label": "invokeToolCall()", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [390, 170] },
+    { "id": "c-loop-harness", "from": "agent-loop", "to": "harness", "label": "modelContext / messages / scratchpad view / plan", "via": [[340, 85], [1180, 85]], "labelAt": [700, 75] },
+    { "id": "c-toolpm-statemachine", "from": "tool-process-manager", "to": "tool-state-machine", "label": "StateMachine", "variant": "emphasis", "fromSide": "right", "toSide": "left", "labelAt": [770, 304] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Agent Loop 核心职责", "items": ["无固定迭代上限：模型持续产生工具调用时循环继续", "停止由模型自然收尾 / AbortSignal / 工具错误 / Harness.shouldStopAfterTurn 决定", "每步至少保存一次 Checkpoint；resume 从 startIter=iteration-1 重跑当前轮", "分层超时：LLM 连接超时 + 流空闲看门狗；普通工具声明 deadline；shell 进程组级取消", "True Cancellation：AbortSignal 全链路传播（Host → Agent → LLM → shell 进程组）", "原子终态落盘：终态状态与终态事件在同一 SQLite 事务提交"] },
+    { "dot": "rose", "title": "ToolInvocation 封闭管道", "items": ["安全顺序不可重排：Parse → Resolve → Schema Validate（v1.8）→ Side-effect preparation → Execute", "Side-Effect 三态：executing→succeeded/uncertain；succeeded 同 key 回放不重跑", "Output Guard 16KB 单一来源（src/tool-output-budget.ts）；普通文本 read 提供行号续读", "Tool Error Classifier 决定是否重试：默认不重试，仅瞬时错误 ≤2 次", "StateMachine 21 个阶段 / 终态封闭；ProcessManager 只协调副作用，不拥有可变状态"] },
+    { "dot": "violet", "title": "状态与观测", "items": ["Trace：18 类结构化事件（llm_call / tool_call / tool_result / final_answer / error 等）/ 序号 / 持久化", "CheckpointWriter：原子写 / 恢复快照；RuntimeObserver：隔离快照 / Console 适配器", "Harness：ContextHarness 装配 ContextManager / Plan / Summary / 模型投影", "外部依赖：LLM Client（OpenAI 兼容 / SSE 流式）、Tool Registry（Schema/Effect/OperationKey）、Checkpoint Store（JSON 文件）"] },
+    { "dot": "emerald", "title": "v2.2 新增能力", "items": ["Toolchain Readiness：启动时发现 Git/Node/npm  Mach-O 依赖闭包，能力快照不含宿主路径", "Background Jobs：Session 级所有权，不随单个 Run 结束销毁，完成后 Agent 收到通知", "Plan ≤300 tok：Agent 自述任务清单，Harness 持有状态，随 checkpoint 恢复", "Context Compaction V1：输入超预算 80% 时增量摘要，压至约 65%，完整 transcript 不删除"] }
+  ]
+}

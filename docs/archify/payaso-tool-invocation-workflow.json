@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PayasoAgent v2.2 ToolInvocation 完整调用链",
+    "quality_profile": "showcase",
+    "viewBox": [1600, 900]
+  },
+  "lanes": [
+    { "id": "main", "label": "主流程" },
+    { "id": "auth", "label": "授权/审批" },
+    { "id": "effect", "label": "副作用/持久化" },
+    { "id": "terminal", "label": "终态/失败", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "intake", "label": "接收+解析", "fromCol": 0, "toCol": 1 },
+    { "id": "gate", "label": "校验+授权", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "execute", "label": "执行+终态", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["received", "parse_resolve", "validated", "authorized", "effect_checked", "executing", "succeeded"],
+  "nodes": [
+    { "id": "received", "lane": "main", "col": 0, "type": "external", "label": "received", "sublabel": "tool_call 到达" },
+    { "id": "parse_resolve", "lane": "main", "col": 1, "type": "backend", "label": "parse", "sublabel": "参数解析 + 工具解析" },
+    { "id": "validated", "lane": "main", "col": 3, "type": "backend", "label": "validated", "sublabel": "Schema 校验通过" },
+    { "id": "authorized", "lane": "auth", "col": 3, "type": "security", "label": "authorized", "sublabel": "授权通过" },
+    { "id": "effect_checked", "lane": "effect", "col": 4, "type": "security", "label": "effect_checked", "sublabel": "Side-Effect 判定" },
+    { "id": "executing", "lane": "main", "col": 5, "type": "backend", "label": "executing", "sublabel": "工具执行中" },
+    { "id": "succeeded", "lane": "terminal", "col": 5, "type": "cloud", "label": "succeeded", "sublabel": "执行成功" },
+    { "id": "failed", "lane": "terminal", "col": 0, "type": "security", "label": "failed", "sublabel": "执行失败" },
+    { "id": "denied", "lane": "terminal", "col": 3, "type": "security", "label": "denied", "sublabel": "授权被拒绝" }
+  ],
+  "edges": [
+    { "id": "e1", "from": "received", "to": "parse_resolve", "label": "parseToolArguments()", "variant": "emphasis", "labelDy": 50 },
+    { "id": "e2", "from": "parse_resolve", "to": "validated", "label": "validateToolArguments()", "variant": "emphasis" },
+    { "id": "e3", "from": "validated", "to": "authorized", "label": "无需审批", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e4", "from": "authorized", "to": "effect_checked", "label": "resolveOperation()", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e5", "from": "effect_checked", "to": "executing", "label": "开始执行", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "e6", "from": "executing", "to": "succeeded", "label": "执行成功", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e7", "from": "received", "to": "failed", "label": "解析失败", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e8", "from": "authorized", "to": "denied", "label": "用户拒绝", "variant": "security", "role": "error", "fromSide": "left", "toSide": "top", "route": "return-left", "labelSegment": 1 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "封闭管道顺序", "items": ["Parse → Resolve → Schema Validate → Authorization → Effect Check → Executing", "任一前置失败 = invocation error，工具不执行、不创建 side-effect"] },
+    { "dot": "rose", "title": "Side-Effect 三态", "items": ["executing → succeeded / uncertain / failed", "succeeded 同 key 回放不重跑；executing/uncertain 不再自动执行"] },
+    { "dot": "violet", "title": "终态封闭", "items": ["succeeded / failed / denied", "终态后不再转换；ProcessManager 只协调副作用"] },
+    { "dot": "emerald", "title": "v2.2 增强", "items": ["分层超时：工具 deadline + shell 进程组级取消", "Tool Output Guard：16KB 硬上限，首尾保留", "True Cancellation：AbortSignal 全链路传播"] }
+  ]
+}

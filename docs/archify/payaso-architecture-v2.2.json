@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PayasoAgent v2.2 架构",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/lwl2225144701-cmd/PayasoAgent.git",
+      "revision": "c38b22bc31b6d561814edf684ab4a69bd4e06e32"
+    },
+    "viewBox": [1480, 780]
+  },
+  "components": [
+    { "id": "web-ui", "type": "frontend", "label": "Web UI", "sublabel": "React 18 + Vite · Timeline · 设置面板", "tag": "浏览器", "pos": [60, 36], "size": [280, 88], "sources": [{ "path": "web/src/api.ts" }, { "path": "web/src/hooks/useEventStream.ts" }, { "path": "web/src/components/Timeline/index.tsx" }] },
+    { "id": "keychain", "type": "security", "label": "macOS Keychain", "sublabel": "SecretStore · 密钥不落库", "tag": "service=PayasoAgent", "pos": [780, 36], "size": [280, 88], "sources": [{ "path": "src/host/secrets/macos-keychain-secret-store.ts" }, { "path": "src/host/secrets/secret-store.ts" }] },
+    { "id": "host-server", "type": "backend", "label": "Host API", "sublabel": "server.ts · routes.ts · 静态托管", "tag": ":4500 · 127.0.0.1", "pos": [60, 200], "size": [280, 110], "sources": [{ "path": "src/host/server.ts" }, { "path": "src/host/routes.ts" }] },
+    { "id": "run-manager", "type": "backend", "label": "RunManager", "sublabel": "Session 上下文 · SSE · 原子终态", "pos": [420, 200], "size": [280, 110], "sources": [{ "path": "src/host/run-manager.ts" }] },
+    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "sessions / runs / events / settings", "tag": ".data/payaso.db", "pos": [780, 200], "size": [280, 110], "sources": [{ "path": "src/host/persistence/sqlite-store.ts" }] },
+    { "id": "checkpoint", "type": "database", "label": "Checkpoint Store", "sublabel": "原子写 · 断点续跑", "tag": ".checkpoints/<runId>.json", "pos": [60, 400], "size": [280, 110], "sources": [{ "path": "src/persistence/file-checkpoint-store.ts" }] },
+    { "id": "runtime-kernel", "type": "backend", "label": "Runtime Kernel", "sublabel": "Agent Loop · Side-Effect · Trace · 取消", "pos": [420, 400], "size": [280, 110], "sources": [{ "path": "src/runtime/agent.ts" }, { "path": "src/runtime/side-effect.ts" }, { "path": "src/runtime/output-guard.ts" }] },
+    { "id": "llm-client", "type": "backend", "label": "LLM Client", "sublabel": "fetch · chat/completions · SSE 流式", "pos": [780, 400], "size": [280, 110], "sources": [{ "path": "src/llm/llm.ts" }] },
+    { "id": "llm-provider", "type": "external", "label": "LLM Provider", "sublabel": "OpenAI 兼容端点", "tag": "POST /chat/completions", "pos": [1140, 400], "size": [280, 110] },
+    { "id": "tools", "type": "backend", "label": "Tool Registry + Sandbox", "sublabel": "Schema · Effect · OperationKey · seatbelt · fail-closed", "tag": "文件 · shell · Demo 工具", "pos": [60, 600], "size": [320, 110], "sources": [{ "path": "src/tools/tools.ts" }, { "path": "src/tools/filesystem.ts" }, { "path": "src/sandbox/macos-sandbox.ts" }] },
+    { "id": "workspace", "type": "external", "label": "Workspace", "sublabel": "用户授权根目录 · 文件工具作用域", "tag": "sandbox/workspaces", "pos": [780, 600], "size": [280, 88], "sources": [{ "path": "src/sandbox/sandbox-manager.ts" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Host 进程 (127.0.0.1:4500)", "wraps": ["host-server", "run-manager"], "pad": 36 },
+    { "kind": "region", "label": "Runtime Kernel (Agent Loop · LLM)", "wraps": ["checkpoint", "runtime-kernel", "llm-client", "llm-provider"], "pad": 36 },
+    { "kind": "security-group", "label": "macOS Sandbox · fail-closed", "wraps": ["tools", "workspace"], "pad": 36 }
+  ],
+  "connections": [
+    { "id": "c-web-host", "from": "web-ui", "to": "host-server", "label": "HTTP + SSE 事件流", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [200, 146] },
+    { "id": "c-host-runmgr", "from": "host-server", "to": "run-manager", "label": "REST 路由", "labelAt": [380, 232] },
+    { "id": "c-runmgr-sql", "from": "run-manager", "to": "sqlite", "label": "终态同事务", "labelAt": [740, 232] },
+    { "id": "c-runmgr-kc", "from": "run-manager", "to": "keychain", "label": "API Key 读写", "variant": "security", "fromSide": "top", "toSide": "left", "via": [[560, 80]], "labelAt": [670, 66] },
+    { "id": "c-runmgr-kernel", "from": "run-manager", "to": "runtime-kernel", "label": "runAgent(task, opts)", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [530, 384] },
+    { "id": "c-kernel-cp", "from": "runtime-kernel", "to": "checkpoint", "label": "快照 / 恢复", "fromSide": "left", "toSide": "right", "labelAt": [380, 428] },
+    { "id": "c-kernel-llm", "from": "runtime-kernel", "to": "llm-client", "label": "Messages + Tool Schema", "fromSide": "right", "toSide": "left", "labelAt": [740, 528] },
+    { "id": "c-llm-provider", "from": "llm-client", "to": "llm-provider", "label": "POST /chat/completions", "variant": "emphasis", "fromSide": "right", "toSide": "left", "labelAt": [1100, 528] },
+    { "id": "c-kernel-tools", "from": "runtime-kernel", "to": "tools", "label": "invoke · 结果回传", "fromSide": "bottom", "toSide": "top", "via": [[560, 560], [220, 560]], "labelAt": [330, 578] },
+    { "id": "c-tools-ws", "from": "tools", "to": "workspace", "label": "文件工具操作", "fromSide": "bottom", "toSide": "bottom", "via": [[220, 740], [920, 740]], "labelAt": [560, 762] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Agent 运行时 v2.2", "items": ["Agent Loop: 无固定迭代上限 · 分层超时 · 分层取消", "Side-Effect 三态 · Output Guard 16KB · Tool Output Budget 单一来源", "Context Compaction V1 · Scratchpad 有界投影 · Plan ≤300 tok", "Toolchain Readiness · Background Jobs Session 级所有权"] },
+    { "dot": "rose", "title": "安全与持久化", "items": ["shell 仅经 sandbox-exec · fail-closed · 网络 deny", "Keychain 密钥 · SQLite 终态同事务 · Checkpoint 原子写", "Sandbox 两层校验 · Operation Identity · 项目约定自动发现"] },
+    { "dot": "violet", "title": "Host 与 Web", "items": ["REST + SSE · 18 类 Trace 事件实时推送 Timeline", "多 Provider 模型配置 + Run 级模型绑定 · 原子元组", "JIT 网络审批 · 工具链准备批准 · 能力快照刷新"] }
+  ]
+}

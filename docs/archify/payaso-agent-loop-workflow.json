@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PayasoAgent v2.2 Agent Loop 内部流程",
+    "quality_profile": "showcase",
+    "viewBox": [1600, 1000]
+  },
+  "lanes": [
+    { "id": "control", "label": "迭代控制" },
+    { "id": "context", "label": "上下文投影" },
+    { "id": "llm", "label": "LLM 调用" },
+    { "id": "decision", "label": "决策分支" },
+    { "id": "tools", "label": "工具执行" },
+    { "id": "terminal", "label": "终态/异常", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "setup", "label": "迭代边界", "fromCol": 0, "toCol": 1 },
+    { "id": "infer", "label": "推理", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "act", "label": "执行/收尾", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["iter_check", "harness", "llm_call", "tool_check", "tool_exec"],
+  "nodes": [
+    { "id": "iter_check", "lane": "control", "col": 0, "type": "security", "label": "迭代边界", "sublabel": "abort+通知+state" },
+    { "id": "harness", "lane": "context", "col": 1, "type": "backend", "label": "Harness投影", "sublabel": "prepareTurn+预算" },
+    { "id": "llm_call", "lane": "llm", "col": 2, "type": "backend", "label": "LLM调用", "sublabel": "chat+物化+sanitize" },
+    { "id": "tool_check", "lane": "decision", "col": 3, "type": "security", "label": "工具决策", "sublabel": "tool_calls?" },
+    { "id": "tool_exec", "lane": "tools", "col": 5, "type": "backend", "label": "工具执行", "sublabel": "invokeToolCall×N" },
+    { "id": "final_ans", "lane": "terminal", "col": 4, "type": "cloud", "label": "最终答案", "sublabel": "plan审计+save" },
+    { "id": "failed", "lane": "terminal", "col": 0, "type": "security", "label": "failed", "sublabel": "error/stalled" },
+    { "id": "stopped", "lane": "terminal", "col": 5, "type": "security", "label": "stopped", "sublabel": "策略停止" },
+    { "id": "recover", "lane": "llm", "col": 3, "type": "messagebus", "label": "回合恢复", "sublabel": "empty/incomplete" },
+    { "id": "loop", "lane": "control", "col": 4, "type": "messagebus", "label": "循环", "sublabel": "→下一轮" }
+  ],
+  "edges": [
+    { "id": "e1", "from": "iter_check", "to": "harness", "label": "prepareTurn()", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e2", "from": "harness", "to": "llm_call", "label": "chat()", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e3", "from": "llm_call", "to": "tool_check", "label": "response", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e4", "from": "tool_check", "to": "tool_exec", "label": "有工具", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e5", "from": "tool_check", "to": "final_ans", "label": "无工具", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e6", "from": "tool_check", "to": "recover", "label": "空回合", "variant": "default", "role": "branch", "fromSide": "top", "toSide": "bottom", "labelSegment": 1 },
+    { "id": "e7", "from": "tool_exec", "to": "loop", "label": "继续", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "up-channel" },
+    { "id": "e8", "from": "recover", "to": "loop", "label": "重试", "variant": "default", "role": "branch", "fromSide": "top", "toSide": "bottom" },
+    { "id": "e10", "from": "iter_check", "to": "failed", "label": "abort", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e11", "from": "tool_exec", "to": "stopped", "label": "策略停止", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "无固定迭代上限", "items": ["模型持续产生工具调用时循环继续", "停止由模型收尾/AbortSignal/工具错误/Harness策略决定", "每步至少保存一次Checkpoint；resume从iteration-1重跑"] },
+    { "dot": "rose", "title": "True Cancellation", "items": ["AbortSignal全链路传播", "迭代边界+工具间检查点", "chat()HTTP/流式层+shell进程组级终止"] },
+    { "dot": "violet", "title": "回合不变量", "items": ["空回合：无工具+无内容→有界恢复→AgentEmptyAnswerError", "未完成回合：plan-like未收尾→decideIncompleteTurn→AgentStalledError", "恢复计数每次Run独立"] },
+    { "dot": "emerald", "title": "v2.2/v2.3增强", "items": ["后台任务通知：迭代边界注入，连续唤醒上限3次", "Context Compaction：超预算80%时增量摘要→约65%", "Plan≤300tok：Agent自述清单，Harness持有状态"] }
+  ]
+}

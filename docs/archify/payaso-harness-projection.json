@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PayasoAgent v2.2 Harness 投影 prepareTurn 内部流程",
+    "quality_profile": "showcase",
+    "viewBox": [1600, 1000]
+  },
+  "lanes": [
+    { "id": "views", "label": "输入投影" },
+    { "id": "pipe", "label": "组装与修剪" },
+    { "id": "compact", "label": "压缩与状态" },
+    { "id": "guard", "label": "紧急兜底" },
+    { "id": "exit", "label": "输出/终态", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "compose", "label": "组装", "fromCol": 0, "toCol": 1 },
+    { "id": "trim", "label": "修剪/判定", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "compactact", "label": "压缩/兜底", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["p_sys", "p_view", "p_trim", "p_trig", "x_prepared"],
+  "nodes": [
+    { "id": "v_transcript", "lane": "views", "col": 0, "type": "external", "label": "transcript", "sublabel": "role过滤·图仅path" },
+    { "id": "v_views", "lane": "views", "col": 2, "type": "backend", "label": "有界视图", "sublabel": "sp 3%≤2K·plan≤300" },
+    { "id": "v_tools", "lane": "views", "col": 4, "type": "database", "label": "ToolSchema", "sublabel": "schema计费优先" },
+    { "id": "p_sys", "lane": "pipe", "col": 0, "type": "backend", "label": "system段组装", "sublabel": "静态在前·两段预算" },
+    { "id": "p_view", "lane": "pipe", "col": 1, "type": "cloud", "label": "视图组装", "sublabel": "buildModelView" },
+    { "id": "p_trim", "lane": "pipe", "col": 3, "type": "security", "label": "轮边界修剪", "sublabel": "整轮原子·保当前轮" },
+    { "id": "p_trig", "lane": "pipe", "col": 5, "type": "security", "label": "80%判定", "sublabel": "修剪前估值" },
+    { "id": "c_sum", "lane": "compact", "col": 3, "type": "cloud", "label": "LLM摘要", "sublabel": "65%目标·8%≤4096" },
+    { "id": "s_state", "lane": "compact", "col": 1, "type": "database", "label": "Harness状态", "sublabel": "summary+count+plan" },
+    { "id": "r_emergency", "lane": "guard", "col": 1, "type": "security", "label": "紧急裁剪", "sublabel": "保最近2→1→0条" },
+    { "id": "x_prepared", "lane": "exit", "col": 5, "type": "cloud", "label": "PreparedTurn", "sublabel": "messages+usage+摘要明细" },
+    { "id": "x_fail", "lane": "exit", "col": 0, "type": "security", "label": "fail-closed", "sublabel": "仍overBudget抛错" }
+  ],
+  "edges": [
+    { "id": "e1", "from": "v_transcript", "to": "p_sys", "label": "transcript", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e2", "from": "p_sys", "to": "p_view", "variant": "emphasis" },
+    { "id": "e3", "from": "v_views", "to": "p_view", "label": "sp/plan文本", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e4", "from": "p_view", "to": "p_trim", "label": "process()", "variant": "emphasis" },
+    { "id": "e5", "from": "v_tools", "to": "p_trim", "label": "schema费", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e6", "from": "p_trim", "to": "p_trig", "variant": "emphasis" },
+    { "id": "e7", "from": "p_trig", "to": "x_prepared", "label": "未超", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e8", "from": "p_trig", "to": "c_sum", "label": "超预算", "variant": "default", "role": "branch", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e9", "from": "c_sum", "to": "s_state", "label": "增量合并", "variant": "default", "role": "return" },
+    { "id": "e10", "from": "c_sum", "to": "r_emergency", "label": "仍超", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "e11", "from": "r_emergency", "to": "x_prepared", "label": "视图有界", "variant": "default", "role": "branch", "fromSide": "right", "toSide": "top" },
+    { "id": "e12", "from": "r_emergency", "to": "x_fail", "label": "兜底耗尽", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "system 段预算与缓存", "items": ["kernel.base 永不丢弃（宁可超预算也保规则）", "静态段在前，最大化 prompt cache 命中", "动态段每轮刷新：toolchain/network/env", "system 总预算 = 15% 窗口（下限 512 tok）"] },
+    { "dot": "rose", "title": "修剪与估算", "items": ["轮为原子单位：user→…→下一 user 整体保留或移除", "永远保留 system + 当前任务轮", "估算 = JSON 结构 + 角色开销 + 图片 tile 定价", "先扣 ToolSchema 费，消息预算 = 目标 − schema"] },
+    { "dot": "violet", "title": "压缩阈值", "items": ["触发 = 修剪前原始估值 > 80% 窗口（防修剪自掩盖）", "目标 65%：留出 system 增长余量防再触发", "摘要预算 = 8% 窗口，夹在 128–4096 tok", "摘要失败 fail-soft 保留裁剪；overBudget 仍 fail-closed"] },
+    { "dot": "emerald", "title": "兜底与状态", "items": ["紧急裁剪：当前轮从最旧逐条丢弃，保最近 2→1→0（85% 目标）", "canonical transcript 永不改写——摘要即逻辑删除", "snapshotState/restoreState 进 Checkpoint，resume 走同一路径", "返回 usage/scratchpadTokens/planTokens 供 trace 计量"] }
+  ]
+}
