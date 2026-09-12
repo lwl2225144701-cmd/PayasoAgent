@@ -112,10 +112,6 @@ export function WorkspacePickerModal({ open, onClose, onSelect }: WorkspacePicke
         listing: {
           ...prev.listing!,
           path: createdPath,
-          home: prev.listing!.home,
-          crumbs: prev.listing!.crumbs,
-          entries: prev.listing!.entries,
-          truncated: prev.listing!.truncated,
         },
       }));
       await handleNavigate(createdPath);

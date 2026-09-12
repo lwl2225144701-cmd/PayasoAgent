@@ -344,6 +344,7 @@ export const Timeline = memo(function Timeline({
   const autoScrollRef = useRef(true);
   const getScrollContainer = useCallback(() => findScrollContainer(scrollRef.current), []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 切到另一轮时必须收起文件面板——runId 是触发条件，刻意不在回调体内引用
   useEffect(() => {
     setFilesOpen(false);
   }, [run?.runId]);
@@ -368,6 +369,7 @@ export const Timeline = memo(function Timeline({
 
   // Scroll once per rendered batch, immediately. Repeated smooth scrolling
   // queues animations and makes a fast stream visibly lag behind the text.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: events 是"每渲染一批滚动一次"的批次触发器，刻意不在回调体内引用
   useEffect(() => {
     if (embedded) return;
     if (!autoScrollRef.current) return;
@@ -494,6 +496,13 @@ export const Timeline = memo(function Timeline({
   const retryCommand = useMemo(() => findLastFailedShellCommand(events), [events]);
   const runActive = run?.status === 'running' || run?.status === 'stopping';
 
+  // 上下文预算环形指示器：取最新一条 context_usage（压缩/紧急裁剪状态随之可见）。
+  // 即使当前 Run 尚未加载完成也要无条件调用 Hook，保证组件每次渲染顺序一致。
+  const latestContextUsage = findLatestContextUsage(events);
+  useEffect(() => {
+    onContextUsage?.(latestContextUsage);
+  }, [onContextUsage, latestContextUsage]);
+
   const handleToolchainPreparation = async (
     ev: ToolchainPreparationRequestedEvent,
     action: 'approve' | 'deny' | 'cancel',
@@ -536,16 +545,9 @@ export const Timeline = memo(function Timeline({
     globalThinking,
   } = structure;
 
-  // 上下文预算环形指示器：取最新一条 context_usage（压缩/紧急裁剪状态随之可见）
-  const latestContextUsage = findLatestContextUsage(events);
   // 首个 token 等待期：运行中且最后一条事件是 llm_call_started（任何后续事件都意味着等待结束）。
   // 父组件 running 期间每 1.2s tick，秒数随之实时刷新。
   const modelWait = run.status === 'running' ? deriveModelWaitState(events, Date.now()) : null;
-  // 上抛给宿主（输入栏底部环形指示器的数据源）；随 events 变化自动更新
-  useEffect(() => {
-    onContextUsage?.(latestContextUsage);
-  }, [onContextUsage, latestContextUsage]);
-
   // Has any work actually been performed? (tools + visible reasoning + final answer).
   // running 时强制渲染：首条事件（reasoning/tool）到达前的空窗期也要立刻给出
   // 「正在执行 · 正在分析」反馈，否则发消息后有几秒完全无响应的观感。

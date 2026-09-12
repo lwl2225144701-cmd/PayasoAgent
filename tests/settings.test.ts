@@ -38,7 +38,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.log(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.log(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
 
@@ -626,8 +626,8 @@ async function postJSONWithOrigin(
     check('Case1: secret lives in SecretStore', secretStore.get(secretKey) === SECRET);
     const dbPath = process.env.PAYASO_DB_PATH!;
     const dbBytes = fs.readFileSync(dbPath);
-    const walBytes = fs.existsSync(dbPath + '-wal')
-      ? fs.readFileSync(dbPath + '-wal')
+    const walBytes = fs.existsSync(`${dbPath}-wal`)
+      ? fs.readFileSync(`${dbPath}-wal`)
       : Buffer.alloc(0);
     check(
       'Case1: raw SQLite (main+WAL) contains no secret',
@@ -643,15 +643,15 @@ async function postJSONWithOrigin(
     check('Case3: metadata-only edit keeps secret', secretStore.get(secretKey) === SECRET);
 
     // Case 4: 替换 → SecretStore 为新值；旧值不出现在任何 settings JSON
-    await patchJSON(`${base}/settings/models/${leak.id}`, { apiKey: SECRET + '-v2' });
-    check('Case4: secret replaced in SecretStore', secretStore.get(secretKey) === SECRET + '-v2');
+    await patchJSON(`${base}/settings/models/${leak.id}`, { apiKey: `${SECRET}-v2` });
+    check('Case4: secret replaced in SecretStore', secretStore.get(secretKey) === `${SECRET}-v2`);
     const afterReplaceList = await getJSON(`${base}/settings/models`);
     const afterReplace = JSON.stringify(afterReplaceList.models.find((m: any) => m.id === leak.id));
     check(
       'Case4: old/new keys absent from settings JSON',
       Boolean(afterReplace) &&
         !afterReplace.includes(SECRET) &&
-        !afterReplace.includes(SECRET + '-v2'),
+        !afterReplace.includes(`${SECRET}-v2`),
     );
 
     // Case 5: 显式清除 → Secret 删除 + hasApiKey=false
@@ -783,11 +783,11 @@ async function postJSONWithOrigin(
 
     // Case 6: 打开即迁移 → SecretStore 有值，SQLite 明文消失
     const mem = new MemorySecretStore();
-    let firstSetCalls = 0;
+    let _firstSetCalls = 0;
     const store = new SqliteRunStore(legacyDbPath, {
       get: (k: string) => mem.get(k),
       set: (k: string, v: string) => {
-        firstSetCalls++;
+        _firstSetCalls++;
         mem.set(k, v);
       },
       delete: (k: string) => {
@@ -798,10 +798,13 @@ async function postJSONWithOrigin(
       'Case6: legacy secret migrated to SecretStore',
       mem.get(providerSecretKey('legacy-p1')) === 'legacy-secret-one',
     );
-    const rawBlob = String(
-      new DatabaseSync(legacyDbPath).prepare("SELECT value FROM settings WHERE key='app'").get()!
-        .value,
-    );
+    // 必须真读到 settings 行：缺行 = 迁移没落库，这里要硬失败；
+    // 否则 String(undefined) === 'undefined' 会让下面的检查假通过。
+    const appRow = new DatabaseSync(legacyDbPath)
+      .prepare("SELECT value FROM settings WHERE key='app'")
+      .get() as { value?: string } | undefined;
+    assert.ok(appRow?.value !== undefined, 'settings 表缺少 key=app 行（迁移未落库）');
+    const rawBlob = String(appRow.value);
     check('Case6: legacy plaintext removed from SQLite', !rawBlob.includes('legacy-secret-one'));
     check(
       'Case6: empty legacy key → no secret created',
@@ -864,10 +867,12 @@ async function postJSONWithOrigin(
           delete: () => {},
         }),
     );
-    const rawAfterFailure = String(
-      new DatabaseSync(failingDb).prepare("SELECT value FROM settings WHERE key='app'").get()!
-        .value,
-    );
+    // 同上：读不到行就硬失败，否则"明文仍在"这条检查会在 undefined 上假通过
+    const rowAfterFailure = new DatabaseSync(failingDb)
+      .prepare("SELECT value FROM settings WHERE key='app'")
+      .get() as { value?: string } | undefined;
+    assert.ok(rowAfterFailure?.value !== undefined, 'settings 表缺少 key=app 行');
+    const rawAfterFailure = String(rowAfterFailure.value);
     check(
       'Case7: legacy apiKey NOT deleted when SecretStore.set fails',
       rawAfterFailure.includes('legacy-secret-must-survive'),
@@ -1563,10 +1568,7 @@ async function postJSONWithOrigin(
     'cap: 创建回显能力覆盖',
     created.modelCapabilities?.['cap-chat']?.contextWindow === 131_072,
   );
-  check(
-    'cap: 创建回显思考档次',
-    created.modelCapabilities?.['cap-chat']?.thinkingLevel === 'high',
-  );
+  check('cap: 创建回显思考档次', created.modelCapabilities?.['cap-chat']?.thinkingLevel === 'high');
 
   const listed = await getJSON(`${base}/settings/models`);
   check(
@@ -1584,7 +1586,7 @@ async function postJSONWithOrigin(
     ),
   );
 
-  let badCap = await patchJSON(
+  const badCap = await patchJSON(
     `${base}/settings/models/${created.id}`,
     {
       modelCapabilities: { 'ghost-model': { contextWindow: 1000 } },
@@ -1593,7 +1595,7 @@ async function postJSONWithOrigin(
   );
   check('cap: 引用目录外模型 400', badCap.message.includes('outside catalog'));
 
-  let badLevel = await patchJSON(
+  const badLevel = await patchJSON(
     `${base}/settings/models/${created.id}`,
     {
       modelCapabilities: { 'cap-chat': { thinkingLevel: 'ultra' } },

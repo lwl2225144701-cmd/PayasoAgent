@@ -6,6 +6,7 @@ export function useConversationScroll(sessionId: string | null, sentRunId: strin
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId 是"重挂观察器 + 重置跟随"的触发器，刻意不在回调体内引用；删掉依赖会让切会话后自动跟随失效（App 首次渲染在落地页、ref 为空时这次 effect 会直接 return，之后永不再挂）
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
     const content = contentRef.current;
@@ -41,10 +42,12 @@ export function useConversationScroll(sessionId: string | null, sentRunId: strin
   }, [sessionId]);
 
   // Sending explicitly resumes following, even when reading an older turn.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 切会话与"发送后"都必须强制拉回底部，这两个值正是触发条件（同样不在回调体内引用）
   useLayoutEffect(() => {
     followingRef.current = true;
     const scroller = scrollRef.current;
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 同上——切会话与"发送后"都要强制拉回底部，这两个值正是触发条件
   }, [sessionId, sentRunId]);
 
   // 手动导航到历史回合前必须暂停自动跟随：否则正在流式的回合会立刻把视图拉回底部，

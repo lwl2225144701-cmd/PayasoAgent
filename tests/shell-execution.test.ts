@@ -14,8 +14,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';
-import { createSandboxPolicy } from '../src/sandbox/sandbox-policy.js';
 import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manager.js';
+import { createSandboxPolicy } from '../src/sandbox/sandbox-policy.js';
 import {
   createShellScratch,
   isShellScratchPath,
@@ -93,162 +93,172 @@ try {
 }
 
 if (scratchChecksEligible) {
-
-await check('shellScratchRoot 默认落在短临时根（/private/tmp/payaso-shell），不位于工作区内', () => {
-  const root = shellScratchRoot({});
-  assert.ok(root.endsWith(path.sep + 'payaso-shell'), `root=${root}`);
-  assert.ok(!root.startsWith(fs.realpathSync.native(os.tmpdir())), '不应再落在 /var/folders 深层路径');
-  // v1.10 关键约束：根路径本身必须短，TMPDIR 才有余量（见 UNIX_SOCKET_PATH_LIMIT_BYTES）
-  assert.ok(
-    root.length < 60,
-    `根路径必须短（实际 ${root.length} 字节），否则 TMPDIR 会逼近 AF_UNIX 108 上限`,
-  );
-});
-
-await check('shellScratchRoot 支持 PAYASO_SHELL_SCRATCH_ROOT 覆盖', () => {
-  const custom = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-custom-scratch-'));
-  const root = shellScratchRoot({ PAYASO_SHELL_SCRATCH_ROOT: custom });
-  assert.equal(root, fs.realpathSync.native(custom));
-  fs.rmSync(custom, { recursive: true, force: true });
-});
-
-await check('isShellScratchPath：受管根内为真，外部为假', () => {
-  const scratch = createShellScratch('probe');
-  try {
-    assert.equal(isShellScratchPath(scratch.path), true);
-    assert.equal(isShellScratchPath(shellScratchRoot({})), true);
-    assert.equal(isShellScratchPath(os.tmpdir()), false);
-    assert.equal(isShellScratchPath('/etc'), false);
-  } finally {
-    scratch.dispose();
-  }
-});
-
-await check('createShellScratch：0700、唯一、dispose 后删除', () => {
-  const a = createShellScratch('unit');
-  const b = createShellScratch('unit');
-  try {
-    assert.notEqual(a.path, b.path, '两次调用必须唯一');
-    const mode = fs.statSync(a.path).mode & 0o777;
-    assert.equal(mode, 0o700, `mode=${mode.toString(8)}`);
-    assert.ok(isShellScratchPath(a.path));
-  } finally {
-    a.dispose();
-    b.dispose();
-  }
-  assert.equal(fs.existsSync(a.path), false, 'dispose 后必须删除');
-  assert.equal(fs.existsSync(b.path), false);
-});
-
-await check('createShellScratch：scope 含路径分隔符也不会逃逸受管根', () => {
-  const scratch = createShellScratch('../../etc/evil');
-  try {
-    assert.ok(isShellScratchPath(scratch.path), `逃逸: ${scratch.path}`);
-  } finally {
-    scratch.dispose();
-  }
-});
-
-await check('TMPDIR 长度不变量：scratch 路径 + socket 预留 < 108（tsx 不再 listen EINVAL）', () => {
-  const scratch = createShellScratch('run-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx');
-  try {
-    const tmpdirBytes = Buffer.byteLength(scratch.path, 'utf8');
-    assert.ok(
-      tmpdirBytes + SCRATCH_SOCKET_RESERVE_BYTES < UNIX_SOCKET_PATH_LIMIT_BYTES,
-      `TMPDIR=${tmpdirBytes} + socket 预留 ${SCRATCH_SOCKET_RESERVE_BYTES} 必须 < 108`,
-    );
-    assert.ok(tmpdirBytes <= SCRATCH_MAX_TMPDIR_BYTES, `TMPDIR=${tmpdirBytes} 超预算`);
-  } finally {
-    scratch.dispose();
-  }
-});
-
-await check('scope 不再进入路径：超长 runId 也不会影响 TMPDIR 长度', () => {
-  const a = createShellScratch('x');
-  const b = createShellScratch('y'.repeat(100));
-  try {
-    assert.equal(a.path.length, b.path.length, '路径长度不应随 scope 变化');
-    assert.ok(Buffer.byteLength(b.path, 'utf8') < 60, `路径应保持短: ${b.path.length}`);
-  } finally {
-    a.dispose();
-    b.dispose();
-  }
-});
-
-await check('测试套件最坏 mkdtemp 前缀也放得下（os.tmpdir() = TMPDIR）', () => {
-  const scratch = createShellScratch('probe');
-  try {
-    // run-all 里最长的套件临时前缀约 29 字符 + mkdtemp 6 位随机
-    const worstCase = Buffer.byteLength(scratch.path, 'utf8') + 29 + 6;
-    assert.ok(
-      worstCase < UNIX_SOCKET_PATH_LIMIT_BYTES,
-      `测试套件 mkdtemp 最坏情况 ${worstCase} 必须 < 108`,
-    );
-  } finally {
-    scratch.dispose();
-  }
-});
-
-await check('回退链：主根不可写时回退到 os.tmpdir()/payaso-shell（嵌套沙箱场景）', () => {
-  const roots = shellScratchRoots({});
-  const primary = roots[0];
-  fs.mkdirSync(primary, { recursive: true, mode: 0o700 });
-  fs.chmodSync(primary, 0o500); // 让 mkdtemp 在主根下 EPERM
-  try {
-    const scratch = createShellScratch('fallback-probe');
-    try {
-      const fallbackRoot = fs.realpathSync.native(roots[1]);
+  await check(
+    'shellScratchRoot 默认落在短临时根（/private/tmp/payaso-shell），不位于工作区内',
+    () => {
+      const root = shellScratchRoot({});
+      assert.ok(root.endsWith(`${path.sep}payaso-shell`), `root=${root}`);
       assert.ok(
-        scratch.path.startsWith(fallbackRoot + path.sep),
-        `应回退到 os.tmpdir() 根: ${scratch.path}`,
+        !root.startsWith(fs.realpathSync.native(os.tmpdir())),
+        '不应再落在 /var/folders 深层路径',
       );
-      assert.equal(isShellScratchPath(scratch.path), true, '回退后的路径仍必须被识别为受管 scratch');
-      // 硬约束：即使回退到 os.tmpdir()（裸环境是 /var/folders 长路径），
-      // TMPDIR + socket 预留必须仍 < 108，tsx 才不会 EINVAL。
+      // v1.10 关键约束：根路径本身必须短，TMPDIR 才有余量（见 UNIX_SOCKET_PATH_LIMIT_BYTES）
       assert.ok(
-        Buffer.byteLength(scratch.path, 'utf8') + SCRATCH_SOCKET_RESERVE_BYTES <
-          UNIX_SOCKET_PATH_LIMIT_BYTES,
-        `回退根 TMPDIR 超预算: ${Buffer.byteLength(scratch.path, 'utf8')}`,
+        root.length < 60,
+        `根路径必须短（实际 ${root.length} 字节），否则 TMPDIR 会逼近 AF_UNIX 108 上限`,
+      );
+    },
+  );
+
+  await check('shellScratchRoot 支持 PAYASO_SHELL_SCRATCH_ROOT 覆盖', () => {
+    const custom = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-custom-scratch-'));
+    const root = shellScratchRoot({ PAYASO_SHELL_SCRATCH_ROOT: custom });
+    assert.equal(root, fs.realpathSync.native(custom));
+    fs.rmSync(custom, { recursive: true, force: true });
+  });
+
+  await check('isShellScratchPath：受管根内为真，外部为假', () => {
+    const scratch = createShellScratch('probe');
+    try {
+      assert.equal(isShellScratchPath(scratch.path), true);
+      assert.equal(isShellScratchPath(shellScratchRoot({})), true);
+      assert.equal(isShellScratchPath(os.tmpdir()), false);
+      assert.equal(isShellScratchPath('/etc'), false);
+    } finally {
+      scratch.dispose();
+    }
+  });
+
+  await check('createShellScratch：0700、唯一、dispose 后删除', () => {
+    const a = createShellScratch('unit');
+    const b = createShellScratch('unit');
+    try {
+      assert.notEqual(a.path, b.path, '两次调用必须唯一');
+      const mode = fs.statSync(a.path).mode & 0o777;
+      assert.equal(mode, 0o700, `mode=${mode.toString(8)}`);
+      assert.ok(isShellScratchPath(a.path));
+    } finally {
+      a.dispose();
+      b.dispose();
+    }
+    assert.equal(fs.existsSync(a.path), false, 'dispose 后必须删除');
+    assert.equal(fs.existsSync(b.path), false);
+  });
+
+  await check('createShellScratch：scope 含路径分隔符也不会逃逸受管根', () => {
+    const scratch = createShellScratch('../../etc/evil');
+    try {
+      assert.ok(isShellScratchPath(scratch.path), `逃逸: ${scratch.path}`);
+    } finally {
+      scratch.dispose();
+    }
+  });
+
+  await check(
+    'TMPDIR 长度不变量：scratch 路径 + socket 预留 < 108（tsx 不再 listen EINVAL）',
+    () => {
+      const scratch = createShellScratch('run-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx');
+      try {
+        const tmpdirBytes = Buffer.byteLength(scratch.path, 'utf8');
+        assert.ok(
+          tmpdirBytes + SCRATCH_SOCKET_RESERVE_BYTES < UNIX_SOCKET_PATH_LIMIT_BYTES,
+          `TMPDIR=${tmpdirBytes} + socket 预留 ${SCRATCH_SOCKET_RESERVE_BYTES} 必须 < 108`,
+        );
+        assert.ok(tmpdirBytes <= SCRATCH_MAX_TMPDIR_BYTES, `TMPDIR=${tmpdirBytes} 超预算`);
+      } finally {
+        scratch.dispose();
+      }
+    },
+  );
+
+  await check('scope 不再进入路径：超长 runId 也不会影响 TMPDIR 长度', () => {
+    const a = createShellScratch('x');
+    const b = createShellScratch('y'.repeat(100));
+    try {
+      assert.equal(a.path.length, b.path.length, '路径长度不应随 scope 变化');
+      assert.ok(Buffer.byteLength(b.path, 'utf8') < 60, `路径应保持短: ${b.path.length}`);
+    } finally {
+      a.dispose();
+      b.dispose();
+    }
+  });
+
+  await check('测试套件最坏 mkdtemp 前缀也放得下（os.tmpdir() = TMPDIR）', () => {
+    const scratch = createShellScratch('probe');
+    try {
+      // run-all 里最长的套件临时前缀约 29 字符 + mkdtemp 6 位随机
+      const worstCase = Buffer.byteLength(scratch.path, 'utf8') + 29 + 6;
+      assert.ok(
+        worstCase < UNIX_SOCKET_PATH_LIMIT_BYTES,
+        `测试套件 mkdtemp 最坏情况 ${worstCase} 必须 < 108`,
       );
     } finally {
       scratch.dispose();
     }
-  } finally {
-    fs.chmodSync(primary, 0o700); // 还原主根权限
-  }
-});
+  });
 
-// ---- 2. sandbox policy：scratch 是工作区外唯一可写根 ----
+  await check('回退链：主根不可写时回退到 os.tmpdir()/payaso-shell（嵌套沙箱场景）', () => {
+    const roots = shellScratchRoots({});
+    const primary = roots[0];
+    fs.mkdirSync(primary, { recursive: true, mode: 0o700 });
+    fs.chmodSync(primary, 0o500); // 让 mkdtemp 在主根下 EPERM
+    try {
+      const scratch = createShellScratch('fallback-probe');
+      try {
+        const fallbackRoot = fs.realpathSync.native(roots[1]);
+        assert.ok(
+          scratch.path.startsWith(fallbackRoot + path.sep),
+          `应回退到 os.tmpdir() 根: ${scratch.path}`,
+        );
+        assert.equal(
+          isShellScratchPath(scratch.path),
+          true,
+          '回退后的路径仍必须被识别为受管 scratch',
+        );
+        // 硬约束：即使回退到 os.tmpdir()（裸环境是 /var/folders 长路径），
+        // TMPDIR + socket 预留必须仍 < 108，tsx 才不会 EINVAL。
+        assert.ok(
+          Buffer.byteLength(scratch.path, 'utf8') + SCRATCH_SOCKET_RESERVE_BYTES <
+            UNIX_SOCKET_PATH_LIMIT_BYTES,
+          `回退根 TMPDIR 超预算: ${Buffer.byteLength(scratch.path, 'utf8')}`,
+        );
+      } finally {
+        scratch.dispose();
+      }
+    } finally {
+      fs.chmodSync(primary, 0o700); // 还原主根权限
+    }
+  });
 
-await check('read-only + scratchRoots：scratch 可写、工作区不可写', () => {
-  const workspace = fs.mkdtempSync(path.join(TEST_ROOT, 'ws-policy-'));
-  const scratch = createShellScratch('policy');
-  try {
-    const policy = createSandboxPolicy(workspace, {
-      permissionMode: 'read-only',
-      scratchRoots: [scratch.path],
-    });
-    assert.deepEqual(policy.scratchRoots, [fs.realpathSync.native(scratch.path)]);
-    assert.ok(policy.writableRoots.includes(fs.realpathSync.native(scratch.path)));
-    assert.ok(
-      !policy.writableRoots.includes(fs.realpathSync.native(workspace)),
-      'read-only 下工作区必须不可写',
+  // ---- 2. sandbox policy：scratch 是工作区外唯一可写根 ----
+
+  await check('read-only + scratchRoots：scratch 可写、工作区不可写', () => {
+    const workspace = fs.mkdtempSync(path.join(TEST_ROOT, 'ws-policy-'));
+    const scratch = createShellScratch('policy');
+    try {
+      const policy = createSandboxPolicy(workspace, {
+        permissionMode: 'read-only',
+        scratchRoots: [scratch.path],
+      });
+      assert.deepEqual(policy.scratchRoots, [fs.realpathSync.native(scratch.path)]);
+      assert.ok(policy.writableRoots.includes(fs.realpathSync.native(scratch.path)));
+      assert.ok(
+        !policy.writableRoots.includes(fs.realpathSync.native(workspace)),
+        'read-only 下工作区必须不可写',
+      );
+      assert.ok(policy.readableRoots.includes(fs.realpathSync.native(scratch.path)));
+    } finally {
+      scratch.dispose();
+    }
+  });
+
+  await check('scratchRoots 落在受管根之外 → 策略构造失败（fail-closed）', () => {
+    const workspace = fs.mkdtempSync(path.join(TEST_ROOT, 'ws-policy-bad-'));
+    assert.throws(
+      () => createSandboxPolicy(workspace, { scratchRoots: [os.tmpdir()] }),
+      /managed shell scratch root/,
     );
-    assert.ok(policy.readableRoots.includes(fs.realpathSync.native(scratch.path)));
-  } finally {
-    scratch.dispose();
-  }
-});
-
-await check('scratchRoots 落在受管根之外 → 策略构造失败（fail-closed）', () => {
-  const workspace = fs.mkdtempSync(path.join(TEST_ROOT, 'ws-policy-bad-'));
-  assert.throws(
-    () => createSandboxPolicy(workspace, { scratchRoots: [os.tmpdir()] }),
-    /managed shell scratch root/,
-  );
-});
-
-
+  });
 } else {
   console.log(
     '  [SKIP] scratch/policy 文件系统检查：当前环境不满足可创建 scratch 根 或 os.tmpdir() 已位于受管根内（嵌套沙箱）',
@@ -297,7 +307,10 @@ await check('shellTimeoutPolicy：env 覆盖 + 非法值回落 + default 不超�
   });
   assert.equal(clamped.defaultMs, 60_000, 'default 不得超过 max');
 
-  const invalid = shellTimeoutPolicy({ PAYASO_SHELL_TIMEOUT_MS: '-5', PAYASO_SHELL_TIMEOUT_MAX_MS: 'x' });
+  const invalid = shellTimeoutPolicy({
+    PAYASO_SHELL_TIMEOUT_MS: '-5',
+    PAYASO_SHELL_TIMEOUT_MAX_MS: 'x',
+  });
   assert.equal(invalid.defaultMs, SHELL_TIMEOUT_DEFAULT_MS);
   assert.equal(invalid.maxMs, SHELL_TIMEOUT_MAX_MS);
 
@@ -411,7 +424,12 @@ if (process.platform !== 'darwin') {
     );
     assert.ok(killed.includes('已请求终止'), killed);
     await sleep(200);
-    const status = await tool('shellJob', { action: 'status', jobId }, 'workspace-write', readOnlyRoot);
+    const status = await tool(
+      'shellJob',
+      { action: 'status', jobId },
+      'workspace-write',
+      readOnlyRoot,
+    );
     assert.ok(status.includes('[killed]'), `应已终止: ${status}`);
   });
 

@@ -4,7 +4,7 @@
 
 import { createContext, type ReactNode, useContext, useMemo } from 'react';
 import type { LanguageMode } from '../preferences';
-import { translator, type Translate } from './translate';
+import { type Translate, translator } from './translate';
 
 interface I18nValue {
   language: LanguageMode;

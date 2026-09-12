@@ -47,9 +47,16 @@
   *,
   *::before,
   *::after {
+    /* 无障碍保证：组件常把 animation/transition 写在内联样式或更高优先级选择器上，
+       只有 !important 压得住。禁止用 lint 自动修复删除（曾被测出：删除后内联
+       5s 动画在 reduce 下照常播放）。 */
+    /* biome-ignore lint/complexity/noImportantStyles: 见上，内联样式只有 !important 压得住 */
     animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: 同上 */
     animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: 同上 */
     transition-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: 同上（平滑滚动也要停） */
     scroll-behavior: auto !important;
   }
 }
@@ -153,6 +160,7 @@ body
 > :not(#root):not(#payaso-portal-root):not(script):not(style):not(link):not(meta):not(title):not(
   base
 ):not(noscript):not(template):not(svg):not([id^="dmmd-"]) {
+  /* biome-ignore lint/complexity/noImportantStyles: 注入节点带内联 display，非 !important 藏不住（已实测） */
   display: none !important;
 }
 
@@ -163,5 +171,6 @@ body
    status popovers) are never matched. */
 #root
 *:is([class*="mascot" i], [class*="doll" i], [class*="NULL" i], [id*="mascot" i], [id*="doll" i]) {
+  /* biome-ignore lint/complexity/noImportantStyles: 同上，第三方节点内联 display 需要 !important */
   display: none !important;
 }
