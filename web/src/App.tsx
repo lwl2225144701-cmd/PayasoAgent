@@ -34,6 +34,7 @@ import { InputBar } from './components/InputBar';
 import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
+import { StatsBar } from './components/StatsBar';
 import { Timeline } from './components/Timeline';
 import {
   applyCompactUsage,
@@ -97,7 +98,7 @@ export default function App() {
     readLastSessionId(),
   );
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
-  // 会话级统计投影（顶栏 stats strip；会话切换/回合终态时刷新）
+  // 会话级统计投影（底部统计条 StatsBar；会话切换/回合终态时刷新）
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   // /plan 计划模式（会话级元数据；进入后下一轮强制只读 + 仅产出方案）
   const [planMode, setPlanModeState] = useState(false);
@@ -997,7 +998,6 @@ export default function App() {
             title={currentSession?.title}
             onResume={handleResumeRun}
             resuming={resumingRun}
-            stats={sessionStats}
             planMode={planMode}
           />
 
@@ -1099,6 +1099,8 @@ export default function App() {
                   <PlanPanel plan={activePlan} running={latestSessionRun?.status === 'running'} />
                 ) : null
               }
+              // 会话统计条贴着 composer 底部（原先在顶栏，读的时候和标题抢同一行）
+              footerSlot={<StatsBar stats={sessionStats} />}
             />
           )}
         </div>

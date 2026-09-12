@@ -26,6 +26,13 @@
   margin: 0 auto 8px;
 }
 
+/* 输入框下方的附加内容（会话统计条）：与 conversationComposer 同宽居中，
+   底部留白交给 .inputBar 的 padding，这里只收紧与输入框之间的间距。 */
+.inputBarFooter {
+  width: min(860px, 100%);
+  margin: 0 auto;
+}
+
 .conversationComposer {
   position: relative;
   width: min(860px, 100%);

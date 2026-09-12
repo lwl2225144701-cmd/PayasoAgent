@@ -75,6 +75,8 @@ interface InputBarProps {
   onBuiltinCommand?: (name: string, args: string) => void;
   // 输入框上方的附加内容（如"当前计划"面板）；宽度与输入框对齐，随输入区一起滚动/固定
   headerSlot?: ReactNode;
+  // 输入框下方的附加内容（如会话统计条）；留在同一块底部 dock 内，复用其渐变底
+  footerSlot?: ReactNode;
 }
 
 export function InputBar({
@@ -101,6 +103,7 @@ export function InputBar({
   onSelectPermission,
   onBuiltinCommand,
   headerSlot,
+  footerSlot,
 }: InputBarProps) {
   const { t } = useI18n();
   // 未传 placeholder 时用跟随语言的默认占位符（传了就尊重调用方，如 hero 态的定制文案）
@@ -604,6 +607,9 @@ export function InputBar({
           onSelectPermission={onSelectPermission}
         />
       </div>
+      {/* 输入框下方的附加内容（当前会话统计条）：留在同一块底部 dock 里，
+          复用它的渐变底与左右内边距，不另起一层背景。 */}
+      {footerSlot && <div className={styles.inputBarFooter}>{footerSlot}</div>}
     </div>
   );
 }

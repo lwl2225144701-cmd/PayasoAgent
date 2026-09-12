@@ -34,7 +34,8 @@ export interface HostSession {
   workspace?: WorkspaceView;
 }
 
-// 会话级统计投影（host GET /sessions/:id/stats）——顶栏 stats strip 数据源。
+// 会话级统计投影（host GET /sessions/:id/stats）——底部统计条 StatsBar 数据源
+// （v2.3 起从顶栏挪到 composer 下方；读数口径不变）。
 export interface SessionStats {
   turns: number;
   steps: number;

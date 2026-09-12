@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatDurationMs } from '../../format';
 import { useI18n } from '../../i18n';
 import type { MessageKey } from '../../i18n/messages';
-import { translator } from '../../i18n/translate';
-import type { LanguageMode } from '../../preferences';
-import type { HostRun, SessionStats } from '../../types';
-import { formatContextTokens } from '../Timeline/context-gauge';
+import type { HostRun } from '../../types';
 import styles from './ShellBar.module.css';
 
 interface ShellBarProps {
@@ -14,8 +10,6 @@ interface ShellBarProps {
   title?: string;
   onResume?: () => void;
   resuming?: boolean;
-  /** 会话级统计投影（顶栏 stats strip）；无则整条不渲染。 */
-  stats?: SessionStats | null;
   /** /plan 计划模式开启时显示标记（下一轮强制只读 + 仅产出方案）。 */
   planMode?: boolean;
 }
@@ -32,42 +26,14 @@ const RUN_STATUS_KEY: Record<HostRun['status'], MessageKey | null> = {
 };
 
 /**
- * 把会话统计折叠成顶栏展示片段（纯函数，供组件渲染与测试复用）。
- * 零值/无数据片段自动省略，首 token 取平均（汇总 ÷ 有记录的回合数）。
- * 语言是入参（不是模块级状态）：默认中文，既有调用点与测试不传也照旧。
+ * 顶栏只保留会话身份与运行态（标题 / Plan 标记 / 状态 pill / 恢复按钮）。
+ * 会话统计已挪到底部 StatsBar（composer 正下方），避免与标题争夺同一行。
  */
-export function sessionStatsSegments(
-  stats: SessionStats,
-  language: LanguageMode = 'zh-CN',
-): string[] {
-  const t = translator(language);
-  const segments: string[] = [];
-  if (stats.turns > 0) segments.push(t('shell.stats.turns', { count: stats.turns }));
-  if (stats.steps > 0) segments.push(t('shell.stats.steps', { count: stats.steps }));
-  if (stats.llmCalls > 0) segments.push(`${stats.llmCalls} LLM`);
-  if (stats.toolCalls > 0) segments.push(t('shell.stats.toolCalls', { count: stats.toolCalls }));
-  if (stats.tokens > 0) segments.push(`${formatContextTokens(stats.tokens)} tok`);
-  if (stats.ttftCount > 0) {
-    segments.push(
-      t('shell.stats.ttft', {
-        duration: formatDurationMs(Math.round(stats.ttftMs / stats.ttftCount), language),
-      }),
-    );
-  }
-  if (stats.durationMs > 0) {
-    segments.push(
-      t('shell.stats.active', { duration: formatDurationMs(stats.durationMs, language) }),
-    );
-  }
-  return segments;
-}
-
-export function ShellBar({ run, title, onResume, resuming, stats, planMode }: ShellBarProps) {
-  const { t, language } = useI18n();
+export function ShellBar({ run, title, onResume, resuming, planMode }: ShellBarProps) {
+  const { t } = useI18n();
   const statusKey = run ? RUN_STATUS_KEY[run.status] : null;
   const label = statusKey ? t(statusKey) : null;
   const displayTitle = title ?? run?.task ?? null;
-  const segments = stats ? sessionStatsSegments(stats, language) : [];
   const [, tick] = useState(0);
   const autoTickRef = useRef<number | null>(null);
 
@@ -95,15 +61,6 @@ export function ShellBar({ run, title, onResume, resuming, stats, planMode }: Sh
         {planMode && (
           <span className={styles.planTag} title={t('shell.planMode.title')}>
             Plan
-          </span>
-        )}
-        {segments.length > 0 && (
-          <span className={styles.statsStrip} title={t('shell.stats.title')}>
-            {segments.map((segment) => (
-              <span key={segment} className={styles.statsItem}>
-                {segment}
-              </span>
-            ))}
           </span>
         )}
         {label && (

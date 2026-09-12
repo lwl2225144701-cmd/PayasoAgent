@@ -76,7 +76,7 @@ export function listSessionRuns(sessionId: string): Promise<{ runs: HostRun[] }>
   return jsonFetch(`/sessions/${sessionId}/runs`, { cache: 'no-store' });
 }
 
-/** 会话级统计投影（顶栏 stats strip 数据源）。 */
+/** 会话级统计投影（底部统计条 StatsBar 数据源）。 */
 export function fetchSessionStats(sessionId: string): Promise<SessionStats> {
   return jsonFetch(`/sessions/${sessionId}/stats`, { cache: 'no-store' });
 }
