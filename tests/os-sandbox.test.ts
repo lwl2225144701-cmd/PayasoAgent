@@ -18,6 +18,7 @@ import {
   type ToolContext,
   type ToolSandboxEvent,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -26,6 +27,7 @@ async function execute(
 ): Promise<string> {
   return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
 import '../src/tools/runtime-tools.js';
 import type { PermissionMode } from '../src/permission-mode.js';
 import { probeSandboxAvailability } from '../src/sandbox/macos-sandbox.js';
@@ -42,10 +44,10 @@ const RUN = 'os-sandbox-test';
 const root = createWorkspace(RUN);
 const work = path.join(root, 'work');
 const outside = path.join(TEST_ROOT, 'outside.txt');
-const tmpOutside = path.join(os.tmpdir(), 'payaso-os-sandbox-' + process.pid + '.txt');
+const tmpOutside = path.join(os.tmpdir(), `payaso-os-sandbox-${process.pid}.txt`);
 
 function shQuote(value: string): string {
-  return "'" + value.replaceAll("'", "'\\''") + "'";
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function shell(
@@ -87,7 +89,7 @@ async function runMatrix(): Promise<void> {
   const startEvents: ToolSandboxEvent[] = [];
   const pwd = await shell('pwd', startEvents);
   assert.match(pwd, /shell-exit-0/);
-  assert.ok(pwd.includes(path.sep + 'work'), 'unexpected cwd output: ' + pwd);
+  assert.ok(pwd.includes(`${path.sep}work`), `unexpected cwd output: ${pwd}`);
   assert.deepEqual(startEvents, [{ type: 'shell_sandbox_started', platform: 'macos' }]);
 
   await shell('printf initial > inside.txt && mkdir nested && printf child > nested/file.txt');
@@ -112,21 +114,21 @@ async function runMatrix(): Promise<void> {
   // Workspace sibling: absolute path write/delete must be denied by the OS.
   fs.writeFileSync(outside, 'keep', 'utf8');
   const deniedEvents: ToolSandboxEvent[] = [];
-  await expectDenied('printf hacked > ' + shQuote(outside), deniedEvents);
+  await expectDenied(`printf hacked > ${shQuote(outside)}`, deniedEvents);
   assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
-  await expectDenied('cat ' + shQuote(outside));
+  await expectDenied(`cat ${shQuote(outside)}`);
   assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
-  await expectDenied('rm -f ' + shQuote(outside));
+  await expectDenied(`rm -f ${shQuote(outside)}`);
   assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
   assert.ok(deniedEvents.some((event) => event.type === 'shell_sandbox_denied'));
 
   // /tmp is intentionally not a writable root in this policy.
   fs.rmSync(tmpOutside, { force: true });
-  await expectDenied('printf tmp > ' + shQuote(tmpOutside));
+  await expectDenied(`printf tmp > ${shQuote(tmpOutside)}`);
   assert.ok(!fs.existsSync(tmpOutside));
 
   // A child shell inherits the same OS sandbox; string indirection cannot escape.
-  await expectDenied('sh -c ' + shQuote('printf child > ' + shQuote(outside)));
+  await expectDenied(`sh -c ${shQuote(`printf child > ${shQuote(outside)}`)}`);
   assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
 
   // Read Only keeps Workspace readable but denies every write, including shell
@@ -136,7 +138,7 @@ async function runMatrix(): Promise<void> {
   assert.ok(readOnlyResult.includes('readable'));
   await expectDenied('printf changed > readonly.txt', undefined, 'read-only');
   await expectDenied(
-    'sh -c ' + shQuote('printf child > child-readonly.txt'),
+    `sh -c ${shQuote('printf child > child-readonly.txt')}`,
     undefined,
     'read-only',
   );
@@ -145,10 +147,10 @@ async function runMatrix(): Promise<void> {
 
   // Full access lifts the filesystem boundary for the process tree while the
   // independent network policy remains deny (covered by shell-network.test.ts).
-  const fullRead = await shell('cat ' + shQuote(outside), undefined, 'full-access');
+  const fullRead = await shell(`cat ${shQuote(outside)}`, undefined, 'full-access');
   assert.ok(fullRead.includes('keep'));
   await shell(
-    'sh -c ' + shQuote('printf full-child > ' + shQuote(outside)),
+    `sh -c ${shQuote(`printf full-child > ${shQuote(outside)}`)}`,
     undefined,
     'full-access',
   );

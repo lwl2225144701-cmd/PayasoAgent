@@ -17,18 +17,21 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  isValidWorkspaceSkillName,
+  MAX_SKILL_FILE_BYTES,
+  resolveSkillRelativePath,
+  SKILL_DIRS,
+} from '../tools/workspace-skill-path.js';
+
+export { MAX_SKILL_FILE_BYTES, resolveSkillRelativePath, SKILL_DIRS };
 
 /** Project instruction files, highest priority first. */
 export const PROJECT_INSTRUCTION_FILES = ['PAYASO.md', 'AGENTS.md', 'CLAUDE.md'] as const;
 
-/** Skill registry directories, highest priority first. */
-export const SKILL_DIRS = ['.payaso/skills', '.claude/skills', '.pi/skills'] as const;
-
 /** Per-file and total caps; the instruction segment is budgeted separately. */
 export const MAX_INSTRUCTION_FILE_BYTES = 32 * 1024;
 export const MAX_INSTRUCTION_TOTAL_BYTES = 32 * 1024;
-export const MAX_SKILL_FILE_BYTES = 64 * 1024;
-const SKILL_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 
 export interface LoadedInstructionFile {
   /** File name as found in the workspace, e.g. `AGENTS.md`. */
@@ -91,9 +94,7 @@ export function readProjectInstructions(workspaceRoot: string, permissionMode: s
   const files = loadProjectInstructionFiles(workspaceRoot, permissionMode);
   if (files.length === 0) return '';
   if (files.length === 1) return files[0].content.trim();
-  return files
-    .map((file) => `## ${file.source}\n\n${file.content.trim()}`)
-    .join('\n\n---\n\n');
+  return files.map((file) => `## ${file.source}\n\n${file.content.trim()}`).join('\n\n---\n\n');
 }
 
 export interface SkillManifest {
@@ -127,7 +128,7 @@ export function scanWorkspaceSkills(
       continue;
     }
     for (const skillDir of entries) {
-      if (!SKILL_NAME_PATTERN.test(skillDir)) continue;
+      if (!isValidWorkspaceSkillName(skillDir)) continue;
       try {
         const filePath = path.join(skillsDir, skillDir, 'SKILL.md');
         const stat = fs.statSync(filePath);
@@ -144,20 +145,6 @@ export function scanWorkspaceSkills(
     }
   }
   return manifests;
-}
-
-/** Workspace-relative path of a skill's SKILL.md, or null when it does not exist. */
-export function resolveSkillRelativePath(workspaceRoot: string, name: string): string | null {
-  if (!SKILL_NAME_PATTERN.test(name)) return null;
-  for (const dir of SKILL_DIRS) {
-    const relPath = path.posix.join(dir, name, 'SKILL.md');
-    try {
-      if (fs.statSync(path.join(workspaceRoot, relPath)).isFile()) return relPath;
-    } catch {
-      /* try next directory */
-    }
-  }
-  return null;
 }
 
 /** 极简 frontmatter 解析：只认 name / description / version，未知字段忽略（fail-closed）。 */

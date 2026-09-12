@@ -51,7 +51,7 @@ function readFileRange(real: string, offset: number, length: number): Buffer {
 
 // 超大文本（≥FULL_READ_TEXT_BYTES）的降级读取：字节窗口 + 字节 offset 续读。
 // 与行号路径互斥——这种文件通常是无换行的压缩/数据文件，行号无意义。
-function readTextByByteWindow(real: string, total: number, rel: string, byteOffset = 0): string {
+function readTextByByteWindow(real: string, total: number, _rel: string, byteOffset = 0): string {
   const remaining = Math.max(0, total - byteOffset);
   const buf = readFileRange(real, byteOffset, Math.min(MAX_READ_BYTES, remaining));
   const body = buf.toString('utf8');
@@ -164,7 +164,8 @@ export function sliceNumberedWindow(
 }
 
 // 拒绝路径的统一脱敏消息：只回显相对路径，不泄露宿主机绝对路径
-function rejectPath(rel: string): never {  throw new Error(`路径被拒绝（仅允许工作区内相对路径，禁止穿越/绝对路径/symlink 逃逸）: ${rel}`);
+function rejectPath(rel: string): never {
+  throw new Error(`路径被拒绝（仅允许工作区内相对路径，禁止穿越/绝对路径/symlink 逃逸）: ${rel}`);
 }
 
 // 解析 + 双重校验（resolvePath 字符串级 + assertInsideWorkspace 真实路径级）
@@ -257,7 +258,7 @@ function atomicWriteContent(real: string, content: string, rel: string): string 
   try {
     fs.writeFileSync(tmp, content, 'utf8');
     fs.renameSync(tmp, real);
-  } catch (err) {
+  } catch (_err) {
     try {
       fs.rmSync(tmp, { force: true });
     } catch {
@@ -667,7 +668,7 @@ function fuzzyLocate(normalized: string, oldText: string): { line: number; actua
   if (!anchor) return null;
   const srcStripped = srcLines.map((l) => l.replace(/\s+/g, ' ').trim());
   const anchorStripped = anchor.replace(/\s+/g, ' ').trim();
-  const hitLine = srcStripped.findIndex((l) => l && l.includes(anchorStripped));
+  const hitLine = srcStripped.findIndex((l) => l?.includes(anchorStripped));
   if (hitLine === -1) return null;
   return { line: hitLine + 1, actual: JSON.stringify(srcLines[hitLine].slice(0, 120)) };
 }
@@ -995,7 +996,7 @@ register({
       result = result.replace(/\n/g, '\r\n');
     }
     if (hadBom) {
-      result = '\uFEFF' + result;
+      result = `\uFEFF${result}`;
     }
 
     if (result === rawContent) {

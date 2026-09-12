@@ -137,7 +137,7 @@ test('read 超大文本 + offset 续读剩余部分', async () => {
   const first = await execute('read', { path: 'output/big.txt' }, ctx);
   const m = first.match(/offset=(\d+)/);
   assert.ok(m, `缺少 offset 提示: ${first.slice(0, 200)}`);
-  const offset = Number(m![1]);
+  const offset = Number(m?.[1]);
   const second = await execute('read', { path: 'output/big.txt', offset }, ctx);
   assert.ok(second.length > 0, '续读返回为空');
 });
@@ -170,8 +170,8 @@ test('read 图片文件 + vision 上下文 → 多模态结果（图片走 image
     await executeRaw('read', { path: 'work/pic.png' }, visionCtx),
   );
   assert.ok(withVision.images && withVision.images.length === 1, '应返回 1 张图片引用');
-  assert.equal(withVision.images![0].mimeType, 'image/png');
-  assert.equal(withVision.images![0].path, 'work/pic.png', '图片路径必须是工作区相对路径');
+  assert.equal(withVision.images?.[0].mimeType, 'image/png');
+  assert.equal(withVision.images?.[0].path, 'work/pic.png', '图片路径必须是工作区相对路径');
   assert.ok(!withVision.text.includes('宿主机'), '文本不得泄露宿主路径');
 
   // 非视觉上下文：保持向后兼容，只给省略提示、不附图
@@ -282,7 +282,7 @@ async function main(): Promise<void> {
   cleanupWorkspace(RUN);
   fs.rmSync(OUTSIDE, { force: true });
   fs.rmSync(TEST_ROOT, { recursive: true, force: true });
-  console.log('\n' + '='.repeat(56));
+  console.log(`\n${'='.repeat(56)}`);
   console.log(`汇总: ${passed} PASS / ${failed} FAIL`);
   if (failed > 0) {
     failures.forEach((f) => {

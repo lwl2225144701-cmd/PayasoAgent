@@ -179,7 +179,7 @@ try {
   }
 
   // ================= 场景 2：checkpoint 保存 executing 失败 → 禁止 execute =================
-  console.log('\n' + '='.repeat(70));
+  console.log(`\n${'='.repeat(70)}`);
   console.log('场景 2 — persist(executing) 失败 → 禁止 execute');
   console.log('='.repeat(70));
 

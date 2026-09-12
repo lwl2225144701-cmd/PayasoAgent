@@ -77,7 +77,8 @@ async function collectSse(
   ms = 120000,
 ): Promise<{ type: string; data: any }[]> {
   const res = await fetch(`${base}/runs/${id}/events`);
-  const reader = res.body!.getReader();
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('SSE response body is unavailable');
   const dec = new TextDecoder();
   let buf = '';
   const events: { type: string; data: any }[] = [];
@@ -106,7 +107,7 @@ async function collectSse(
     /* 连接中断 */
   }
   try {
-    await res.body!.cancel();
+    await res.body?.cancel();
   } catch {
     /* 忽略 */
   }

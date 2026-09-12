@@ -99,9 +99,9 @@ function generateFile(fileIndex, targetKB) {
   while (lines.length < 300 || bytes < targetBytes) {
     const line = makeSentence(rand, lineNo++);
     lines.push(line);
-    bytes += Buffer.byteLength(line + '\n', 'utf8');
+    bytes += Buffer.byteLength(`${line}\n`, 'utf8');
   }
-  return lines.join('\n') + '\n';
+  return `${lines.join('\n')}\n`;
 }
 
 function estimateTokens(text) {

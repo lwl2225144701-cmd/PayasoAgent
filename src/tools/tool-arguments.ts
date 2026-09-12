@@ -77,7 +77,12 @@ function expectedTypeLabel(type: unknown): string | undefined {
   return undefined;
 }
 
-function validateValue(schema: Schema, value: unknown, keyPath: string, issues: ToolArgumentIssue[]): void {
+function validateValue(
+  schema: Schema,
+  value: unknown,
+  keyPath: string,
+  issues: ToolArgumentIssue[],
+): void {
   const typeLabel = expectedTypeLabel(schema.type);
   const acceptedTypes = Array.isArray(schema.type)
     ? (schema.type as string[])
@@ -123,7 +128,9 @@ function validateObject(
   keyPath: string,
   issues: ToolArgumentIssue[],
 ): void {
-  const properties = isRecord(schema.properties) ? (schema.properties as Record<string, Schema>) : {};
+  const properties = isRecord(schema.properties)
+    ? (schema.properties as Record<string, Schema>)
+    : {};
   const declared = Object.keys(properties);
   const required = Array.isArray(schema.required)
     ? (schema.required as unknown[]).filter((item): item is string => typeof item === 'string')

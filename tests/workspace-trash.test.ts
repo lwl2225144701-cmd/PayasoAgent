@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
 import type { StoredRun, StoredSession } from '../src/host/persistence/store.js';
 import { RunManager } from '../src/host/run-manager.js';
@@ -33,6 +34,11 @@ const canonicalB = fs.realpathSync.native(workspaceB);
 const tests: { name: string; fn: () => void | Promise<void> }[] = [];
 function test(name: string, fn: () => void | Promise<void>): void {
   tests.push({ name, fn });
+}
+
+function requireRunId(runId: string | undefined): string {
+  assert.ok(runId, 'expected session to contain a run');
+  return runId;
 }
 
 function createStoppedSession(
@@ -135,10 +141,11 @@ test('重复初始化数据库不会重复添加 deleted_at', () => {
 test('deleted_at 索引成功创建', () => {
   const dbPath = path.join(ROOT, 'migration-indexes.db');
   const store = new SqliteRunStore(dbPath);
-  const sessionIndexes = store['db'].prepare('PRAGMA index_list(sessions)').all() as Array<{
+  const database = (store as unknown as { db: DatabaseSync }).db;
+  const sessionIndexes = database.prepare('PRAGMA index_list(sessions)').all() as Array<{
     name: string;
   }>;
-  const runIndexes = store['db'].prepare('PRAGMA index_list(runs)').all() as Array<{
+  const runIndexes = database.prepare('PRAGMA index_list(runs)').all() as Array<{
     name: string;
   }>;
   assert.ok(sessionIndexes.some((i) => i.name === 'idx_sessions_deleted_at'));
@@ -441,7 +448,7 @@ test('Purge 后内存 Run 不再可访问', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'purge-memory').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
 
   manager.deleteWorkspace(sessionId);
   manager.purgeWorkspace(sessionId);
@@ -496,7 +503,7 @@ test('软删除后通过旧 ID 无法绕过过滤访问 Session、Run、Events�
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'host-filter').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.close();
 
   const soft = new RunManager(new SqliteRunStore(dbPath));
@@ -505,7 +512,7 @@ test('软删除后通过旧 ID 无法绕过过滤访问 Session、Run、Events�
 
   const srv = createHostServer(new RunManager(new SqliteRunStore(dbPath)));
   server = srv;
-  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
   port = (server.address() as { port: number }).port;
 
   try {
@@ -565,7 +572,7 @@ test('当前 Workspace 被软删后 clearWorkspace', () => {
   const manager = new RunManager(store);
   setWorkspace(workspaceA);
   const sessionId = createStoppedSession(manager, 'current-clear').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   manager.deleteWorkspace(sessionId);
   assert.equal(getWorkspace(), null);
@@ -580,12 +587,12 @@ test('删除其他 Workspace 时不得清空当前 Workspace', () => {
   createStoppedSession(manager, 'keep-current');
   setWorkspace(workspaceB);
   const sessionB = createStoppedSession(manager, 'delete-other').sessionId;
-  const runB = manager.listSessionRuns(sessionB)![0].runId;
+  const runB = requireRunId(manager.listSessionRuns(sessionB)?.[0].runId);
   manager.stop(runB);
   setWorkspace(workspaceA); // current is A, we will delete B
   manager.deleteWorkspace(sessionB);
   assert.ok(getWorkspace());
-  assert.equal(getWorkspace()!.rootPath, canonicalA);
+  assert.equal(getWorkspace()?.rootPath, canonicalA);
   manager.close();
 });
 
@@ -599,7 +606,7 @@ test('softDeleteWorkspace 异常时完整 rollback', () => {
   store.createRun(storedRun('r-rb', 's-rb', canonicalA, 'workspace-A'));
 
   // 在 sessions 上创建触发器，软删时强制 ABORT，验证 softDeleteWorkspace 自身事务回滚
-  (store as any)['db'].exec(`
+  (store as any).db.exec(`
     CREATE TRIGGER soft_delete_fail BEFORE UPDATE ON sessions
     FOR EACH ROW WHEN NEW.deleted_at IS NOT NULL
     BEGIN SELECT RAISE(ABORT, 'soft_delete_abort'); END;
@@ -622,7 +629,7 @@ test('restoreWorkspace 异常时完整 rollback', () => {
   store.softDeleteWorkspace(canonicalA, '2026-08-27T01:00:00.000Z');
 
   // 在 sessions 上创建触发器，恢复时强制 ABORT，验证 restoreWorkspace 自身事务回滚
-  (store as any)['db'].exec(`
+  (store as any).db.exec(`
     CREATE TRIGGER restore_fail BEFORE UPDATE ON sessions
     FOR EACH ROW WHEN NEW.deleted_at IS NULL AND OLD.deleted_at IS NOT NULL
     BEGIN SELECT RAISE(ABORT, 'restore_abort'); END;
@@ -645,7 +652,7 @@ test('软删后同一 Manager 内存态绕过', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'memory-bypass').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
 
   manager.deleteWorkspace(sessionId);
@@ -713,7 +720,7 @@ test('软删后 Host 路由拒绝旧 Run 的 GET /runs/:id、stop 和 files', as
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'post-delete').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   manager.close();
 
@@ -723,8 +730,8 @@ test('软删后 Host 路由拒绝旧 Run 的 GET /runs/:id、stop 和 files', as
 
   const srv = createHostServer(new RunManager(new SqliteRunStore(dbPath)));
   server = srv;
-  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-  port = (server!.address() as { port: number }).port;
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  port = (srv.address() as { port: number }).port;
   try {
     async function request(
       method: string,
@@ -765,7 +772,7 @@ test('软删后 Host 路由拒绝旧 Run 的 GET /runs/:id、stop 和 files', as
     assert.equal(filesResp.status, 404, `files status=${filesResp.status}`);
   } finally {
     await new Promise<void>((r) => setTimeout(r, 50));
-    await new Promise<void>((r) => server!.close(() => r()));
+    await new Promise<void>((r) => server?.close(() => r()));
     server = null;
   }
 });
@@ -817,7 +824,7 @@ test('恢复不自动设置 currentWorkspace', () => {
   store.softDeleteWorkspace(canonicalA, '2026-08-27T01:00:00.000Z');
   const manager = new RunManager(store);
   setWorkspace(workspaceA);
-  assert.equal(getWorkspace()!.rootPath, canonicalA);
+  assert.equal(getWorkspace()?.rootPath, canonicalA);
   manager.deleteWorkspace('s-rc');
   assert.equal(getWorkspace(), null);
   manager.restoreWorkspace('s-rc');
@@ -859,7 +866,7 @@ test('未软删除的 Workspace 拒绝 purge', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'purge-not-deleted').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   assert.throws(() => manager.purgeWorkspace(sessionId), /Workspace has not been deleted/);
   manager.close();
@@ -873,7 +880,7 @@ test('软删期间不能继续对话', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'no-new-run').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   manager.deleteWorkspace(sessionId);
   assert.throws(() => manager.createInSession('new-run', sessionId), /Session not found/);
@@ -987,10 +994,10 @@ test('deleteWorkspace 基于 sessionId 解析私有 workspaceRoot', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'session-id-delete').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   // Another workspace with same basename but different root
-  const otherRoot = path.join(ROOT, 'other-' + path.basename(workspaceA));
+  const otherRoot = path.join(ROOT, `other-${path.basename(workspaceA)}`);
   fs.mkdirSync(otherRoot, { recursive: true });
   const otherCanonical = fs.realpathSync.native(otherRoot);
   store.createSession(storedSession('s-other', otherCanonical, path.basename(workspaceA)));
@@ -1016,7 +1023,7 @@ test('恢复路径校验不泄露 Host 绝对路径到响应', async () => {
   }).sessionId;
   const session = store.getSession(sessionId, { includeDeleted: true })!;
   store.updateSession({ ...session, workspaceRoot: privateCanonical });
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   manager.deleteWorkspace(sessionId);
   fs.rmSync(privateCanonical, { recursive: true, force: true });
@@ -1038,7 +1045,7 @@ test('重复软删幂等且不返回 500', () => {
   const store = new SqliteRunStore(dbPath);
   const manager = new RunManager(store);
   const sessionId = createStoppedSession(manager, 'idempotent-http').sessionId;
-  const runId = manager.listSessionRuns(sessionId)![0].runId;
+  const runId = requireRunId(manager.listSessionRuns(sessionId)?.[0].runId);
   manager.stop(runId);
   manager.deleteWorkspace(sessionId);
   const second = manager.deleteWorkspace(sessionId);

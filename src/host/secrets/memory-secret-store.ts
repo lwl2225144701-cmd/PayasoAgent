@@ -1,7 +1,7 @@
 // MemorySecretStore：仅测试 / 依赖注入使用，不做任何持久化。
 // UnsupportedSecretStore：非 macOS 平台的明确失败实现 —— 绝不静默回退明文存储。
 
-import type { SecretStore } from './secret-store.js';
+import type { SecretStore } from './secret-store-contract.js';
 
 export class MemorySecretStore implements SecretStore {
   private readonly map = new Map<string, string>();

@@ -58,16 +58,18 @@ await test('含 shell 组合/重定向 → 保守判为可能写', () => {
     'ls `pwd`',
     'echo a\nls',
   ]) {
-    assert.equal(
-      classifyShellCommand(command).effect,
-      'non_idempotent',
-      `应保守判定: ${command}`,
-    );
+    assert.equal(classifyShellCommand(command).effect, 'non_idempotent', `应保守判定: ${command}`);
   }
 });
 
 await test('写命令不在白名单 → non_idempotent', () => {
-  for (const command of ['npm run test:all', 'npx tsx build.ts', 'rm -rf dist', 'mv a b', 'git commit -m x']) {
+  for (const command of [
+    'npm run test:all',
+    'npx tsx build.ts',
+    'rm -rf dist',
+    'mv a b',
+    'git commit -m x',
+  ]) {
     assert.equal(classifyShellCommand(command).effect, 'non_idempotent', command);
   }
 });

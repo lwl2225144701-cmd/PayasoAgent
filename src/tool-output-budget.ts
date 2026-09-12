@@ -82,7 +82,13 @@ export function sliceTextToBudget(text: string, budget: SliceBudget = {}): Slice
 
   const originalBytes = utf8ByteLength(text);
   if (originalBytes <= maxBytes) {
-    return { content: text, truncated: false, originalBytes, returnedBytes: originalBytes, omittedBytes: 0 };
+    return {
+      content: text,
+      truncated: false,
+      originalBytes,
+      returnedBytes: originalBytes,
+      omittedBytes: 0,
+    };
   }
 
   const markerBytes = utf8ByteLength(marker);

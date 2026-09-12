@@ -24,6 +24,7 @@ register({
   parameters: { type: 'object', properties: { round: { type: 'number' } } },
   execute: async () => 'x'.repeat(12_000),
 });
+
 import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
 import type { TraceEvent } from '../src/runtime/trace.js';
 
@@ -142,7 +143,7 @@ try {
     permissionMode: 'workspace-write',
     modelContext: resolveModelContextConfig({
       model: 'unknown-small-model', // 不在能力注册表 → 保守 fallback 预算
-      contextWindowTokens: 6_000,   // 显式小窗口：让 12KB 工具结果稳定触发超限
+      contextWindowTokens: 6_000, // 显式小窗口：让 12KB 工具结果稳定触发超限
       maxOutputTokens: 1_000,
       safetyTokens: 500,
     }),
@@ -157,17 +158,21 @@ try {
       bigCalls++;
       return new Response(
         JSON.stringify({
-          choices: [{
-            message: {
-              role: 'assistant',
-              content: '',
-              tool_calls: [{
-                id: `call-big-${bigCalls}`,
-                type: 'function',
-                function: { name: 'emergency-probe', arguments: '{"round":' + bigCalls + '}' },
-              }],
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  {
+                    id: `call-big-${bigCalls}`,
+                    type: 'function',
+                    function: { name: 'emergency-probe', arguments: `{"round":${bigCalls}}` },
+                  },
+                ],
+              },
             },
-          }],
+          ],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
@@ -194,12 +199,17 @@ try {
   assert.equal(emergencyResult, 'survived');
   const lastUsage = [...emergencyTraces]
     .reverse()
-    .find((event): event is Extract<TraceEvent, { type: 'context_usage' }> => event.type === 'context_usage');
+    .find(
+      (event): event is Extract<TraceEvent, { type: 'context_usage' }> =>
+        event.type === 'context_usage',
+    );
   assert.ok(lastUsage);
   assert.equal(lastUsage.emergencyTrim, true, 'last round must be flagged as emergency-trimmed');
   // 紧急裁剪生效：最终视图必然有界（第 2 轮即收敛，之后保持小视图不再膨胀）
-  assert.ok(requestSizes[requestSizes.length - 1] <= 2 && requestSizes.every((n) => n <= 6),
-    `final view must stay bounded: ${JSON.stringify(requestSizes)}`);
+  assert.ok(
+    requestSizes[requestSizes.length - 1] <= 2 && requestSizes.every((n) => n <= 6),
+    `final view must stay bounded: ${JSON.stringify(requestSizes)}`,
+  );
   fs.rmSync(checkpointPath(emergencyRunId), { force: true });
   console.log('Emergency over-budget fallback test: PASS');
 } finally {

@@ -34,7 +34,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.log(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.log(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
 

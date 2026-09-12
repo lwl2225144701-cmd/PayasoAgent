@@ -106,7 +106,11 @@ const FIND_MUTATING_FLAGS: ReadonlySet<string> = new Set([
 const SHELL_METACHARACTER = /[;|&<>`\n\r]|\$\(/;
 
 /** git global flags that may precede the subcommand. */
-const GIT_GLOBAL_FLAGS_WITH_VALUE: ReadonlySet<string> = new Set(['-c', '--git-dir', '--work-tree']);
+const GIT_GLOBAL_FLAGS_WITH_VALUE: ReadonlySet<string> = new Set([
+  '-c',
+  '--git-dir',
+  '--work-tree',
+]);
 
 function basename(token: string): string {
   const parts = token.split('/');

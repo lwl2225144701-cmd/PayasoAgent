@@ -162,7 +162,7 @@ await test('edit 保留 CRLF 换行风格', async () => {
   );
   assert.ok(res.includes('编辑成功'), `结果: ${res}`);
   const content = fs.readFileSync(path.join(root, 'work', 'crlf.ts'), 'utf8');
-  assert.ok(content.includes('\r\n'), '应保留 CRLF: ' + JSON.stringify(content));
+  assert.ok(content.includes('\r\n'), `应保留 CRLF: ${JSON.stringify(content)}`);
   assert.ok(!content.includes('\r\n\r\n'), '不应引入多余换行');
 });
 
@@ -170,7 +170,7 @@ await test('edit 保留 CRLF 换行风格', async () => {
 await test('edit 保留 LF 换行风格', async () => {
   writeApp('const a = 1;\nconst b = 2;\nconst c = 3;\n');
   const content = fs.readFileSync(path.join(root, 'work', 'app.ts'), 'utf8');
-  assert.ok(!content.includes('\r\n'), '应保留 LF: ' + JSON.stringify(content));
+  assert.ok(!content.includes('\r\n'), `应保留 LF: ${JSON.stringify(content)}`);
 });
 
 // ---- 8. 无实际修改（oldText === newText）→ 无修改提示 ----

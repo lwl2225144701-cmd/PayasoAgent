@@ -2,8 +2,8 @@
 // 只暴露名称、地址和模型能力；认证信息永远不进入返回值。
 
 import type { Api, Model, Provider, ProviderStreams } from '@earendil-works/pi-ai';
-import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 
 export const PI_AI_MODEL_LIMIT = 50;
 

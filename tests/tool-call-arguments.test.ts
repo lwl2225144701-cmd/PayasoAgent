@@ -100,13 +100,26 @@ await test('非 toolCall 块与缺失 id 被忽略', () => {
     { type: 'toolCall', arguments: {} },
     { type: 'toolCall', id: 'ok', arguments: {} },
   ];
-  const mapped = rawArgumentsByToolCallId(blocks, new Map([[0, 'text'], [1, '{}'], [2, '{}']]));
+  const mapped = rawArgumentsByToolCallId(
+    blocks,
+    new Map([
+      [0, 'text'],
+      [1, '{}'],
+      [2, '{}'],
+    ]),
+  );
   assert.equal(mapped.size, 0);
 });
 
 await test('mergeRawArguments：不覆盖传输层已有条目', () => {
   const existing = new Map([['call-1', '{"from":"openai-path"}']]);
-  const merged = mergeRawArguments(existing, new Map([['call-1', '{"raw":'], ['call-2', '{"b":']]));
+  const merged = mergeRawArguments(
+    existing,
+    new Map([
+      ['call-1', '{"raw":'],
+      ['call-2', '{"b":'],
+    ]),
+  );
   assert.equal(merged?.get('call-1'), '{"from":"openai-path"}');
   assert.equal(merged?.get('call-2'), '{"b":');
 });
@@ -157,7 +170,11 @@ function anthropicStream(partialJsonFragments: string[]): string {
     { event: 'content_block_stop', data: { type: 'content_block_stop', index: 0 } },
     {
       event: 'message_delta',
-      data: { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 8 } },
+      data: {
+        type: 'message_delta',
+        delta: { stop_reason: 'tool_use' },
+        usage: { output_tokens: 8 },
+      },
     },
     { event: 'message_stop', data: { type: 'message_stop' } },
   ];
@@ -212,13 +229,14 @@ interface OpenAiChunk {
 }
 
 function openAiCompatStream(chunks: OpenAiChunk[]): string {
-  const lines = chunks.map(({ delta, finish }) =>
-    `data: ${JSON.stringify({
-      id: 'chatcmpl_test',
-      object: 'chat.completion.chunk',
-      model: 'MiniMax-M3',
-      choices: [{ index: 0, delta, finish_reason: finish ?? null }],
-    })}\n\n`,
+  const lines = chunks.map(
+    ({ delta, finish }) =>
+      `data: ${JSON.stringify({
+        id: 'chatcmpl_test',
+        object: 'chat.completion.chunk',
+        model: 'MiniMax-M3',
+        choices: [{ index: 0, delta, finish_reason: finish ?? null }],
+      })}\n\n`,
   );
   const final = `data: ${JSON.stringify({
     id: 'chatcmpl_test',
@@ -264,7 +282,12 @@ await test('集成：分片带空串 id/name 时仍拿到完整参数（MiniMax-
         content: '',
         role: 'assistant',
         tool_calls: [
-          { id: 'call_minimax_1', type: 'function', function: { name: 'ls', arguments: '' }, index: 0 },
+          {
+            id: 'call_minimax_1',
+            type: 'function',
+            function: { name: 'ls', arguments: '' },
+            index: 0,
+          },
         ],
       },
     },
@@ -310,7 +333,12 @@ await test('集成：后续片段 name 为空串时不覆盖已知函数名', as
       delta: {
         role: 'assistant',
         tool_calls: [
-          { id: '', type: 'function', function: { name: '', arguments: '{"command": "ls -la"}' }, index: 0 },
+          {
+            id: '',
+            type: 'function',
+            function: { name: '', arguments: '{"command": "ls -la"}' },
+            index: 0,
+          },
         ],
       },
     },
@@ -324,7 +352,14 @@ await test('集成：函数名跨分片拼接仍然有效（cal + culator）', a
     {
       delta: {
         role: 'assistant',
-        tool_calls: [{ id: 'call_split', type: 'function', function: { name: 'cal', arguments: '{}' }, index: 0 }],
+        tool_calls: [
+          {
+            id: 'call_split',
+            type: 'function',
+            function: { name: 'cal', arguments: '{}' },
+            index: 0,
+          },
+        ],
       },
     },
     {

@@ -6,17 +6,17 @@
 // 绝不回显给浏览器（读 API 只回 hasApiKey/mask）。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { fetchAvailableModelCatalog } from '../available-models.js';
 import type { CreateModelProviderInput, UpdateModelProviderInput } from '../persistence/store.js';
 import { listPiAiProviderCatalog } from '../pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from '../provider-url.js';
 import type { RunManager } from '../run-manager.js';
-import { fetchAvailableModelCatalog } from '../available-models.js';
 import {
-  MAX_BODY_BYTES,
-  RequestBodyTooLargeError,
   bad,
   checkOrigin,
+  MAX_BODY_BYTES,
   notFound,
+  RequestBodyTooLargeError,
   readBody,
   requireAuth,
   requireJsonContentType,
@@ -208,12 +208,7 @@ export async function handleSettings(
         return bad(res, message);
       }
     }
-    if (
-      s.length === 3 &&
-      s[1] === 'available-models' &&
-      s[2] === 'preview' &&
-      method === 'POST'
-    ) {
+    if (s.length === 3 && s[1] === 'available-models' && s[2] === 'preview' && method === 'POST') {
       // 新增 Provider 时的临时预检：用表单中的 baseUrl + apiKey 拉取模型目录。
       // 凭证不落盘、不进日志、不回显；仍受 fetchAvailableModelsSafe 保护
       // （协议白名单、凭证拒绝、loopback 限制、响应大小限制）。需鉴权。

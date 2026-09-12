@@ -102,7 +102,7 @@ try {
   assert.ok(requested && requested.requestId.length > 0);
   assert.equal(requested?.toolName, 'git');
   assert.equal(requested?.packageName, 'git');
-  assert.equal(manager.resolveToolchainPreparation(runId, requested!.requestId, false), true);
+  assert.equal(manager.resolveToolchainPreparation(runId, requested?.requestId, false), true);
   assert.deepEqual(await pending, {
     approved: false,
     prepared: false,
@@ -114,7 +114,7 @@ try {
   assert.ok(resolved);
   assert.equal(resolved?.approved, false);
   assert.equal(resolved?.prepared, false);
-  assert.equal(manager.resolveToolchainPreparation(runId, requested!.requestId, true), false);
+  assert.equal(manager.resolveToolchainPreparation(runId, requested?.requestId, true), false);
 
   const server = createHostServer(manager, 'toolchain-token');
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -151,7 +151,7 @@ try {
           Authorization: 'Bearer toolchain-token',
           Origin: `http://127.0.0.1:${portNumber}`,
         },
-        body: JSON.stringify({ requestId: nextRequest!.requestId, approved: false }),
+        body: JSON.stringify({ requestId: nextRequest?.requestId, approved: false }),
       },
     );
     assert.equal(response.status, 200);
@@ -179,7 +179,7 @@ try {
           Authorization: 'Bearer toolchain-token',
           Origin: `http://127.0.0.1:${portNumber}`,
         },
-        body: JSON.stringify({ requestId: cancelRequest!.requestId, cancel: true }),
+        body: JSON.stringify({ requestId: cancelRequest?.requestId, cancel: true }),
       },
     );
     assert.equal(cancelResponse.status, 200);
@@ -244,7 +244,7 @@ try {
     );
     assert.ok(phaseRequest);
     assert.equal(
-      phaseManager.resolveToolchainPreparation(phaseRunId, phaseRequest!.requestId, true),
+      phaseManager.resolveToolchainPreparation(phaseRunId, phaseRequest?.requestId, true),
       true,
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -255,7 +255,7 @@ try {
       ),
     );
     assert.equal(
-      phaseManager.cancelToolchainPreparation(phaseRunId, phaseRequest!.requestId),
+      phaseManager.cancelToolchainPreparation(phaseRunId, phaseRequest?.requestId),
       true,
     );
     assert.equal((await phasePending).status, 'aborted');

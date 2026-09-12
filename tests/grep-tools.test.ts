@@ -12,6 +12,7 @@ import {
   type ToolContext,
   validateToolResult,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -20,6 +21,7 @@ async function execute(
 ): Promise<string> {
   return normalizeToolResult(await executeRaw(name, args, context)).text;
 }
+
 import '../src/tools/runtime-tools.js'; // 副作用：注册 grep / glob / shell / moveFile / deleteFile
 import { SEARCH_MAX_FILE_BYTES } from '../src/tools/workspace-scan.js';
 
@@ -38,11 +40,7 @@ fs.mkdirSync(path.join(root, 'work', 'sub'), { recursive: true });
 fs.writeFileSync(path.join(root, 'work', 'sub', 'b.txt'), 'hello node\nbaz qux\n', 'utf8');
 fs.writeFileSync(path.join(root, 'work', 'sub', 'c.bin'), Buffer.from([0x00, 0x01, 0x02]), 'utf8');
 // 超过搜索阈值才应被跳过（v1.9 阈值从 64KB 提升到 8MB：源码文件不再被静默漏搜）
-fs.writeFileSync(
-  path.join(root, 'work', 'big.txt'),
-  'x'.repeat(SEARCH_MAX_FILE_BYTES + 1),
-  'utf8',
-);
+fs.writeFileSync(path.join(root, 'work', 'big.txt'), 'x'.repeat(SEARCH_MAX_FILE_BYTES + 1), 'utf8');
 const OUTSIDE = path.join(TEST_ROOT, 'grep-outside.txt');
 fs.writeFileSync(OUTSIDE, 'secret outside', 'utf8');
 

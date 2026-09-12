@@ -112,7 +112,10 @@ await check('枚举越界 → enum issue', () => {
 await check('嵌套数组对象：逐项校验并给出索引路径', () => {
   const result = validateToolArguments(PROBE_SCHEMA, {
     path: 'a',
-    edits: [{ oldText: 'x', newText: 'y' }, { oldText: 1, newText: 'z' }],
+    edits: [
+      { oldText: 'x', newText: 'y' },
+      { oldText: 1, newText: 'z' },
+    ],
   });
   const issue = result.issues.find((item) => item.kind === 'type');
   assert.equal(issue?.key, 'edits[1].oldText', JSON.stringify(result.issues));
@@ -140,7 +143,10 @@ await check('additionalProperties: true → 允许未知参数（显式声明的
 });
 
 await check('未声明 type 的 schema → 不因校验器局限而拦截', () => {
-  assert.equal(validateToolArguments({ type: 'object', properties: {} }, { anything: 1 }).ok, false);
+  assert.equal(
+    validateToolArguments({ type: 'object', properties: {} }, { anything: 1 }).ok,
+    false,
+  );
   // 显式允许扩展时才放行
   assert.equal(
     validateToolArguments(
@@ -162,27 +168,33 @@ await check('提示文案包含可接受参数与重试指引（模型可据此�
 
 // ---- 2. 集成：未知参数不执行工具，回传结构化错误 ----
 
-await check('集成：未知参数 → 工具不执行 + INVALID_ARGUMENT_SHAPE + 模型修正后恰好执行一次', async () => {
-  probe.executeCount = 0;
-  probe.lastArgs = null;
-  const result = await runMockAgent({
-    runId: 'arg-validation-unknown',
-    task: '校验参数',
-    workspaceRoot: WORKSPACE,
-    script: [
-      () => toolCallResponse([{ id: 'c1', name: 'arg-probe', args: { path: 'a', bogus: 1 } }]),
-      () => toolCallResponse([{ id: 'c2', name: 'arg-probe', args: { path: 'a' } }]),
-      () => textResponse('done'),
-    ],
-  });
-  assert.equal(result.error, undefined, String(result.error));
-  assert.equal(result.answer, 'done');
-  assert.equal(probe.executeCount, 1, '未知参数不得执行工具');
-  assert.deepEqual(probe.lastArgs, { path: 'a' });
-  const invalid = result.traces.find((event) => event.type === 'tool_call_invalid');
-  assert.ok(invalid, '必须产生 tool_call_invalid');
-  assert.equal(invalid.type === 'tool_call_invalid' ? invalid.code : '', 'INVALID_ARGUMENT_SHAPE');
-});
+await check(
+  '集成：未知参数 → 工具不执行 + INVALID_ARGUMENT_SHAPE + 模型修正后恰好执行一次',
+  async () => {
+    probe.executeCount = 0;
+    probe.lastArgs = null;
+    const result = await runMockAgent({
+      runId: 'arg-validation-unknown',
+      task: '校验参数',
+      workspaceRoot: WORKSPACE,
+      script: [
+        () => toolCallResponse([{ id: 'c1', name: 'arg-probe', args: { path: 'a', bogus: 1 } }]),
+        () => toolCallResponse([{ id: 'c2', name: 'arg-probe', args: { path: 'a' } }]),
+        () => textResponse('done'),
+      ],
+    });
+    assert.equal(result.error, undefined, String(result.error));
+    assert.equal(result.answer, 'done');
+    assert.equal(probe.executeCount, 1, '未知参数不得执行工具');
+    assert.deepEqual(probe.lastArgs, { path: 'a' });
+    const invalid = result.traces.find((event) => event.type === 'tool_call_invalid');
+    assert.ok(invalid, '必须产生 tool_call_invalid');
+    assert.equal(
+      invalid.type === 'tool_call_invalid' ? invalid.code : '',
+      'INVALID_ARGUMENT_SHAPE',
+    );
+  },
+);
 
 await check('集成：缺必填同样被拦截，不执行工具', async () => {
   probe.executeCount = 0;
@@ -230,7 +242,11 @@ await check('回归：未声明的 timeout 被拒绝，提示指向 timeoutMs', 
         ]),
       () =>
         toolCallResponse([
-          { id: 's2', name: 'shell-like-counting', args: { command: 'npm test', timeoutMs: 120000 } },
+          {
+            id: 's2',
+            name: 'shell-like-counting',
+            args: { command: 'npm test', timeoutMs: 120000 },
+          },
         ]),
       () => textResponse('ran'),
     ],

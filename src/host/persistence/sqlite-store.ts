@@ -5,8 +5,8 @@ import url from 'node:url';
 import { storedPermissionMode } from '../../permission-mode.js';
 import type { HostEvent } from '../run-events.js';
 import { createSecretStore, type SecretStore } from '../secrets/secret-store.js';
-import { SettingsStore } from './settings-store.js';
 import type { ModelThinkingLevel } from './settings-store.js';
+import { SettingsStore } from './settings-store.js';
 import type {
   CreateModelProviderInput,
   DefaultModelSelection,

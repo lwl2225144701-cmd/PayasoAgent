@@ -16,15 +16,9 @@
 import { EncryptedFileSecretStore } from './encrypted-file-secret-store.js';
 import { MacOSKeychainSecretStore } from './macos-keychain-secret-store.js';
 import { MemorySecretStore, UnsupportedSecretStore } from './memory-secret-store.js';
+import type { SecretStore } from './secret-store-contract.js';
 
-export interface SecretStore {
-  /** 读取 secret；不存在返回 null。Keychain 不可访问时抛出脱敏错误。 */
-  get(key: string): string | null;
-  /** 写入/替换 secret（幂等）。失败时抛出，调用方必须假设 secret 未写入。 */
-  set(key: string, value: string): void;
-  /** 删除 secret；不存在视为成功（幂等）。 */
-  delete(key: string): void;
-}
+export type { SecretStore } from './secret-store-contract.js';
 
 // Secret key：稳定引用，不使用 API Key 本身或 display name 做标识
 export function providerSecretKey(providerId: string): string {

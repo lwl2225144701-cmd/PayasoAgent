@@ -4,14 +4,14 @@
 // Host 只通过 RunManager/Runtime 公开边界工作；路径一律经 Sandbox resolvePath 校验。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { RunManager } from './run-manager.js';
-import { handleRuntime } from './routes/runtime-handler.js';
-import { handleSettings } from './routes/settings-handler.js';
-import { handleWorkspace } from './routes/workspace-handler.js';
-import { handleSessions } from './routes/sessions-handler.js';
-import { handleRuns } from './routes/runs-handler.js';
 import { segs } from './routes/route-context.js';
+import { handleRuns } from './routes/runs-handler.js';
+import { handleRuntime } from './routes/runtime-handler.js';
+import { handleSessions } from './routes/sessions-handler.js';
+import { handleSettings } from './routes/settings-handler.js';
 import { serveStatic } from './routes/static-handler.js';
+import { handleWorkspace } from './routes/workspace-handler.js';
+import type { RunManager } from './run-manager.js';
 
 // 对外兼容导出：Host 组合根通过 routes 设置进程级 API Token。
 export { setHostApiToken } from './routes/route-context.js';

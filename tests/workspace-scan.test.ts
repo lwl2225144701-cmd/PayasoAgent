@@ -10,8 +10,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { compileGlob, matchesGlob } from '../src/tools/glob-pattern.js';
-import { normalizeToolResult, type ToolContext } from '../src/tools/tools.js';
-import { execute as executeRaw } from '../src/tools/tools.js';
+import {
+  execute as executeRaw,
+  normalizeToolResult,
+  type ToolContext,
+} from '../src/tools/tools.js';
 import '../src/tools/runtime-tools.js';
 import { createWorkspace } from '../src/sandbox/sandbox-manager.js';
 import { DEFAULT_IGNORED_DIRS, scanWorkspaceFiles } from '../src/tools/workspace-scan.js';

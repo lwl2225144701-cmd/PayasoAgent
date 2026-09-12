@@ -11,7 +11,7 @@
 // - 入库字节 = 归一化后字节（内容寻址对归一化结果去重），originalDimensions
 //   记录归一化前原图尺寸
 
-import type { CreateRunAttachmentInput } from '../host/run-manager.js';
+import type { CreateRunAttachmentInput } from '../attachment-types.js';
 
 export const ATTACHMENT_PIXEL_LIMIT = 64 * 1024 * 1024;
 export const ATTACHMENT_SIDE_LIMIT = 16_384;

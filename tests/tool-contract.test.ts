@@ -13,6 +13,7 @@ import {
   type Tool,
   type ToolContext,
 } from '../src/tools/tools.js';
+
 // 测试按文本结果断言：execute 可能返回多模态结果（文本+图片引用），统一取文本部分。
 async function execute(
   name: string,
@@ -258,7 +259,7 @@ async function main(): Promise<void> {
       console.log(`  [FAIL] ${t.name} — ${msg}`);
     }
   }
-  console.log('\n' + '='.repeat(56));
+  console.log(`\n${'='.repeat(56)}`);
   console.log(`汇总: ${passed} PASS / ${failed} FAIL`);
   if (failed > 0) {
     failures.forEach((f) => {

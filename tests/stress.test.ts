@@ -308,7 +308,7 @@ scenarios['longchain-mixed'] = {
   e2e: true,
   run: async (ctx) => {
     const ws = createWorkspace(ctx.runId);
-    fs.writeFileSync(path.join(ws, 'input', 'num.txt'), 'L=7\n' + 'x'.repeat(3000));
+    fs.writeFileSync(path.join(ws, 'input', 'num.txt'), `L=7\n${'x'.repeat(3000)}`);
     fs.writeFileSync(path.join(ws, 'work', 'a.txt'), 'aaa');
     fs.mkdirSync(path.join(ws, 'work', 'sub'), { recursive: true });
     const task =
@@ -353,7 +353,7 @@ scenarios['longchain-batch'] = {
       0,
       ...(cp?.messages ?? [])
         .filter((m) => m.role === 'assistant' && m.tool_calls?.length)
-        .map((m) => m.tool_calls!.length),
+        .map((m) => m.tool_calls?.length ?? 0),
     );
     const ok = answer.includes('555') && answer.includes('192') && answer.includes('143');
     return {
@@ -408,7 +408,7 @@ scenarios['large-read-oversize'] = {
   e2e: true,
   run: async (ctx) => {
     const ws = createWorkspace(ctx.runId);
-    fs.writeFileSync(path.join(ws, 'input', 'big.txt'), ('x'.repeat(1024) + '\n').repeat(1200));
+    fs.writeFileSync(path.join(ws, 'input', 'big.txt'), `${'x'.repeat(1024)}\n`.repeat(1200));
     const task = '请读取 input/big.txt 并告诉我它的内容或大小。';
     const { answer } = await runAgentTask(task, ctx.runId);
     const cp = loadCheckpoint(ctx.runId);
@@ -518,10 +518,7 @@ scenarios['recover-invalid-chain'] = {
   e2e: true,
   run: async (ctx) => {
     const ws = createWorkspace(ctx.runId);
-    fs.writeFileSync(
-      path.join(ws, 'input', 'oversize.txt'),
-      ('y'.repeat(1024) + '\n').repeat(1200),
-    );
+    fs.writeFileSync(path.join(ws, 'input', 'oversize.txt'), `${'y'.repeat(1024)}\n`.repeat(1200));
     const task = '请查询深圳的天气并把温度加 10；然后读取 input/oversize.txt 的内容。告诉我结果。';
     const { answer } = await runAgentTask(task, ctx.runId);
     const out = cap.join('\n');
@@ -1045,7 +1042,7 @@ async function runWorkerScenario(id: string, resumeId?: string): Promise<void> {
       /* 保留现场优先 */
     }
   }
-  fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), cap.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), `${cap.join('\n')}\n`, 'utf8');
   process.stdout.write(`[STRESS-RESULT]${JSON.stringify(res)}\n`);
 }
 
@@ -1198,7 +1195,7 @@ async function runOrchestrator(): Promise<void> {
           }
         }
         logLine += res.detail;
-        fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), logLine + '\n', 'utf8');
+        fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), `${logLine}\n`, 'utf8');
       } else if (id === 'se-resume-crash') {
         // 真实崩溃：SIGKILL 掉正在执行 appendEntry 的 worker，再 resume 验证防重放
         const runId = 'stress-se-resume-crash';
@@ -1289,7 +1286,7 @@ async function runOrchestrator(): Promise<void> {
             }
           : { pass: false, detail: `resume 阶段失败: ${resumeRes.detail}`, metrics: { killed } };
         logLine = `[phase1 SIGKILL] ${killed ? '已杀' : 'sentinel 超时未杀'}\n[resume] ${res.detail}`;
-        fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), logLine + '\n', 'utf8');
+        fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), `${logLine}\n`, 'utf8');
         try {
           cleanupWorkspace(runId);
         } catch {
@@ -1302,7 +1299,7 @@ async function runOrchestrator(): Promise<void> {
         // 保留现场：非 E2E 确定性场景同时把 stdout 留档
         fs.writeFileSync(
           path.join(LOG_DIR, `${id}.log`),
-          logLine + '\n' + stdout.slice(0, 20_000),
+          `${logLine}\n${stdout.slice(0, 20_000)}`,
           'utf8',
         );
       }
@@ -1327,7 +1324,7 @@ async function runOrchestrator(): Promise<void> {
   // ============ 汇总 ============
   const passed = results.filter((r) => r.pass).length;
   const failed = results.filter((r) => !r.pass);
-  console.log('\n' + '='.repeat(70));
+  console.log(`\n${'='.repeat(70)}`);
   console.log('压测汇总');
   console.log('='.repeat(70));
   console.log(`总场景: ${results.length} | PASS: ${passed} | FAIL: ${failed.length}`);
@@ -1348,7 +1345,7 @@ async function runOrchestrator(): Promise<void> {
   );
   const anyEscape = results.some((r) => !r.pass && r.metrics && (r.metrics as any).leak === true);
   const contextBlow = results.some((r) => r.metrics && (r.metrics as any).finding === true);
-  console.log('\n' + '='.repeat(70));
+  console.log(`\n${'='.repeat(70)}`);
   console.log('关键结论');
   console.log('='.repeat(70));
   console.log(

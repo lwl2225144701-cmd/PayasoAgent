@@ -8,8 +8,8 @@
 // as the native picker (see workspace.ts / canonicalizeWorkspaceRoot): the
 // user explicitly chooses a folder, which is the authorization.
 
+import { type Dirent, existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -118,18 +118,15 @@ async function resolveBrowseTarget(requested?: string): Promise<string> {
  * - path 缺省 → home；空串（保留值）→ Windows "此电脑"盘符列表；非绝对路径 → home
  * - 不存在的路径/权限错误由调用方以错误信息呈现（不做静默回退，用户应能感知）
  */
-export async function browseDirectory(
-  requestedPath?: string,
-): Promise<DirectoryListing> {
+export async function browseDirectory(requestedPath?: string): Promise<DirectoryListing> {
   const home = os.homedir();
   // 空串 = 虚拟"此电脑"层：列出所有可用盘符（仅 Windows；POSIX 回退 home）
-  const raw =
-    requestedPath === undefined ? undefined : String(requestedPath).trim();
+  const raw = requestedPath === undefined ? undefined : String(requestedPath).trim();
   if (raw === '' && process.platform === 'win32') {
     return volumesListing(home);
   }
   const target = await resolveBrowseTarget(requestedPath);
-  let dirents;
+  let dirents: Dirent[];
   try {
     dirents = await fs.readdir(target, { withFileTypes: true });
   } catch (err) {

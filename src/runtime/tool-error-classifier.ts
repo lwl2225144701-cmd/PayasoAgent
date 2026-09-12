@@ -15,8 +15,8 @@
 // transient failure. New knowledge is added by appending a rule, not by editing
 // the classifier core.
 
-import { isAbortError } from '../util/abort.js';
 import { NetworkDeniedError, RequiredRuntimeToolUnavailableError } from '../tools/tools.js';
+import { isAbortError } from '../util/abort.js';
 
 export type ToolErrorKind = 'transient' | 'permanent' | 'abort' | 'policy';
 
@@ -32,7 +32,11 @@ export interface ToolErrorClassification {
 
 interface ClassifierRule {
   name: string;
-  classify(error: unknown, code: string | undefined, message: string): ToolErrorClassification | undefined;
+  classify(
+    error: unknown,
+    code: string | undefined,
+    message: string,
+  ): ToolErrorClassification | undefined;
 }
 
 /** errno codes that indicate a transient condition. */
@@ -88,7 +92,11 @@ const RULES: ClassifierRule[] = [
     name: 'abort',
     classify: (error) =>
       isAbortError(error)
-        ? { kind: 'abort', retryable: false, reason: 'run aborted; retrying would ignore cancellation' }
+        ? {
+            kind: 'abort',
+            retryable: false,
+            reason: 'run aborted; retrying would ignore cancellation',
+          }
         : undefined,
   },
   {

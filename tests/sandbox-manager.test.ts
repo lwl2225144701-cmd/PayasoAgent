@@ -40,7 +40,7 @@ function expectThrow(fn: () => unknown): void {
   assert.throws(fn);
 }
 
-console.log('SandboxManager 单元测试（SANDBOX_ROOT=' + TEST_ROOT + '）\n');
+console.log(`SandboxManager 单元测试（SANDBOX_ROOT=${TEST_ROOT}）\n`);
 
 // ---- 1. 正常路径 ----
 test('createWorkspace 创建 input/work/output', () => {
@@ -179,7 +179,7 @@ test('cleanupWorkspace 后 createWorkspace 可重建', () => {
 
 // ---- 汇总 ----
 fs.rmSync(TEST_ROOT, { recursive: true, force: true });
-console.log('\n' + '='.repeat(56));
+console.log(`\n${'='.repeat(56)}`);
 console.log(`汇总: ${passed} PASS / ${failed} FAIL`);
 if (failed > 0) {
   failures.forEach((f) => {

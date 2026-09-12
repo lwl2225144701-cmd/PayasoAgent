@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { SecretStore } from './secret-store.js';
+import type { SecretStore } from './secret-store-contract.js';
 
 const KEY_BYTES = 32; // AES-256
 const IV_BYTES = 12; // GCM 推荐 96-bit

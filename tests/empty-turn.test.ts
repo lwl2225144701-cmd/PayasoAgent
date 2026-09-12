@@ -7,15 +7,15 @@
 import assert from 'node:assert/strict';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
 import { AgentEmptyAnswerError, AgentStalledError } from '../src/runtime/agent.js';
+import { register } from '../src/tools/tools.js';
 import {
   createTestWorkspaceRoot,
   emptyResponse,
-  runMockAgent,
   MOCK_MODEL_CONFIG,
+  runMockAgent,
   textResponse,
   toolCallResponse,
 } from './helpers/mock-runner.js';
-import { register } from '../src/tools/tools.js';
 
 const WORKSPACE = createTestWorkspaceRoot('payaso-empty-turn-');
 
@@ -82,10 +82,7 @@ await check('持续空回答 → 恢复次数用尽后 fail loudly（绝不 comp
   assert.equal(result.fetchCalls, 3, '初始 1 次 + 2 次恢复');
   const recovered = result.traces.filter((event) => event.type === 'empty_turn_recovered');
   assert.equal(recovered.length, 2, '恢复次数应等于策略上限');
-  assert.ok(
-    !result.traces.some((event) => event.type === 'final_answer'),
-    '不得产生 final_answer',
-  );
+  assert.ok(!result.traces.some((event) => event.type === 'final_answer'), '不得产生 final_answer');
 });
 
 await check('有 tool_calls 的空 content 是正常回合，不触发恢复', async () => {
@@ -175,7 +172,9 @@ await check('正常结论、引用、代码示例和授权提问不触发继续�
 
 await check('自定义 Harness 可以关闭文本启发式，不被 Runtime 默认策略覆盖', async () => {
   class AcceptTextHarness extends DefaultContextHarness {
-    override incompleteTurnPolicy() { return undefined; }
+    override incompleteTurnPolicy() {
+      return undefined;
+    }
   }
   const answer = '接下来运行 test:all：';
   const result = await runMockAgent({
@@ -183,7 +182,8 @@ await check('自定义 Harness 可以关闭文本启发式，不被 Runtime 默�
     task: '只返回给定文本',
     workspaceRoot: WORKSPACE,
     contextHarness: new AcceptTextHarness({
-      permissionMode: 'read-only', modelConfig: MOCK_MODEL_CONFIG,
+      permissionMode: 'read-only',
+      modelConfig: MOCK_MODEL_CONFIG,
     }),
     script: [() => textResponse(answer)],
   });

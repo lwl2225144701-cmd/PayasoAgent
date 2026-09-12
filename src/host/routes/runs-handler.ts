@@ -5,31 +5,26 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
-import { prepareAttachments } from '../../runtime/attachment-normalize.js';
 import type { PermissionMode } from '../../permission-mode.js';
-import type { CreateRunAttachmentInput, RunManager, SseSink } from '../run-manager.js';
+import { prepareAttachments } from '../../runtime/attachment-normalize.js';
 import { openFileInDefaultBrowser } from '../default-browser.js';
+import type { CreateRunAttachmentInput, RunManager, SseSink } from '../run-manager.js';
 import {
-  IMAGE_EXT_MIME,
-  listFiles,
-  readFileChecked,
-  readImageChecked,
-} from './static-handler.js';
-import {
-  MAX_ATTACHMENT_BODY_BYTES,
-  SAFE_RUN_ID,
-  SAFE_SESSION_ID,
-  RequestBodyTooLargeError,
   bad,
   checkOrigin,
+  MAX_ATTACHMENT_BODY_BYTES,
   notFound,
+  RequestBodyTooLargeError,
   readBody,
   requestAttachments,
   requestModelSelection,
   requestPermissionMode,
   requireAuth,
+  SAFE_RUN_ID,
+  SAFE_SESSION_ID,
   sendJson,
 } from './route-context.js';
+import { IMAGE_EXT_MIME, listFiles, readFileChecked, readImageChecked } from './static-handler.js';
 
 // SSE：实时推送 Run 事件（回放历史 + 实时）
 function handleSse(

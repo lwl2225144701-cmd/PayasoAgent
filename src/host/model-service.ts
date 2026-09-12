@@ -7,13 +7,13 @@
 // 边界：只依赖 RunStore（凭证与 Provider 元数据唯一来源），不反向依赖 RunManager。
 
 import type { ModelConfig } from '../llm/llm.js';
-import { getPiAiProviderModel } from './pi-ai-providers.js';
 import type {
   CreateModelProviderInput,
   ModelProviderView,
   RunStore,
   UpdateModelProviderInput,
 } from './persistence/store.js';
+import { getPiAiProviderModel } from './pi-ai-providers.js';
 
 export interface ModelServiceDeps {
   store: RunStore;
@@ -79,11 +79,7 @@ export class ModelService {
   // 视觉能力解析：设置页显式勾选优先；pi-ai 内置 Provider 再兜底查注册表
   // （注册表的 model.input 是权威能力声明）；自定义 OpenAI 兼容端点无法从
   // 协议探测，缺省 false —— 由用户按供应商文档在设置页勾选。
-  resolveVision(
-    piProviderId: string | undefined,
-    model: string,
-    explicit?: boolean,
-  ): boolean {
+  resolveVision(piProviderId: string | undefined, model: string, explicit?: boolean): boolean {
     // 三态：显式 true/false 均优先（false 可关掉注册表声明的视觉），
     // 缺省才走 pi-ai 注册表推断（非 pi-ai 路径无注册表 → false）。
     if (explicit === true) return true;
@@ -129,9 +125,7 @@ export class ModelService {
         ...(selected.maxOutputTokens !== undefined
           ? { maxOutputTokens: selected.maxOutputTokens }
           : {}),
-        ...(selected.thinkingLevel !== undefined
-          ? { thinkingLevel: selected.thinkingLevel }
-          : {}),
+        ...(selected.thinkingLevel !== undefined ? { thinkingLevel: selected.thinkingLevel } : {}),
       };
     }
 
@@ -167,9 +161,11 @@ export class ModelService {
   // 组不出来就 fail-closed 抛错，由 startAgent 落为 failed Run。
   // 安全语义：Resume 必须使用当前完整配置（当前 baseUrl + 当前 Secret），
   // 禁止历史 baseUrl 与当前 Secret 混用；模型也必须在当前 provider 目录中。
-  modelConfigForRun(
-    run: { providerId?: string; model?: string; sessionId: string },
-  ): ModelConfig | undefined {
+  modelConfigForRun(run: {
+    providerId?: string;
+    model?: string;
+    sessionId: string;
+  }): ModelConfig | undefined {
     if (run.providerId && run.model) {
       const secret = this.store.getModelProviderSecret(run.providerId, run.model);
       const provider = this.store.getModelProvider(run.providerId);

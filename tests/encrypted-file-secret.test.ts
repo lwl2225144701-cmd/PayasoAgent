@@ -28,8 +28,8 @@ function test(name: string, fn: () => void | Promise<void>): void {
 }
 
 const KEY_A = 'model-provider:test-a:api-key';
-const SECRET_A = 'sk-encrypted-a-' + crypto.randomUUID();
-const SECRET_B = 'sk-encrypted-b-' + crypto.randomUUID();
+const SECRET_A = `sk-encrypted-a-${crypto.randomUUID()}`;
+const SECRET_B = `sk-encrypted-b-${crypto.randomUUID()}`;
 
 // ---- 1. 往返 ----
 test('get before set → null', () => {
@@ -66,7 +66,7 @@ test('delete 幂等（再次删除不抛错）', () => {
 
 // ---- 4. 密文安全：磁盘上不出现明文 ----
 test('密文文件不包含明文 apiKey', () => {
-  const SECRET = 'sk-plaintext-check-' + crypto.randomUUID();
+  const SECRET = `sk-plaintext-check-${crypto.randomUUID()}`;
   store.set('model-provider:plaintext:api-key', SECRET);
   const files = fs.readdirSync(path.join(dir, 'secrets'));
   for (const f of files) {

@@ -28,7 +28,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.log(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.log(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
 
@@ -36,7 +36,7 @@ function check(name: string, cond: boolean, detail = ''): void {
 function extractDocList(id: string): string[] | null {
   const doc = fs.readFileSync(DOC_PATH, 'utf-8');
   const m = doc.match(
-    new RegExp(`<!-- docs-contract:${id} -->\\s*\\n\\s*\\` + '```json\\n(.+?)\\n```', 's'),
+    new RegExp(`<!-- docs-contract:${id} -->\\s*\\n\\s*\\\`\`\`json\\n(.+?)\\n\`\`\``, 's'),
   );
   if (!m) return null;
   try {

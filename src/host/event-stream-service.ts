@@ -10,8 +10,8 @@
 // - unsubscribe 从 live 表移除 sink（不 end，由调用方负责关闭连接）。
 
 import type { RunStore } from './persistence/store.js';
-import type { SseSink } from './run-manager.js';
-import { sseEncode, type HostEvent } from './run-events.js';
+import { type HostEvent, sseEncode } from './run-events.js';
+import type { SseSink } from './run-types.js';
 
 export interface EventStreamServiceDeps {
   store: RunStore;

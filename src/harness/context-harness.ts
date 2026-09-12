@@ -493,7 +493,7 @@ export class DefaultContextHarness implements AgentContextHarness {
   }
 
   /** 估算当前 transcript 的模型视图输入占用（/compact 完成后即时刷新占用率用）。 */
-  estimateViewUsage(transcript: ChatMessage[], tools: ToolSchema[]) {
+  estimateViewUsage(transcript: ChatMessage[], _tools: ToolSchema[]) {
     return this.contextManager.process(this.buildModelView(transcript, '')).usage;
   }
 
@@ -521,12 +521,22 @@ export class DefaultContextHarness implements AgentContextHarness {
   incompleteTurnPolicy(answer: string): IncompleteTurnPolicy | undefined {
     // 仅匹配末尾独立的行动句。前文关键词、引用和代码示例不能作为重试依据。
     // 这是有界恢复启发式，不是任务完成度证明。
-    const ending = answer.trim().split(/\n|[。！？.!?]/u).at(-1)?.trim() ?? '';
+    const ending =
+      answer
+        .trim()
+        .split(/\n|[。！？.!?]/u)
+        .at(-1)
+        ?.trim() ?? '';
     if (
-      !/^(?:为了[^，,：:]{1,16}[，,]\s*)?(?:接下来|下一步|再确认|让我(?:再)?|我(?:将|会)|(?:I will|I'll|I’ll|Let me|Next)\b)/iu.test(ending) ||
-      !/(?:检查|执行|验证|运行|抓取|对照|读取|确认|查看|扫描|比较|\b(?:check|verify|compare|run|read|inspect|fetch)\b)/iu.test(ending) ||
+      !/^(?:为了[^，,：:]{1,16}[，,]\s*)?(?:接下来|下一步|再确认|让我(?:再)?|我(?:将|会)|(?:I will|I'll|I’ll|Let me|Next)\b)/iu.test(
+        ending,
+      ) ||
+      !/(?:检查|执行|验证|运行|抓取|对照|读取|确认|查看|扫描|比较|\b(?:check|verify|compare|run|read|inspect|fetch)\b)/iu.test(
+        ending,
+      ) ||
       !/[:：]$/u.test(ending)
-    ) return undefined;
+    )
+      return undefined;
 
     return {
       reason: 'assistant ended with an unfinished action statement',

@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     try {
       await assert.rejects(
         () =>
-          runAgent('overbudget task ' + 'x'.repeat(200), undefined, {
+          runAgent(`overbudget task ${'x'.repeat(200)}`, undefined, {
             executionContext: createAgentExecutionContext({ runId }),
             ...createDefaultRuntimeServices(),
             onTrace: (ev) => events.push(ev as { type?: string; message?: string }),

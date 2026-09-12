@@ -70,7 +70,7 @@ register({
       if (json && (json.temperature === null || json.temperature === undefined)) {
         return { valid: false, reason: 'temperature 缺失或为空' };
       }
-      if (typeof json.temperature !== 'number' || !isFinite(json.temperature)) {
+      if (typeof json.temperature !== 'number' || !Number.isFinite(json.temperature)) {
         return { valid: false, reason: 'temperature 不是有效数值' };
       }
       return true;

@@ -4,11 +4,11 @@
 // 实测每请求 ~6.3K token，且与 transcript 重复、每轮变化破坏 prompt cache。
 
 import assert from 'node:assert/strict';
+import { estimateTextTokens } from '../src/harness/model-context.js';
 import {
   renderBoundedScratchpadView,
   type ScratchpadView,
 } from '../src/harness/scratchpad-view.js';
-import { estimateTextTokens } from '../src/harness/model-context.js';
 
 let passed = 0;
 let failed = 0;

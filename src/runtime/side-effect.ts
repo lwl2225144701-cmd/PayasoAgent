@@ -59,7 +59,7 @@ export function createSideEffectGuard(seed: ExecutedOperation[] = []): SideEffec
   return {
     isExecuted: (key) => done.has(key),
     getState: (key) => done.get(key)?.state,
-    replay: (key) => (done.get(key)?.state === 'succeeded' ? done.get(key)!.result : undefined),
+    replay: (key) => (done.get(key)?.state === 'succeeded' ? done.get(key)?.result : undefined),
     begin: (key) => done.set(key, { state: 'executing' }),
     succeed: (key, result) => done.set(key, { state: 'succeeded', result }),
     markUncertain: (key) => done.set(key, { state: 'uncertain' }),

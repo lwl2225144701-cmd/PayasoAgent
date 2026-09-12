@@ -6,10 +6,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { HostEvent } from '../src/host/run-events.js';
-import { createHostServer, RunManager } from '../src/host/server.js';
 import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
 import type { StoredRun, StoredSession } from '../src/host/persistence/store.js';
+import type { HostEvent } from '../src/host/run-events.js';
+import { createHostServer, RunManager } from '../src/host/server.js';
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-run-events-'));
 process.env.SANDBOX_ROOT = ROOT;

@@ -124,7 +124,8 @@ flowchart LR
 | `agent.ts` | 保留 `runAgent()` 主循环 |
 | `agent-context.ts` | State、Harness、Scratchpad、Trace、Checkpoint 装配 |
 | `turn-policy.ts` | 空回合、未完成收尾、停止决策 |
-| `tool-invocation/process-manager.ts` | 一次工具调用的完整生命周期 |
+| `tool-invocation/process-manager.ts` | 工具调用协调与副作用执行 |
+| `tool-invocation/state-machine.ts` | 调用阶段、合法转换与封闭终态 |
 
 工具调用采用 **Durable Process Manager + Explicit State Machine**：
 

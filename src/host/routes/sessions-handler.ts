@@ -4,22 +4,22 @@
 // 语义，端点数量最多。从 routes.ts 拆出后该域有唯一 owner。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { prepareAttachments } from '../../runtime/attachment-normalize.js';
 import type { PermissionMode } from '../../permission-mode.js';
+import { prepareAttachments } from '../../runtime/attachment-normalize.js';
 import type { CreateRunAttachmentInput, RunManager } from '../run-manager.js';
 import {
-  MAX_ATTACHMENT_BODY_BYTES,
-  MAX_BODY_BYTES,
-  SAFE_SESSION_ID,
-  RequestBodyTooLargeError,
   bad,
   checkOrigin,
+  MAX_ATTACHMENT_BODY_BYTES,
+  MAX_BODY_BYTES,
   notFound,
+  RequestBodyTooLargeError,
   readBody,
   requestAttachments,
   requestModelSelection,
   requestPermissionMode,
   requireAuth,
+  SAFE_SESSION_ID,
   sendJson,
 } from './route-context.js';
 

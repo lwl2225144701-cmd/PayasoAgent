@@ -9,7 +9,7 @@
 // - Secret 仅经 stdin 传入（-w 置于 argv 最后），绝不进入 argv/进程列表
 
 import { spawnSync } from 'node:child_process';
-import type { SecretStore } from './secret-store.js';
+import type { SecretStore } from './secret-store-contract.js';
 
 const SERVICE = 'PayasoAgent';
 const DEFAULT_SECURITY_CLI = '/usr/bin/security';

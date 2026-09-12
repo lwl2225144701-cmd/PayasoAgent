@@ -26,7 +26,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     console.log(`  [PASS] ${name}`);
   } else {
     failed++;
-    console.error(`  [FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    console.error(`  [FAIL] ${name}${detail ? ` — ${detail}` : ''}`);
   }
 }
 

@@ -5,7 +5,11 @@
 
 import assert from 'node:assert/strict';
 import { classifyToolError } from '../src/runtime/tool-error-classifier.js';
-import { NetworkDeniedError, register, RequiredRuntimeToolUnavailableError } from '../src/tools/tools.js';
+import {
+  NetworkDeniedError,
+  RequiredRuntimeToolUnavailableError,
+  register,
+} from '../src/tools/tools.js';
 import {
   createTestWorkspaceRoot,
   runMockAgent,
@@ -118,7 +122,9 @@ await check('集成：ENOENT 只执行一次，且回传的 tool 消息说明"�
   assert.equal(permanentProbe.calls, 1, `确定性错误必须只执行一次，实际 ${permanentProbe.calls}`);
   const toolErrors = result.traces.filter((event) => event.type === 'tool_error');
   assert.equal(toolErrors.length, 1, `tool_error 应只发一次，实际 ${toolErrors.length}`);
-  const last = requestBodies[requestBodies.length - 1] as { messages?: Array<{ role: string; content: string }> };
+  const last = requestBodies[requestBodies.length - 1] as {
+    messages?: Array<{ role: string; content: string }>;
+  };
   const recovery = last?.messages?.find(
     (message) => message.role === 'tool' && message.content.includes('文件不存在: missing.ts'),
   );

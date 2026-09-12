@@ -7,6 +7,7 @@
 //   4. 契约一致性：Runtime guard 与 read 使用同一份预算（read 结果永不触发 guard）
 
 import assert from 'node:assert/strict';
+import { guardToolOutput } from '../src/runtime/output-guard.js';
 import {
   sliceTextToBudget,
   TOOL_OUTPUT_HEAD_BYTES,
@@ -16,7 +17,6 @@ import {
   utf8Head,
   utf8Tail,
 } from '../src/tool-output-budget.js';
-import { guardToolOutput } from '../src/runtime/output-guard.js';
 import { sliceNumberedWindow } from '../src/tools/filesystem.js';
 
 const tests: { name: string; fn: () => void }[] = [];
@@ -74,7 +74,10 @@ test('utf8Head / utf8Tail 不切坏多字节字符', () => {
 // ---- 2. sliceNumberedWindow ----
 
 function numbered(count: number, lineText = (i: number) => `line-${i}-${'x'.repeat(40)}`) {
-  return Array.from({ length: count }, (_, i) => `${String(i + 1).padStart(4, ' ')}→${lineText(i)}`);
+  return Array.from(
+    { length: count },
+    (_, i) => `${String(i + 1).padStart(4, ' ')}→${lineText(i)}`,
+  );
 }
 
 test('窗口在预算内：恒等，不标记截断', () => {
