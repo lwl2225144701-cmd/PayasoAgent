@@ -10,8 +10,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { getNetworkMode } from '../network-mode.js';
-import { storedPermissionMode } from '../permission-mode.js';
 import { toolTimeoutPolicy } from '../runtime/tool-invocation/process-manager.js';
 import {
   getBackgroundJob,
@@ -21,13 +19,8 @@ import {
   startBackgroundJob,
   waitForBackgroundJob,
 } from '../sandbox/background-jobs.js';
-import {
-  MacOSSandbox,
-  type MacOSSandboxResult,
-  probeSandboxAvailability,
-} from '../sandbox/macos-sandbox.js';
 import { classifyShellCommand } from '../sandbox/shell-command-effect.js';
-import { discoverShellHost, runUncontainedShell } from '../sandbox/shell-host.js';
+import { executeShellCommand, type ShellExecuteResult } from '../sandbox/shell-executor.js';
 import { createShellScratch } from '../sandbox/shell-scratch.js';
 import {
   resolveShellToolTimeout,
@@ -458,82 +451,30 @@ register({
 // 前台：等待命令结束（超时由 shell-timeout 策略收敛）。
 // 后台（background=true）：立即返回 jobId，由 shellJob 轮询/终止；长测试、构建
 // 不再占满整个回合。两条路径共用同一受管 scratch 与沙箱执行器。
+// 平台选择（macOS Seatbelt / Windows ACL / 无沙箱门控）在 shell-executor 内完成，
+// 本函数只保留工具层语义：scratch 生命周期、denied 与缺失工具的错误转换。
 async function executeContainedShell(
   command: string,
   context: ToolContext,
   timeoutMs: number,
   onOutput?: (text: string) => void,
-): Promise<MacOSSandboxResult> {
-  const workspaceRoot = context.workspaceRoot;
-  const permissionMode = storedPermissionMode(context.permissionMode);
+): Promise<ShellExecuteResult> {
   // Scratch（HOME/TMPDIR）：所有权限模式下都放在受管临时根目录，而不是
   // Workspace 内。Read Only 下命令仍需要可写的缓存目录（npm/npx/git/tsx），
   // 而 Workspace 必须保持只读；Workspace Write 下也避免污染用户项目。
   const scratch = createShellScratch(context.runId);
   try {
-    // 双通道（docs/windows-mac-compat.md §3）：
-    // - macOS：Seatbelt 沙箱，fail-closed——sandbox-exec 不可用即拒绝，绝不静默降级
-    // - 其他平台：无 OS 沙箱原语，默认同样拒绝（延续"绝不静默降低遏制"原则），
-    //   仅当用户显式选择审批模式或设置 PAYASO_SHELL_UNSANDBOXED=1 才放行
-    let result: MacOSSandboxResult;
-    if (process.platform === 'darwin') {
-      if (!(await probeSandboxAvailability())) {
-        throw new Error(
-          'Shell tool unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
-            '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed shell to preserve ' +
-            'filesystem containment.',
-        );
-      }
-      // v1.10 回归修复：运行时注入 context.networkMode；测试/CLI 缺省时回退全局
-      // getNetworkMode()（默认 on）。若按 undefined 判为 off，沙箱 profile 加
-      // (deny network*)，会连带拦截 AF_UNIX socket 创建 → tsx/npx listen EPERM。
-      const networkAccess = (context.networkMode ?? getNetworkMode()) === 'on';
-      const sandbox = MacOSSandbox.forWorkspace(workspaceRoot, permissionMode, networkAccess, {
-        scratchRoots: [scratch.path],
-      });
-      result = await sandbox.run(command, {
-        cwd: workspaceRoot,
-        home: scratch.path,
-        tmpdir: scratch.path,
-        timeoutMs,
-        signal: context.signal,
-        onOutput,
-        onEvent: (event) => {
-          if (event === 'started') {
-            context.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
-          } else {
-            context.onSandboxEvent?.({
-              type: 'shell_sandbox_denied',
-              platform: 'macos',
-              reason: 'workspace_policy',
-            });
-          }
-        },
-      });
-    } else {
-      if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
-        throw new Error(
-          'Shell unavailable on this platform: 当前平台无 macOS OS Sandbox，' +
-            '为保持文件系统遏制默认拒绝。请设置 PAYASO_SHELL_UNSANDBOXED=1 ' +
-            '显式允许无沙箱 shell 后重试（默认关闭）。',
-        );
-      }
-      const host = await discoverShellHost();
-      if (!host) {
-        throw new Error(
-          'Shell unavailable: 未找到 bash 解释器。Windows 请安装 Git for Windows ' +
-            '(https://git-scm.com) 后重试。',
-        );
-      }
-      result = await runUncontainedShell(host, command, {
-        cwd: workspaceRoot,
-        home: scratch.path,
-        tmpdir: scratch.path,
-        timeoutMs,
-        signal: context.signal,
-        onOutput,
-      });
-    }
+    const result = await executeShellCommand({
+      command,
+      workspaceRoot: context.workspaceRoot,
+      permissionMode: context.permissionMode,
+      networkMode: context.networkMode,
+      scratch,
+      timeoutMs,
+      signal: context.signal,
+      onOutput,
+      onSandboxEvent: context.onSandboxEvent,
+    });
     if (result.denied) {
       // Do not expose stderr or host paths to the LLM/context.
       throw new Error(
@@ -553,7 +494,7 @@ async function executeContainedShell(
   }
 }
 
-function formatShellResult(result: MacOSSandboxResult, timeoutMs: number): string {
+function formatShellResult(result: ShellExecuteResult, timeoutMs: number): string {
   const head = result.timedOut
     ? `[shell-timeout] 命令超时(${timeoutMs}ms)或强制终止\n`
     : `[shell-exit-${result.exitCode ?? -1}]\n`;
