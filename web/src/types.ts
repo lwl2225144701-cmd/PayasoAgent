@@ -10,6 +10,16 @@ export type HostRunStatus =
   | 'interrupted';
 export type PermissionMode = 'read-only' | 'workspace-write' | 'full-access';
 
+/** Shell 隔离能力（GET /runtime/capabilities 的 shellIsolation 字段，诚实分级）：
+ *  partial 必须对 UI 可见——Windows ACL 为部分写入隔离，读与网络不受限。 */
+export interface ShellIsolationCapabilities {
+  executor: 'macos-seatbelt' | 'windows-acl' | 'uncontained-gated';
+  enforcement: 'full' | 'partial' | 'none';
+  writeIsolation: 'full' | 'partial' | 'none';
+  readIsolation: 'full' | 'none';
+  networkIsolation: 'os-level' | 'none';
+}
+
 export interface HostRun {
   runId: string;
   sessionId: string;

@@ -19,11 +19,35 @@ try {
       discovery?: string;
       tools?: Record<string, { status?: string; source?: string; reason?: string }>;
     };
+    shellIsolation?: {
+      executor?: string;
+      enforcement?: string;
+      writeIsolation?: string;
+      readIsolation?: string;
+      networkIsolation?: string;
+    };
   };
   assert.ok(body.capabilities);
   assert.ok(body.capabilities.platform === 'macos' || body.capabilities.platform === 'unsupported');
   assert.equal(body.capabilities.discovery, 'startup');
   assert.ok(body.capabilities.tools);
+
+  // Shell 隔离能力（诚实分级）：字段齐全且枚举合法；与本进程平台一致。
+  assert.ok(body.shellIsolation);
+  assert.ok(
+    body.shellIsolation.executor === 'macos-seatbelt'
+      || body.shellIsolation.executor === 'windows-acl'
+      || body.shellIsolation.executor === 'uncontained-gated',
+  );
+  assert.ok(['full', 'partial', 'none'].includes(String(body.shellIsolation.enforcement)));
+  assert.ok(['full', 'partial', 'none'].includes(String(body.shellIsolation.writeIsolation)));
+  assert.ok(['full', 'none'].includes(String(body.shellIsolation.readIsolation)));
+  assert.ok(['os-level', 'none'].includes(String(body.shellIsolation.networkIsolation)));
+  // macOS 本机：seatbelt + full；gate 环境变量未设时绝不虚报 partial
+  if (process.platform === 'darwin') {
+    assert.equal(body.shellIsolation.executor, 'macos-seatbelt');
+    assert.equal(body.shellIsolation.enforcement, 'full');
+  }
 
   // No private manifest fields or absolute host paths may cross the endpoint.
   const serialized = JSON.stringify(body);

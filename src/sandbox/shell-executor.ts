@@ -26,6 +26,56 @@ export type ShellExecutorKind = 'macos-seatbelt' | 'windows-acl' | 'uncontained-
 /** 隔离完整度：full=全部承诺的文件效应都被治理；partial=部分写入隔离；none=无 OS 级遏制。 */
 export type ShellEnforcement = 'full' | 'partial' | 'none';
 
+/**
+ * Shell 隔离能力报告（诚实分级，方案文档 §3：partial 必须在 Host/Web 可见，
+ * 无法兑现的权限要求明确返回不可用，不静默放宽）。
+ * - writeIsolation：写入边界治理程度（ACL 的 Everyone/NTFS 硬链接例外 → partial）
+ * - readIsolation：读取边界（ACL 受限令牌不限制读取 → none；Seatbelt 限制 readableRoots → full）
+ * - networkIsolation：网络开关能否在 OS 层强制（ACL 不限制网络 → none；
+ *   network.mode=off 时全局拒绝 shell，但那是 Host 层拒绝，不是 OS 隔离）
+ */
+export interface ShellIsolationCapabilities {
+  executor: ShellExecutorKind;
+  enforcement: ShellEnforcement;
+  writeIsolation: 'full' | 'partial' | 'none';
+  readIsolation: 'full' | 'none';
+  networkIsolation: 'os-level' | 'none';
+}
+
+/** 当前平台实际的 Shell 隔离能力（纯函数，platform/env 可注入）。 */
+export function shellIsolationCapabilities(
+  platform: NodeJS.Platform,
+  env: Record<string, string | undefined> = process.env,
+): ShellIsolationCapabilities {
+  const executor = selectShellExecutor(platform, env);
+  switch (executor) {
+    case 'macos-seatbelt':
+      return {
+        executor,
+        enforcement: 'full',
+        writeIsolation: 'full',
+        readIsolation: 'full',
+        networkIsolation: 'os-level',
+      };
+    case 'windows-acl':
+      return {
+        executor,
+        enforcement: 'partial',
+        writeIsolation: 'partial',
+        readIsolation: 'none',
+        networkIsolation: 'none',
+      };
+    case 'uncontained-gated':
+      return {
+        executor,
+        enforcement: 'none',
+        writeIsolation: 'none',
+        readIsolation: 'none',
+        networkIsolation: 'none',
+      };
+  }
+}
+
 export interface ShellExecuteRequest {
   command: string;
   workspaceRoot: string;

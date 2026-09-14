@@ -8,6 +8,7 @@ import {
   getRuntimeToolchainCapabilities,
   refreshRuntimeToolchainCapabilities,
 } from '../../sandbox/toolchain-manager.js';
+import { shellIsolationCapabilities } from '../../sandbox/shell-executor.js';
 import type { RunManager } from '../run-manager.js';
 import { checkOrigin, notFound, requireAuth, sendJson } from './route-context.js';
 
@@ -21,8 +22,12 @@ export async function handleRuntime(
 ): Promise<void> {
   // Read-only, path-free runtime capability projection. The private sandbox
   // manifest never leaves the process; this endpoint is for diagnostics/UI.
+  // shellIsolation：Shell 隔离能力的诚实分级（partial 必须对 UI 可见，不静默放宽）。
   if (s.length === 2 && s[0] === 'runtime' && s[1] === 'capabilities' && method === 'GET') {
-    return sendJson(res, 200, { capabilities: getRuntimeToolchainCapabilities() });
+    return sendJson(res, 200, {
+      capabilities: getRuntimeToolchainCapabilities(),
+      shellIsolation: shellIsolationCapabilities(process.platform),
+    });
   }
 
   // 当前工作区的 Prompt 命令注册表（只读元数据：name + description，无模板正文）。

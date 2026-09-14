@@ -40,6 +40,14 @@
   flex: 0 0 auto;
 }
 
+/* Shell 隔离能力值：只读文本（能力是平台事实，不可在 UI 切换） */
+.shellIsolationValue {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  max-width: 200px;
+  text-align: right;
+}
+
 .selectWrap {
   position: relative;
   display: inline-flex;

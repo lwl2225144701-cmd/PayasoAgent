@@ -1,4 +1,5 @@
-import type { KeyboardEvent, ReactNode, WheelEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent, type ReactNode, type WheelEvent } from 'react';
+import { fetchShellIsolation } from '../../api';
 import { useI18n } from '../../i18n';
 import {
   type ConversationFontSize,
@@ -7,7 +8,7 @@ import {
   MIN_CONVERSATION_FONT_SIZE,
 } from '../../preferences';
 import type { ThemeMode } from '../../theme';
-import type { PermissionMode } from '../../types';
+import type { PermissionMode, ShellIsolationCapabilities } from '../../types';
 import { AppearanceSettings } from '../AppearanceSettings';
 import { ChevronDownIcon } from '../icons';
 import { PermissionDropdown } from '../PermissionDropdown';
@@ -49,6 +50,8 @@ export function GeneralSettings({
         />
       </SettingRow>
 
+      <ShellIsolationRow />
+
       <SettingRow title={t('settings.general.language')} className={styles.languageRow}>
         <div className={styles.selectWrap}>
           <select
@@ -80,6 +83,67 @@ export function GeneralSettings({
         </fieldset>
       </SettingRow>
     </div>
+  );
+}
+
+/**
+ * Shell 隔离能力行：展示当前平台的执行器与隔离完整度（诚实分级）。
+ * partial（Windows ACL）必须可见——写入部分隔离、读与网络不受限、
+ * workspace-write 会在工作区留下持续性授权 ACE。
+ */
+function ShellIsolationRow() {
+  const { t } = useI18n();
+  const [info, setInfo] = useState<ShellIsolationCapabilities | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchShellIsolation()
+      .then((value) => {
+        if (!cancelled) setInfo(value);
+      })
+      .catch(() => {
+        /* Host 未返回能力报告时保持占位（不可用信息不猜测） */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const executorLabel = (executor: ShellIsolationCapabilities['executor']): string =>
+    executor === 'macos-seatbelt'
+      ? t('settings.shellIsolation.executor.macosSeatbelt')
+      : executor === 'windows-acl'
+        ? t('settings.shellIsolation.executor.windowsAcl')
+        : t('settings.shellIsolation.executor.uncontainedGated');
+
+  const description =
+    info === null
+      ? t('settings.shellIsolation.loading')
+      : info.enforcement === 'full'
+        ? t('settings.shellIsolation.fullNote')
+        : info.enforcement === 'partial'
+          ? t('settings.shellIsolation.partialCaveat')
+          : t('settings.shellIsolation.noneNote');
+
+  return (
+    <SettingRow
+      title={t('settings.shellIsolation.title')}
+      description={
+        <>
+          <div>{description}</div>
+          {info?.enforcement === 'partial' && (
+            <div>{t('settings.shellIsolation.standingAceNote')}</div>
+          )}
+          {info?.networkIsolation === 'none' && info?.enforcement !== 'none' && (
+            <div>{t('settings.shellIsolation.networkNote')}</div>
+          )}
+        </>
+      }
+    >
+      <span className={styles.shellIsolationValue}>
+        {info === null ? '—' : executorLabel(info.executor)}
+      </span>
+    </SettingRow>
   );
 }
 
@@ -160,7 +224,7 @@ function SettingRow({
   className = '',
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {

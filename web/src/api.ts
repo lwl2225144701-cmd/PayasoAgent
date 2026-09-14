@@ -12,6 +12,7 @@ import type {
   PromptCommand,
   ProviderModelInfo,
   SessionStats,
+  ShellIsolationCapabilities,
   UpdateModelProviderInput,
   WorkspaceView,
 } from './types';
@@ -70,6 +71,16 @@ export function workspaceFileUrl(runId: string, relPath: string): string {
 
 export function listSessions(): Promise<{ sessions: HostSession[] }> {
   return jsonFetch('/sessions', { cache: 'no-store' });
+}
+
+/** 当前平台的 Shell 隔离能力（诚实分级；partial 必须对 UI 可见）。 */
+export function fetchShellIsolation(): Promise<ShellIsolationCapabilities> {
+  return jsonFetch<{ shellIsolation?: ShellIsolationCapabilities }>('/runtime/capabilities', {
+    cache: 'no-store',
+  }).then((resp) => {
+    if (!resp.shellIsolation) throw new Error('Host did not return shellIsolation capabilities');
+    return resp.shellIsolation;
+  });
 }
 
 export function listSessionRuns(sessionId: string): Promise<{ runs: HostRun[] }> {
