@@ -372,12 +372,14 @@ export interface ToolOutputTruncatedEvent extends TraceEventBase {
 
 export interface ShellSandboxStartedEvent extends TraceEventBase {
   type: 'shell_sandbox_started';
-  platform: 'macos';
+  platform: 'macos' | 'windows';
+  /** 可选：windows-acl 执行器为部分写入隔离（partial）；macOS 事件不携带该字段。 */
+  enforcement?: 'full' | 'partial';
 }
 
 export interface ShellSandboxDeniedEvent extends TraceEventBase {
   type: 'shell_sandbox_denied';
-  platform: 'macos';
+  platform: 'macos' | 'windows';
   reason: 'workspace_policy';
 }
 
