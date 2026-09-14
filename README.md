@@ -30,7 +30,7 @@
 
 * 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（正则递归搜索，默认忽略依赖/产物目录）/ `glob`（按模式查找文件，mtime 排序）/ `moveFile` / `deleteFile`
 
-* `shell`：macOS `sandbox-exec` 执行，输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出（运行中可 `offset` 增量读取）/终止（长测试与构建不阻塞本轮）。后台作业是**会话级**的：不随单个 Run 结束销毁，完成后 Agent 会收到通知并读取结果，Session 删除或 Host 关闭时统一回收；HOME/TMPDIR 指向沙箱外**短路径**受管 scratch（macOS 默认 /private/tmp/payaso-shell，Read Only 下仍可写缓存，不污染工作区；短路径保证 tsx 等依赖 TMPDIR 建 Unix socket 的工具可用）；沙箱不可用时拒绝执行（绝不裸跑）
+* `shell`：文件系统边界由 OS 级沙箱强制——macOS 走 `sandbox-exec`（完整隔离）；Windows 可启用 ACL 受限令牌执行器（`PAYASO_SHELL_WINDOWS_ACL`，默认关、部分写入隔离，真机验证清单见 `docs/cross-platform-sandbox-plan.md`）。输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出（运行中可 `offset` 增量读取）/终止（长测试与构建不阻塞本轮）。后台作业是**会话级**的：不随单个 Run 结束销毁，完成后 Agent 会收到通知并读取结果，Session 删除或 Host 关闭时统一回收；HOME/TMPDIR 指向沙箱外**短路径**受管 scratch（macOS 默认 /private/tmp/payaso-shell，Read Only 下仍可写缓存，不污染工作区；短路径保证 tsx 等依赖 TMPDIR 建 Unix socket 的工具可用）；沙箱不可用时拒绝执行（绝不裸跑）
 
 * `updatePlan`：Agent 自述任务清单（全量替换；Harness 持有状态、随 checkpoint 恢复），前端在用户气泡下方实时显示进度
 
@@ -99,7 +99,7 @@ CI（`.github/workflows/ci.yml`，macOS + Node 22）固定执行 `npm ci` → `n
 
 * **无联网工具**：没有 web search / fetch，Agent 无法获取外部信息（`shell` 的网络能力由 `network.mode` 控制，默认 on）
 
-* **shell 沙箱仅 macOS**：`sandbox-exec` 不可用时 shell 工具整体禁用（fail-closed）；其他平台需显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才放行
+* **shell 沙箱平台能力分级**：macOS 完整隔离（`sandbox-exec`，不可用时整体禁用 fail-closed）；Windows ACL 执行器已就绪但默认关（`PAYASO_SHELL_WINDOWS_ACL=1` 启用，部分写入隔离，真机验证清单见 `docs/cross-platform-sandbox-plan.md`）；其余平台需显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才放行。实际能力见 `GET /runtime/capabilities` 的 `shellIsolation` 与设置界面
 
 * **上下文管理**：超预算先按完整旧轮增量摘要压缩（compaction），单任务长执行有当前轮紧急裁剪兜底
 

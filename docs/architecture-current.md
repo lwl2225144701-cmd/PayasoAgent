@@ -131,6 +131,8 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
 | `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）
+| `src/sandbox/shell-executor.ts`                   | 统一 Shell 执行入口与平台选择（darwin→Seatbelt / win32+gate→Windows ACL / 其余→无沙箱门控）；结果附 executor/enforcement；`shellIsolationCapabilities()` 诚实分级能力报告（GET /runtime/capabilities 的 shellIsolation 字段）
+| `src/sandbox/windows-acl-sandbox.ts` + `win-acl-runner.mjs` | Windows ACL 受限令牌执行器（gate `PAYASO_SHELL_WINDOWS_ACL` 默认关，真机验证清单见 docs/cross-platform-sandbox-plan.md）：薄 runner 子进程复用 DeepSeek AclSandbox；read-only→仅 scratch 可写、workspace-write→workspace+scratch；runner 失败（exit 127+签名）fail-closed 不回退；enforcement=partial（读/网络不受限，Everyone/硬链接例外）
 | `src/sandbox/shell-scratch.ts`                    | 受管可写 scratch（HOME/TMPDIR）：read-only 下命令仍可写缓存，工作区保持只读；**根目录刻意取短路径**（macOS 默认 /private/tmp/payaso-shell，避开 /var/folders 的 AF_UNIX 108 字节限制）
 | `src/sandbox/shell-timeout.ts`                    | Shell 超时策略（默认 120s / 上限 600s / env 可配 / 模型可请求 `timeoutMs`）                                                                               |
 | `src/sandbox/sandbox-policy.ts`                   | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false）                                                                                                            |
@@ -403,7 +405,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 * 用户鉴权 / 多租户（runId 单租户；Host 仅监听 127.0.0.1）
 
-* 非 macOS 上的 shell 工具（`sandbox-exec` 仅 darwin）；**macOS 上 sandbox-exec 不可用时 shell 自动禁用**（fail-closed，见 §8 #8）
+* 非 macOS 上的 shell 沙箱：Windows ACL 执行器已就绪但 **gate 默认关**（`PAYASO_SHELL_WINDOWS_ACL`，真机验证清单见 docs/cross-platform-sandbox-plan.md §5；enforcement=partial）；Linux 沙箱未实施（无沙箱门控路径需 `PAYASO_SHELL_UNSANDBOXED=1` 显式放行）。**macOS 上 sandbox-exec 不可用时 shell 自动禁用**（fail-closed，见 §8 #8）
 
 ***
 
