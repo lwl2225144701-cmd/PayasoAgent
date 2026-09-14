@@ -7,7 +7,7 @@
 // - 为什么不用库自带 stock runner：其 argv 契约无法表达 Payaso 的
 //   "read-only 工作区 + 可写受管 scratch" 语义（read-only 零授权；workspace-write
 //   必授予 workspace；其随机私有 temp 目录路径无法预知、HOME 指不进去）。
-// - fail-closed：runner 自身失败（exit 127 + 签名行）= 命令未执行，结构化报错，
+// - fail-closed：独立 IPC 报告执行阶段，无法确认结果时明确报告不确定，
 //   绝不回退无沙箱路径。
 // - enforcement = partial：写入部分隔离（Everyone 与 NTFS 硬链接例外），
 //   读取与网络不受限；能力报告必须如实标注（shellIsolationCapabilities）。
@@ -17,11 +17,6 @@ import { fileURLToPath } from 'node:url';
 import { type PermissionMode, storedPermissionMode } from '../permission-mode.js';
 import { MAX_SHELL_OUTPUT } from './macos-sandbox.js';
 import { type ShellHost, type ShellRunResult, terminateProcessTree } from './shell-host.js';
-
-/** runner 自身失败的 stderr 行前缀（契约：命令未执行）。 */
-export const WINDOWS_ACL_RUNNER_SIGNATURE = 'payaso-win-acl';
-/** runner 自身失败的退出码（与命令退出码空间隔离；DeepSeek stock runner 同款语义）。 */
-export const WINDOWS_ACL_RUNNER_FAILURE_EXIT = 127;
 
 const DEFAULT_RUNNER_PATH = fileURLToPath(new URL('./win-acl-runner.mjs', import.meta.url));
 
@@ -40,11 +35,14 @@ export interface WindowsAclRunnerArgvInput {
  * 构造薄 runner 的完整 argv（纯函数，测试直接断言）：
  * [node, runner.mjs, --workspace, w, --scratch, s, --mode, m, --, bash, -c, command]
  * 权限模式映射：read-only → 'read-only'（工作区不授权，仅 scratch 可写）；
- * workspace-write / full-access → 'workspace-write'（ACL 写边界相同：读不受限）。
+ * Full access 明确拒绝，不能静默映射为 workspace-write。
  */
 export function buildWindowsAclRunnerArgv(input: WindowsAclRunnerArgvInput): string[] {
-  const mode =
-    storedPermissionMode(input.permissionMode) === 'read-only' ? 'read-only' : 'workspace-write';
+  const mode = storedPermissionMode(input.permissionMode);
+  if (mode === 'full-access')
+    throw new Error(
+      'Windows ACL does not support Full access; explicitly enable PAYASO_SHELL_UNSANDBOXED=1 to use uncontained Shell.',
+    );
   return [
     input.nodeExecutable,
     input.runnerPath ?? DEFAULT_RUNNER_PATH,
@@ -59,17 +57,6 @@ export function buildWindowsAclRunnerArgv(input: WindowsAclRunnerArgvInput): str
     '-c',
     input.command,
   ];
-}
-
-/**
- * 识别 runner 自身失败（对照 DeepSeek RUNNER_FAILURE_RULES 的 exit-gated 双条件）：
- * 退出码必须是 127 且 stderr 存在签名行。命令自身打印签名文本（exit≠127）不算；
- * runner 清理失败（子进程已执行，退出码为子进程的）不算。
- */
-export function isWindowsAclRunnerFailure(exitCode: number | null, stderr: string): boolean {
-  if (exitCode !== WINDOWS_ACL_RUNNER_FAILURE_EXIT) return false;
-  const prefix = `${WINDOWS_ACL_RUNNER_SIGNATURE}: `;
-  return stderr.split(/\r?\n/).some((line) => line.startsWith(prefix));
 }
 
 export interface WindowsAclShellOptions {
@@ -87,8 +74,9 @@ export interface WindowsAclShellOptions {
 }
 
 export type WindowsAclShellResult = ShellRunResult & {
-  /** runner 自身失败的签名行（存在 = 命令未执行，调用方必须 fail-closed 报错）。 */
+  execution: 'not_started' | 'unknown' | 'completed';
   runnerFailure?: string;
+  cleanupErrors: string[];
 };
 
 /**
@@ -119,9 +107,27 @@ export function runWindowsAclShell(
     const child = doSpawn(argv[0], argv.slice(1), {
       cwd: options.workspaceRoot,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
 
+    let report:
+      | { execution: WindowsAclShellResult['execution']; error?: string; cleanupErrors: string[] }
+      | undefined;
+    child.on('message', (message) => {
+      const m = message as Record<string, unknown> | null;
+      if (
+        m?.type === 'acl-result' &&
+        ['not_started', 'unknown', 'completed'].includes(String(m.execution)) &&
+        Array.isArray(m.cleanupErrors) &&
+        m.cleanupErrors.every((e) => typeof e === 'string')
+      ) {
+        report = {
+          execution: m.execution as WindowsAclShellResult['execution'],
+          error: typeof m.error === 'string' ? m.error : undefined,
+          cleanupErrors: m.cleanupErrors as string[],
+        };
+      }
+    });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -169,11 +175,6 @@ export function runWindowsAclShell(
           reject(new DOMException('Aborted', 'AbortError'));
           return;
         }
-        const runnerFailureLine = isWindowsAclRunnerFailure(code, stderr)
-          ? stderr
-              .split(/\r?\n/)
-              .find((line) => line.startsWith(`${WINDOWS_ACL_RUNNER_SIGNATURE}: `))
-          : undefined;
         resolve({
           exitCode: code,
           signal: null,
@@ -181,7 +182,9 @@ export function runWindowsAclShell(
           stderr: outputLimit(stderr),
           timedOut,
           denied: false,
-          ...(runnerFailureLine !== undefined ? { runnerFailure: runnerFailureLine } : {}),
+          execution: report?.execution ?? 'unknown',
+          cleanupErrors: report?.cleanupErrors ?? [],
+          ...(report?.error ? { runnerFailure: report.error } : {}),
         });
       });
     });

@@ -75,7 +75,38 @@ const main = async (): Promise<void> => {
     }
   });
 
+  await test('Windows ACL Full access 未获无沙箱授权时明确拒绝', async () => {
+    const previous = process.env.PAYASO_SHELL_WINDOWS_ACL;
+    const uncontained = process.env.PAYASO_SHELL_UNSANDBOXED;
+    process.env.PAYASO_SHELL_WINDOWS_ACL = '1';
+    delete process.env.PAYASO_SHELL_UNSANDBOXED;
+    const scratch = createShellScratch('full-access-gate');
+    try {
+      await assert.rejects(
+        executeShellCommand({
+          command: 'echo must-not-run',
+          workspaceRoot: TEST_ROOT,
+          permissionMode: 'full-access',
+          scratch,
+          timeoutMs: 5000,
+          platform: 'win32',
+        }),
+        /does not support Full access/,
+      );
+    } finally {
+      scratch.dispose();
+      if (previous === undefined) delete process.env.PAYASO_SHELL_WINDOWS_ACL;
+      else process.env.PAYASO_SHELL_WINDOWS_ACL = previous;
+      if (uncontained === undefined) delete process.env.PAYASO_SHELL_UNSANDBOXED;
+      else process.env.PAYASO_SHELL_UNSANDBOXED = uncontained;
+    }
+  });
+
   await test('win32 gate 开：runner 失败（非 win32 无 kernel32）→ fail-closed 结构化错误，命令未执行', async () => {
+    if (process.platform === 'win32') {
+      console.log('  [SKIP] 此用例验证非 Windows 的 FFI 加载失败');
+      return;
+    }
     const previous = process.env.PAYASO_SHELL_WINDOWS_ACL;
     process.env.PAYASO_SHELL_WINDOWS_ACL = '1';
     const scratch = createShellScratch('gate-on');

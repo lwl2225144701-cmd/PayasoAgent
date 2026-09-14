@@ -196,6 +196,15 @@ async function executeUncontainedGated(request: ShellExecuteRequest): Promise<Sh
 // 不受限；能力报告必须如实标注，不静默放宽权限语义（方案文档 §3）。
 
 async function executeWindowsAcl(request: ShellExecuteRequest): Promise<ShellExecuteResult> {
+  if (storedPermissionMode(request.permissionMode) === 'full-access') {
+    // 保留既有显式无沙箱授权要求，不把 ACL gate 当成无限制执行许可。
+    if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
+      throw new Error(
+        'Windows ACL does not support Full access. Explicitly enable PAYASO_SHELL_UNSANDBOXED=1 or choose Workspace write.',
+      );
+    }
+    return executeUncontainedGated(request);
+  }
   const host = await discoverShellHost();
   if (!host) {
     throw new Error(
@@ -211,13 +220,17 @@ async function executeWindowsAcl(request: ShellExecuteRequest): Promise<ShellExe
     signal: request.signal,
     onOutput: request.onOutput,
   });
-  if (result.runnerFailure !== undefined) {
-    // fail-closed：runner 自身失败 = 命令未执行（受限令牌未建立）。
-    // 结构化报错引导排查，绝不回退无沙箱路径。
+  if (result.execution !== 'completed') {
+    const state =
+      result.execution === 'not_started'
+        ? 'the command was not executed'
+        : 'execution outcome is unknown; the command may have run; inspect effects before retrying';
     throw new Error(
-      'Windows ACL sandbox runner failed; the command was not executed. ' +
-        `Runner failure: ${result.runnerFailure}`,
+      `Windows ACL sandbox runner failed; ${state}. ${result.runnerFailure ?? 'Runner exited without a completion report.'}`,
     );
+  }
+  if (result.cleanupErrors.length) {
+    result.stderr += `\nWindows ACL cleanup failed: ${result.cleanupErrors.join('; ')}`;
   }
   // 事件在执行成功后发出（post-hoc）：与 macOS 的 spawn 时刻不同 —— runner 内部
   // 无法观测受限子进程的启动时刻，而 runner 失败时绝不能宣称"沙箱已应用"。

@@ -9,16 +9,15 @@
 //    '--', <bash 路径>, '-c', <命令>]
 //
 // 权限模式 → AclSandbox 授权形状（docs/cross-platform-sandbox-plan.md §3）：
-//  - read-only：writableDirs=[scratch] + tempWriteSid(scratch)、tempDir=null。
+//  - read-only：scratch 由 AclWriteGrant 可撤销授权，AclSandbox 不管理 DACL。
 //    workspace 不在 writableDirs → 无 capability ACE → 只读；历史 workspace-write
 //    留下的 standing workspace ACE 因 workspaceWriteSid 不在 restricting 列表而惰性。
-//  - workspace-write / full-access：库原生形状 —— writableDirs=[workspace] +
+//  - workspace-write：库原生形状 —— writableDirs=[workspace] +
 //    workspaceWriteSid(workspace)（standing ACE，跨会话复用缓存）+ tempDir=scratch +
 //    tempWriteSid(scratch)（可撤销 ACE）。
 //
-// 失败契约：任何 runner 侧失败（坏参数/目录缺失/令牌或授权/spawn 失败）打印
-// "payaso-win-acl: <detail>" 到 stderr 并 exit 127；子进程绝不无限制执行
-// （fail-closed）。子进程已执行后的清理失败只打印签名行，不覆盖其退出码。
+// 失败契约：独立 IPC 报告 not_started / unknown / completed，清理故障单独上报。
+// 命令输出及退出码不得作为未执行证据；Full access 不进入此 runner。
 //
 // 依赖：@deepseek-ai/dsh-sandbox-windows-acl（MIT）提供 AclSandbox 与 SID 派生；
 // koffi 仅用于本进程绑定 SetEnvironmentVariableW / SetConsoleCtrlHandler
@@ -26,6 +25,8 @@
 // ERROR_INVALID_PARAMETER，必须改自身环境后让子进程继承 —— stock runner 同款）。
 
 import { existsSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SIGNATURE = 'payaso-win-acl';
 const FAILURE_EXIT = 127;
@@ -108,38 +109,56 @@ async function main() {
     fail(`SetConsoleCtrlHandler failed (Win32 ${getLastError()})`);
   }
 
-  const { AclSandbox, tempWriteSid, workspaceWriteSid } = await import(
+  const { AclSandbox, AclWriteGrant, tempWriteSid, workspaceWriteSid } = await import(
     '@deepseek-ai/dsh-sandbox-windows-acl'
   );
 
-  const sandbox =
-    parsed.mode === 'read-only'
-      ? new AclSandbox({
-          writableDirs: [parsed.scratch],
-          writeSid: tempWriteSid(parsed.scratch),
-          tempDir: null,
-          mode: 'workspace-write',
-        })
-      : new AclSandbox({
-          writableDirs: [parsed.workspace],
-          writeSid: workspaceWriteSid(parsed.workspace),
-          tempDir: parsed.scratch,
-          tempWriteSid: tempWriteSid(parsed.scratch),
-          mode: 'workspace-write',
-        });
+  return executeWithSandbox(
+    parsed,
+    { AclSandbox, AclWriteGrant, tempWriteSid, workspaceWriteSid },
+    (name, value) => {
+      if (!setEnvironmentVariable(name, value))
+        throw new Error(`SetEnvironmentVariableW ${name} failed`);
+    },
+  );
+}
 
-  let initialized = false;
+// 与 Win32 绑定分离，允许验证授权生命周期和执行阶段；不提供环境变量注入后门。
+export async function executeWithSandbox(parsed, api, setEnvironment) {
+  const { AclSandbox, AclWriteGrant, tempWriteSid, workspaceWriteSid } = api;
+  let sandbox;
+  let grant;
+  let execution = 'not_started';
+  let exitCode = 127;
+  let error;
+  const cleanupErrors = [];
   try {
-    await sandbox.init();
-    initialized = true;
-
-    // HOME/TMPDIR(unix 语义，Git Bash 使用) + TMP/TEMP(Windows 语义) 全部指向 scratch。
-    for (const name of ['HOME', 'TMP', 'TEMP', 'TMPDIR']) {
-      if (!setEnvironmentVariable(name, parsed.scratch)) {
-        fail(`SetEnvironmentVariableW ${name} failed (Win32 ${getLastError()})`);
-      }
+    const scratchSid = tempWriteSid(parsed.scratch);
+    if (parsed.mode === 'read-only') {
+      grant = AclWriteGrant.create(scratchSid);
+      grant.add(parsed.scratch, false);
     }
-
+    sandbox = new AclSandbox(
+      parsed.mode === 'read-only'
+        ? {
+            writableDirs: [parsed.scratch],
+            writeSid: scratchSid,
+            tempDir: null,
+            mode: 'workspace-write',
+            manageDacls: false,
+          }
+        : {
+            writableDirs: [parsed.workspace],
+            writeSid: workspaceWriteSid(parsed.workspace),
+            tempDir: parsed.scratch,
+            tempWriteSid: scratchSid,
+            mode: 'workspace-write',
+          },
+    );
+    await sandbox.init();
+    for (const name of ['HOME', 'TMP', 'TEMP', 'TMPDIR']) setEnvironment(name, parsed.scratch);
+    // spawn 内部也可能在创建进程后抛错，因此调用前就进入不确定阶段。
+    execution = 'unknown';
     const child = sandbox.spawn({
       command: parsed.command,
       args: parsed.args,
@@ -147,32 +166,46 @@ async function main() {
       stdio: 'inherit',
     });
     const result = await child.wait();
-    return result.exitCode;
+    exitCode = result.exitCode;
+    execution = 'completed';
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : String(cause);
   } finally {
-    // 清理失败不得掩盖子进程退出码：报告后继续（temp ACE 撤销；workspace
-    // standing ACE 按设计留存复用）。
-    if (initialized) {
+    // 每个资源独立清理；部分授权失败也要撤销。未知执行状态不得声称命令未运行。
+    if (execution === 'unknown')
+      cleanupErrors.push(
+        'Process termination is unconfirmed; grant cleanup deferred to avoid revoking live children.',
+      );
+    for (const resource of execution === 'unknown' ? [] : [sandbox, grant]) {
       try {
-        sandbox.dispose();
-      } catch (error) {
-        process.stderr.write(
-          `${SIGNATURE}: cleanup: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
+        resource?.dispose();
+      } catch (cause) {
+        cleanupErrors.push(cause instanceof Error ? cause.message : String(cause));
       }
     }
   }
+  return { execution, exitCode, error, cleanupErrors };
 }
 
-main().then(
-  (exitCode) => {
-    process.exitCode = exitCode;
-  },
-  (error) => {
-    if (!(error instanceof RunnerFailure)) {
-      process.stderr.write(
-        `${SIGNATURE}: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-    }
-    process.exitCode = FAILURE_EXIT;
-  },
-);
+async function launch() {
+  let report;
+  try {
+    report = await main();
+  } catch (error) {
+    report = {
+      execution: 'not_started',
+      exitCode: FAILURE_EXIT,
+      error: error instanceof Error ? error.message : String(error),
+      cleanupErrors: [],
+    };
+  }
+  // 状态走独立 IPC，stdout/stderr 与命令退出码不能证明命令是否执行。
+  if (process.send)
+    await new Promise((resolve) => process.send({ type: 'acl-result', ...report }, resolve));
+  else if (report.error) process.stderr.write(`${SIGNATURE}: ${report.error}\n`);
+  // 未确认子进程结束时直接退出，关闭 runner 持有的 Job，父进程随后清理 scratch。
+  if (report.execution === 'unknown') process.exit(report.exitCode);
+  process.exitCode = report.exitCode;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) void launch();
