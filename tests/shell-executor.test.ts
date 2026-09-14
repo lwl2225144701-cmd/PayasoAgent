@@ -36,14 +36,20 @@ async function test(name: string, fn: () => Promise<void> | void): Promise<void>
 
 const main = async (): Promise<void> => {
   await test('selectShellExecutor：darwin → macos-seatbelt（与 gate 无关）', () => {
-    assert.equal(selectShellExecutor('darwin', { PAYASO_SHELL_WINDOWS_ACL: '1' }), 'macos-seatbelt');
+    assert.equal(
+      selectShellExecutor('darwin', { PAYASO_SHELL_WINDOWS_ACL: '1' }),
+      'macos-seatbelt',
+    );
     assert.equal(selectShellExecutor('darwin', {}), 'macos-seatbelt');
   });
 
   await test('selectShellExecutor：win32 gate 开 → windows-acl；gate 关 → uncontained-gated', () => {
     assert.equal(selectShellExecutor('win32', { PAYASO_SHELL_WINDOWS_ACL: '1' }), 'windows-acl');
     assert.equal(selectShellExecutor('win32', {}), 'uncontained-gated');
-    assert.equal(selectShellExecutor('win32', { PAYASO_SHELL_WINDOWS_ACL: '0' }), 'uncontained-gated');
+    assert.equal(
+      selectShellExecutor('win32', { PAYASO_SHELL_WINDOWS_ACL: '0' }),
+      'uncontained-gated',
+    );
   });
 
   await test('selectShellExecutor：linux → uncontained-gated（Linux 沙箱另行实施）', () => {

@@ -4,11 +4,11 @@
 // 状态。从 routes.ts 拆出后，分发骨架只负责按路径前缀路由到这里。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { shellIsolationCapabilities } from '../../sandbox/shell-executor.js';
 import {
   getRuntimeToolchainCapabilities,
   refreshRuntimeToolchainCapabilities,
 } from '../../sandbox/toolchain-manager.js';
-import { shellIsolationCapabilities } from '../../sandbox/shell-executor.js';
 import type { RunManager } from '../run-manager.js';
 import { checkOrigin, notFound, requireAuth, sendJson } from './route-context.js';
 

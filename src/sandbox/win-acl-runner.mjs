@@ -52,10 +52,17 @@ function parseArgs(raw) {
     const value = raw[index];
     if (value === undefined) fail(`missing value after ${token}`);
     switch (token) {
-      case '--workspace': workspace = value; break;
-      case '--scratch': scratch = value; break;
-      case '--mode': mode = value; break;
-      default: fail(`unknown argument: ${token}`);
+      case '--workspace':
+        workspace = value;
+        break;
+      case '--scratch':
+        scratch = value;
+        break;
+      case '--mode':
+        mode = value;
+        break;
+      default:
+        fail(`unknown argument: ${token}`);
     }
   }
   if (workspace === undefined) fail('missing --workspace');
@@ -80,9 +87,7 @@ async function main() {
   requireDirectory('--workspace', parsed.workspace);
   requireDirectory('--scratch', parsed.scratch);
 
-  const { assertTempRootOutsideWorkspace } = await import(
-    '@deepseek-ai/dsh-sandbox-windows-acl'
-  );
+  const { assertTempRootOutsideWorkspace } = await import('@deepseek-ai/dsh-sandbox-windows-acl');
   // Payaso 契约保证 scratch 在 workspace 外（受管临时根）；runner 侧防御性复检。
   assertTempRootOutsideWorkspace(parsed.workspace, parsed.scratch);
 
@@ -164,7 +169,9 @@ main().then(
   },
   (error) => {
     if (!(error instanceof RunnerFailure)) {
-      process.stderr.write(`${SIGNATURE}: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(
+        `${SIGNATURE}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
     }
     process.exitCode = FAILURE_EXIT;
   },

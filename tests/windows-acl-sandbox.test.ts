@@ -6,8 +6,8 @@
 //   3. runWindowsAclShell：注入假 spawn —— runner 失败路径 / 正常路径 / 自然 127
 
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import {
   buildWindowsAclRunnerArgv,
   isWindowsAclRunnerFailure,
@@ -54,10 +54,16 @@ const main = async (): Promise<void> => {
     assert.deepEqual(argv, [
       '/node/bin/node',
       '/runner/win-acl-runner.mjs',
-      '--workspace', 'C:\\ws',
-      '--scratch', 'C:\\scratch\\s-abc123',
-      '--mode', 'read-only',
-      '--', HOST.shellPath, '-c', 'npm test',
+      '--workspace',
+      'C:\\ws',
+      '--scratch',
+      'C:\\scratch\\s-abc123',
+      '--mode',
+      'read-only',
+      '--',
+      HOST.shellPath,
+      '-c',
+      'npm test',
     ]);
   });
 
@@ -80,7 +86,10 @@ const main = async (): Promise<void> => {
 
   await test('失败识别：exit 127 + 签名行 → runner 失败', () => {
     assert.equal(
-      isWindowsAclRunnerFailure(127, `noise\n${WINDOWS_ACL_RUNNER_SIGNATURE}: SetConsoleCtrlHandler failed (Win32 5)`),
+      isWindowsAclRunnerFailure(
+        127,
+        `noise\n${WINDOWS_ACL_RUNNER_SIGNATURE}: SetConsoleCtrlHandler failed (Win32 5)`,
+      ),
       true,
     );
   });
@@ -90,15 +99,24 @@ const main = async (): Promise<void> => {
   });
 
   await test('失败识别：有签名行但 exit ≠ 127 → 不是 runner 失败（子进程已执行，清理失败不覆盖退出码）', () => {
-    assert.equal(isWindowsAclRunnerFailure(0, `${WINDOWS_ACL_RUNNER_SIGNATURE}: cleanup: boom`), false);
     assert.equal(
-      isWindowsAclRunnerFailure(WINDOWS_ACL_RUNNER_FAILURE_EXIT - 1, `${WINDOWS_ACL_RUNNER_SIGNATURE}: x`),
+      isWindowsAclRunnerFailure(0, `${WINDOWS_ACL_RUNNER_SIGNATURE}: cleanup: boom`),
+      false,
+    );
+    assert.equal(
+      isWindowsAclRunnerFailure(
+        WINDOWS_ACL_RUNNER_FAILURE_EXIT - 1,
+        `${WINDOWS_ACL_RUNNER_SIGNATURE}: x`,
+      ),
       false,
     );
   });
 
   await test('runWindowsAclShell：假 spawn 模拟 runner 失败（127 + 签名）→ runnerFailure 携带签名行', async () => {
-    const spawnImpl = fakeSpawn({ exitCode: 127, stderr: `${WINDOWS_ACL_RUNNER_SIGNATURE}: cannot load kernel32\n` });
+    const spawnImpl = fakeSpawn({
+      exitCode: 127,
+      stderr: `${WINDOWS_ACL_RUNNER_SIGNATURE}: cannot load kernel32\n`,
+    });
     const result = await runWindowsAclShell(HOST, 'echo hi', {
       workspaceRoot: 'C:\\ws',
       scratchPath: 'C:\\scratch\\s-x',

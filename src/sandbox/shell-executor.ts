@@ -9,7 +9,7 @@
 // - fail-closed 贯穿：沙箱不可用即拒绝执行，绝不静默降级到无沙箱。
 
 import { getNetworkMode, type NetworkMode } from '../network-mode.js';
-import { storedPermissionMode, type PermissionMode } from '../permission-mode.js';
+import { type PermissionMode, storedPermissionMode } from '../permission-mode.js';
 import type { ToolSandboxEvent } from '../tools/tools.js';
 import {
   MacOSSandbox,

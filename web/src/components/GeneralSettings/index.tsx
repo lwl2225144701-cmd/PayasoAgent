@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type ReactNode, type WheelEvent } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useState, type WheelEvent } from 'react';
 import { fetchShellIsolation } from '../../api';
 import { useI18n } from '../../i18n';
 import {

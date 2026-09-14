@@ -13,10 +13,10 @@
 //   读取与网络不受限；能力报告必须如实标注（shellIsolationCapabilities）。
 
 import { spawn } from 'node:child_process';
-import { storedPermissionMode, type PermissionMode } from '../permission-mode.js';
-import { MAX_SHELL_OUTPUT } from './macos-sandbox.js';
-import { terminateProcessTree, type ShellHost, type ShellRunResult } from './shell-host.js';
 import { fileURLToPath } from 'node:url';
+import { type PermissionMode, storedPermissionMode } from '../permission-mode.js';
+import { MAX_SHELL_OUTPUT } from './macos-sandbox.js';
+import { type ShellHost, type ShellRunResult, terminateProcessTree } from './shell-host.js';
 
 /** runner 自身失败的 stderr 行前缀（契约：命令未执行）。 */
 export const WINDOWS_ACL_RUNNER_SIGNATURE = 'payaso-win-acl';
@@ -69,9 +69,7 @@ export function buildWindowsAclRunnerArgv(input: WindowsAclRunnerArgvInput): str
 export function isWindowsAclRunnerFailure(exitCode: number | null, stderr: string): boolean {
   if (exitCode !== WINDOWS_ACL_RUNNER_FAILURE_EXIT) return false;
   const prefix = `${WINDOWS_ACL_RUNNER_SIGNATURE}: `;
-  return stderr
-    .split(/\r?\n/)
-    .some((line) => line.startsWith(prefix));
+  return stderr.split(/\r?\n/).some((line) => line.startsWith(prefix));
 }
 
 export interface WindowsAclShellOptions {

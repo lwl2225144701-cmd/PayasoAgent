@@ -504,7 +504,9 @@ function formatShellResult(result: ShellExecuteResult, timeoutMs: number): strin
 register({
   name: 'shell',
   description:
-    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 ${Math.round(TOOL_OUTPUT_MAX_BYTES / 1024)}KB；文件系统边界由 OS 级沙箱强制执行，平台能力以 runtime capabilities 报告为准——macOS 为完整隔离，Windows ACL 为部分写入隔离）。` +
+    // 注意：文案不得出现 "capabilities"（network-control 守卫：内部字段名不得进入 LLM Schema），
+    // 且长度不得超出既有文案（context-compaction 套件对工具 schema token 敏感，变长会触发紧急裁剪路径）。
+    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 ${Math.round(TOOL_OUTPUT_MAX_BYTES / 1024)}KB；macOS 沙箱内执行，其余平台默认拒绝）。` +
     `前台默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s；background=true 且未传 timeoutMs 时默认 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s；` +
     `可用 timeoutMs 调整（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）。` +
     `超时会整树终止并返回 [shell-timeout]。background=true 时立即返回 jobId，用 shellJob wait 等待（长测试、构建用），不要用 shell sleep 轮询。` +
