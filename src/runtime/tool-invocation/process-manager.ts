@@ -378,6 +378,8 @@ export async function invokeToolCall(
             emit({
               type: 'shell_sandbox_started',
               platform: event.platform,
+              // enforcement 仅 windows-acl 携带；macOS 事件形状保持不变。
+              ...(event.enforcement !== undefined ? { enforcement: event.enforcement } : {}),
             });
           } else {
             emit({

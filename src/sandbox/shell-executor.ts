@@ -18,6 +18,7 @@ import {
 } from './macos-sandbox.js';
 import { discoverShellHost, runUncontainedShell } from './shell-host.js';
 import type { ShellScratch } from './shell-scratch.js';
+import { runWindowsAclShell } from './windows-acl-sandbox.js';
 
 /** 执行器种类（决定 enforcement 与能力报告）。 */
 export type ShellExecutorKind = 'macos-seatbelt' | 'windows-acl' | 'uncontained-gated';
@@ -140,11 +141,40 @@ async function executeUncontainedGated(request: ShellExecuteRequest): Promise<Sh
   return { ...result, executor: 'uncontained-gated', enforcement: 'none' };
 }
 
-// ---- win32：Windows ACL 受限令牌执行器（步骤 2 接入；在此之前不可达）----
+// ---- win32：Windows ACL 受限令牌执行器（gate：PAYASO_SHELL_WINDOWS_ACL=1）----
+// enforcement=partial：写入部分隔离（Everyone 与 NTFS 硬链接例外），读取与网络
+// 不受限；能力报告必须如实标注，不静默放宽权限语义（方案文档 §3）。
 
 async function executeWindowsAcl(request: ShellExecuteRequest): Promise<ShellExecuteResult> {
-  void request;
-  // selectShellExecutor 只在 win32 + gate 开启时返回 'windows-acl'；
-  // 本分支在步骤 2（windows-acl-sandbox.ts）落地前不可达。
-  throw new Error('Shell executor "windows-acl" is not implemented yet');
+  const host = await discoverShellHost();
+  if (!host) {
+    throw new Error(
+      'Shell unavailable: 未找到 bash 解释器。Windows 请安装 Git for Windows ' +
+        '(https://git-scm.com) 后重试。',
+    );
+  }
+  const result = await runWindowsAclShell(host, request.command, {
+    workspaceRoot: request.workspaceRoot,
+    scratchPath: request.scratch.path,
+    permissionMode: request.permissionMode,
+    timeoutMs: request.timeoutMs,
+    signal: request.signal,
+    onOutput: request.onOutput,
+  });
+  if (result.runnerFailure !== undefined) {
+    // fail-closed：runner 自身失败 = 命令未执行（受限令牌未建立）。
+    // 结构化报错引导排查，绝不回退无沙箱路径。
+    throw new Error(
+      'Windows ACL sandbox runner failed; the command was not executed. ' +
+        `Runner failure: ${result.runnerFailure}`,
+    );
+  }
+  // 事件在执行成功后发出（post-hoc）：与 macOS 的 spawn 时刻不同 —— runner 内部
+  // 无法观测受限子进程的启动时刻，而 runner 失败时绝不能宣称"沙箱已应用"。
+  request.onSandboxEvent?.({
+    type: 'shell_sandbox_started',
+    platform: 'windows',
+    enforcement: 'partial',
+  });
+  return { ...result, executor: 'windows-acl', enforcement: 'partial' };
 }

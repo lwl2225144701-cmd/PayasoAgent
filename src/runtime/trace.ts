@@ -202,13 +202,15 @@ export type TraceEvent =
       type: 'shell_sandbox_started';
       step: number;
       timestamp: string;
-      platform: 'macos';
+      platform: 'macos' | 'windows';
+      // 可选：windows-acl 执行器为部分写入隔离（partial）；macOS 不携带该字段。
+      enforcement?: 'full' | 'partial';
     }
   | {
       type: 'shell_sandbox_denied';
       step: number;
       timestamp: string;
-      platform: 'macos';
+      platform: 'macos' | 'windows';
       reason: 'workspace_policy';
     }
   | {
@@ -388,11 +390,12 @@ export type TraceEventInput =
     }
   | {
       type: 'shell_sandbox_started';
-      platform: 'macos';
+      platform: 'macos' | 'windows';
+      enforcement?: 'full' | 'partial';
     }
   | {
       type: 'shell_sandbox_denied';
-      platform: 'macos';
+      platform: 'macos' | 'windows';
       reason: 'workspace_policy';
     }
   | {
