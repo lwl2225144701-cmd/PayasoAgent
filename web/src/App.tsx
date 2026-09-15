@@ -125,6 +125,7 @@ export default function App() {
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const initialModelCheck = useRef(false);
   const [defaultModel, setDefaultModelState] = useState<DefaultModelView | null>(null);
   const [models, setModels] = useState<ModelProviderView[]>([]);
   // pi-ai 内置目录：用于解析未显式配置视觉开关的内置 Provider 模型是否支持图片输入
@@ -236,6 +237,10 @@ export default function App() {
     try {
       const resp = await listModels();
       setModels(resp.models);
+      if (!initialModelCheck.current) {
+        initialModelCheck.current = true;
+        if (resp.models.length === 0) setSettingsOpen(true);
+      }
     } catch {
       // ignore
     }

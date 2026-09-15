@@ -81,6 +81,19 @@ npm run cli "帮我计算 15*37"   # 命令行单次任务
 
 也可以不写 `.env`，直接在 Web UI 左下角「设置」中添加模型提供方（密钥写入 Keychain）。
 
+### npm 包方式运行（免克隆仓库）
+
+发布后可用一条命令启动（本地 tarball 验证阶段：`npm install <tarball>` 后运行）：
+
+```bash
+npx payaso-agent@latest          # 默认端口 4500，就绪后自动打开浏览器
+npx payaso-agent --port 5000 --no-open --help
+```
+
+* 不读取当前目录 `.env`；数据（数据库 / checkpoint / 凭证 / 沙箱 / 附件）统一放在 `~/.payaso/`，可用绝对路径 `PAYASO_HOME` 覆盖
+* 首次使用在页面左下角「设置」配置模型，再选择工作区；启动目录不会自动授权给 Agent
+* 从源码运行迁移到 npm 包：旧数据不自动搬迁，按 `docs/npx-distribution-plan.md` 的「旧数据迁移」表在 Host 停止状态下成组迁移并验证
+
 ## 测试命令
 
 | 命令                               | 内容                                                                     | 依赖            |

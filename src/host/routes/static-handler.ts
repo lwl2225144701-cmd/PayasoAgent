@@ -7,14 +7,15 @@
 import fs from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import path from 'node:path';
+import { webStaticRoot } from '../../app-paths.js';
 import { assertInsideRoot, resolveWorkspacePath } from '../../sandbox/sandbox-manager.js';
 
 const MAX_FILE_BYTES = 1024 * 1024; // 文本文件读取上限
 const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024; // 图片附件/预览上限（与 read 读图一致）
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
 
-// 静态文件根目录：项目根/web/dist/（server 从项目根启动，process.cwd() 为项目根）
-const STATIC_ROOT = path.resolve(process.cwd(), 'web', 'dist');
+// 静态文件跟随安装包，不依赖用户启动目录。
+const STATIC_ROOT = webStaticRoot;
 
 // 白名单 MIME 类型
 const MIME_TYPES: Record<string, string> = {

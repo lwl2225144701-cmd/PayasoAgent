@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import url from 'node:url';
+import { appDataPath } from '../../app-paths.js';
 import { storedPermissionMode } from '../../permission-mode.js';
 import type { HostEvent } from '../run-events.js';
 import { createSecretStore, type SecretStore } from '../secrets/secret-store.js';
@@ -19,13 +19,6 @@ import type {
   StoredSession,
   UpdateModelProviderInput,
 } from './store.js';
-
-// Repo root：sqlite-store.ts 位于 src/host/persistence/，往上 4 层回到 package.json 所在目录
-const REPO_ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..', '..');
-
-// 默认数据库路径：优先放项目目录内 .data/payaso.db（一定可写，避免 HOME 目录权限/扩展属性/沙箱问题）
-// 用户可通过环境变量 PAYASO_DB_PATH 覆盖：设为绝对路径就写指定位置，设为 ":memory:" 就全内存模式
-const DEFAULT_DB_PATH = path.join(REPO_ROOT, '.data', 'payaso.db');
 
 interface RunRow {
   run_id: string;
@@ -100,7 +93,7 @@ function mapSession(row: SessionRow): StoredSession {
 }
 
 export function resolvePayasoDbPath(env: Record<string, string | undefined> = process.env): string {
-  return env.PAYASO_DB_PATH?.trim() || DEFAULT_DB_PATH;
+  return env.PAYASO_DB_PATH?.trim() || appDataPath('payaso.db');
 }
 
 export class SqliteRunStore implements RunStore {
@@ -113,7 +106,7 @@ export class SqliteRunStore implements RunStore {
     let initialized = false;
     const attempts: Array<{ path: string; error: string }> = [];
 
-    for (const candidate of [actualPath, ':memory:']) {
+    for (const candidate of [actualPath]) {
       if (initialized) break;
       actualPath = candidate;
       let opened: DatabaseSync | undefined;
@@ -222,16 +215,10 @@ export class SqliteRunStore implements RunStore {
         } catch {
           /* ignore */
         }
-        if (actualPath === ':memory:') {
-          throw new Error(
-            `[RunStore] 无法初始化持久层（磁盘和 :memory: 均失败）：\n${attempts.map((a) => `- ${a.path}: ${a.error}`).join('\n')}`,
-          );
-        }
+        throw new Error(
+          `[RunStore] 无法初始化持久层；拒绝以易失内存替代：\n${attempts.map((a) => `- ${a.path}: ${a.error}`).join('\n')}`,
+        );
       }
-    }
-    if (actualPath !== dbPath) {
-      (this as any).dbPath = actualPath;
-      console.warn(`[RunStore] 无法使用 ${dbPath}，已回退到内存模式（:memory:）；数据不会持久化`);
     }
   }
 

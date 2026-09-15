@@ -28,3 +28,8 @@ input/
 .idea/
 docs/archify/*.png
 docs/archify/*.visual-check.*
+
+# npm 发布构建产物
+dist/
+*.tgz
+THIRD_PARTY_NOTICES.md
