@@ -1,7 +1,11 @@
 import type { HostEvent, StreamingEvent } from '../types';
 
 function isStreamingEvent(event: HostEvent): event is StreamingEvent {
-  return event.type === 'assistant_delta' || event.type === 'reasoning_delta';
+  return (
+    event.type === 'assistant_delta' ||
+    event.type === 'reasoning_delta' ||
+    event.type === 'shell_output_delta'
+  );
 }
 
 /**

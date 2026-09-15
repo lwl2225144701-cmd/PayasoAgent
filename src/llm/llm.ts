@@ -108,7 +108,11 @@ export interface ToolSchema {
 
 export interface ChatStreamDelta {
   messageId: string;
-  type: 'assistant_delta' | 'reasoning_delta';
+  // shell_output_delta 不走 LLM：它是前台 shell 的 stdout/stderr 增量，由工具执行层
+  // 借同一条流式通道推给 UI。复用该通道而**不是**发 TraceEvent，是因为 delta 不应
+  // 作为 trace step 持久化（否则每个输出块都会写进 trace/checkpoint）。
+  // 其 messageId 取工具调用 id，便于前端把输出归到对应的工具行。
+  type: 'assistant_delta' | 'reasoning_delta' | 'shell_output_delta';
   delta: string;
 }
 

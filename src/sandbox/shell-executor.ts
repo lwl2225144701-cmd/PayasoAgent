@@ -16,7 +16,12 @@ import {
   type MacOSSandboxResult,
   probeSandboxAvailability,
 } from './macos-sandbox.js';
-import { discoverShellHost, runUncontainedShell } from './shell-host.js';
+import {
+  discoverNativeShellHost,
+  discoverShellHost,
+  isWindowsAclEnabled,
+  runUncontainedShell,
+} from './shell-host.js';
 import type { ShellScratch } from './shell-scratch.js';
 import { runWindowsAclShell } from './windows-acl-sandbox.js';
 
@@ -108,7 +113,7 @@ export function selectShellExecutor(
   env: Record<string, string | undefined> = process.env,
 ): ShellExecutorKind {
   if (platform === 'darwin') return 'macos-seatbelt';
-  if (platform === 'win32' && env.PAYASO_SHELL_WINDOWS_ACL === '1') return 'windows-acl';
+  if (platform === 'win32' && isWindowsAclEnabled(env)) return 'windows-acl';
   return 'uncontained-gated';
 }
 
@@ -205,11 +210,16 @@ async function executeWindowsAcl(request: ShellExecuteRequest): Promise<ShellExe
     }
     return executeUncontainedGated(request);
   }
-  const host = await discoverShellHost();
+  // 载体必须是原生 PE（runtime==='native'）：MSYS2 bash 与 WSL bash 在
+  // WRITE_RESTRICTED 受限令牌下都必然失败，详见 shell-host.ts 文件头。
+  // 因此这里刻意走 discoverNativeShellHost（PowerShell → cmd），而不是 discoverShellHost。
+  const host = await discoverNativeShellHost();
   if (!host) {
     throw new Error(
-      'Shell unavailable: 未找到 bash 解释器。Windows 请安装 Git for Windows ' +
-        '(https://git-scm.com) 后重试。',
+      'Windows ACL sandbox unavailable: no native Windows shell carrier found ' +
+        '(expected PowerShell at %SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe). ' +
+        'The ACL executor cannot fall back to Git Bash or WSL: both die during DLL initialization ' +
+        'under the WRITE_RESTRICTED restricted token, before any command runs.',
     );
   }
   const result = await runWindowsAclShell(host, request.command, {

@@ -109,6 +109,9 @@ export interface ToolInvocationContext {
   approvalPort: ApprovalPort | undefined;
   toolchainPreparationPort: ToolchainPreparationPort | undefined;
   emit: (input: TraceEventInput) => void;
+  // v2.4 前台 shell 流式输出：工具执行期的 stdout/stderr 增量回调（由 agent loop
+  // 接进 onStreamDelta，messageId = 本次工具调用 id）。缺省 = 不流式，行为与旧版一致。
+  onToolOutput?: (chunk: string) => void;
   save: (status?: string) => void;
   observer: RuntimeObserver;
   observeState: (detail: 'summary' | 'full') => void;
@@ -146,6 +149,7 @@ export async function invokeToolCall(
     observeState,
     observeScratchpad,
     pushToolCallError,
+    onToolOutput,
   } = ctx;
   const toolName = call.function.name;
 
@@ -373,6 +377,9 @@ export async function invokeToolCall(
         // runSignal 保留原始 Run 取消信号（后台作业等长生命周期用途）。
         signal: deadline.signal,
         runSignal: toolContext.runSignal ?? signal,
+        // 前台 shell 增量输出（仅 shell 工具消费；其他工具忽略）。Runtime-only：
+        // 不进 LLM Schema，也不作为工具返回值。
+        onShellOutput: onToolOutput,
         onSandboxEvent: (event: ToolSandboxEvent) => {
           if (event.type === 'shell_sandbox_started') {
             emit({

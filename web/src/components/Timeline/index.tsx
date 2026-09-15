@@ -85,6 +85,11 @@ export interface ToolCallData {
   error?: unknown;
   /** 工具产出的图片（工作区相对路径，需配合 runId 拼访问地址） */
   images?: TraceImage[];
+  /**
+   * v2.4 前台 shell 实时输出预览（shell_output_delta 累积）。
+   * 仅运行中可见：命令结束后以完整 result 为准，避免预览与结果两份文本并存。
+   */
+  liveOutput?: string;
 }
 
 function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -140,6 +145,14 @@ function ExecutionPanel({
   }, [running]);
   const tools = groups.flatMap((group) => group.tools);
   const failedCount = tools.filter((tool) => tool.status === 'failed').length;
+  // v2.4 前台 shell 实时输出：详情默认收起是有意为之（避免每次发消息都把页面撑开），
+  // 但 ToolActionRow 只在 open 时才挂载 —— 面板不展开，"逐行出现"就永远看不到。
+  // 折中：首个实时增量出现时自动展开一次；用户中途手动收起后不再抢焦点（autoOpened
+  // 记得住），Run 结束时仍由下方既有逻辑统一收起。
+  const hasLiveOutput = tools.some(
+    (tool) => tool.status === 'running' && Boolean(tool.liveOutput),
+  );
+  const autoOpenedForLiveRef = useRef(false);
   const elapsed = running && startedAt ? elapsedSeconds(startedAt) : 0;
   const startMs = startedAt ? new Date(startedAt).getTime() : NaN;
   const endMs = running ? Date.now() : new Date(finishedAt).getTime();
@@ -199,6 +212,19 @@ function ExecutionPanel({
     if (!running && wasRunning.current) setOpen(false);
     wasRunning.current = running;
   }, [running]);
+
+  // 实时输出出现即展开一次（见上方 hasLiveOutput 处说明）。依赖项用布尔量，
+  // 避免 tools 每次渲染新建数组导致 effect 反复触发。
+  useEffect(() => {
+    if (!running) {
+      autoOpenedForLiveRef.current = false;
+      return;
+    }
+    if (hasLiveOutput && !autoOpenedForLiveRef.current) {
+      autoOpenedForLiveRef.current = true;
+      setOpen(true);
+    }
+  }, [running, hasLiveOutput]);
 
   if (!hasDetails && !running && status !== 'failed' && status !== 'interrupted') return null;
 
@@ -1149,6 +1175,16 @@ function buildFlatToolCards(events: HostEvent[]): Array<ToolCallData & { __step:
         target.error = err.error;
         target.durationMs = computeDurationMs(target.startedAt, err.timestamp);
       }
+      continue;
+    }
+    // v2.4 前台 shell 实时输出：增量挂到"当前正在跑的那张卡"。
+    // 不按 messageId 匹配工具 id —— tool_call 事件本身不携带调用 id，而同一轮内
+    // 工具调用是顺序执行的，所以"最后一个 running 卡"就是输出所属的卡，与
+    // tool_result / tool_error 的归属逻辑完全一致。
+    // 本分支是循环体内最后一支，故无需 continue。
+    if (ev.type === 'shell_output_delta') {
+      const target = [...cards].reverse().find((c) => c.status === 'running');
+      if (target) target.liveOutput = (target.liveOutput ?? '') + ev.delta;
     }
   }
   return cards;

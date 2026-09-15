@@ -10,11 +10,13 @@ import {
   runWindowsAclShell,
 } from '../src/sandbox/windows-acl-sandbox.js';
 
+// ACL 沙箱只接受原生 PE 载体（MSYS2/WSL 在 WRITE_RESTRICTED 下必然在 DLL 初始化阶段死亡）。
 const host = {
   platform: 'win32' as const,
-  shellPath: 'bash.exe',
-  source: 'git-bash' as const,
-  wslLegacy: false,
+  shellPath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  source: 'powershell' as const,
+  carrier: 'powershell' as const,
+  runtime: 'native' as const,
 };
 function fakeSpawn(code: number, stderr: string, report?: object): typeof spawn {
   return (() => {
@@ -43,17 +45,47 @@ const input = {
   nodeExecutable: 'node',
   workspaceRoot: 'C:\\工作区',
   scratchPath: 'C:\\temp',
-  bashPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
-  command: 'echo hi',
 };
 assert.throws(
-  () => buildWindowsAclRunnerArgv({ ...input, permissionMode: 'full-access' }),
+  () =>
+    buildWindowsAclRunnerArgv({
+      ...input,
+      permissionMode: 'full-access',
+      invocation: ['powershell.exe', '-Command', 'echo hi'],
+    }),
   /Full access/,
 );
 for (const permissionMode of ['read-only', 'workspace-write'] as const) {
-  const argv = buildWindowsAclRunnerArgv({ ...input, permissionMode });
-  assert.equal(argv[argv.indexOf('--mode') + 1], permissionMode);
-  assert.equal(argv.at(-3), input.bashPath);
+  for (const invocation of [
+    // posix 载体：argv 尾段 = [exe, '-c', command]
+    ['C:\\Program Files\\Git\\bin\\bash.exe', '-c', 'echo hi'],
+    // 原生 PE 载体：PowerShell 的 -Command 全长写法
+    ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'echo hi'],
+  ]) {
+    const argv = buildWindowsAclRunnerArgv({ ...input, permissionMode, invocation });
+    assert.equal(argv[argv.indexOf('--mode') + 1], permissionMode);
+    // argv 尾段必须**原样**回放载体调用形状（含 exe 与全部参数），不再硬编码 bash/-c
+    assert.deepEqual(argv.slice(argv.indexOf('--') + 1), invocation);
+  }
+}
+// fail-closed：MSYS2 / WSL 载体必须在 spawn 之前被拒绝，并给出准确的机制诊断。
+for (const [runtime, source, path] of [
+  ['msys2', 'git-bash', 'D:\\Git\\Git\\bin\\bash.exe'],
+  ['wsl', 'wsl-bash', 'C:\\Windows\\System32\\bash.exe'],
+] as const) {
+  await assert.rejects(
+    () =>
+      runWindowsAclShell(
+        { platform: 'win32', shellPath: path, source, carrier: 'posix', runtime },
+        'echo test',
+        { workspaceRoot: '.', scratchPath: '.' },
+      ),
+    (err: unknown) => {
+      const message = (err as Error).message;
+      // 必须点明真实机制，而不是误导用户去"安装 Git for Windows"
+      return /cannot use the discovered shell carrier/.test(message) && !/Git for Windows/.test(message);
+    },
+  );
 }
 const completed = await result(127, 'payaso-win-acl: cleanup: revoke failed', {
   execution: 'completed',
@@ -174,3 +206,27 @@ process.send({ type: 'acl-result', execution: 'completed', cleanupErrors: ['clea
 } finally {
   rmSync(fixtureDir, { recursive: true, force: true });
 }
+
+// 超时路径回归（真机 D1 用例暴露的缺陷）：timeoutTimer 终止的是 **runner 本身**
+// （child.pid），而 runner 正是唯一能发出完成报告的 IPC 通道 ⇒ report 必然缺失。
+// 这属于**预期路径**而非失败：必须返回 timedOut=true，而不是退回 execution='unknown'，
+// 否则上层 shell-executor 会把它升级成"执行结果未知，命令可能已运行"的异常。
+const timeoutDir = mkdtempSync(join(tmpdir(), 'payaso-acl-timeout-'));
+try {
+  const hangRunner = join(timeoutDir, 'hang-runner.mjs');
+  // 既不发 acl-result 报告，也不自行退出；3s 兜底自退，避免 taskkill 不可用时测试挂死。
+  writeFileSync(hangRunner, 'setTimeout(() => process.exit(9), 3000);\n');
+  const timed = await runWindowsAclShell(host, 'unused', {
+    workspaceRoot: timeoutDir,
+    scratchPath: timeoutDir,
+    runnerPath: hangRunner,
+    timeoutMs: 1200,
+  });
+  assert.equal(timed.timedOut, true);
+  assert.equal(timed.execution, 'completed');
+  assert.equal(timed.runnerFailure, undefined);
+  assert.deepEqual(timed.cleanupErrors, []);
+} finally {
+  rmSync(timeoutDir, { recursive: true, force: true });
+}
+console.log('windows-acl-sandbox：超时路径返回 timedOut=true（不再误报 execution=unknown）');

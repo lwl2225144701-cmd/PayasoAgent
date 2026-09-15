@@ -150,6 +150,8 @@ export const timelineMessages = {
   },
   'timeline.tool.args': { 'zh-CN': '参数', 'en-US': 'Arguments' },
   'timeline.tool.result': { 'zh-CN': '结果', 'en-US': 'Result' },
+  // v2.4 前台 shell 运行中的实时输出预览
+  'timeline.tool.liveOutput': { 'zh-CN': '实时输出', 'en-US': 'Live output' },
   'timeline.tool.error': { 'zh-CN': '错误', 'en-US': 'Error' },
   'timeline.tool.truncated': {
     'zh-CN': '…（已截断，完整内容请查看日志）',

@@ -446,6 +446,12 @@ export async function runAgent(
             signal: opts.signal,
             approvalPort: opts.approvalPort,
             toolchainPreparationPort: opts.toolchainPreparationPort,
+            // v2.4 前台 shell 流式输出：把工具执行期的 stdout/stderr 增量接进同一条
+            // 流式通道（不落 trace）。messageId 取本次工具调用 id，前端据此归行。
+            onToolOutput: opts.onStreamDelta
+              ? (chunk: string) =>
+                  opts.onStreamDelta?.({ messageId: call.id, type: 'shell_output_delta', delta: chunk })
+              : undefined,
             emit,
             save,
             observer,

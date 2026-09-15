@@ -34,7 +34,10 @@ function check(name: string, cond: boolean, detail = ''): void {
 
 // 从文档中提取 <!-- docs-contract:<id> --> 块内的 JSON 数组
 function extractDocList(id: string): string[] | null {
-  const doc = fs.readFileSync(DOC_PATH, 'utf-8');
+  // 归一化换行符：契约块的正则按 LF 书写，而 checkout 到 Windows 时
+  // （core.autocrlf）整个文件会变成 CRLF，```json\n 这类字面量就匹配不上，
+  // 于是「文档缺块」误报。行尾差异与契约内容无关，先归一化再匹配。
+  const doc = fs.readFileSync(DOC_PATH, 'utf-8').replace(/\r\n/g, '\n');
   const m = doc.match(
     new RegExp(`<!-- docs-contract:${id} -->\\s*\\n\\s*\\\`\`\`json\\n(.+?)\\n\`\`\``, 's'),
   );

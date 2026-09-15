@@ -320,6 +320,7 @@ export function connectSSE(
     'run_interrupted',
     'assistant_delta',
     'reasoning_delta',
+    'shell_output_delta',
     'llm_call',
     'llm_call_started',
     'llm_request_sent',

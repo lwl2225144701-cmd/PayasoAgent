@@ -453,6 +453,26 @@ register({
 // 不再占满整个回合。两条路径共用同一受管 scratch 与沙箱执行器。
 // 平台选择（macOS Seatbelt / Windows ACL / 无沙箱门控）在 shell-executor 内完成，
 // 本函数只保留工具层语义：scratch 生命周期、denied 与缺失工具的错误转换。
+/**
+ * v2.4 前台 shell 实时输出预览。
+ * 增量按块转发给 UI（经 Runtime 的流式通道，不落 trace）；**总量**按工具输出上限
+ * 封顶，避免 `yes` 这类命令把 SSE 打满。
+ * 预览被截断不影响模型看到的内容 —— 最终结果仍由 formatShellResult 完整返回。
+ */
+function liveShellOutput(
+  onOutput?: (chunk: string) => void,
+): ((chunk: string) => void) | undefined {
+  if (!onOutput) return undefined;
+  let forwarded = 0;
+  return (chunk: string) => {
+    if (forwarded >= TOOL_OUTPUT_MAX_BYTES || !chunk) return;
+    const remaining = TOOL_OUTPUT_MAX_BYTES - forwarded;
+    const slice = chunk.length <= remaining ? chunk : chunk.slice(0, remaining);
+    forwarded += slice.length;
+    onOutput(slice);
+  };
+}
+
 async function executeContainedShell(
   command: string,
   context: ToolContext,
@@ -575,7 +595,12 @@ register({
       );
     }
 
-    const result = await executeContainedShell(cmd, context, timeoutMs);
+    const result = await executeContainedShell(
+      cmd,
+      context,
+      timeoutMs,
+      liveShellOutput(context.onShellOutput),
+    );
     return formatShellResult(result, timeoutMs);
   },
 });

@@ -105,7 +105,9 @@ async function main() {
 
   // 忽略 runner 自身 CTRL+C：受限子进程（同控制台）自行处理；runner 必须存活到
   // 授权撤销与退出码镜像完成。
-  if (!setConsoleCtrlHandler(null, 1)) {
+  // 注意：签名声明为 bool，koffi 对 bool 入参只接受 true/false；传 1 会抛
+  // "Unexpected Number value, expected boolean"（依赖库自身 binding 用 "int" 故不受影响）。
+  if (!setConsoleCtrlHandler(null, true)) {
     fail(`SetConsoleCtrlHandler failed (Win32 ${getLastError()})`);
   }
 

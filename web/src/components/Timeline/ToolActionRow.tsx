@@ -81,6 +81,13 @@ export function ToolActionRow({ data, runId }: ToolActionRowProps) {
         </span>
       </button>
 
+      {data.status === 'running' && data.liveOutput && (
+        <div className={styles.toolLiveOutput}>
+          <span className={styles.toolLiveOutputLabel}>{t('timeline.tool.liveOutput')}</span>
+          {data.liveOutput}
+        </div>
+      )}
+
       {data.images && data.images.length > 0 && (
         <div className={styles.toolImageStrip}>
           {data.images.map((img) => (

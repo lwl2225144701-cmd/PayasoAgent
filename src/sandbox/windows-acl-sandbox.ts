@@ -16,7 +16,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { type PermissionMode, storedPermissionMode } from '../permission-mode.js';
 import { MAX_SHELL_OUTPUT } from './macos-sandbox.js';
-import { type ShellHost, type ShellRunResult, terminateProcessTree } from './shell-host.js';
+import {
+  buildShellInvocation,
+  describeAclIncompatibleCarrier,
+  isAclCompatibleCarrier,
+  type ShellHost,
+  type ShellRunResult,
+  terminateProcessTree,
+} from './shell-host.js';
 
 const DEFAULT_RUNNER_PATH = fileURLToPath(new URL('./win-acl-runner.mjs', import.meta.url));
 
@@ -27,15 +34,19 @@ export interface WindowsAclRunnerArgvInput {
   workspaceRoot: string;
   scratchPath: string;
   permissionMode?: PermissionMode;
-  bashPath: string;
-  command: string;
+  /** 载体的命令调用形状 `[exe, ...args]`，由 `buildShellInvocation` 产出。 */
+  invocation: readonly string[];
 }
 
 /**
  * 构造薄 runner 的完整 argv（纯函数，测试直接断言）：
- * [node, runner.mjs, --workspace, w, --scratch, s, --mode, m, --, bash, -c, command]
+ * [node, runner.mjs, --workspace, w, --scratch, s, --mode, m, --, ...carrierInvocation]
  * 权限模式映射：read-only → 'read-only'（工作区不授权，仅 scratch 可写）；
  * Full access 明确拒绝，不能静默映射为 workspace-write。
+ *
+ * 载体不再硬编码 bash/-c：argv 尾段由载体决定（PowerShell 用 `-Command`，cmd 用 `/c`）。
+ * 这是 2026-09-14 真机验收的结论 —— MSYS2 bash 在 WRITE_RESTRICTED 令牌下必然
+ * 在 DLL 初始化阶段死亡，ACL 沙箱因此改用原生 PE 载体。
  */
 export function buildWindowsAclRunnerArgv(input: WindowsAclRunnerArgvInput): string[] {
   const mode = storedPermissionMode(input.permissionMode);
@@ -53,9 +64,7 @@ export function buildWindowsAclRunnerArgv(input: WindowsAclRunnerArgvInput): str
     '--mode',
     mode,
     '--',
-    input.bashPath,
-    '-c',
-    input.command,
+    ...input.invocation,
   ];
 }
 
@@ -91,6 +100,12 @@ export function runWindowsAclShell(
   command: string,
   options: WindowsAclShellOptions,
 ): Promise<WindowsAclShellResult> {
+  // fail-closed 第一道闸：ACL 沙箱只接受原生 PE 载体。MSYS2/WSL 载体在受限令牌下
+  // 必然在 DLL 初始化阶段死亡，放行只会得到无法解释的 0xC0000142 / E_ACCESSDENIED。
+  // 在 spawn 之前就拒绝，并给出准确诊断（不是"没装 Git"）。
+  if (!isAclCompatibleCarrier(host)) {
+    return Promise.reject(new Error(describeAclIncompatibleCarrier(host)));
+  }
   const doSpawn = options.spawnImpl ?? spawn;
   const timeout = options.timeoutMs ?? 60_000;
   const argv = buildWindowsAclRunnerArgv({
@@ -99,8 +114,7 @@ export function runWindowsAclShell(
     workspaceRoot: options.workspaceRoot,
     scratchPath: options.scratchPath,
     permissionMode: options.permissionMode,
-    bashPath: host.shellPath,
-    command,
+    invocation: buildShellInvocation(host, command),
   });
 
   return new Promise<WindowsAclShellResult>((resolve, reject) => {
@@ -173,6 +187,27 @@ export function runWindowsAclShell(
       settle(() => {
         if (aborted && (code === null || code !== 0)) {
           reject(new DOMException('Aborted', 'AbortError'));
+          return;
+        }
+        if (timedOut && !report) {
+          // 超时路径必须独立处理，理由与 aborted 分支对称：
+          // timeoutTimer 终止的是 **runner 本身**（child.pid），而 runner 正是唯一能发出
+          // 完成报告的 IPC 通道 ⇒ report 必然缺失。这是**预期路径**而非失败 —— 命令确已
+          // 执行（超时本身即证明它跑起来了），整树也已终止（外加 kill-on-close Job Object
+          // 双保险）。若在此退回 execution='unknown'，上层 shell-executor 会把它升级成
+          // "执行结果未知，命令可能已运行"的异常，与 runUncontainedShell 的契约
+          // （超时 → timedOut=true 正常返回）不一致。
+          // 已知限制：runner 被强杀，来不及做 scratch 清理 ⇒ cleanupErrors 无从上报。
+          resolve({
+            exitCode: code,
+            signal: null,
+            stdout: outputLimit(stdout),
+            stderr: outputLimit(stderr),
+            timedOut: true,
+            denied: false,
+            execution: 'completed',
+            cleanupErrors: [],
+          });
           return;
         }
         resolve({

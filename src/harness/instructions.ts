@@ -1,5 +1,6 @@
 import type { NetworkMode } from '../network-mode.js';
 import type { PermissionMode } from '../permission-mode.js';
+import { describeShellLanguage } from '../sandbox/shell-host.js';
 import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
 import type { SystemSegment } from './instruction-composer.js';
 
@@ -81,7 +82,10 @@ export function envContextPrompt(workspaceName?: string): string {
   const date = now.toISOString().split('T')[0];
   const platform = process.platform;
   const ws = workspaceName ? `\nWorkspace: ${workspaceName}` : '';
-  return `## Environment\nDate: ${date}\nPlatform: ${platform}${ws}`;
+  // 命令语言随平台与开关变化（Windows ACL 沙箱只能用原生 PE 载体 → PowerShell），
+  // 必须显式告知模型，否则它会写出另一种语言里语法不通的命令。
+  const shell = describeShellLanguage(platform);
+  return `## Environment\nDate: ${date}\nPlatform: ${platform}\nShell: ${shell}${ws}`;
 }
 
 // Project instructions segment — user-supplied guidance from PAYASO.md.

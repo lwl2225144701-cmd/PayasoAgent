@@ -91,7 +91,9 @@ export type ToolchainPreparationProgressEvent = {
 };
 
 export type StreamingEvent = {
-  type: 'assistant_delta' | 'reasoning_delta';
+  // shell_output_delta：前台 shell 命令的 stdout/stderr 增量（v2.4）。
+  // 与 assistant/reasoning delta 走同一条不落 trace 的流式通道；messageId = 工具调用 id。
+  type: 'assistant_delta' | 'reasoning_delta' | 'shell_output_delta';
   runId: string;
   messageId: string;
   timestamp: string;

@@ -40,6 +40,11 @@ export interface ToolContext {
   runSignal?: AbortSignal;
   // Runtime-only observation hook; never included in an LLM Tool Schema.
   onSandboxEvent?: (event: ToolSandboxEvent) => void;
+  // v2.4 前台 shell 流式输出：命令 stdout/stderr 增量到达即回调（Runtime-only
+  // observation hook，永不进入 LLM Schema，也不作为工具返回值）。前台 shell 用它
+  // 把输出实时推给 UI；后台作业另有自己的滚动缓冲，不走这里。
+  // 单块内容不作截断保证：调用方需自行限幅（见 runtime-tools 的 shellOutputDelta）。
+  onShellOutput?: (chunk: string) => void;
   // v2.2 Plan：计划写入口（Runtime 装饰 Harness 端口后注入）。工具只见文本：
   // 计划状态与"是否变更"不出 Harness/Runtime 边界；LLM 不可见、不可传。
   planPort?: { apply(items: PlanItemInput[]): string };

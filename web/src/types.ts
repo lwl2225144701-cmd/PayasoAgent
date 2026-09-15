@@ -472,7 +472,8 @@ export interface RunInterruptedEvent {
 }
 
 export interface StreamingEvent {
-  type: 'assistant_delta' | 'reasoning_delta';
+  // shell_output_delta：前台 shell 的 stdout/stderr 增量；messageId = 工具调用 id。
+  type: 'assistant_delta' | 'reasoning_delta' | 'shell_output_delta';
   runId: string;
   messageId: string;
   timestamp: string;
