@@ -79,11 +79,12 @@ npx payaso-agent@latest
 - 端口占用：明确报错 `Port N is in use. Choose another port with --port.`，exit 1，不连接未知服务。
 - SIGINT：优雅退出，exit 0。
 - 包内容检查：无 `.env`/日志/checkpoint/测试文件；无 `sk-` 密钥模式命中。
+- **完整体验验收（人工，2026-09-14 通过）**：干净目录 `~/Downloads/myProject/test_payasoAgent` 安装 tarball，UI 完成首次模型配置（密钥入 Keychain）、选择含中文/空格路径的工作区、执行真实任务并中途停止；Ctrl+C 优雅退出后重启，历史会话与消息完整、可继续对话。数据全程隔离在 `test_payasoAgent/app-home/`，未污染 `~/.payaso` 与源码目录。
 
 ### 未完成
 
-1. **完整体验验收**（§5 第 3 步）：首次配置模型、选工作区、执行任务、重启恢复历史、模拟旧数据迁移——需人工在 UI 操作并记录证据。
-2. **npm 发布**（§5 第 4 步）：包名、版本、发布权限、许可待确认；发布前不得把本地 tarball 验证说成线上分发已完成。
+1. **npm 发布**（§5 第 4 步）：包名、版本、发布权限、许可待确认；发布前不得把本地 tarball 验证说成线上分发已完成。
+2. **旧数据迁移演练**：迁移步骤已写入本文档，尚未在真实旧数据（`.data/` + `.checkpoints/`）上演练一遍并验证恢复。
 3. Windows：本方案不改变 Windows 实验 gate 状态；安装成功不代表 Windows 沙箱已验收（见 `docs/cross-platform-sandbox-plan.md` §5）。
 
 ### 旧数据迁移（不自动搬迁，手动成组操作）
