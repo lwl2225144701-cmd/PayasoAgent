@@ -2,6 +2,7 @@
   "name": "payaso-agent",
   "version": "2.2.0",
   "description": "PayasoAgent: LLM-driven tool-calling agent runtime with Host API (HTTP+SSE) and React Web UI",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.5.0"
