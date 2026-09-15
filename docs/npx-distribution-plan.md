@@ -90,7 +90,7 @@ npx payaso-agent@latest
 
 以只读方式复制真实旧数据（Host 运行中，DB 用 `sqlite3 .backup` 一致性快照，附件/checkpoint 直接拷贝）到演练目录：DB 144 runs / 65 sessions / 52k events、附件 5 文件、checkpoint 299 文件（36MB）。凭证目录 `~/.payaso-agent` 不存在（macOS 走 Keychain），跳过。
 
-以 `PAYASO_HOME=演练目录` 启动包实例：启动无错误，`GET /runs` 返回完整历史且内容可读——**演练通过**。
+以 `PAYASO_HOME=演练目录` 启动包实例：启动无错误，`GET /runs` 返回完整历史且内容可读；设置 → 模型页人工复验，提供方列表完整加载（密钥仅掩码返回，Keychain 引用正常）——**演练通过**。
 
 发现（符合 §4 预期，写入迁移注意）：47 个历史 workspace_root 中 32 个已不存在（旧 `sandbox/workspaces/<uuid>` 被清理、部分为已过期的 `/private/tmp` 路径）——历史会话可查看，但**对已消失 workspace 的旧 run 执行恢复/文件读取会失败**，属预期行为；恢复旧任务前应先在 UI 重新选择有效工作区。
 3. Windows：本方案不改变 Windows 实验 gate 状态；安装成功不代表 Windows 沙箱已验收（见 `docs/cross-platform-sandbox-plan.md` §5）。
