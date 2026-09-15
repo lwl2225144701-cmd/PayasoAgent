@@ -11,13 +11,13 @@
 // - 失败对外脱敏（"Unable to read provider credential"），不泄露内部细节
 // - 原子写入（tmp + rename），避免进程中断产生半文件
 //
-// 位置：默认 ~/.payaso-agent/（可被 PAYASO_SECRET_DIR 覆盖，测试用临时目录）。
+// 位置：默认 ~/.payaso/credentials/（可被 PAYASO_SECRET_DIR 覆盖，测试用临时目录）。
 // 权限：目录 0700，密钥/密文文件 0600。
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { appDataPath } from '../../app-paths.js';
 import type { SecretStore } from './secret-store-contract.js';
 
 const KEY_BYTES = 32; // AES-256
@@ -29,7 +29,7 @@ const SECRETS_DIR = 'secrets';
 export function defaultEncryptedSecretDir(): string {
   const env = process.env.PAYASO_SECRET_DIR;
   if (env) return path.resolve(env);
-  return path.join(os.homedir(), '.payaso-agent');
+  return appDataPath('credentials');
 }
 
 function sha256Hex(input: string): string {

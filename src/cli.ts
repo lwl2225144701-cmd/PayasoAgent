@@ -50,7 +50,7 @@ const runAgentOptions = {
 if (resumeId) {
   const cp = loadCheckpoint(resumeId);
   if (!cp) {
-    console.error(`[Error] checkpoint 不存在: .checkpoints/${resumeId}.json`);
+    console.error(`[Error] checkpoint 不存在: ${resumeId}`);
     process.exit(1);
   }
   console.log(`任务: ${cp.task}（恢复执行）`);

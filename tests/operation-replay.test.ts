@@ -1,3 +1,4 @@
+import { checkpointPath } from '../src/persistence/file-checkpoint-store.js';
 // 套件: Operation Replay（确定性）— 验证 executing/uncertain 持久化下，Recovery 后相同 canonical key 不再被再次执行
 // 场景 1: tool_call#1 副作用后 throw → uncertain → Recovery → scripted LLM 再次请求相同 key → 必须被阻断（不 execute）
 // 场景 2: checkpoint 保存 executing 失败 → 禁止 execute（execute 次数 = 0）
@@ -185,7 +186,7 @@ try {
 
   const persistFailRunId = 'op-replay-persist-fail';
   // 预创建目录使 saveCheckpoint 写文件必然失败（EISDIR）
-  fs.mkdirSync(path.join(process.cwd(), '.checkpoints', `${persistFailRunId}.json`), {
+  fs.mkdirSync(checkpointPath(persistFailRunId), {
     recursive: true,
   });
 

@@ -3,20 +3,19 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { checkpointDir } from '../app-paths.js';
 import type {
   Checkpoint,
   CheckpointSnapshot,
   CheckpointWriter,
 } from '../runtime/checkpoint-port.js';
 
-const CHECKPOINT_DIR = path.join(process.cwd(), '.checkpoints');
-
 export function checkpointPath(runId: string): string {
-  return path.join(CHECKPOINT_DIR, `${runId}.json`);
+  return path.join(checkpointDir(), `${runId}.json`);
 }
 
 export function saveCheckpoint(snapshot: CheckpointSnapshot): string {
-  mkdirSync(CHECKPOINT_DIR, { recursive: true });
+  mkdirSync(checkpointDir(), { recursive: true });
   const full: Checkpoint = { ...snapshot, savedAt: new Date().toISOString() };
   const file = checkpointPath(snapshot.runId);
   const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;

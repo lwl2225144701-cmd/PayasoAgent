@@ -4,20 +4,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { appDataPath } from '../app-paths.js';
 
-// 默认 sandbox 根：<项目根>/sandbox（本文件位于 src/sandbox/，向上两级为项目根）
-// 可用环境变量 SANDBOX_ROOT 覆盖（便于测试指向临时目录，不污染仓库）
-const DEFAULT_SANDBOX_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'sandbox',
-);
-
+// 显式覆盖仍兼容；默认工作区不写入 npm 安装目录。
 export function getSandboxRoot(): string {
   const env = process.env.SANDBOX_ROOT;
-  return env ? path.resolve(env) : DEFAULT_SANDBOX_ROOT;
+  return env ? path.resolve(env) : appDataPath('sandbox');
 }
 
 // runId 只允许文件系统/URL 安全字符：字母数字、-、_；禁止路径分隔符、绝对路径、.. 等

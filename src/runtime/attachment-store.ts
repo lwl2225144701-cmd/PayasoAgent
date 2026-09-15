@@ -10,18 +10,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { appDataPath } from '../app-paths.js';
 import { assertInsideRoot, resolveWorkspacePath } from '../sandbox/sandbox-manager.js';
 
-// 数据根与 sqlite-store 同根：<项目根>/.data/attachments/v1（payaso.db 同级）。
+// 附件库跟随应用数据目录，避免写入 npm 安装目录。
 // PAYASO_ATTACHMENT_STORE 可覆盖（测试指向临时目录，不污染仓库）。
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export function getAttachmentStoreRoot(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const override = env.PAYASO_ATTACHMENT_STORE?.trim();
-  return override ? path.resolve(override) : path.join(REPO_ROOT, '.data', 'attachments', 'v1');
+  return override ? path.resolve(override) : appDataPath('attachments', 'v1');
 }
 
 export function attachmentSha256(bytes: Buffer): string {

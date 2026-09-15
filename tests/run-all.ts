@@ -164,9 +164,14 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 function runSuite(suite: { name: string; file: string }, index: number): Promise<SuiteResult> {
   return new Promise((resolve) => {
     const startedAt = Date.now();
+    const suiteHome = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-suite-'));
     const child = spawn(process.execPath, ['--import', 'tsx', suite.file], {
       cwd: PROJECT_ROOT,
-      env: process.env,
+      env: {
+        ...process.env,
+        PAYASO_HOME: suiteHome,
+        PAYASO_CHECKPOINT_DIR: path.join(suiteHome, 'checkpoints'),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const chunks: Buffer[] = [];
@@ -186,6 +191,7 @@ function runSuite(suite: { name: string; file: string }, index: number): Promise
       chunks.push(Buffer.from(`[runner] 子进程启动失败: ${err.message}\n`));
     });
     child.on('close', (exitCode) => {
+      fs.rmSync(suiteHome, { recursive: true, force: true });
       const raw = Buffer.concat(chunks).toString('utf8');
       const overflow =
         droppedBytes > 0

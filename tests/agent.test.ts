@@ -4,7 +4,13 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import fs, { rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { checkpointDir } from '../src/app-paths.js';
+
+process.env.PAYASO_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-e2e-'));
+process.env.PAYASO_CHECKPOINT_DIR = path.join(process.env.PAYASO_HOME, 'checkpoints');
+
 import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { cleanupWorkspace, createWorkspace } from '../src/sandbox/sandbox-manager.js';
 
@@ -392,7 +398,7 @@ async function main(): Promise<void> {
           continue;
         }
         // 提取 checkpoint runId（从 saved 路径）
-        const m = out.match(/\.checkpoints\/([0-9a-f-]+)\.json/);
+        const m = out.match(/[\\/]checkpoints[\\/]([0-9a-f-]+)\.json/);
         if (!m) {
           results.push({ name: tc.name, pass: false, reason: '中断运行未产生 checkpoint' });
           console.log('  [FAIL] 未找到 checkpoint 文件');
@@ -448,7 +454,7 @@ async function main(): Promise<void> {
 
   // 清理测试产生的 checkpoint（环境安全删除守卫可能拦截大批量删除，失败不阻塞汇总）
   try {
-    rmSync('.checkpoints', { recursive: true, force: true });
+    rmSync(checkpointDir(), { recursive: true, force: true });
   } catch (e) {
     console.log(
       `  [cleanup] 清理 .checkpoints 被安全守卫拦截（可手动删除）: ${(e as Error).message.split('\n')[0]}`,
