@@ -1,0 +1,367 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PayasoAgent Agent Loop：模型不可信，Runtime 兜底",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "main-loop",
+        "label": "主循环",
+        "focus": [
+          "transcript",
+          "prepare",
+          "llm",
+          "pipeline",
+          "finish",
+          "answer"
+        ],
+        "note": "transcript 只增不改；每轮重建视图喂给 LLM，结果回填进入下一轮。"
+      },
+      {
+        "id": "context-policy",
+        "label": "上下文三级收缩",
+        "focus": [
+          "transcript",
+          "prepare",
+          "llm"
+        ],
+        "note": "轮边界裁剪 → LLM 滚动摘要 → 当前轮紧急裁剪，超预算 fail-closed。"
+      },
+      {
+        "id": "safety",
+        "label": "护栏与恢复",
+        "focus": [
+          "pipeline",
+          "sideeffect",
+          "recover",
+          "finish"
+        ],
+        "note": "副作用守卫、防死循环、有界恢复、收尾守卫，失败永远作为工具消息回传。"
+      }
+    ],
+    "viewBox": [
+      760,
+      980
+    ]
+  },
+  "lanes": [
+    {
+      "id": "context",
+      "label": "上下文管理（Harness）"
+    },
+    {
+      "id": "loop",
+      "label": "Agent 主循环（Runtime）"
+    },
+    {
+      "id": "tools",
+      "label": "工具管道"
+    },
+    {
+      "id": "guard",
+      "label": "安全护栏",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "view",
+      "label": "构建视图",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "decide",
+      "label": "调用 LLM",
+      "fromCol": 2,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "execute",
+      "label": "执行工具",
+      "fromCol": 3,
+      "toCol": 3
+    },
+    {
+      "id": "close",
+      "label": "收尾",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "transcript",
+    "prepare",
+    "llm",
+    "pipeline",
+    "finish",
+    "answer"
+  ],
+  "nodes": [
+    {
+      "id": "transcript",
+      "lane": "context",
+      "col": 0,
+      "type": "database",
+      "label": "Transcript",
+      "sublabel": "全量·只增不改",
+      "tag": "checkpoint",
+      "width": 92
+    },
+    {
+      "id": "notify",
+      "lane": "loop",
+      "col": 0,
+      "type": "messagebus",
+      "label": "通知注入",
+      "sublabel": "后台任务唤醒",
+      "tag": "≤3次",
+      "width": 92
+    },
+    {
+      "id": "prepare",
+      "lane": "context",
+      "col": 1,
+      "type": "backend",
+      "label": "prepareTurn",
+      "sublabel": "重建模型视图",
+      "tag": "三级收缩",
+      "width": 110
+    },
+    {
+      "id": "llm",
+      "lane": "loop",
+      "col": 2,
+      "type": "cloud",
+      "label": "LLM 调用",
+      "sublabel": "流式·可取消",
+      "width": 120
+    },
+    {
+      "id": "pipeline",
+      "lane": "tools",
+      "col": 3,
+      "type": "messagebus",
+      "label": "工具管道",
+      "sublabel": "校验→执行→guard",
+      "tag": "输出16KB",
+      "width": 140
+    },
+    {
+      "id": "recover",
+      "lane": "guard",
+      "col": 2,
+      "type": "security",
+      "label": "有界恢复",
+      "sublabel": "防死循环",
+      "width": 120
+    },
+    {
+      "id": "sideeffect",
+      "lane": "guard",
+      "col": 3,
+      "type": "security",
+      "label": "副作用守卫",
+      "sublabel": "回放·阻断",
+      "width": 120
+    },
+    {
+      "id": "finish",
+      "lane": "loop",
+      "col": 4,
+      "type": "backend",
+      "label": "收尾守卫",
+      "sublabel": "空回合检测",
+      "tag": "nudge≤2",
+      "width": 96
+    },
+    {
+      "id": "answer",
+      "lane": "loop",
+      "col": 5,
+      "type": "frontend",
+      "label": "最终答案",
+      "sublabel": "空结果即失败",
+      "width": 96
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-notify-prepare",
+      "from": "notify",
+      "to": "prepare",
+      "label": "唤醒",
+      "role": "branch",
+      "variant": "dashed",
+      "labelDy": 24
+    },
+    {
+      "id": "e-transcript-prepare",
+      "from": "transcript",
+      "to": "prepare",
+      "label": "投影",
+      "role": "main",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": 76,
+      "labelDx": 30
+    },
+    {
+      "id": "e-prepare-llm",
+      "from": "prepare",
+      "to": "llm",
+      "label": "有界视图",
+      "role": "main",
+      "variant": "emphasis",
+      "labelDy": 11
+    },
+    {
+      "id": "e-llm-pipeline",
+      "from": "llm",
+      "to": "pipeline",
+      "label": "tool_calls",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-llm-finish",
+      "from": "llm",
+      "to": "finish",
+      "label": "无工具调用",
+      "role": "branch",
+      "labelDy": -22
+    },
+    {
+      "id": "e-pipeline-finish",
+      "from": "pipeline",
+      "to": "finish",
+      "label": "本轮结束",
+      "role": "main",
+      "labelDy": 11
+    },
+    {
+      "id": "e-pipeline-llm",
+      "from": "pipeline",
+      "to": "llm",
+      "label": "结果回填·下一轮",
+      "role": "return",
+      "route": "return-left",
+      "channelX": 152
+    },
+    {
+      "id": "e-pipeline-effect",
+      "from": "pipeline",
+      "to": "sideeffect",
+      "label": "非幂等",
+      "role": "branch",
+      "variant": "security",
+      "labelDy": 25,
+      "labelDx": -40
+    },
+    {
+      "id": "e-effect-pipeline",
+      "from": "sideeffect",
+      "to": "pipeline",
+      "label": "回放·拒绝",
+      "role": "return",
+      "variant": "security",
+      "labelAt": [
+        505,
+        433
+      ]
+    },
+    {
+      "id": "e-pipeline-recover",
+      "from": "pipeline",
+      "to": "recover",
+      "label": "执行失败",
+      "role": "error",
+      "variant": "security",
+      "labelDy": 11
+    },
+    {
+      "id": "e-recover-llm",
+      "from": "recover",
+      "to": "llm",
+      "label": "重新决策",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "id": "e-finish-answer",
+      "from": "finish",
+      "to": "answer",
+      "label": "通过守卫",
+      "role": "main",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": 52
+    },
+    {
+      "id": "e-finish-llm",
+      "from": "finish",
+      "to": "llm",
+      "label": "nudge 重试",
+      "role": "error",
+      "variant": "security",
+      "via": [
+        [
+          444,
+          243
+        ],
+        [
+          444,
+          221
+        ],
+        [
+          382,
+          221
+        ],
+        [
+          382,
+          243
+        ]
+      ],
+      "labelDy": -12,
+      "labelAt": [
+        406,
+        224
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主循环怎么转",
+      "items": [
+        "没有固定迭代上限：模型持续调工具就一直转",
+        "终止只由收尾 / 取消 / 工具安全 / Harness 策略决定",
+        "每轮 prepareTurn 重建模型视图，transcript 永不改写",
+        "后台作业完成时伪造 user 消息，防止模型干等收尾"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "护栏怎么兜",
+      "items": [
+        "副作用操作先持久化 intent 再执行，persist 失败就禁跑",
+        "已成功的操作回放结果，结果不确定的永久阻断",
+        "失败消息带指令回传：禁止同参数重试，教它换方法",
+        "空回合 / 未完成行动句各给有限 nudge，超限 fail loudly"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "为什么这样设计",
+      "items": [
+        "模型是不可信输入源：幻觉参数、绕黑名单、装死都要兜",
+        "每类不可信行为对应一个确定性 Runtime 机制",
+        "所有恢复预算有界，burn 完就落 failed 可 resume",
+        "智能决策权留给模型，安全边界握在 Runtime"
+      ]
+    }
+  ]
+}
