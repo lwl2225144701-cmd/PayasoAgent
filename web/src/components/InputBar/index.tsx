@@ -27,7 +27,7 @@ import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
 
-import { attachmentKind, attachmentSizeLabel, MAX_ATTACHMENTS, MAX_IMAGE_BYTES, MAX_TEXT_BYTES } from '../../../../src/attachment-policy';
+import { attachmentKind, attachmentSizeLabel, MAX_ATTACHMENTS, MAX_DOCX_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES } from '../../../../src/attachment-policy';
 
 interface PendingAttachment {
   id: string;
@@ -296,11 +296,16 @@ export function InputBar({
         );
         continue;
       }
-      if (file.size > (kind === 'image' ? MAX_IMAGE_BYTES : MAX_TEXT_BYTES)) {
+      if (file.size > (kind === 'image' ? MAX_IMAGE_BYTES : kind === 'docx' ? MAX_DOCX_BYTES : MAX_TEXT_BYTES)) {
         rejected.push(
-          t(kind === 'image' ? 'composer.attachment.tooLarge' : 'composer.attachment.textTooLarge', {
-            name: file.name || t('composer.attachment.clipboardName'),
-          }),
+          t(
+            kind === 'image'
+              ? 'composer.attachment.tooLarge'
+              : kind === 'docx'
+                ? 'composer.attachment.docxTooLarge'
+                : 'composer.attachment.textTooLarge',
+            { name: file.name || t('composer.attachment.clipboardName') },
+          ),
         );
         continue;
       }
@@ -415,8 +420,8 @@ export function InputBar({
     attachments.length > 0 ? (
       <div className={styles.attachmentStrip}>
         {attachments.map((item) => (
-          <div key={item.id} className={`${styles.attachmentChip} ${attachmentKind(item.file.name, item.file.type) === 'text' ? styles.fileChip : ''}`}>
-            {attachmentKind(item.file.name, item.file.type) === 'text' ? (
+          <div key={item.id} className={`${styles.attachmentChip} ${attachmentKind(item.file.name, item.file.type) !== 'image' ? styles.fileChip : ''}`}>
+            {attachmentKind(item.file.name, item.file.type) !== 'image' ? (
               <div className={styles.fileInfo} title={item.file.name}>
                 <span className={styles.fileName}>{item.file.name}</span>
                 <span className={styles.fileMeta}>{item.file.name.split('.').pop()?.toUpperCase()} · {attachmentSizeLabel(item.file.size)}</span>

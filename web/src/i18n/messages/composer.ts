@@ -20,6 +20,10 @@ export const composerMessages = {
     'zh-CN': '{name}：超过文本文件 2 MiB 上限',
     'en-US': '{name}: exceeds the 2 MiB text file limit',
   },
+  'composer.attachment.docxTooLarge': {
+    'zh-CN': '{name}：超过 .docx 文件 8 MiB 上限',
+    'en-US': '{name}: exceeds the 8 MiB .docx limit',
+  },
   'composer.attachment.notUtf8': {
     'zh-CN': '{name}：请转换成 UTF-8 文本',
     'en-US': '{name}: convert to UTF-8 text',
@@ -38,8 +42,8 @@ export const composerMessages = {
     'en-US': 'At most {count} attachments can be attached',
   },
   'composer.attachment.unsupportedType': {
-    'zh-CN': '{name}：仅支持 PNG / JPEG / WebP / GIF 图片及 UTF-8 文本、配置和代码文件',
-    'en-US': '{name}: only PNG / JPEG / WebP / GIF images and UTF-8 text, configuration or code files are supported',
+    'zh-CN': '{name}：仅支持 PNG / JPEG / WebP / GIF 图片、UTF-8 文本、配置、代码文件及 .docx 文档',
+    'en-US': '{name}: only PNG / JPEG / WebP / GIF images, UTF-8 text, configuration, code files and .docx documents are supported',
   },
   'composer.attachment.tooLarge': {
     'zh-CN': '{name}：超过 8MB 上限',

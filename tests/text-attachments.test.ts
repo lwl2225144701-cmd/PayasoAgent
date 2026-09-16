@@ -17,8 +17,40 @@ import { runAgent } from '../src/runtime/agent.js';
 import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
 import { readDownloadChecked } from '../src/host/routes/static-handler.js';
-import { attachmentKind, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
+import { attachmentKind, MAX_DOCX_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
+import { deflateRawSync } from 'node:zlib';
 import type { ChatMessage } from '../src/llm/llm.js';
+
+// 手工拼一个最小 docx：单条目 zip（局部头 + deflate 的 word/document.xml +
+// 中央目录 + EOCD），不依赖任何 zip 库，字段布局与 attachment-docx.ts 的
+// 解析一一对应。
+function buildMinimalDocx(documentXml: string, opts: { skipDocument?: boolean } = {}): Buffer {
+  const name = Buffer.from('word/document.xml', 'utf8');
+  const data = deflateRawSync(Buffer.from(documentXml, 'utf8'));
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(Buffer.byteLength(documentXml), 22);
+  local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(Buffer.byteLength(documentXml), 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE(0, 42); // 局部头偏移
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(local.length + name.length + data.length, 16);
+  if (opts.skipDocument) {
+    // 没有任何条目的合法空 zip：EOCD 直接跟在空局部头后（仅作缺正文用例）
+    return Buffer.concat([eocd]);
+  }
+  return Buffer.concat([local, name, data, central, name, eocd]);
+}
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-text-att-'));
 process.env.PAYASO_HOME = root;
@@ -61,6 +93,25 @@ try {
   restoreTextAttachment(ws, saved.relPath, saved.sha256);
   check(fs.readFileSync(local, 'utf8') === 'changed');
   fs.unlinkSync(local); restoreTextAttachment(ws, saved.relPath, saved.sha256);
+
+  // ---- .docx：zip 解包 + word/document.xml 文本提取（prepare 阶段归一为 text/plain）----
+  check(attachmentKind('方案补充.docx', '') === 'docx');
+  check(attachmentKind('legacy.doc', '') === null); // 旧版二进制 .doc 不放行
+  const documentXml =
+    '<w:document><w:body><w:p><w:r><w:t>DOCX_SENTINEL_91</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>A&amp;B</w:t><w:tab/><w:t>C</w:t><w:br/><w:t>D</w:t></w:r></w:p></w:body></w:document>';
+  const docx = buildMinimalDocx(documentXml);
+  const preparedDocx = await prepareAttachments(requestAttachments({ attachments: [input('方案补充.docx', docx)] }));
+  check(preparedDocx[0].mimeType === 'text/plain');
+  const docxText = Buffer.from(preparedDocx[0].dataBase64, 'base64').toString('utf8');
+  check(docxText.includes('DOCX_SENTINEL_91'));
+  check(docxText.includes('A&B\tC\nD'));
+  check(docxText.startsWith('DOCX_SENTINEL_91'));
+  // 非 zip 字节 / 缺正文 / 超限 / 旧 .doc 全部拒绝
+  await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('假.docx', Buffer.from('PK\u0003\u0004 not a zip at all'))] })));
+  await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('空.docx', buildMinimalDocx('', { skipDocument: true }))] })));
+  assert.throws(() => requestAttachments({ attachments: [input('大.docx', Buffer.alloc(MAX_DOCX_BYTES + 1))] }));
+  assert.throws(() => requestAttachments({ attachments: [input('旧文档.doc', bytes)] })); checks += 4;
   check(fs.readFileSync(local).equals(bytes));
   check(readDownloadChecked(ws, saved.relPath).ok);
   check(!readDownloadChecked(ws, '../objects-store').ok);

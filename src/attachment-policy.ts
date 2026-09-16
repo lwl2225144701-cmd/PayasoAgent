@@ -1,14 +1,20 @@
 // 消息附件公共策略：浏览器与 Host 共用类型判断和大小限制，无平台依赖。
+// 上限依据：图片 8MiB 对齐读图上限；文本 2MiB 对齐读文件上限；docx 8MiB
+// 保证 base64（×4/3 ≈ 10.7MiB）仍落在 12MiB 请求体预算内。
 export const MAX_ATTACHMENTS = 4;
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+export const MAX_DOCX_BYTES = 8 * 1024 * 1024;
 export const MAX_ATTACHMENT_BODY_BYTES = 12 * 1024 * 1024;
 export const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const TEXT_EXTENSIONS = new Set('txt md markdown json jsonc yaml yml toml csv tsv ts tsx js jsx mjs cjs py pyi html htm css scss less sql sh bash zsh xml ini conf cfg log c h cpp hpp rs go java kt swift rb php vue svelte graphql proto'.split(' '));
 const TEXT_NAMES = new Set(['dockerfile', 'makefile', 'license', 'readme', '.gitignore', '.editorconfig', '.npmrc']);
-export function attachmentKind(name: string, mimeType: string): 'image' | 'text' | null {
+const DOCX_EXTENSIONS = new Set(['docx']); // 仅 OOXML；旧版二进制 .doc 无法安全解包，不放行
+export type AttachmentKind = 'image' | 'text' | 'docx';
+export function attachmentKind(name: string, mimeType: string): AttachmentKind | null {
   if (IMAGE_MIMES.has(mimeType.toLowerCase())) return 'image';
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  if (DOCX_EXTENSIONS.has(base.split('.').pop() ?? '')) return 'docx';
   if (TEXT_NAMES.has(base) || TEXT_EXTENSIONS.has(base.split('.').pop() ?? '')) return 'text';
   return null;
 }
