@@ -107,11 +107,35 @@ try {
   check(docxText.includes('DOCX_SENTINEL_91'));
   check(docxText.includes('A&B\tC\nD'));
   check(docxText.startsWith('DOCX_SENTINEL_91'));
+  // 回归：<w:tc>/<w:tr>/<w:tbl>/<w:type> 不得被当成 <w:t> 文本节点（曾把整段
+  // 表格 XML 吞进输出 —— 模型侧表现为"表格 XML 重复膨胀 + 单元格内容缺失"）
+  check(!docxText.includes('<w:'));
+  const tableXml =
+    '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' +
+    '<w:tr><w:tc><w:p><w:r><w:t>字段</w:t></w:r></w:p></w:tc>' +
+    '<w:tc><w:p><w:r><w:t>类型</w:t></w:r></w:p></w:tc></w:tr>' +
+    '<w:tr><w:tc><w:p><w:r><w:t>chunk_id</w:t></w:r></w:p></w:tc>' +
+    '<w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc></w:tr></w:tbl>';
+  const tableText = Buffer.from(
+    (await prepareAttachments(requestAttachments({ attachments: [input('表格.docx', buildMinimalDocx(tableXml))] })))[0].dataBase64,
+    'base64',
+  ).toString('utf8');
+  check(tableText === '字段\t类型\nchunk_id\t\n');
+  // 回归：mc:Fallback（同内容的 VML 降级副本）只提取一次
+  const fallbackXml =
+    '<w:p><mc:AlternateContent><mc:Choice><w:r><w:t>唯一内容</w:t></w:r></mc:Choice>' +
+    '<mc:Fallback><w:r><w:t>唯一内容</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p>';
+  const fallbackText = Buffer.from(
+    (await prepareAttachments(requestAttachments({ attachments: [input('去重.docx', buildMinimalDocx(fallbackXml))] })))[0].dataBase64,
+    'base64',
+  ).toString('utf8');
+  check(fallbackText === '唯一内容\n');
+  check(fallbackText.split('唯一内容').length - 1 === 1);
   // 非 zip 字节 / 缺正文 / 超限 / 旧 .doc 全部拒绝
   await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('假.docx', Buffer.from('PK\u0003\u0004 not a zip at all'))] })));
   await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('空.docx', buildMinimalDocx('', { skipDocument: true }))] })));
   assert.throws(() => requestAttachments({ attachments: [input('大.docx', Buffer.alloc(MAX_DOCX_BYTES + 1))] }));
-  assert.throws(() => requestAttachments({ attachments: [input('旧文档.doc', bytes)] })); checks += 4;
+  assert.throws(() => requestAttachments({ attachments: [input('旧文档.doc', bytes)] })); checks += 9;
   check(fs.readFileSync(local).equals(bytes));
   check(readDownloadChecked(ws, saved.relPath).ok);
   check(!readDownloadChecked(ws, '../objects-store').ok);
