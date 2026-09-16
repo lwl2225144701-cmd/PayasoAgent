@@ -102,9 +102,9 @@ const main = async (): Promise<void> => {
     }
   });
 
-  await test('win32 gate 开：runner 失败（非 win32 无 kernel32）→ fail-closed 结构化错误，命令未执行', async () => {
+  await test('win32 gate 开：非 win32 无原生载体（PowerShell/cmd）→ fail-closed 拒绝执行，命令未执行', async () => {
     if (process.platform === 'win32') {
-      console.log('  [SKIP] 此用例验证非 Windows 的 FFI 加载失败');
+      console.log('  [SKIP] 此用例验证非 Windows 的无载体拒绝路径（Windows 上载体可用，走 runner）');
       return;
     }
     const previous = process.env.PAYASO_SHELL_WINDOWS_ACL;
@@ -120,7 +120,7 @@ const main = async (): Promise<void> => {
           timeoutMs: 30_000,
           platform: 'win32',
         }),
-        /Windows ACL sandbox runner failed; the command was not executed/,
+        /Windows ACL sandbox unavailable: no native Windows shell carrier found/,
       );
     } finally {
       scratch.dispose();
