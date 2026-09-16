@@ -66,7 +66,7 @@ import type {
   SessionStats,
   WorkspaceView,
 } from './types';
-import { alignedAttachmentName, prepareImageForUpload } from './utils/image-prepare';
+import { prepareAttachmentForUpload } from './utils/attachment-prepare';
 
 // 与会话标题生成规则（与 src/host/run-manager.ts sessionTitle 保持一致）。
 // 语言是入参而非 hook：模块级纯函数，且要能被非组件调用点复用。
@@ -472,18 +472,7 @@ export default function App() {
         // mimeType 取实际编码产物（浏览器可能回退编码格式，Host 会嗅探校验）。
         const attachmentPayload = attachments?.length
           ? await Promise.all(
-              attachments.map(async (file) => {
-                const prepared = await prepareImageForUpload(file, language);
-                return {
-                  // 扩展名对齐实际编码产物（浏览器回退编码时 mime 可能变化）
-                  name: alignedAttachmentName(
-                    file.name.replace(/[\\/]/g, '_') || 'image.png',
-                    prepared.mimeType,
-                  ),
-                  mimeType: prepared.mimeType || 'application/octet-stream',
-                  dataBase64: prepared.dataBase64,
-                };
-              }),
+              attachments.map((file) => prepareAttachmentForUpload(file, language)),
             )
           : undefined;
         const resp = await createRun(

@@ -10,6 +10,9 @@ import type {
 
 // 用户随消息发送的图片附件（落盘后的引用：工作区相对路径，可走 files 端点预览）。
 export interface HostAttachment {
+  kind?: 'image' | 'text';
+  sizeBytes?: number;
+  sha256?: string;
   name: string;
   mimeType: string;
   path: string;

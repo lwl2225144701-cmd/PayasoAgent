@@ -1,0 +1,20 @@
+// 文本不做有损转换；图片继续走现有归一化，类型与限制和 Host 共用。
+// 异常文案走 translate（语言是入参，模块内不留隐藏语言状态，与 image-prepare 一致）。
+import { attachmentKind, decodeAttachmentText, MAX_TEXT_BYTES } from '../../../src/attachment-policy';
+import { translate } from '../i18n/translate';
+import { alignedAttachmentName, prepareImageForUpload } from './image-prepare';
+import type { Language } from '../i18n/translate';
+export async function prepareAttachmentForUpload(file: File, language: Language) {
+  const kind = attachmentKind(file.name, file.type);
+  if (kind === 'image') {
+    const prepared = await prepareImageForUpload(file, language);
+    return { name: alignedAttachmentName(file.name.replace(/[\\/]/g, '_') || 'image.png', prepared.mimeType), mimeType: prepared.mimeType, dataBase64: prepared.dataBase64 };
+  }
+  if (kind !== 'text') throw new Error(translate(language, 'composer.attachment.unsupportedType', { name: file.name }));
+  if (file.size > MAX_TEXT_BYTES) throw new Error(translate(language, 'composer.attachment.textTooLarge', { name: file.name }));
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  try { decodeAttachmentText(bytes); } catch { throw new Error(translate(language, 'composer.attachment.notUtf8', { name: file.name })); }
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return { name: file.name, mimeType: 'text/plain', dataBase64: btoa(binary) };
+}

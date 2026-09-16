@@ -1,0 +1,10 @@
+.attachment { max-width: 100%; min-width: 0; }
+.card { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--color-border-default); border-radius: 12px; min-width: 220px; max-width: 420px; }
+.card button, .preview button { color: inherit; background: transparent; border: none; cursor: pointer; font: inherit; font-size: 12px; }
+.card button:disabled { opacity: 0.5; cursor: wait; }
+.info { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 4px; text-align: left; }
+.name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.meta { color: var(--text-secondary); font-size: 11px; }
+.preview { margin-top: 8px; max-width: min(650px, 75vw); }
+.preview pre { padding: 12px; max-height: 320px; overflow: auto; font-size: 12px; white-space: pre; border: 1px solid var(--color-border-default); border-radius: 8px; }
+.error { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }

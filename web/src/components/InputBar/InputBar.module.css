@@ -597,3 +597,8 @@
   color: var(--text-secondary, #888);
   font-size: 12px;
 }
+
+.fileChip { width: min(260px, 100%); height: 64px; padding: 10px 30px 10px 12px; box-sizing: border-box; }
+.fileInfo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fileName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.fileMeta { color: var(--text-secondary); font-size: 11px; }

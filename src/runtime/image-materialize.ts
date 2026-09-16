@@ -114,9 +114,10 @@ export function writeAttachmentFile(input: {
   directory: string;
   fileName: string;
   dataBase64: string;
+  independentCopy?: boolean;
 }): { relPath: string; sha256: string } {
   const bytes = Buffer.from(input.dataBase64, 'base64');
-  if (bytes.length === 0) throw new Error('附件内容为空');
+  if (bytes.length === 0 && !input.independentCopy) throw new Error('附件内容为空');
   const storeRoot = getAttachmentStoreRoot();
   sweepAttachmentTmpOnce(storeRoot);
   const stored = putAttachmentObject(storeRoot, bytes);
@@ -125,6 +126,7 @@ export function writeAttachmentFile(input: {
     input.workspaceRoot,
     input.directory,
     input.fileName,
+    input.independentCopy,
   );
   return { relPath, sha256: stored.sha256 };
 }

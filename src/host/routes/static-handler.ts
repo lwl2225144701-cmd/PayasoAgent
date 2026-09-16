@@ -10,7 +10,7 @@ import path from 'node:path';
 import { webStaticRoot } from '../../app-paths.js';
 import { assertInsideRoot, resolveWorkspacePath } from '../../sandbox/sandbox-manager.js';
 
-const MAX_FILE_BYTES = 1024 * 1024; // 文本文件读取上限
+const MAX_FILE_BYTES = 2 * 1024 * 1024; // 文本文件读取上限
 const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024; // 图片附件/预览上限（与 read 读图一致）
 const MAX_STATIC_BYTES = 5 * 1024 * 1024; // 静态资源大小上限（含 JS bundle）
 
@@ -209,4 +209,16 @@ export function readImageChecked(
   } catch {
     return { ok: false, error: '路径被拒绝或不存在' };
   }
+}
+
+// 下载与文本/图片预览共用工作区边界，但返回原始字节。
+export function readDownloadChecked(root: string, rel: string): { ok: true; buffer: Buffer } | { ok: false; error: string } {
+  try {
+    if (!rel || rel === '.' || rel.includes('..')) return { ok: false, error: '非法相对路径' };
+    const real = resolveWorkspacePath(root, rel);
+    assertInsideRoot(root, real);
+    const stat = fs.statSync(real);
+    if (!stat.isFile() || stat.size > MAX_IMAGE_FILE_BYTES) return { ok: false, error: '文件类型或大小不支持下载' };
+    return { ok: true, buffer: fs.readFileSync(real) };
+  } catch { return { ok: false, error: '路径被拒绝或不存在' }; }
 }

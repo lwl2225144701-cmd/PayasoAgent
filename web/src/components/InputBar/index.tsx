@@ -1,6 +1,7 @@
 import {
   type ClipboardEvent,
   type CompositionEvent,
+  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
   useEffect,
@@ -26,10 +27,7 @@ import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
 
-// 与 Host 侧约束保持一致（routes.ts：MAX_ATTACHMENTS / MAX_IMAGE_FILE_BYTES / ATTACHMENT_MIME）
-const MAX_ATTACHMENTS = 4;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+import { attachmentKind, attachmentSizeLabel, MAX_ATTACHMENTS, MAX_IMAGE_BYTES, MAX_TEXT_BYTES } from '../../../../src/attachment-policy';
 
 interface PendingAttachment {
   id: string;
@@ -255,21 +253,33 @@ export function InputBar({
     commitAttachments(attachmentsRef.current.filter((item) => item.id !== id));
   }
 
-  // 粘贴截图：剪贴板里的图片项直接成为消息附件（不经过文件选择器）。
-  // 纯文本粘贴不拦截，保持原有输入行为。
+  // 粘贴文件和拖放共用接收逻辑；纯文本和文本拖动不拦截。
   function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (const item of Array.from(items)) {
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) files.push(file);
-      }
-    }
-    if (files.length === 0) return;
+    const files = Array.from(e.clipboardData.files);
+    if (!files.length) return;
     e.preventDefault();
+    if (!disabled) acceptFiles(files);
+  }
 
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    if (disabled) return;
+    const items = Array.from(e.dataTransfer.items);
+    if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) {
+      alert(t('composer.attachment.directory'));
+      return;
+    }
+    acceptFiles(Array.from(e.dataTransfer.files));
+  }
+
+  function acceptFiles(files: File[]) {
     const accepted: PendingAttachment[] = [];
     const rejected: string[] = [];
     for (const file of files) {
@@ -277,7 +287,8 @@ export function InputBar({
         rejected.push(t('composer.attachment.tooMany', { count: MAX_ATTACHMENTS }));
         break;
       }
-      if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+      const kind = attachmentKind(file.name, file.type);
+      if (!kind) {
         rejected.push(
           t('composer.attachment.unsupportedType', {
             name: file.name || t('composer.attachment.clipboardName'),
@@ -285,9 +296,9 @@ export function InputBar({
         );
         continue;
       }
-      if (file.size > MAX_IMAGE_BYTES) {
+      if (file.size > (kind === 'image' ? MAX_IMAGE_BYTES : MAX_TEXT_BYTES)) {
         rejected.push(
-          t('composer.attachment.tooLarge', {
+          t(kind === 'image' ? 'composer.attachment.tooLarge' : 'composer.attachment.textTooLarge', {
             name: file.name || t('composer.attachment.clipboardName'),
           }),
         );
@@ -357,7 +368,7 @@ export function InputBar({
     const sentAttachments = attachmentsRef.current;
     const files = sentAttachments.map((item) => item.file);
     // 用户只发图不写字时的兜底任务文案（图片始终作为用户消息附件进入模型上下文）
-    const sentText = trimmed || (files.length > 0 ? t('composer.imageOnlyTask') : '');
+    const sentText = trimmed || (files.length > 0 ? t('composer.attachmentOnlyTask') : '');
 
     sendingRef.current = true;
     // 发送后立即清空草稿；object URL 暂不释放，失败还原时预览仍可用
@@ -404,13 +415,18 @@ export function InputBar({
     attachments.length > 0 ? (
       <div className={styles.attachmentStrip}>
         {attachments.map((item) => (
-          <div key={item.id} className={styles.attachmentChip}>
-            <img
+          <div key={item.id} className={`${styles.attachmentChip} ${attachmentKind(item.file.name, item.file.type) === 'text' ? styles.fileChip : ''}`}>
+            {attachmentKind(item.file.name, item.file.type) === 'text' ? (
+              <div className={styles.fileInfo} title={item.file.name}>
+                <span className={styles.fileName}>{item.file.name}</span>
+                <span className={styles.fileMeta}>{item.file.name.split('.').pop()?.toUpperCase()} · {attachmentSizeLabel(item.file.size)}</span>
+              </div>
+            ) : <img
               src={item.url}
               alt={item.file.name}
               className={styles.attachmentThumb}
               title={item.file.name}
-            />
+            />}
             <button
               type="button"
               className={styles.attachmentRemove}
@@ -426,7 +442,7 @@ export function InputBar({
 
   // 已粘贴图片但当前模型不支持视觉：图片发出去模型也看不到，发送前明确提示
   const visionWarning =
-    attachments.length > 0 && visionSupported === false ? (
+    attachments.some((item) => attachmentKind(item.file.name, item.file.type) === 'image') && visionSupported === false ? (
       <div className={styles.visionWarning}>{t('composer.visionWarning')}</div>
     ) : null;
 
@@ -451,7 +467,7 @@ export function InputBar({
           </button>
         </div>
 
-        <div className={styles.heroInputWrapper}>
+        <div className={styles.heroInputWrapper} onDragOver={handleDragOver} onDrop={handleDrop}>
           {attachmentStrip}
           {visionWarning}
           <ComposerTextarea
@@ -512,7 +528,7 @@ export function InputBar({
   return (
     <div className={`${styles.inputBar} ${styles.conversationBar}`}>
       {headerSlot && <div className={styles.inputBarHeader}>{headerSlot}</div>}
-      <div className={styles.conversationComposer}>
+      <div className={styles.conversationComposer} onDragOver={handleDragOver} onDrop={handleDrop}>
         {attachmentStrip}
         {visionWarning}
         {queuedMessages.length > 0 && (

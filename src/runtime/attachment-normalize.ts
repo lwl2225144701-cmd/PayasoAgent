@@ -11,6 +11,7 @@
 // - 入库字节 = 归一化后字节（内容寻址对归一化结果去重），originalDimensions
 //   记录归一化前原图尺寸
 
+import { attachmentKind, decodeAttachmentText, MAX_TEXT_BYTES } from '../attachment-policy.js';
 import type { CreateRunAttachmentInput } from '../attachment-types.js';
 
 export const ATTACHMENT_PIXEL_LIMIT = 64 * 1024 * 1024;
@@ -77,7 +78,7 @@ export async function prepareAttachments(
   list: CreateRunAttachmentInput[],
   injectSharp?: SharpModule | null,
 ): Promise<PreparedAttachment[]> {
-  const sharp = injectSharp !== undefined ? injectSharp : await loadSharp();
+  const sharp = injectSharp !== undefined ? injectSharp : list.some((item) => attachmentKind(item.name, item.mimeType) === 'image') ? await loadSharp() : null;
   return Promise.all(list.map((item) => prepareAttachment(sharp, item)));
 }
 
@@ -86,6 +87,11 @@ async function prepareAttachment(
   item: CreateRunAttachmentInput,
 ): Promise<PreparedAttachment> {
   const bytes = Buffer.from(item.dataBase64, 'base64');
+  if (attachmentKind(item.name, item.mimeType) === 'text') {
+    if (bytes.length > MAX_TEXT_BYTES) throw new Error(`附件 ${item.name} 超过 2 MiB 上限`);
+    try { decodeAttachmentText(bytes); } catch { throw new Error(`附件 ${item.name} 不是 UTF-8 文本，请转码后重试`); }
+    return { name: item.name, mimeType: 'text/plain', dataBase64: bytes.toString('base64') };
+  }
   if (bytes.length === 0) throw new Error(`附件 ${item.name} 内容为空`);
   const sniffed = sniffImageMime(bytes);
   if (!sniffed) throw new Error(`附件 ${item.name} 不是可识别的图片字节`);

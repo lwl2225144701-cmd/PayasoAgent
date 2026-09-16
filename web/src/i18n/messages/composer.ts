@@ -7,32 +7,47 @@ export const composerMessages = {
     'zh-CN': '发消息或做任务... / Enter 发送，Shift+Enter 换行',
     'en-US': 'Send a message or start a task… / Enter to send, Shift+Enter for a new line',
   },
-  // 用户只发图不写字时进入模型上下文的兜底任务文案
-  'composer.imageOnlyTask': {
-    'zh-CN': '请分析附带的图片。',
-    'en-US': 'Please analyze the attached image.',
+  // 用户只发附件不写字时进入模型上下文的兜底任务文案
+  'composer.attachmentOnlyTask': {
+    'zh-CN': '请查看附件。',
+    'en-US': 'Please review the attachments.',
   },
-
-  // 图片附件（粘贴截图）
+  'composer.attachment.directory': {
+    'zh-CN': '暂不支持文件夹，请拖入单个文件。',
+    'en-US': 'Folders are not supported. Drop individual files.',
+  },
+  'composer.attachment.textTooLarge': {
+    'zh-CN': '{name}：超过文本文件 2 MiB 上限',
+    'en-US': '{name}: exceeds the 2 MiB text file limit',
+  },
+  'composer.attachment.notUtf8': {
+    'zh-CN': '{name}：请转换成 UTF-8 文本',
+    'en-US': '{name}: convert to UTF-8 text',
+  },
+  'composer.attachment.previewLimited': { 'zh-CN': '仅预览前 64K 字符，请下载查看完整文件。', 'en-US': 'Preview limited to the first 64K characters. Download the complete file.' },
+  'composer.attachment.preview': { 'zh-CN': '预览', 'en-US': 'Preview' },
+  'composer.attachment.download': { 'zh-CN': '下载', 'en-US': 'Download' },
+  'composer.attachment.close': { 'zh-CN': '关闭预览', 'en-US': 'Close preview' },
+  // 消息附件（拖放与粘贴）
   'composer.attachment.clipboardName': {
-    'zh-CN': '剪贴板图片',
-    'en-US': 'Clipboard image',
+    'zh-CN': '剪贴板文件',
+    'en-US': 'Clipboard file',
   },
   'composer.attachment.tooMany': {
-    'zh-CN': '最多附带 {count} 张图片',
-    'en-US': 'At most {count} images can be attached',
+    'zh-CN': '最多附带 {count} 个附件',
+    'en-US': 'At most {count} attachments can be attached',
   },
   'composer.attachment.unsupportedType': {
-    'zh-CN': '{name}：仅支持 PNG / JPEG / WebP / GIF',
-    'en-US': '{name}: only PNG / JPEG / WebP / GIF are supported',
+    'zh-CN': '{name}：仅支持 PNG / JPEG / WebP / GIF 图片及 UTF-8 文本、配置和代码文件',
+    'en-US': '{name}: only PNG / JPEG / WebP / GIF images and UTF-8 text, configuration or code files are supported',
   },
   'composer.attachment.tooLarge': {
     'zh-CN': '{name}：超过 8MB 上限',
     'en-US': '{name}: exceeds the 8MB limit',
   },
   'composer.attachment.remove': {
-    'zh-CN': '移除图片',
-    'en-US': 'Remove image',
+    'zh-CN': '移除附件',
+    'en-US': 'Remove attachment',
   },
   // 已粘贴图片但当前模型不支持视觉：图片发出去模型也看不到
   'composer.visionWarning': {

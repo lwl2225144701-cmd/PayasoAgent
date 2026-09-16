@@ -185,13 +185,31 @@ test('writeAttachmentFile：返回 relPath + sha256，workspace 与库字节一�
   const { relPath, sha256 } = writeAttachmentFile({
     workspaceRoot: wsRoot,
     directory: 'input/attachments',
-    fileName: 'e2e 图.png', // 中文名被清洗
+    fileName: 'e2e 图.png', // 中文名保留在磁盘文件名里（publishStem 只滤危险字符）
     dataBase64,
   });
   assert.ok(sha256.length === 64);
   const wsFile = fs.readFileSync(path.join(wsRoot, relPath));
   assert.ok(wsFile.equals(pngBytes(10)));
   assert.equal(sha256, attachmentSha256(wsFile));
+});
+
+test('publishStem：Unicode 文件名保留可读，危险字符仍被消毒', () => {
+  const wsRoot = path.join(WS, 'run-stem');
+  fs.mkdirSync(wsRoot, { recursive: true });
+  const dataBase64 = pngBytes(10).toString('base64');
+  const publish = (fileName: string) =>
+    writeAttachmentFile({ workspaceRoot: wsRoot, directory: 'input/attachments', fileName, dataBase64 }).relPath
+      .split('/')
+      .pop();
+  // 中文/日文与内部空格保留，不再挤成一串下划线
+  assert.equal(publish('需求说明 v2.png'), '需求说明 v2.png');
+  assert.equal(publish('設計書.md'), '設計書.md');
+  // 路径穿越（basename 已剥离）、控制字符、隐藏文件与结尾点仍被消毒
+  assert.equal(publish('../../etc/passwd.png'), 'passwd.png');
+  assert.equal(publish('bad\tname.txt'), 'bad_name.txt');
+  assert.equal(publish('.gitignore'), '_gitignore');
+  assert.equal(publish('trailing. .'), 'trailing');
 });
 
 test('writeAttachmentFile：空内容抛错', () => {

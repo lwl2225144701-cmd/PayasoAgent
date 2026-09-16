@@ -23,10 +23,8 @@ import type { CreateRunAttachmentInput } from '../run-manager.js';
 // 常规 JSON 请求体上限；视觉附件端点（/runs 与 /sessions/:id/runs）单独放宽：
 // 客户端已把每张图压到 ≤2MiB（P2），4 张 + base64 膨胀 ≈ ≤12MB。
 export const MAX_BODY_BYTES = 2 * 1024 * 1024;
-export const MAX_ATTACHMENT_BODY_BYTES = 12 * 1024 * 1024;
-const MAX_ATTACHMENTS = 4; // 单条消息最多图片数
-const ATTACHMENT_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const MAX_IMAGE_FILE_BYTES = 8 * 1024 * 1024; // 图片附件/预览上限（与 read 读图一致）
+export { MAX_ATTACHMENT_BODY_BYTES } from '../../attachment-policy.js';
+import { attachmentKind, MAX_ATTACHMENTS, MAX_IMAGE_BYTES, MAX_TEXT_BYTES } from '../../attachment-policy.js';
 
 export const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 export const SAFE_SESSION_ID = SAFE_RUN_ID;
@@ -193,7 +191,7 @@ export function requestAttachments(body: Record<string, unknown>): CreateRunAtta
   if (body.attachments === undefined) return [];
   if (!Array.isArray(body.attachments)) throw new Error('attachments 必须是数组');
   if (body.attachments.length > MAX_ATTACHMENTS) {
-    throw new Error(`附件最多 ${MAX_ATTACHMENTS} 张`);
+    throw new Error(`附件最多 ${MAX_ATTACHMENTS} 个`);
   }
   return body.attachments.map((raw, index) => {
     const label = `附件 ${index + 1}`;
@@ -204,15 +202,16 @@ export function requestAttachments(body: Record<string, unknown>): CreateRunAtta
     const dataBase64 =
       typeof item.dataBase64 === 'string' ? item.dataBase64.replace(/\s+/g, '') : '';
     if (!name || name.length > 200) throw new Error(`${label} 文件名非法`);
-    if (!ATTACHMENT_MIME.has(mimeType)) {
-      throw new Error(`${label} 仅支持 PNG / JPEG / WebP / GIF 图片`);
-    }
-    if (!/^[A-Za-z0-9+/=]+$/.test(dataBase64) || dataBase64.length < 8) {
+    const kind = attachmentKind(name, mimeType);
+    if (!kind) throw new Error(`${label} 仅支持图片和 UTF-8 文本/代码文件`);
+    if (typeof item.dataBase64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(dataBase64)) {
       throw new Error(`${label} 数据非法`);
     }
-    // base64 每 4 字符 ≈ 3 字节，先按估算拦超大图，避免无谓解码占内存。
-    const approxBytes = Math.floor((dataBase64.length * 3) / 4);
-    if (approxBytes > MAX_IMAGE_FILE_BYTES) throw new Error(`${label} 超过 8MB 上限`);
-    return { name, mimeType, dataBase64 };
+    const limit = kind === 'image' ? MAX_IMAGE_BYTES : MAX_TEXT_BYTES;
+    if (dataBase64.length > Math.ceil(limit / 3) * 4) throw new Error(`${label} 超过大小上限`);
+    const bytes = Buffer.from(dataBase64, 'base64');
+    if (bytes.toString('base64') !== dataBase64) throw new Error(`${label} 数据非法`);
+    if (bytes.length > limit) throw new Error(`${label} 超过大小上限`);
+    return { name, mimeType: kind === 'text' ? 'text/plain' : mimeType, dataBase64 };
   });
 }

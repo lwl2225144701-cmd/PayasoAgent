@@ -1,3 +1,4 @@
+import { FileAttachment } from './FileAttachment';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelToolchainPreparation,
@@ -604,7 +605,9 @@ export const Timeline = memo(function Timeline({
             runStarted.attachments &&
             runStarted.attachments.length > 0 && (
               <div className={styles.userAttachments}>
-                {runStarted.attachments.map((att) => (
+                {runStarted.attachments.map((att) => att.kind === 'text' || !att.mimeType.startsWith('image/') ? (
+                  <FileAttachment key={att.path} runId={run.runId} file={att} />
+                ) : (
                   <a
                     key={att.path}
                     className={styles.userAttachmentLink}

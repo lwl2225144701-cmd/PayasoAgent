@@ -17,6 +17,8 @@ import type {
   WorkspaceView,
 } from './types';
 
+import { MAX_ATTACHMENT_BODY_BYTES } from '../../src/attachment-policy';
+
 const API_BASE = '';
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -54,14 +56,13 @@ export function createRun(
     ? { providerId: modelSelection.providerId, model: modelSelection.model }
     : {};
   const attachmentFields = attachments && attachments.length > 0 ? { attachments } : {};
-  return jsonFetch(url, {
-    method: 'POST',
-    body: JSON.stringify(
-      workspaceName
-        ? { task, workspaceName, permissionMode, ...modelFields, ...attachmentFields }
-        : { task, permissionMode, ...modelFields, ...attachmentFields },
-    ),
-  });
+  const body = JSON.stringify(workspaceName
+    ? { task, workspaceName, permissionMode, ...modelFields, ...attachmentFields }
+    : { task, permissionMode, ...modelFields, ...attachmentFields });
+  if (new TextEncoder().encode(body).length > MAX_ATTACHMENT_BODY_BYTES) {
+    throw new Error('Message exceeds 12 MiB. Please remove some attachments.');
+  }
+  return jsonFetch(url, { method: 'POST', body });
 }
 
 /** 工作区内文件（含图片）的二进制访问地址；图片扩展名由 Host 直接返回二进制，可供 <img> 使用 */

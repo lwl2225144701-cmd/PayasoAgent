@@ -47,6 +47,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'host-timeout', file: 'tests/host-timeout.test.ts' },
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
   { name: 'filesystem-tools', file: 'tests/filesystem-tools.test.ts' },
+  { name: 'text-attachments', file: 'tests/text-attachments.test.ts' },
   { name: 'attachment-store', file: 'tests/attachment-store.test.ts' },
   { name: 'attachment-normalize', file: 'tests/attachment-normalize.test.ts' },
   { name: 'frontend-image-prepare', file: 'tests/frontend-image-prepare.test.ts' },

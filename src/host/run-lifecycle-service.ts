@@ -24,8 +24,10 @@ import {
 } from '../permission-mode.js';
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
+import { attachmentManifest, type TextAttachmentRef } from '../attachment-manifest.js';
+import { restoreTextAttachment } from '../runtime/attachment-store.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
-import { getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
+import { getRunWorkspaceRoot, createWorkspace } from '../sandbox/sandbox-manager.js';
 import { isAbortError } from '../util/abort.js';
 import type { ApprovalCoordinator } from './approval-coordinator.js';
 import type { EventStreamService } from './event-stream-service.js';
@@ -145,7 +147,7 @@ export class RunLifecycleService {
     // 视觉强校验（在 session 落库之前拒绝，不产生孤儿会话）：模型配置已显式
     // 解析且视觉未开启 → 拒绝带图请求（400）。前端发前已警告；env 兜底模型
     // 能力未知，保持宽容不拒（物化阶段仍会剥图并注明）。
-    if (opts?.attachments?.length && resolved && resolved.vision !== true) {
+    if (opts?.attachments?.some((item) => item.mimeType.startsWith('image/')) && resolved && resolved.vision !== true) {
       throw new Error('当前模型已关闭视觉输入，已拒绝图片附件（可在设置中开启该模型的视觉能力）');
     }
     let session: StoredSession;
@@ -208,6 +210,10 @@ export class RunLifecycleService {
     // 附件落盘（v2 内容寻址）：字节入库 sha256 去重 + 原子发布，再硬链接进
     // 会话工作区 input/attachments/（agent 可见，只读）。同名冲突由库自动加
     // 后缀，永不覆盖。落盘失败按创建失败处理（不留下无附件的 Run）。
+    // 旧式 per-run 工作区要等 startAgent 里的 createWorkspace 才真正创建；
+    // 落附件早于那一步，必须先确保根存在，否则 assertInsideRoot 对不存在
+    // 的根直接拒绝 ——「默认工作区 + 会话首个 Run + 带附件」必现 400。
+    if (run.workspaceRoot === getRunWorkspaceRoot(runId)) createWorkspace(runId);
     const attachmentImages: MessageImage[] = [];
     const attachmentViews: HostAttachment[] = [];
     for (const attachment of opts?.attachments ?? []) {
@@ -216,8 +222,9 @@ export class RunLifecycleService {
         directory: ATTACHMENT_DIR,
         fileName: `${runId.slice(0, 8)}-${attachment.name}`,
         dataBase64: attachment.dataBase64,
+        independentCopy: !attachment.mimeType.startsWith('image/'),
       });
-      attachmentImages.push({
+      if (attachment.mimeType.startsWith('image/')) attachmentImages.push({
         mimeType: attachment.mimeType,
         path: relPath,
         sha256,
@@ -225,7 +232,7 @@ export class RunLifecycleService {
         height: attachment.height,
         originalDimensions: attachment.originalDimensions,
       });
-      attachmentViews.push({ name: attachment.name, mimeType: attachment.mimeType, path: relPath });
+      attachmentViews.push({ name: attachment.name, mimeType: attachment.mimeType, path: relPath, kind: attachment.mimeType.startsWith('image/') ? 'image' : 'text', sizeBytes: Buffer.from(attachment.dataBase64, 'base64').length, sha256 });
     }
 
     // Persist before execution starts, so every Runtime event has a parent Run.
@@ -245,6 +252,7 @@ export class RunLifecycleService {
         conversationHistory,
         previousHarnessState,
         attachmentImages,
+        attachmentViews.filter((item) => item.kind === 'text'),
       );
     }
     return { runId, sessionId: session.sessionId };
@@ -298,7 +306,8 @@ export class RunLifecycleService {
     };
     this.store.updateRun(this.toStoredRun(run));
     this.runs.set(runId, run);
-    this.record(run, { type: 'run_started', runId, timestamp: now });
+    const originalStart = run.events.find((event) => event.type === 'run_started' && event.attachments?.length);
+    this.record(run, { type: 'run_started', runId, timestamp: now, ...(originalStart?.type === 'run_started' ? { attachments: originalStart.attachments } : {}) });
     this.startAgent(run, checkpoint.task, checkpoint);
     return true;
   }
@@ -640,7 +649,9 @@ export class RunLifecycleService {
     for (let index = lastCheckpointIndex + 1; index < runs.length; index++) {
       const run = runs[index];
       if (run.status === 'running' || run.status === 'interrupted') continue;
-      messages.push({ role: 'user', content: run.task });
+      const started = this.store.listEvents(run.runId).map((item) => item.event).find((event) => event.type === 'run_started' && event.attachments?.length);
+      const files = started?.type === 'run_started' ? started.attachments?.filter((item) => item.kind === 'text') ?? [] : [];
+      messages.push({ role: 'user', content: run.task + attachmentManifest(files), ...(files.length ? { textAttachments: files } : {}) });
       if (run.status === 'completed' && run.result) {
         messages.push({ role: 'assistant', content: run.result });
       } else {
@@ -659,6 +670,7 @@ export class RunLifecycleService {
     conversationHistory: ChatMessage[] = [],
     previousHarnessState?: ContextHarnessState,
     attachments?: MessageImage[],
+    textAttachments: TextAttachmentRef[] = [],
   ): void {
     let pendingDelta: StreamingEvent | null = null;
     let deltaTimer: ReturnType<typeof setTimeout> | null = null;
@@ -704,6 +716,16 @@ export class RunLifecycleService {
         return;
       }
       try {
+        // 恢复当前会话已上传的文本副本；不能恢复时让 read 返回明确错误。
+        for (const previous of this.store.listRunsBySession(run.sessionId)) {
+          for (const { event } of this.store.listEvents(previous.runId)) {
+            if (event.type !== 'run_started') continue;
+            for (const file of event.attachments ?? []) {
+              if (file.kind !== 'text' || !file.sha256) continue;
+              try { restoreTextAttachment(run.workspaceRoot, file.path, file.sha256); } catch { /* 原始路径仍留在清单，读取时明确失败 */ }
+            }
+          }
+        }
         const projectInstructions = readProjectInstructions(run.workspaceRoot, run.permissionMode);
         const skills = scanWorkspaceSkills(run.workspaceRoot, run.permissionMode);
         const executionContext = createAgentExecutionContext({
@@ -732,6 +754,7 @@ export class RunLifecycleService {
               workspaceName: run.workspace?.name ?? '',
             });
             harness.setSkills(skills);
+            harness.setTextAttachments(textAttachments);
             return harness;
           })(),
           previousHarnessState,

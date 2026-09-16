@@ -119,7 +119,12 @@ function stripThink(text: string): string {
   return output.trim();
 }
 
+import { attachmentManifest, type TextAttachmentRef } from '../attachment-manifest.js';
+
 export class DefaultContextHarness implements AgentContextHarness {
+  private textAttachments: TextAttachmentRef[] = [];
+
+  setTextAttachments(files: TextAttachmentRef[]): void { this.textAttachments = files; }
   readonly modelContext: ModelContextConfig;
   private readonly contextManager: ContextManager;
   private readonly composer: InstructionComposer;
@@ -246,6 +251,7 @@ export class DefaultContextHarness implements AgentContextHarness {
       .map((message) => ({
         role: message.role,
         content: message.content,
+        ...(message.textAttachments?.length ? { textAttachments: message.textAttachments.map((file) => ({ ...file })) } : {}),
         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
         ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
         ...(message.images?.length
@@ -262,7 +268,8 @@ export class DefaultContextHarness implements AgentContextHarness {
       ...conversation,
       {
         role: 'user',
-        content: task,
+        content: task + attachmentManifest(this.textAttachments),
+        ...(this.textAttachments.length ? { textAttachments: this.textAttachments.map((file) => ({ ...file })) } : {}),
         ...(attachments.length > 0
           ? {
               images: attachments.map((image) => ({
@@ -366,6 +373,13 @@ export class DefaultContextHarness implements AgentContextHarness {
     } else {
       this.state.summarizedMessageCount = 0;
       modelView.unshift(systemMessage);
+    }
+    const visiblePaths = new Set(modelView.flatMap((message) => message.textAttachments ?? []).map((file) => file.path));
+    const archived = transcript.flatMap((message) => message.textAttachments ?? []).filter((file) => !visiblePaths.has(file.path));
+    if (archived.length) {
+      const latestUser = modelView.map((message) => message.role).lastIndexOf('user');
+      if (latestUser >= 0) modelView[latestUser].content += attachmentManifest(archived.slice(-16)) +
+        (archived.length > 16 ? '\n更早附件可用 ls 查看 input/attachments/。' : '');
     }
     return modelView;
   }

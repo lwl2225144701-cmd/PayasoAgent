@@ -127,6 +127,7 @@ export function publishAttachmentIntoWorkspace(
   workspaceRoot: string,
   directory: string,
   fileName: string,
+  independentCopy = false,
 ): WorkspacePublishResult {
   const baseDir = resolveWorkspacePath(workspaceRoot, directory);
   assertInsideRoot(workspaceRoot, baseDir);
@@ -137,6 +138,11 @@ export function publishAttachmentIntoWorkspace(
 
   for (let attempt = 2; ; attempt += 1) {
     try {
+      if (independentCopy) {
+        fs.copyFileSync(storePath, target, fs.constants.COPYFILE_EXCL);
+        if (process.platform !== 'win32') fs.chmodSync(target, OBJECT_MODE);
+        return { relPath: toWorkspaceRel(workspaceRoot, target), copied: true };
+      }
       fs.linkSync(storePath, target);
       return { relPath: toWorkspaceRel(workspaceRoot, target), copied: false };
     } catch (err) {
@@ -163,9 +169,15 @@ export function publishAttachmentIntoWorkspace(
 }
 
 function publishStem(fileName: string): { stem: string; ext: string; fileName: string } {
+  // 只滤真正危险的字符：路径分隔符已被 basename 去掉；这里保留 Unicode 字母/
+  // 数字/组合记号（含中文、日文等）与内部空格（Windows 只禁结尾空格），其余
+  // （控制字符、符号、tab/换行）替换为 _ —— 中文附件名在磁盘上保持可读，多个
+  // 中文名不再挤成一串下划线。结尾的点/空白对 Windows 无效，剥掉；全空时由
+  // 下方兜底为 attachment。
   const safe = path
     .basename(fileName)
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/[^\p{L}\p{N}\p{M}._ -]/gu, '_')
+    .replace(/[.\s]+$/, '')
     .replace(/^\.+/, '_');
   const ext = path.extname(safe);
   let stem = ext ? safe.slice(0, -ext.length) : safe;
@@ -175,4 +187,19 @@ function publishStem(fileName: string): { stem: string; ext: string; fileName: s
 
 function toWorkspaceRel(workspaceRoot: string, absolutePath: string): string {
   return path.relative(path.resolve(workspaceRoot), absolutePath).split(path.sep).join('/');
+}
+
+// 只恢复缺失的文本副本；已有文件不覆盖。失败由调用方保留为可见缺失。
+export function restoreTextAttachment(workspaceRoot: string, relPath: string, sha256: string): void {
+  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('非法附件内容键');
+  const target = resolveWorkspacePath(workspaceRoot, relPath);
+  assertInsideRoot(workspaceRoot, target);
+  if (fs.existsSync(target)) return;
+  const storeRoot = getAttachmentStoreRoot();
+  const source = path.join(storeRoot, 'objects', sha256.slice(0, 2), sha256);
+  assertInsideRoot(storeRoot, source);
+  const bytes = fs.readFileSync(source);
+  if (attachmentSha256(bytes) !== sha256) throw new Error('附件对象损坏');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, bytes, { flag: 'wx', mode: OBJECT_MODE });
 }

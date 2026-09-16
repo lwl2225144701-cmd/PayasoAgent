@@ -24,7 +24,7 @@ import {
   SAFE_SESSION_ID,
   sendJson,
 } from './route-context.js';
-import { IMAGE_EXT_MIME, listFiles, readFileChecked, readImageChecked } from './static-handler.js';
+import { IMAGE_EXT_MIME, listFiles, readFileChecked, readImageChecked, readDownloadChecked } from './static-handler.js';
 
 // SSE：实时推送 Run 事件（回放历史 + 实时）
 function handleSse(
@@ -264,6 +264,19 @@ export async function handleRuns(
       const rel = s.slice(3).join('/');
       const root = manager.getWorkspaceRoot(runId);
       if (!root) return notFound(res);
+      if (new URL(req.url ?? '/', 'http://localhost').searchParams.get('download') === '1') {
+        const file = readDownloadChecked(root, rel);
+        if (!file.ok) return bad(res, file.error);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': file.buffer.length,
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(rel))}`,
+          'x-content-type-options': 'nosniff',
+          'cache-control': 'no-store',
+        });
+        res.end(file.buffer);
+        return;
+      }
       if (IMAGE_EXT_MIME[path.extname(rel).toLowerCase()]) {
         const image = readImageChecked(root, rel);
         if (!image.ok) return bad(res, image.error);

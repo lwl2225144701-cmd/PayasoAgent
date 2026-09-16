@@ -424,6 +424,9 @@ export interface ErrorEvent extends TraceEventBase {
 
 /** 用户随任务上传的图片附件（已落盘到会话工作区 input/attachments/） */
 export interface RunAttachment {
+  kind?: 'image' | 'text';
+  sizeBytes?: number;
+  sha256?: string;
   name: string;
   mimeType: string;
   path: string;
