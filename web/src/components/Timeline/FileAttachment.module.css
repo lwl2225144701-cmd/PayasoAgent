@@ -8,3 +8,4 @@
 .preview { margin-top: 8px; max-width: min(650px, 75vw); }
 .preview pre { padding: 12px; max-height: 320px; overflow: auto; font-size: 12px; white-space: pre; border: 1px solid var(--color-border-default); border-radius: 8px; }
 .error { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.binaryNote { margin-top: 8px; color: var(--text-secondary); font-size: 12px; max-width: 420px; overflow-wrap: anywhere; }

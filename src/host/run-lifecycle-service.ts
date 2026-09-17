@@ -25,6 +25,7 @@ import {
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import { attachmentManifest, type TextAttachmentRef } from '../attachment-manifest.js';
+import { attachmentKind } from '../attachment-policy.js';
 import { restoreTextAttachment } from '../runtime/attachment-store.js';
 import { writeAttachmentFile } from '../runtime/image-materialize.js';
 import { getRunWorkspaceRoot, createWorkspace } from '../sandbox/sandbox-manager.js';
@@ -44,6 +45,14 @@ import type { HostAttachment, HostEvent, StreamingEvent } from './run-events.js'
 import type { CreateRunAttachmentInput } from './run-types.js';
 import { type CleanupError, type HostRun, isCancellable } from './run-types.js';
 import { publicActiveView, publicStoredView, sessionTitle } from './run-views.js';
+
+// HostAttachment（含 mimeType 等展示字段）→ 模型侧清单引用（仅定位信息）。
+type TextLikeAttachment = Omit<HostAttachment, 'kind'> & { kind?: 'text' | 'binary' };
+function asTextAttachmentRefs(views: HostAttachment[]): TextAttachmentRef[] {
+  return views
+    .filter((item): item is TextLikeAttachment => item.kind === 'text' || item.kind === 'binary')
+    .map(({ name, path, sizeBytes, sha256, kind }) => ({ name, path, sizeBytes, sha256, kind }));
+}
 import type { SessionService } from './session-service.js';
 import { PLAN_DIRECTIVE } from './session-service.js';
 import type { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
@@ -232,7 +241,18 @@ export class RunLifecycleService {
         height: attachment.height,
         originalDimensions: attachment.originalDimensions,
       });
-      attachmentViews.push({ name: attachment.name, mimeType: attachment.mimeType, path: relPath, kind: attachment.mimeType.startsWith('image/') ? 'image' : 'text', sizeBytes: Buffer.from(attachment.dataBase64, 'base64').length, sha256 });
+      attachmentViews.push({
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        path: relPath,
+        kind: attachment.mimeType.startsWith('image/')
+          ? 'image'
+          : attachmentKind(attachment.name, attachment.mimeType) === 'binary'
+            ? 'binary'
+            : 'text',
+        sizeBytes: Buffer.from(attachment.dataBase64, 'base64').length,
+        sha256,
+      });
     }
 
     // Persist before execution starts, so every Runtime event has a parent Run.
@@ -252,7 +272,7 @@ export class RunLifecycleService {
         conversationHistory,
         previousHarnessState,
         attachmentImages,
-        attachmentViews.filter((item) => item.kind === 'text'),
+        asTextAttachmentRefs(attachmentViews),
       );
     }
     return { runId, sessionId: session.sessionId };
@@ -650,7 +670,7 @@ export class RunLifecycleService {
       const run = runs[index];
       if (run.status === 'running' || run.status === 'interrupted') continue;
       const started = this.store.listEvents(run.runId).map((item) => item.event).find((event) => event.type === 'run_started' && event.attachments?.length);
-      const files = started?.type === 'run_started' ? started.attachments?.filter((item) => item.kind === 'text') ?? [] : [];
+      const files = started?.type === 'run_started' ? asTextAttachmentRefs(started.attachments ?? []) : [];
       messages.push({ role: 'user', content: run.task + attachmentManifest(files), ...(files.length ? { textAttachments: files } : {}) });
       if (run.status === 'completed' && run.result) {
         messages.push({ role: 'assistant', content: run.result });
@@ -716,12 +736,13 @@ export class RunLifecycleService {
         return;
       }
       try {
-        // 恢复当前会话已上传的文本副本；不能恢复时让 read 返回明确错误。
+        // 恢复当前会话已上传的文本/二进制副本（图片走 content store 之外
+        // 的物化路径，不在此列）；不能恢复时让 read/工具调用返回明确错误。
         for (const previous of this.store.listRunsBySession(run.sessionId)) {
           for (const { event } of this.store.listEvents(previous.runId)) {
             if (event.type !== 'run_started') continue;
             for (const file of event.attachments ?? []) {
-              if (file.kind !== 'text' || !file.sha256) continue;
+              if (file.kind === 'image' || !file.sha256) continue;
               try { restoreTextAttachment(run.workspaceRoot, file.path, file.sha256); } catch { /* 原始路径仍留在清单，读取时明确失败 */ }
             }
           }

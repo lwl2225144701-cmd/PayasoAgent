@@ -110,15 +110,15 @@ test('Host Workspace API 只返回 name，不常规暴露真实绝对路径', as
   }
 });
 
-test('Host 请求体上限分层：附件端点 12MB、常规端点 2MB', async () => {
+test('Host 请求体上限分层：附件端点 24MB、常规端点 2MB', async () => {
   const server = createHostServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const address = server.address();
     assert.ok(address && typeof address === 'object');
     const base = `http://127.0.0.1:${address.port}`;
-    // 附件端点（POST /runs）上限 12MB：13MB 必须拒
-    const oversized = 13 * 1024 * 1024;
+    // 附件端点（POST /runs）上限 24MB：25MB 必须拒（也防止误落 session 污染后续用例）
+    const oversized = 25 * 1024 * 1024;
     const rejected = await fetch(`${base}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -126,7 +126,7 @@ test('Host 请求体上限分层：附件端点 12MB、常规端点 2MB', async 
     });
     assert.equal(rejected.status, 413);
     assert.equal(((await rejected.json()) as { error: string }).error, 'payload_too_large');
-    // 附件端点 5MB（无附件）不拒：走处理器逻辑（空 task → 400），证明 12MB 生效
+    // 附件端点 5MB（无附件）不拒：走处理器逻辑（空 task → 400），证明 24MB 生效
     const mid = await fetch(`${base}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -11,8 +11,11 @@
 // - 入库字节 = 归一化后字节（内容寻址对归一化结果去重），originalDimensions
 //   记录归一化前原图尺寸
 
-import { attachmentKind, decodeAttachmentText, MAX_DOCX_BYTES, MAX_TEXT_BYTES } from '../attachment-policy.js';
+import { attachmentKind, decodeAttachmentText, MAX_OFFICE_BYTES, MAX_PDF_BYTES, MAX_TEXT_BYTES } from '../attachment-policy.js';
 import { extractDocxText } from './attachment-docx.js';
+import { extractPptxText } from './attachment-pptx.js';
+import { extractXlsxText } from './attachment-xlsx.js';
+import { extractPdfText } from './attachment-pdf.js';
 import type { CreateRunAttachmentInput } from '../attachment-types.js';
 
 export const ATTACHMENT_PIXEL_LIMIT = 64 * 1024 * 1024;
@@ -94,15 +97,26 @@ async function prepareAttachment(
     try { decodeAttachmentText(bytes); } catch { throw new Error(`附件 ${item.name} 不是 UTF-8 文本，请转码后重试`); }
     return { name: item.name, mimeType: 'text/plain', dataBase64: bytes.toString('base64') };
   }
-  if (kind === 'docx') {
-    // docx 在 prepare 阶段解包成纯文本：下游（落盘/清单/时间线）从此把它
+  if (kind === 'docx' || kind === 'pptx' || kind === 'xlsx' || kind === 'pdf') {
+    // 文档类在 prepare 阶段解包成纯文本：下游（落盘/清单/时间线）从此把它
     // 当普通文本附件，零特判。提取后的文本同样受 2MiB 读取预算约束。
-    if (bytes.length > MAX_DOCX_BYTES) throw new Error(`附件 ${item.name} 超过 8 MiB 上限`);
-    const text = extractDocxText(bytes);
+    const limit = kind === 'pdf' ? MAX_PDF_BYTES : MAX_OFFICE_BYTES;
+    if (bytes.length > limit) throw new Error(`附件 ${item.name} 超过大小上限`);
+    const text =
+      kind === 'docx' ? extractDocxText(bytes)
+      : kind === 'pptx' ? extractPptxText(bytes)
+      : kind === 'xlsx' ? extractXlsxText(bytes)
+      : extractPdfText(bytes);
     if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) {
       throw new Error(`附件 ${item.name} 正文超过 2 MiB，请拆分后上传`);
     }
     return { name: item.name, mimeType: 'text/plain', dataBase64: Buffer.from(text, 'utf8').toString('base64') };
+  }
+  if (kind === 'binary') {
+    // .doc/.ppt 旧版 OLE2：无法零依赖解包，原样保留字节（mimeType 透传），
+    // 由 Agent 在沙箱里用系统工具（textutil/antiword/python 等）转换。
+    if (bytes.length > MAX_OFFICE_BYTES) throw new Error(`附件 ${item.name} 超过 8 MiB 上限`);
+    return { name: item.name, mimeType: item.mimeType || 'application/octet-stream', dataBase64: bytes.toString('base64') };
   }
   if (bytes.length === 0) throw new Error(`附件 ${item.name} 内容为空`);
   const sniffed = sniffImageMime(bytes);

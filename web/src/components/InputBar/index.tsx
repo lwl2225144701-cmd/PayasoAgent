@@ -27,7 +27,7 @@ import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
 
-import { attachmentKind, attachmentSizeLabel, MAX_ATTACHMENTS, MAX_DOCX_BYTES, MAX_IMAGE_BYTES, MAX_TEXT_BYTES } from '../../../../src/attachment-policy';
+import { attachmentKind, attachmentSizeLabel, MAX_ATTACHMENTS, MAX_IMAGE_BYTES, MAX_OFFICE_BYTES, MAX_PDF_BYTES, MAX_TEXT_BYTES } from '../../../../src/attachment-policy';
 
 interface PendingAttachment {
   id: string;
@@ -296,14 +296,21 @@ export function InputBar({
         );
         continue;
       }
-      if (file.size > (kind === 'image' ? MAX_IMAGE_BYTES : kind === 'docx' ? MAX_DOCX_BYTES : MAX_TEXT_BYTES)) {
+      const limit =
+        kind === 'image' ? MAX_IMAGE_BYTES
+        : kind === 'pdf' ? MAX_PDF_BYTES
+        : kind === 'text' ? MAX_TEXT_BYTES
+        : MAX_OFFICE_BYTES;
+      if (file.size > limit) {
         rejected.push(
           t(
             kind === 'image'
               ? 'composer.attachment.tooLarge'
-              : kind === 'docx'
-                ? 'composer.attachment.docxTooLarge'
-                : 'composer.attachment.textTooLarge',
+              : kind === 'pdf'
+                ? 'composer.attachment.pdfTooLarge'
+                : kind === 'text'
+                  ? 'composer.attachment.textTooLarge'
+                  : 'composer.attachment.officeTooLarge',
             { name: file.name || t('composer.attachment.clipboardName') },
           ),
         );

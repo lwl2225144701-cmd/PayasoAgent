@@ -8,9 +8,11 @@ import type {
   ToolchainPreparationStatus,
 } from '../sandbox/toolchain-preparation.js';
 
-// 用户随消息发送的图片附件（落盘后的引用：工作区相对路径，可走 files 端点预览）。
+// 用户随消息发送的附件（落盘后的引用：工作区相对路径，可走 files 端点预览）。
+// kind: image / text（已归一为纯文本，含 docx/pptx/xlsx/pdf 解包产物）/ binary
+//（.doc/.ppt 等原样保留的二进制，read 不可读，需工具转换）。
 export interface HostAttachment {
-  kind?: 'image' | 'text';
+  kind?: 'image' | 'text' | 'binary';
   sizeBytes?: number;
   sha256?: string;
   name: string;

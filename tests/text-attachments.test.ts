@@ -17,39 +17,59 @@ import { runAgent } from '../src/runtime/agent.js';
 import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
 import { readDownloadChecked } from '../src/host/routes/static-handler.js';
-import { attachmentKind, MAX_DOCX_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
+import { attachmentKind, MAX_OFFICE_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
+import { attachmentManifest } from '../src/attachment-manifest.js';
 import { deflateRawSync } from 'node:zlib';
 import type { ChatMessage } from '../src/llm/llm.js';
 
-// 手工拼一个最小 docx：单条目 zip（局部头 + deflate 的 word/document.xml +
-// 中央目录 + EOCD），不依赖任何 zip 库，字段布局与 attachment-docx.ts 的
-// 解析一一对应。
-function buildMinimalDocx(documentXml: string, opts: { skipDocument?: boolean } = {}): Buffer {
-  const name = Buffer.from('word/document.xml', 'utf8');
-  const data = deflateRawSync(Buffer.from(documentXml, 'utf8'));
-  const local = Buffer.alloc(30);
-  local.writeUInt32LE(0x04034b50, 0);
-  local.writeUInt16LE(8, 8);
-  local.writeUInt32LE(data.length, 18);
-  local.writeUInt32LE(Buffer.byteLength(documentXml), 22);
-  local.writeUInt16LE(name.length, 26);
-  const central = Buffer.alloc(46);
-  central.writeUInt32LE(0x02014b50, 0);
-  central.writeUInt16LE(8, 10);
-  central.writeUInt32LE(data.length, 20);
-  central.writeUInt32LE(Buffer.byteLength(documentXml), 24);
-  central.writeUInt16LE(name.length, 28);
-  central.writeUInt32LE(0, 42); // 局部头偏移
+// 手工拼一个最小 zip（docx/pptx/xlsx 共用）：局部头 + deflate 条目 + 中央
+// 目录 + EOCD，不依赖任何 zip 库，字段布局与 attachment-zip.ts 的解析一一对应。
+function buildZip(entries: Record<string, string>): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [nameStr, content] of Object.entries(entries)) {
+    const name = Buffer.from(nameStr, 'utf8');
+    const data = deflateRawSync(Buffer.from(content, 'utf8'));
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(Buffer.byteLength(content), 22);
+    local.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(Buffer.byteLength(content), 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42); // 局部头偏移
+    locals.push(local, name, data);
+    centrals.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const centralBytes = Buffer.concat(centrals);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(1, 8);
-  eocd.writeUInt16LE(1, 10);
-  eocd.writeUInt32LE(local.length + name.length + data.length, 16);
-  if (opts.skipDocument) {
-    // 没有任何条目的合法空 zip：EOCD 直接跟在空局部头后（仅作缺正文用例）
-    return Buffer.concat([eocd]);
-  }
-  return Buffer.concat([local, name, data, central, name, eocd]);
+  eocd.writeUInt16LE(Object.keys(entries).length, 8);
+  eocd.writeUInt16LE(Object.keys(entries).length, 10);
+  eocd.writeUInt32LE(centralBytes.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, centralBytes, eocd]);
+}
+
+function buildMinimalDocx(documentXml: string, opts: { skipDocument?: boolean } = {}): Buffer {
+  return opts.skipDocument ? buildZip({}) : buildZip({ 'word/document.xml': documentXml });
+}
+
+// 最小 PDF：单个 FlateDecode 文本流。content 是 BT…ET 文本对象里的指令。
+function buildPdf(content: string): Buffer {
+  const stream = deflateRawSync(Buffer.from(`BT /F1 12 Tf 72 720 Td ${content} ET`, 'latin1'));
+  return Buffer.concat([
+    Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n2 0 obj\n<< /Length ' + stream.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1'),
+    stream,
+    Buffer.from('\nendstream\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF', 'latin1'),
+  ]);
 }
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-text-att-'));
@@ -68,8 +88,11 @@ try {
   check(prepared[0].mimeType === 'text/plain');
   check(Buffer.from(prepared[0].dataBase64, 'base64').equals(bytes));
   check(attachmentKind('AGENTS.md', '') === 'text');
-  for (const name of ['archive.zip', 'document.pdf', 'program.exe']) {
+  for (const name of ['archive.zip', 'program.exe', 'schema.bin']) {
     assert.throws(() => requestAttachments({ attachments: [input(name, bytes)] })); checks++;
+  }
+  for (const [name, expected] of [['a.docx', 'docx'], ['a.pptx', 'pptx'], ['a.xlsx', 'xlsx'], ['a.pdf', 'pdf'], ['a.doc', 'binary'], ['a.ppt', 'binary']] as const) {
+    check(attachmentKind(name, '') === expected);
   }
   assert.throws(() => requestAttachments({ attachments: [input('a.txt', Buffer.alloc(MAX_TEXT_BYTES + 1))] })); checks++;
   assert.throws(() => requestAttachments({ attachments: [{ name: 'a.txt', mimeType: '', dataBase64: 'YR==' }] })); checks++;
@@ -96,7 +119,7 @@ try {
 
   // ---- .docx：zip 解包 + word/document.xml 文本提取（prepare 阶段归一为 text/plain）----
   check(attachmentKind('方案补充.docx', '') === 'docx');
-  check(attachmentKind('legacy.doc', '') === null); // 旧版二进制 .doc 不放行
+  check(attachmentKind('legacy.doc', '') === 'binary'); // 旧版 .doc 走二进制原样通道
   const documentXml =
     '<w:document><w:body><w:p><w:r><w:t>DOCX_SENTINEL_91</w:t></w:r></w:p>' +
     '<w:p><w:r><w:t>A&amp;B</w:t><w:tab/><w:t>C</w:t><w:br/><w:t>D</w:t></w:r></w:p></w:body></w:document>';
@@ -131,11 +154,63 @@ try {
   ).toString('utf8');
   check(fallbackText === '唯一内容\n');
   check(fallbackText.split('唯一内容').length - 1 === 1);
-  // 非 zip 字节 / 缺正文 / 超限 / 旧 .doc 全部拒绝
+  // 非 zip 字节 / 缺正文 / 超限 全部拒绝
   await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('假.docx', Buffer.from('PK\u0003\u0004 not a zip at all'))] })));
   await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('空.docx', buildMinimalDocx('', { skipDocument: true }))] })));
-  assert.throws(() => requestAttachments({ attachments: [input('大.docx', Buffer.alloc(MAX_DOCX_BYTES + 1))] }));
-  assert.throws(() => requestAttachments({ attachments: [input('旧文档.doc', bytes)] })); checks += 9;
+  assert.throws(() => requestAttachments({ attachments: [input('大.docx', Buffer.alloc(MAX_OFFICE_BYTES + 1))] })); checks += 3;
+
+  // ---- .pptx：zip 解包 + slideN.xml 的 <a:t> 文本，按幻灯片分节 ----
+  const pptx = buildZip({
+    'ppt/slides/slide1.xml': '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>PPTX_标题一</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    'ppt/slides/slide2.xml': '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>第二页要点</a:t></a:r></a:p><a:p><a:r><a:t>另起一行</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+  });
+  const pptxText = Buffer.from(
+    (await prepareAttachments(requestAttachments({ attachments: [input('汇报.pptx', pptx)] })))[0].dataBase64,
+    'base64',
+  ).toString('utf8');
+  check(pptxText.includes('--- 幻灯片 1 ---'));
+  check(pptxText.includes('PPTX_标题一'));
+  check(pptxText.includes('--- 幻灯片 2 ---'));
+  check(pptxText.includes('第二页要点\n另起一行'));
+  check(!pptxText.includes('<a:'));
+
+  // ---- .xlsx：共享串 + 各 sheet 还原 TSV（空列占位保持对齐） ----
+  const xlsx = buildZip({
+    'xl/sharedStrings.xml': '<sst><si><t>字段</t></si><si><r><t>值</t></r></si><si><t>行二字段</t></si></sst>',
+    'xl/worksheets/sheet1.xml':
+      '<worksheet><sheetData>' +
+      '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+      '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>42</v></c><c r="D2"><v>跳过C列</v></c></row>' +
+      '</sheetData></worksheet>',
+  });
+  const xlsxText = Buffer.from(
+    (await prepareAttachments(requestAttachments({ attachments: [input('清单.xlsx', xlsx)] })))[0].dataBase64,
+    'base64',
+  ).toString('utf8');
+  check(xlsxText.includes('--- Sheet 1 ---'));
+  check(xlsxText.includes('字段\t值'));
+  check(xlsxText.includes('行二字段\t42\t\t跳过C列'));
+
+  // ---- .pdf：FlateDecode 流 Tj 文本提取；无文本层返回占位说明 ----
+  const pdfText = Buffer.from(
+    (await prepareAttachments(requestAttachments({ attachments: [input('文档.pdf', buildPdf('(Hello PDF world) Tj'))] })))[0].dataBase64,
+    'base64',
+  ).toString('utf8');
+  check(pdfText.includes('Hello PDF world'));
+  const scanned = Buffer.from(
+    (await prepareAttachments(requestAttachments({ attachments: [input('扫描.pdf', buildPdf('0 0 1 rg 10 10 100 100 re f'))] })))[0].dataBase64,
+    'base64',
+  ).toString('utf8');
+  check(scanned.includes('无文本层'));
+  await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('假.pdf', Buffer.from('not a pdf'))] }))); checks++;
+
+  // ---- .doc/.ppt：旧版二进制原样保留（mimeType 透传，字节不变） ----
+  const docBytes = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00, 0x00]);
+  const docPrepared = await prepareAttachments(requestAttachments({ attachments: [input('旧方案.doc', docBytes, 'application/msword')] }));
+  check(docPrepared[0].mimeType === 'application/msword');
+  check(Buffer.from(docPrepared[0].dataBase64, 'base64').equals(docBytes));
+  check(attachmentManifest([{ name: '旧方案.doc', path: 'x.doc', kind: 'binary' }]).includes('二进制附件'));
+  check(!attachmentManifest([{ name: 'a.txt', path: 'a.txt', kind: 'text' }]).includes('二进制附件'));
   check(fs.readFileSync(local).equals(bytes));
   check(readDownloadChecked(ws, saved.relPath).ok);
   check(!readDownloadChecked(ws, '../objects-store').ok);
