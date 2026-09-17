@@ -404,7 +404,7 @@ scenarios['large-read-700k'] = {
 
 scenarios['large-read-oversize'] = {
   group: 'large',
-  desc: '读取 1.2MB（>1MB 限）→ Output Guard 判 invalid，不塞 Context',
+  desc: '读取 1.2MB 大文件 → 输出被切片到预算内，Context 有界不撑爆',
   e2e: true,
   run: async (ctx) => {
     const ws = createWorkspace(ctx.runId);
@@ -414,23 +414,29 @@ scenarios['large-read-oversize'] = {
     const cp = loadCheckpoint(ctx.runId);
     const msgBytes = cp ? JSON.stringify(cp.messages).length : 0;
     const leaked = msgBytes > 50 * 1024;
-    const completedHasBig = (cp?.scratchpad.completedSteps ?? []).some((s: { result: string }) =>
-      s.result.includes('xxx'),
+    const steps = cp?.scratchpad.completedSteps ?? [];
+    // 责任切分契约：guard 对超预算结果做确定性切片（不判 invalid），
+    // 不变式是「任何单条 completed 结果都不超过预算的合理余量」+ 有分页/
+    // 截断证据（多行大文件走 [READ 提示] 分页；单行超长走 [READ TRUNCATED]）。
+    const maxResultLen = Math.max(0, ...steps.map((s: { result: string }) => s.result.length));
+    const truncated = steps.some((s: { result: string }) =>
+      s.result.includes('[READ 提示]') ||
+      s.result.includes('[READ TRUNCATED]') ||
+      s.result.includes('[OUTPUT TRUNCATED]'),
     );
-    const inv = invalidEvents(cap.join('\n'));
-    const pass = inv >= 1 && !leaked && !completedHasBig;
+    const pass = !leaked && maxResultLen <= 32 * 1024 && truncated;
     return {
       pass,
-      detail: `invalid 事件=${inv}, msgBytes=${(msgBytes / 1024).toFixed(0)}KB, completed 含大内容=${completedHasBig}, 答案=${answer.slice(0, 50)}`,
-      metrics: { invalidEvents: inv, msgBytes, leaked, completedHasBig },
-      layer: pass ? undefined : leaked || completedHasBig ? 'runtime' : 'tool',
+      detail: `msgBytes=${(msgBytes / 1024).toFixed(0)}KB, 最大单条结果=${(maxResultLen / 1024).toFixed(1)}KB, 截断标记=${truncated}, 答案=${answer.slice(0, 50)}`,
+      metrics: { msgBytes, maxResultLen, truncated, leaked },
+      layer: leaked || maxResultLen > 32 * 1024 ? 'runtime' : !truncated ? 'tool' : undefined,
     };
   },
 };
 
 scenarios['large-read-binary'] = {
   group: 'large',
-  desc: '读取 500KB 二进制 → Output Guard 判 invalid，不把二进制喂给 LLM',
+  desc: '读取 500KB 二进制 → read 拒绝载入（省略提示），二进制字节不进 Context',
   e2e: true,
   run: async (ctx) => {
     const ws = createWorkspace(ctx.runId);
@@ -439,15 +445,17 @@ scenarios['large-read-binary'] = {
     const task = '请读取 input/big.bin 并告诉我它的内容。';
     const { answer } = await runAgentTask(task, ctx.runId);
     const cp = loadCheckpoint(ctx.runId);
+    const msgBytes = cp ? JSON.stringify(cp.messages).length : 0;
+    // read 对二进制返回省略提示（isProbablyBinary 接线后）：NUL 字节不应
+    // 出现在 checkpoint 消息里（Agent 若改用 shell file/wc 查看则为文本输出）。
     const msgJson = cp ? JSON.stringify(cp.messages) : '';
-    const nulLeak = msgJson.includes('\u0000');
-    const inv = invalidEvents(cap.join('\n'));
-    const pass = inv >= 1 && !nulLeak;
+    const nulLeak = msgJson.includes('\\u0000');
+    const pass = !nulLeak && msgBytes <= 50 * 1024 && answer.length > 0;
     return {
       pass,
-      detail: `invalid 事件=${inv}, messages 含 NUL 字节=${nulLeak}, 答案=${answer.slice(0, 50)}`,
-      metrics: { invalidEvents: inv, nulLeak },
-      layer: pass ? undefined : nulLeak ? 'runtime' : 'tool',
+      detail: `msgBytes=${(msgBytes / 1024).toFixed(0)}KB, messages 含 NUL=${nulLeak}, 答案=${answer.slice(0, 50)}`,
+      metrics: { msgBytes, nulLeak },
+      layer: nulLeak || msgBytes > 50 * 1024 ? 'runtime' : undefined,
     };
   },
 };
@@ -514,7 +522,7 @@ scenarios['recover-mixed-fails'] = {
 
 scenarios['recover-invalid-chain'] = {
   group: 'recovery',
-  desc: 'invalid result 链（getWeather=null + 超大文件），下游不得使用无效结果',
+  desc: 'invalid result（getWeather=null）下游不得使用；大文件按切片契约有界返回',
   e2e: true,
   run: async (ctx) => {
     const ws = createWorkspace(ctx.runId);
@@ -525,19 +533,23 @@ scenarios['recover-invalid-chain'] = {
     const inv = invalidEvents(out);
     const cp = loadCheckpoint(ctx.runId);
     const completed = cp?.scratchpad.completedSteps ?? [];
-    const bad = completed.filter(
-      (s: { result: string }) => s.result.includes('temperature') || s.result.includes('yyyy'),
-    ).length;
-    const pass = inv >= 2 && bad === 0;
+    // 核心不变式：无效的天气结果（temperature=null）不得被下游计算采用；
+    // 大文件按切片契约返回（不再判 invalid），只要求单条结果有界。
+    // inv 依赖真实天气服务失败与否（天然不稳定），只作指标记录 —— 确定性
+    // invalid 路径由 E2E #15–#17 的夹具覆盖。
+    const bad = completed.filter((s: { result: string }) => s.result.includes('temperature')).length;
+    const maxResultLen = Math.max(0, ...completed.map((s: { result: string }) => s.result.length));
+    const pass = bad === 0 && maxResultLen <= 32 * 1024;
     return {
       pass,
-      detail: `invalid 事件=${inv}, completedSteps 混入无效结果=${bad}, 答案=${answer.slice(0, 50)}`,
+      detail: `invalid 事件=${inv}, completedSteps 混入无效结果=${bad}, 最大单条结果=${(maxResultLen / 1024).toFixed(1)}KB, 答案=${answer.slice(0, 50)}`,
       metrics: {
         invalidEvents: inv,
         badInCompleted: bad,
+        maxResultLen,
         invalidTotal: cp?.state.invalidToolResults ?? 0,
       },
-      layer: bad > 0 ? 'runtime' : pass ? undefined : 'llm',
+      layer: bad > 0 || maxResultLen > 32 * 1024 ? 'runtime' : pass ? undefined : 'llm',
     };
   },
 };
@@ -889,8 +901,10 @@ scenarios['sandbox-symlink'] = {
     let goodOk = false;
     try {
       const r = await execute('readFile', { path: 'work/goodlink' }, ctx2);
-      goodOk = r === 'INSIDE';
-      if (!goodOk) errs.push(`内部 symlink 结果异常: ${r}`);
+      const text = typeof r === 'string' ? r : r.content;
+      // readFile 返回带行号前缀的文本（如 "   1→INSIDE"），按内容判定而非全等
+      goodOk = text.includes('INSIDE');
+      if (!goodOk) errs.push(`内部 symlink 结果异常: ${text}`);
     } catch (e) {
       errs.push(`内部合法 symlink 被误拦: ${(e as Error).message}`);
     }
@@ -1043,7 +1057,10 @@ async function runWorkerScenario(id: string, resumeId?: string): Promise<void> {
     }
   }
   fs.writeFileSync(path.join(LOG_DIR, `${id}.log`), `${cap.join('\n')}\n`, 'utf8');
-  process.stdout.write(`[STRESS-RESULT]${JSON.stringify(res)}\n`);
+  // 管道输出是异步的：紧跟 process.exit 会丢弃尚未 flush 的缓冲 —— 大状态转储
+  // 曾把 [STRESS-RESULT] 整行吞掉，编排器误判「worker 崩溃/被 kill」。等标记
+  // 真正写出后再退出。
+  process.stdout.write(`[STRESS-RESULT]${JSON.stringify(res)}\n`, () => process.exit(0));
 }
 
 // ================= 编排器主流程 =================
@@ -1293,7 +1310,10 @@ async function runOrchestrator(): Promise<void> {
           /* 保留 */
         }
       } else {
-        const { res: r, stdout } = await runScenarioWorker(id, [], env, 240_000);
+        // 大文件场景要读 0.5–1.2MB 再让 LLM 长思考总结，240s 会误杀（SIGKILL
+        // 中途无 [STRESS-RESULT]）——按组放宽到 420s，其余保持 240s。
+        const timeoutMs = group === 'large' ? 420_000 : 240_000;
+        const { res: r, stdout } = await runScenarioWorker(id, [], env, timeoutMs);
         res = r;
         logLine = res.detail;
         // 保留现场：非 E2E 确定性场景同时把 stdout 留档
@@ -1374,7 +1394,8 @@ const scenarioId = scIdx >= 0 ? argv[scIdx + 1] : undefined;
 if (scenarioId) {
   const rsIdx = argv.indexOf('--resume');
   const resumeId = rsIdx >= 0 ? argv[rsIdx + 1] : undefined;
-  runWorkerScenario(scenarioId, resumeId).then(() => process.exit(0));
+  // 退出由 runWorkerScenario 在标记 flush 后负责（见其尾部的 write 回调）
+  void runWorkerScenario(scenarioId, resumeId);
 } else {
   runOrchestrator().catch((e) => {
     console.error(`编排器崩溃: ${(e as Error).stack ?? e}`);

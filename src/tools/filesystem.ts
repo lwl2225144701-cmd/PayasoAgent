@@ -5,11 +5,13 @@
 // v1.5 融合身份机制：路径类工具用 canonicalPathKey 做操作 identity 归一化（不暴露宿主绝对路径）。
 // v1.7：readFile→read / writeFile→write / listDir→ls 重命名，保留 hidden 别名兼容；
 //       新增 edit 工具（oldText/newText 精确替换，禁止重叠，保留换行风格）。
-// v1.8：read 不再限制文本大小 — 超大文本截断 + continuation hint（offset 续读）；
-//       图片省略提示；其他二进制按乱码文本截断返回。
+// read 文本统一按行分页，分块扫描大文件；超长单行有限展示并明确提示。
+//       图片省略提示；其他二进制（NUL/大量控制字符）返回省略提示并指路 shell
+//       工具（file/wc/xxd），不再把乱码文本喂给模型。
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { readTextWindow } from './read-text-window.js';
 import { storedPermissionMode } from '../permission-mode.js';
 import {
   assertInsideRoot,
@@ -34,9 +36,6 @@ export const MAX_READ_BYTES = 64 * 1024; // 64KB
 // v1.9 read 双限截断：按行号读取时，行数与字节数双限，取先到者。
 const MAX_READ_LINES = 500; // 单次最多返回 500 行
 const MAX_LINE_NUMBER_WIDTH = 6; // 行号列宽上限（999999 行）
-// 整文件读入内存（用于按行切片）的上限；超过则退化为字节窗口读取（老路径）。
-const FULL_READ_TEXT_BYTES = 2 * 1024 * 1024; // 2MB
-
 // 读文件 [offset, offset+length) 字节范围（UTF-8 安全由调用方保证边界）。
 function readFileRange(real: string, offset: number, length: number): Buffer {
   const fd = fs.openSync(real, 'r');
@@ -47,21 +46,6 @@ function readFileRange(real: string, offset: number, length: number): Buffer {
   } finally {
     fs.closeSync(fd);
   }
-}
-
-// 超大文本（≥FULL_READ_TEXT_BYTES）的降级读取：字节窗口 + 字节 offset 续读。
-// 与行号路径互斥——这种文件通常是无换行的压缩/数据文件，行号无意义。
-function readTextByByteWindow(real: string, total: number, _rel: string, byteOffset = 0): string {
-  const remaining = Math.max(0, total - byteOffset);
-  const buf = readFileRange(real, byteOffset, Math.min(MAX_READ_BYTES, remaining));
-  const body = buf.toString('utf8');
-  const endOffset = byteOffset + buf.length;
-  if (endOffset >= total) return body;
-  return (
-    `${body}\n[READ TRUNCATED]\n` +
-    `[READ 提示] 文件共 ${total} 字节（超大文本，按字节窗口读取）。` +
-    `已读至 offset=${endOffset}，剩余可用 offset=${endOffset}（字节偏移）续读。`
-  ).trim();
 }
 
 // ---- 行感知输出预算切片 ----
@@ -379,7 +363,7 @@ const MAX_IMAGE_READ_BYTES = 8 * 1024 * 1024;
 register({
   name: 'read',
   description:
-    '读取文件内容，返回时每行带行号前缀（格式"行号→内容"，行号仅为定位用，不是文件内容；用 edit 复制 oldText 时请勿包含行号前缀）。默认返回前 500 行；用 offset 从指定行号续读、limit 限定本次行数。单次返回受 16KB 输出预算限制：超预算时保留首尾并在中间标注省略区间，提示中会给出精确的 offset/limit 续读参数（内容不丢失，只是分页）。图片文件：当前模型支持视觉时直接返回图片供查看分析（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 下仅限 Workspace；Full access 下可使用绝对路径。',
+    '读取文本或图片。文本返回“行号→内容”，edit 的 oldText 不要包含行号。offset 始终是起始行号，limit 是行数（默认/最大 500），不随文件大小改变。输出预算 16KB，超限保留首尾并提示续读行号；超长单行可能截断，需其他工具处理。支持视觉的模型可查看工作区内图片（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 仅限工作区；Full access 可用绝对路径。',
   effect: 'read',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '').trim();
@@ -398,7 +382,7 @@ register({
       },
       limit: {
         type: 'number',
-        description: '本次最多读取的行数，默认 500。',
+        description: '本次最多读取的行数，默认 500，最大 500。',
       },
     },
     required: ['path'],
@@ -410,6 +394,8 @@ register({
     if (!Number.isFinite(startLine) || startLine < 1) startLine = 1;
     let limit = Number(args.limit ?? MAX_READ_LINES);
     if (!Number.isFinite(limit) || limit < 1) limit = MAX_READ_LINES;
+    startLine = Math.floor(startLine);
+    limit = Math.min(MAX_READ_LINES, Math.floor(limit));
 
     const real = resolveAuthorizedPath(context, rel);
     let st: fs.Stats;
@@ -422,7 +408,7 @@ register({
     if (st.size === 0) return '[READ 提示] 文件为空。';
 
     // 读头部用于图片嗅探（图片无论大小都只需头部 magic）
-    const headLen = Math.min(MAX_READ_BYTES, st.size);
+    const headLen = Math.min(12, st.size);
     const headBuf = readFileRange(real, 0, headLen);
     const image = sniffImage(headBuf);
     if (image) {
@@ -453,29 +439,20 @@ register({
       };
     }
 
-    // ---- 文本路径 ----
-    // 超大文件（≥2MB）退化为字节窗口读取（老路径），避免整文件进内存；
-    // 此时无法给行号，按字节 offset 续读。这种文件通常是无换行的压缩/数据文件。
-    if (st.size >= FULL_READ_TEXT_BYTES) {
-      const byteOffset = Number(args.offset ?? 0);
-      const safeByte =
-        Number.isFinite(byteOffset) && byteOffset >= 0 ? Math.min(byteOffset, st.size) : 0;
-      return readTextByByteWindow(real, st.size, rel, safeByte);
+    // 非图片二进制（NUL/大量控制字符）不按文本读：6KB 乱码经 JSON 转义会
+    // 膨胀到 ~36KB 进 Context，纯耗 token 无信息量。isProbablyBinary 此前
+    // 已实现但未接线，这里补上 —— 与图片省略同一模式，指路 shell 工具。
+    const binarySample = readFileRange(real, 0, Math.min(8192, st.size));
+    if (isProbablyBinary(binarySample)) {
+      return (
+        `[二进制文件省略] ${rel}: 二进制文件（共 ${st.size} 字节），未载入内容。` +
+        `如需了解其信息，请改用 shell 工具（file / wc / xxd / head -c）。`
+      );
     }
 
-    let raw: string;
-    try {
-      raw = fs.readFileSync(real, 'utf8');
-    } catch {
-      throw new Error(`读取失败: ${rel}`);
-    }
-    // 剥离 BOM（仅显示用，edit 写回时自行保留）
-    const hadBom = raw.charCodeAt(0) === 0xfeff;
-    const text = hadBom ? raw.slice(1) : raw;
-
-    // split 保留语义：末尾换行不产生多余空行
-    const lines = text.split('\n');
-    const totalLines = lines.length;
+    const { lines: windowLines, totalLines, hadBom, truncatedLines } = await readTextWindow(
+      real, startLine, limit, MAX_READ_BYTES,
+    ).catch(() => { throw new Error(`读取失败: ${rel}`); });
 
     if (startLine > totalLines) {
       throw new Error(
@@ -483,28 +460,21 @@ register({
       );
     }
 
-    const startIdx = startLine - 1;
-    const endIdx = Math.min(startIdx + limit, totalLines);
-    const windowLines = lines.slice(startIdx, endIdx);
-
     // 行号列宽（不超过 6 位）
     const width = Math.min(MAX_LINE_NUMBER_WIDTH, String(totalLines).length);
     const numberedLines = windowLines.map(
       (line, i) => `${String(startLine + i).padStart(width, ' ')}→${line}`,
     );
     const lastShownLine = startLine + windowLines.length - 1;
-    const hasMoreLines = endIdx < totalLines;
+    const hasMoreLines = lastShownLine < totalLines;
 
     const hints: string[] = [];
     if (hadBom) hints.push('[READ 提示] 文件含 UTF-8 BOM（已在显示中剥离）。');
 
-    // 超长单行：窗口内若某行本身超 64KB，提示用字节窗口/shell
-    const hugeLine = windowLines.find((l) => utf8ByteLength(l) > MAX_READ_BYTES);
-    if (hugeLine) {
-      const hugeLineNo = startLine + windowLines.indexOf(hugeLine);
+    if (truncatedLines.length) {
       hints.push(
-        `[READ 提示] 第 ${hugeLineNo} 行单行超过 ${MAX_READ_BYTES} 字节（疑似压缩/无换行文件）。` +
-          `可用 shell: sed -n '${hugeLineNo}p' ${rel} | head -c 128K 查看片段。`,
+        `[READ 提示] 第 ${truncatedLines.slice(0, 8).join('、')} 等 ${truncatedLines.length} 行超过 ${MAX_READ_BYTES} 字节，仅显示有限前缀。` +
+        'offset 始终表示行号，不能续读同一行内部；完整内容请用其他文件处理工具读取。',
       );
     }
 
