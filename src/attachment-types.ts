@@ -1,13 +1,16 @@
-// Shared attachment contract used by Host request handling and Runtime
-// normalization. Keeping it outside either layer prevents Runtime from
-// depending on the Host facade for a data-only type.
-export interface CreateRunAttachmentInput {
+// 附件持久引用：Host、Harness 与界面共享的数据契约，不包含文件内容。
+export interface AttachmentExtraction {
+  status: 'extracted' | 'partial' | 'failed';
+  path?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  message?: string;
+}
+export interface TextAttachmentRef {
   name: string;
-  mimeType: string;
-  dataBase64: string;
-  /** Normalized dimensions; absent when normalization was not available. */
-  width?: number;
-  height?: number;
-  /** Original dimensions before normalization, for example "5000x3000". */
-  originalDimensions?: string;
+  path: string;
+  sizeBytes?: number;
+  sha256?: string;
+  kind?: 'text' | 'binary';
+  extraction?: AttachmentExtraction;
 }

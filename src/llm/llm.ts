@@ -91,7 +91,7 @@ export interface MessageImage {
   data?: string;
 }
 
-import type { TextAttachmentRef } from '../attachment-manifest.js';
+import type { TextAttachmentRef } from '../attachment-types.js';
 
 export interface ChatMessage {
   /** 文本附件引用保留在 canonical transcript，不作为 Provider 文件块。 */

@@ -119,7 +119,8 @@ function stripThink(text: string): string {
   return output.trim();
 }
 
-import { attachmentManifest, type TextAttachmentRef } from '../attachment-manifest.js';
+import { attachmentManifest } from './attachment-manifest.js';
+import type { TextAttachmentRef } from '../attachment-types.js';
 
 export class DefaultContextHarness implements AgentContextHarness {
   private textAttachments: TextAttachmentRef[] = [];

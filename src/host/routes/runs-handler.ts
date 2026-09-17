@@ -6,7 +6,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import type { PermissionMode } from '../../permission-mode.js';
-import { prepareAttachments } from '../../runtime/attachment-normalize.js';
+import { prepareAttachments } from '../attachments/normalize.js';
 import { openFileInDefaultBrowser } from '../default-browser.js';
 import type { CreateRunAttachmentInput, RunManager, SseSink } from '../run-manager.js';
 import {

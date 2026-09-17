@@ -1,3 +1,4 @@
+import type { AttachmentExtraction } from '../../src/attachment-types';
 // 前端类型定义 — 对齐后端 HostEvent / HostRun / FileEntry
 
 // stopping（v1.6）：用户已请求停止（abort 已发出），执行尚未真正退出
@@ -424,6 +425,7 @@ export interface ErrorEvent extends TraceEventBase {
 
 /** 用户随任务上传的附件（已落盘到会话工作区 input/attachments/） */
 export interface RunAttachment {
+  extraction?: AttachmentExtraction;
   kind?: 'image' | 'text' | 'binary';
   sizeBytes?: number;
   sha256?: string;

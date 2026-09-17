@@ -1,3 +1,4 @@
+import { writeAttachmentFile } from '../src/host/attachments/publish.js';
 // 模块: 附件内容寻址库单元测试（attachment-store P0 期，纯文件系统，秒级完成）
 // 用法: npx tsx tests/attachment-store.test.ts
 // 验收：sha256 去重单对象、原子发布字节完整、0444 只读、同名冲突追加后缀不覆盖、
@@ -13,10 +14,9 @@ import {
   publishAttachmentIntoWorkspace,
   putAttachmentObject,
   sweepAttachmentTmp,
-} from '../src/runtime/attachment-store.js';
+} from '../src/attachments/store.js';
 import {
   materializeMessagesForModel,
-  writeAttachmentFile,
 } from '../src/runtime/image-materialize.js';
 
 let passed = 0;

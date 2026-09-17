@@ -1,3 +1,4 @@
+import type { AttachmentExtraction } from '../attachment-types.js';
 // 模块: Host 事件类型 — 浏览器通过 SSE 接收的 Run 事件
 // 组成 = Runtime Trace 事件（透传，保持 type/step/timestamp 原样） + Host 生命周期事件。
 // 生命周期事件由 RunManager 在 Run 状态转换时产生（Host Run Status，与 Runtime Task Outcome 独立）。
@@ -9,9 +10,10 @@ import type {
 } from '../sandbox/toolchain-preparation.js';
 
 // 用户随消息发送的附件（落盘后的引用：工作区相对路径，可走 files 端点预览）。
-// kind: image / text（已归一为纯文本，含 docx/pptx/xlsx/pdf 解包产物）/ binary
-//（.doc/.ppt 等原样保留的二进制，read 不可读，需工具转换）。
+// path 指向上传文件；文档原件为 binary，extraction 单独引用可读正文。
+// 历史 text 附件仍按原路径读取，不尝试凭正文重建丢失的原件。
 export interface HostAttachment {
+  extraction?: AttachmentExtraction;
   kind?: 'image' | 'text' | 'binary';
   sizeBytes?: number;
   sha256?: string;
@@ -26,7 +28,7 @@ export type LifecycleEvent =
       type: 'run_started';
       runId: string;
       timestamp: string;
-      // 本轮用户消息附带的图片（无附件时缺省）；前端据此在用户气泡渲染图片。
+      // 本轮用户消息附件（无附件时缺省），不包含 base64 或提取正文。
       attachments?: HostAttachment[];
     }
   | { type: 'run_stopping'; runId: string; timestamp: string }

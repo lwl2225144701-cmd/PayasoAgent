@@ -24,10 +24,10 @@ import {
 } from '../permission-mode.js';
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
-import { attachmentManifest, type TextAttachmentRef } from '../attachment-manifest.js';
-import { attachmentKind } from '../attachment-policy.js';
-import { restoreTextAttachment } from '../runtime/attachment-store.js';
-import { writeAttachmentFile } from '../runtime/image-materialize.js';
+import { attachmentManifest } from '../harness/attachment-manifest.js';
+import type { TextAttachmentRef } from '../attachment-types.js';
+import { restoreAttachment } from '../attachments/store.js';
+import { publishAttachments } from './attachments/publish.js';
 import { getRunWorkspaceRoot, createWorkspace } from '../sandbox/sandbox-manager.js';
 import { isAbortError } from '../util/abort.js';
 import type { ApprovalCoordinator } from './approval-coordinator.js';
@@ -51,16 +51,13 @@ type TextLikeAttachment = Omit<HostAttachment, 'kind'> & { kind?: 'text' | 'bina
 function asTextAttachmentRefs(views: HostAttachment[]): TextAttachmentRef[] {
   return views
     .filter((item): item is TextLikeAttachment => item.kind === 'text' || item.kind === 'binary')
-    .map(({ name, path, sizeBytes, sha256, kind }) => ({ name, path, sizeBytes, sha256, kind }));
+    .map(({ name, path, sizeBytes, sha256, kind, extraction }) => ({ name, path, sizeBytes, sha256, kind, extraction }));
 }
 import type { SessionService } from './session-service.js';
 import { PLAN_DIRECTIVE } from './session-service.js';
 import type { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
 import { getWorkspace } from './workspace.js';
 import { readProjectInstructions, scanWorkspaceSkills } from './workspace-instructions.js';
-
-// 附件在工作区内的落盘目录（相对 workspaceRoot）。
-const ATTACHMENT_DIR = 'input/attachments';
 
 const INTERRUPTED_ERROR = 'Host restarted before the Run completed';
 
@@ -223,37 +220,7 @@ export class RunLifecycleService {
     // 落附件早于那一步，必须先确保根存在，否则 assertInsideRoot 对不存在
     // 的根直接拒绝 ——「默认工作区 + 会话首个 Run + 带附件」必现 400。
     if (run.workspaceRoot === getRunWorkspaceRoot(runId)) createWorkspace(runId);
-    const attachmentImages: MessageImage[] = [];
-    const attachmentViews: HostAttachment[] = [];
-    for (const attachment of opts?.attachments ?? []) {
-      const { relPath, sha256 } = writeAttachmentFile({
-        workspaceRoot: run.workspaceRoot,
-        directory: ATTACHMENT_DIR,
-        fileName: `${runId.slice(0, 8)}-${attachment.name}`,
-        dataBase64: attachment.dataBase64,
-        independentCopy: !attachment.mimeType.startsWith('image/'),
-      });
-      if (attachment.mimeType.startsWith('image/')) attachmentImages.push({
-        mimeType: attachment.mimeType,
-        path: relPath,
-        sha256,
-        width: attachment.width,
-        height: attachment.height,
-        originalDimensions: attachment.originalDimensions,
-      });
-      attachmentViews.push({
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        path: relPath,
-        kind: attachment.mimeType.startsWith('image/')
-          ? 'image'
-          : attachmentKind(attachment.name, attachment.mimeType) === 'binary'
-            ? 'binary'
-            : 'text',
-        sizeBytes: Buffer.from(attachment.dataBase64, 'base64').length,
-        sha256,
-      });
-    }
+    const { images: attachmentImages, views: attachmentViews } = publishAttachments(run.workspaceRoot, runId, opts?.attachments ?? []);
 
     // Persist before execution starts, so every Runtime event has a parent Run.
     this.store.createRun(this.toStoredRun(run));
@@ -743,7 +710,10 @@ export class RunLifecycleService {
             if (event.type !== 'run_started') continue;
             for (const file of event.attachments ?? []) {
               if (file.kind === 'image' || !file.sha256) continue;
-              try { restoreTextAttachment(run.workspaceRoot, file.path, file.sha256); } catch { /* 原始路径仍留在清单，读取时明确失败 */ }
+              for (const ref of [file, file.extraction]) {
+                if (!ref?.path || !ref.sha256) continue;
+                try { restoreAttachment(run.workspaceRoot, ref.path, ref.sha256); } catch { /* 清单保留路径，工具读取时报告缺失。 */ }
+              }
             }
           }
         }

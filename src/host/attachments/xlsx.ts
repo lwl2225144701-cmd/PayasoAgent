@@ -2,7 +2,8 @@
 // 各 sheet 的 xl/worksheets/sheetN.xml 里单元格 <c r="A1" t="s"><v>0</v></c>
 // 引用共享串。按行还原成 TSV：空列用连续制表符占位（保持列对齐），每张表
 // 以 "--- Sheet N ---" 分节。公式/数字/布尔取 <v> 原值，内联串取 <is><t>。
-import { zipEntry, zipEntryNames } from './attachment-zip.js';
+import { MAX_TEXT_BYTES } from '../../attachment-policy.js';
+import { openZip } from './zip.js';
 
 const SHEET_RE = /^xl\/worksheets\/sheet(\d+)\.xml$/;
 const CELL_RE = /<c\b[^>]*r="([A-Z]+)\d+"[^>]*?(?:\/>|>([\s\S]*?)<\/c>)/g;
@@ -41,18 +42,23 @@ function parseSharedStrings(xml: string): string[] {
 
 function sheetXmlToTsv(xml: string, sharedStrings: string[]): string {
   const lines: string[] = [];
+  let textBytes = 0;
   const rowRe = /<row(?:\s[^>]*)?>([\s\S]*?)<\/row>/g;
   for (const row of xml.matchAll(rowRe)) {
     const cells = new Map<number, string>();
     for (const cell of row[1].matchAll(CELL_RE)) {
       const col = columnIndex(cell[1]);
+      if (!Number.isSafeInteger(col) || col > 16383) throw new Error('工作表列索引超限');
       const body = cell[2] ?? '';
       const typeMatch = /t="([^"]+)"/.exec(cell[0]);
       let value = '';
       if (typeMatch && typeMatch[1] === 's') {
         const v = /<v>([\s\S]*?)<\/v>/.exec(body);
         const index = v ? Number(v[1]) : NaN;
-        value = Number.isInteger(index) && index >= 0 && index < sharedStrings.length ? sharedStrings[index] : '';
+        value =
+          Number.isInteger(index) && index >= 0 && index < sharedStrings.length
+            ? sharedStrings[index]
+            : '';
       } else if (typeMatch && typeMatch[1] === 'inlineStr') {
         const t = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/.exec(body);
         value = t ? decodeXmlEntities(t[1]) : '';
@@ -60,6 +66,8 @@ function sheetXmlToTsv(xml: string, sharedStrings: string[]): string {
         const v = /<v>([\s\S]*?)<\/v>/.exec(body);
         value = v ? decodeXmlEntities(v[1]) : '';
       }
+      textBytes += Buffer.byteLength(value, 'utf8') + 1;
+      if (textBytes > MAX_TEXT_BYTES) throw new Error('工作表正文超过 2 MiB');
       cells.set(col, value.replace(/\r\n/g, '\n'));
     }
     if (cells.size === 0) continue;
@@ -69,27 +77,35 @@ function sheetXmlToTsv(xml: string, sharedStrings: string[]): string {
     // 行尾空列不保留悬挂制表符
     while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
     lines.push(parts.join('\t'));
+    textBytes += parts.length;
+    if (textBytes > MAX_TEXT_BYTES) throw new Error('工作表正文超过 2 MiB');
   }
   return lines.join('\n');
 }
 
 /** 提取 .xlsx 全部工作表为 TSV；缺共享串表按空串处理，缺 sheet 抛错。 */
 export function extractXlsxText(bytes: Buffer): string {
-  const names = zipEntryNames(bytes);
+  const zip = openZip(bytes);
+  const names = zip.names;
   const sheets = names
     .map((name) => SHEET_RE.exec(name))
     .filter((match): match is RegExpExecArray => match !== null)
     .sort((a, b) => Number(a[1]) - Number(b[1]));
   if (sheets.length === 0) throw new Error('.xlsx 缺少工作表（xl/worksheets/sheetN.xml）');
-  const sharedRaw = zipEntry(bytes, 'xl/sharedStrings.xml');
+  const sharedRaw = zip.read('xl/sharedStrings.xml');
   const sharedStrings = sharedRaw ? parseSharedStrings(sharedRaw.toString('utf8')) : [];
   const parts: string[] = [];
+  let outputBytes = 0;
   for (const match of sheets) {
-    const xml = zipEntry(bytes, match[0]);
+    const xml = zip.read(match[0]);
     if (!xml) continue;
     const tsv = sheetXmlToTsv(xml.toString('utf8'), sharedStrings);
+    outputBytes += Buffer.byteLength(tsv, 'utf8') + 64;
+    if (outputBytes > MAX_TEXT_BYTES) throw new Error('提取正文超过 2 MiB');
     if (tsv.trim()) parts.push(`--- Sheet ${match[1]} ---\n${tsv}`);
   }
   if (parts.length === 0) throw new Error('.xlsx 未提取到内容');
-  return parts.join('\n\n');
+  const result = parts.join('\n\n');
+  if (Buffer.byteLength(result, 'utf8') > MAX_TEXT_BYTES) throw new Error('提取正文超过 2 MiB');
+  return result;
 }

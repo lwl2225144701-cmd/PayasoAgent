@@ -4,7 +4,7 @@
 // </w:tc> 转制表、表格行 </w:tr> 转换行（TSV）、<w:tab/> 转制表、<w:br/> 转
 // 换行，其余 XML 结构全部剥掉，只留可见文本；XML 实体解码；mc:Fallback
 // （同内容的 VML 降级副本）整体剥离防双份提取。
-import { zipEntry } from './attachment-zip.js';
+import { openZip } from './zip.js';
 
 function decodeXmlEntities(text: string): string {
   return text
@@ -68,7 +68,8 @@ function documentXmlToText(xml: string): string {
       const close = xml.indexOf('</w:t>', tagEnd);
       if (close < 0) break;
       text += xml.slice(tagEnd + 1, close);
-      position = close;
+      position = close + 6;
+      continue;
     }
     position = tagEnd + 1;
   }
@@ -79,7 +80,8 @@ function documentXmlToText(xml: string): string {
 
 /** 提取 .docx 正文纯文本；非 zip / 缺正文 / 解包失败一律抛错。 */
 export function extractDocxText(bytes: Buffer): string {
-  const document = zipEntry(bytes, 'word/document.xml');
+  const zip = openZip(bytes);
+  const document = zip.read('word/document.xml');
   if (!document) throw new Error('.docx 缺少正文（word/document.xml）');
   return documentXmlToText(removeMcFallback(document.toString('utf8')));
 }

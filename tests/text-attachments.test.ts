@@ -7,18 +7,21 @@ import { MemorySecretStore } from '../src/host/secrets/secret-store.js';
 import { RunManager } from '../src/host/run-manager.js';
 import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
 import { requestAttachments } from '../src/host/routes/route-context.js';
-import { prepareAttachments } from '../src/runtime/attachment-normalize.js';
-import { writeAttachmentFile } from '../src/runtime/image-materialize.js';
-import { getAttachmentStoreRoot, restoreTextAttachment } from '../src/runtime/attachment-store.js';
+import { prepareAttachments } from '../src/host/attachments/normalize.js';
+import { writeAttachmentFile, publishAttachments } from '../src/host/attachments/publish.js';
+import { getAttachmentStoreRoot, restoreAttachment } from '../src/attachments/store.js';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
-import { createAgentExecutionContext, createDefaultRuntimeServices } from '../src/bootstrap/runtime-bootstrap.js';
+import {
+  createAgentExecutionContext,
+  createDefaultRuntimeServices,
+} from '../src/bootstrap/runtime-bootstrap.js';
 import { createScratchpad } from '../src/runtime/scratchpad.js';
 import { runAgent } from '../src/runtime/agent.js';
 import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
 import { readDownloadChecked } from '../src/host/routes/static-handler.js';
 import { attachmentKind, MAX_OFFICE_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
-import { attachmentManifest } from '../src/attachment-manifest.js';
+import { attachmentManifest } from '../src/harness/attachment-manifest.js';
 import { deflateRawSync } from 'node:zlib';
 import type { ChatMessage } from '../src/llm/llm.js';
 
@@ -66,7 +69,12 @@ function buildMinimalDocx(documentXml: string, opts: { skipDocument?: boolean } 
 function buildPdf(content: string): Buffer {
   const stream = deflateRawSync(Buffer.from(`BT /F1 12 Tf 72 720 Td ${content} ET`, 'latin1'));
   return Buffer.concat([
-    Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n2 0 obj\n<< /Length ' + stream.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1'),
+    Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n2 0 obj\n<< /Length ' +
+        stream.length +
+        ' /Filter /FlateDecode >>\nstream\n',
+      'latin1',
+    ),
     stream,
     Buffer.from('\nendstream\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF', 'latin1'),
   ]);
@@ -76,11 +84,19 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-text-att-'));
 process.env.PAYASO_HOME = root;
 process.env.PAYASO_ATTACHMENT_STORE = path.join(root, 'objects-store');
 process.env.PAYASO_CHECKPOINT_DIR = path.join(root, 'checkpoints');
-const ws = path.join(root, 'workspace'); fs.mkdirSync(ws);
+const ws = path.join(root, 'workspace');
+fs.mkdirSync(ws);
 const originalFetch = globalThis.fetch;
 let checks = 0;
-function check(ok: unknown) { assert.ok(ok); checks++; }
-const input = (name: string, bytes: Buffer, mimeType = '') => ({ name, mimeType, dataBase64: bytes.toString('base64') });
+function check(ok: unknown) {
+  assert.ok(ok);
+  checks++;
+}
+const input = (name: string, bytes: Buffer, mimeType = '') => ({
+  name,
+  mimeType,
+  dataBase64: bytes.toString('base64'),
+});
 try {
   const bytes = Buffer.from('{"compilerOptions":{"target":"ATTACHMENT_SENTINEL_47"}}');
   const parsed = requestAttachments({ attachments: [input('配置.json', bytes)] });
@@ -89,44 +105,99 @@ try {
   check(Buffer.from(prepared[0].dataBase64, 'base64').equals(bytes));
   check(attachmentKind('AGENTS.md', '') === 'text');
   for (const name of ['archive.zip', 'program.exe', 'schema.bin']) {
-    assert.throws(() => requestAttachments({ attachments: [input(name, bytes)] })); checks++;
+    assert.throws(() => requestAttachments({ attachments: [input(name, bytes)] }));
+    checks++;
   }
-  for (const [name, expected] of [['a.docx', 'docx'], ['a.pptx', 'pptx'], ['a.xlsx', 'xlsx'], ['a.pdf', 'pdf'], ['a.doc', 'binary'], ['a.ppt', 'binary']] as const) {
+  for (const [name, expected] of [
+    ['a.docx', 'docx'],
+    ['a.pptx', 'pptx'],
+    ['a.xlsx', 'xlsx'],
+    ['a.pdf', 'pdf'],
+    ['a.doc', 'binary'],
+    ['a.ppt', 'binary'],
+  ] as const) {
     check(attachmentKind(name, '') === expected);
   }
-  assert.throws(() => requestAttachments({ attachments: [input('a.txt', Buffer.alloc(MAX_TEXT_BYTES + 1))] })); checks++;
-  assert.throws(() => requestAttachments({ attachments: [{ name: 'a.txt', mimeType: '', dataBase64: 'YR==' }] })); checks++;
-  assert.throws(() => requestAttachments({ attachments: Array.from({ length: 5 }, () => input('a.txt', bytes)) })); checks++;
+  assert.throws(() =>
+    requestAttachments({ attachments: [input('a.txt', Buffer.alloc(MAX_TEXT_BYTES + 1))] }),
+  );
+  checks++;
+  assert.throws(() =>
+    requestAttachments({ attachments: [{ name: 'a.txt', mimeType: '', dataBase64: 'YR==' }] }),
+  );
+  checks++;
+  assert.throws(() =>
+    requestAttachments({ attachments: Array.from({ length: 5 }, () => input('a.txt', bytes)) }),
+  );
+  checks++;
   for (const invalid of [Buffer.from([0xff, 0xfe, 0x41]), Buffer.from('a\0b')]) {
-    await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('bad.txt', invalid)] }))); checks++;
+    await assert.rejects(
+      prepareAttachments(requestAttachments({ attachments: [input('bad.txt', invalid)] })),
+    );
+    checks++;
   }
-  await prepareAttachments(requestAttachments({ attachments: [input('bom.txt', Buffer.from('\ufeff中文'))] })); checks++;
-  await prepareAttachments(requestAttachments({ attachments: [input('broken.json', Buffer.from('{'))] })); checks++;
-  const saved = writeAttachmentFile({ workspaceRoot: ws, directory: 'input/attachments', fileName: 'config.json', dataBase64: prepared[0].dataBase64, independentCopy: true });
-  const duplicate = writeAttachmentFile({ workspaceRoot: ws, directory: 'input/attachments', fileName: 'config.json', dataBase64: prepared[0].dataBase64, independentCopy: true });
+  await prepareAttachments(
+    requestAttachments({ attachments: [input('bom.txt', Buffer.from('\ufeff中文'))] }),
+  );
+  checks++;
+  await prepareAttachments(
+    requestAttachments({ attachments: [input('broken.json', Buffer.from('{'))] }),
+  );
+  checks++;
+  const saved = writeAttachmentFile({
+    workspaceRoot: ws,
+    directory: 'input/attachments',
+    fileName: 'config.json',
+    dataBase64: prepared[0].dataBase64,
+    independentCopy: true,
+  });
+  const duplicate = writeAttachmentFile({
+    workspaceRoot: ws,
+    directory: 'input/attachments',
+    fileName: 'config.json',
+    dataBase64: prepared[0].dataBase64,
+    independentCopy: true,
+  });
   check(saved.relPath !== duplicate.relPath);
-  const empty = await prepareAttachments(requestAttachments({ attachments: [input('empty.txt', Buffer.alloc(0))] }));
-  const emptySaved = writeAttachmentFile({ workspaceRoot: ws, directory: 'input/attachments', fileName: 'empty.txt', dataBase64: empty[0].dataBase64, independentCopy: true });
+  const empty = await prepareAttachments(
+    requestAttachments({ attachments: [input('empty.txt', Buffer.alloc(0))] }),
+  );
+  const emptySaved = writeAttachmentFile({
+    workspaceRoot: ws,
+    directory: 'input/attachments',
+    fileName: 'empty.txt',
+    dataBase64: empty[0].dataBase64,
+    independentCopy: true,
+  });
   check(fs.statSync(path.join(ws, emptySaved.relPath)).size === 0);
-  const object = path.join(getAttachmentStoreRoot(), 'objects', saved.sha256.slice(0, 2), saved.sha256);
+  const object = path.join(
+    getAttachmentStoreRoot(),
+    'objects',
+    saved.sha256.slice(0, 2),
+    saved.sha256,
+  );
   const local = path.join(ws, saved.relPath);
   check(fs.statSync(object).ino !== fs.statSync(local).ino);
-  fs.chmodSync(local, 0o600); fs.writeFileSync(local, 'changed');
+  fs.chmodSync(local, 0o600);
+  fs.writeFileSync(local, 'changed');
   check(fs.readFileSync(object).equals(bytes));
-  restoreTextAttachment(ws, saved.relPath, saved.sha256);
+  restoreAttachment(ws, saved.relPath, saved.sha256);
   check(fs.readFileSync(local, 'utf8') === 'changed');
-  fs.unlinkSync(local); restoreTextAttachment(ws, saved.relPath, saved.sha256);
+  fs.unlinkSync(local);
+  restoreAttachment(ws, saved.relPath, saved.sha256);
 
-  // ---- .docx：zip 解包 + word/document.xml 文本提取（prepare 阶段归一为 text/plain）----
+  // ---- .docx：zip 解包 + word/document.xml 文本提取（原件不变，prepare 单独提取正文）----
   check(attachmentKind('方案补充.docx', '') === 'docx');
   check(attachmentKind('legacy.doc', '') === 'binary'); // 旧版 .doc 走二进制原样通道
   const documentXml =
     '<w:document><w:body><w:p><w:r><w:t>DOCX_SENTINEL_91</w:t></w:r></w:p>' +
     '<w:p><w:r><w:t>A&amp;B</w:t><w:tab/><w:t>C</w:t><w:br/><w:t>D</w:t></w:r></w:p></w:body></w:document>';
   const docx = buildMinimalDocx(documentXml);
-  const preparedDocx = await prepareAttachments(requestAttachments({ attachments: [input('方案补充.docx', docx)] }));
-  check(preparedDocx[0].mimeType === 'text/plain');
-  const docxText = Buffer.from(preparedDocx[0].dataBase64, 'base64').toString('utf8');
+  const preparedDocx = await prepareAttachments(
+    requestAttachments({ attachments: [input('方案补充.docx', docx)] }),
+  );
+  check(Buffer.from(preparedDocx[0].dataBase64, 'base64').equals(docx));
+  const docxText = preparedDocx[0].extraction!.text!;
   check(docxText.includes('DOCX_SENTINEL_91'));
   check(docxText.includes('A&B\tC\nD'));
   check(docxText.startsWith('DOCX_SENTINEL_91'));
@@ -139,35 +210,57 @@ try {
     '<w:tc><w:p><w:r><w:t>类型</w:t></w:r></w:p></w:tc></w:tr>' +
     '<w:tr><w:tc><w:p><w:r><w:t>chunk_id</w:t></w:r></w:p></w:tc>' +
     '<w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc></w:tr></w:tbl>';
-  const tableText = Buffer.from(
-    (await prepareAttachments(requestAttachments({ attachments: [input('表格.docx', buildMinimalDocx(tableXml))] })))[0].dataBase64,
-    'base64',
-  ).toString('utf8');
+  const tableText = (
+    await prepareAttachments(
+      requestAttachments({ attachments: [input('表格.docx', buildMinimalDocx(tableXml))] }),
+    )
+  )[0].extraction!.text!;
   check(tableText === '字段\t类型\nchunk_id\t\n');
   // 回归：mc:Fallback（同内容的 VML 降级副本）只提取一次
   const fallbackXml =
     '<w:p><mc:AlternateContent><mc:Choice><w:r><w:t>唯一内容</w:t></w:r></mc:Choice>' +
     '<mc:Fallback><w:r><w:t>唯一内容</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p>';
-  const fallbackText = Buffer.from(
-    (await prepareAttachments(requestAttachments({ attachments: [input('去重.docx', buildMinimalDocx(fallbackXml))] })))[0].dataBase64,
-    'base64',
-  ).toString('utf8');
+  const fallbackText = (
+    await prepareAttachments(
+      requestAttachments({ attachments: [input('去重.docx', buildMinimalDocx(fallbackXml))] }),
+    )
+  )[0].extraction!.text!;
   check(fallbackText === '唯一内容\n');
   check(fallbackText.split('唯一内容').length - 1 === 1);
-  // 非 zip 字节 / 缺正文 / 超限 全部拒绝
-  await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('假.docx', Buffer.from('PK\u0003\u0004 not a zip at all'))] })));
-  await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('空.docx', buildMinimalDocx('', { skipDocument: true }))] })));
-  assert.throws(() => requestAttachments({ attachments: [input('大.docx', Buffer.alloc(MAX_OFFICE_BYTES + 1))] })); checks += 3;
+  // 无法提取保留原件并报告失败；超限上传拒绝
+  check(
+    (
+      await prepareAttachments(
+        requestAttachments({
+          attachments: [input('假.docx', Buffer.from('PK\u0003\u0004 not a zip at all'))],
+        }),
+      )
+    )[0].extraction?.status === 'failed',
+  );
+  check(
+    (
+      await prepareAttachments(
+        requestAttachments({
+          attachments: [input('空.docx', buildMinimalDocx('', { skipDocument: true }))],
+        }),
+      )
+    )[0].extraction?.status === 'failed',
+  );
+  assert.throws(() =>
+    requestAttachments({ attachments: [input('大.docx', Buffer.alloc(MAX_OFFICE_BYTES + 1))] }),
+  );
+  checks++;
 
   // ---- .pptx：zip 解包 + slideN.xml 的 <a:t> 文本，按幻灯片分节 ----
   const pptx = buildZip({
-    'ppt/slides/slide1.xml': '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>PPTX_标题一</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
-    'ppt/slides/slide2.xml': '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>第二页要点</a:t></a:r></a:p><a:p><a:r><a:t>另起一行</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    'ppt/slides/slide1.xml':
+      '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>PPTX_标题一</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    'ppt/slides/slide2.xml':
+      '<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>第二页要点</a:t></a:r></a:p><a:p><a:r><a:t>另起一行</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
   });
-  const pptxText = Buffer.from(
-    (await prepareAttachments(requestAttachments({ attachments: [input('汇报.pptx', pptx)] })))[0].dataBase64,
-    'base64',
-  ).toString('utf8');
+  const pptxText = (
+    await prepareAttachments(requestAttachments({ attachments: [input('汇报.pptx', pptx)] }))
+  )[0].extraction!.text!;
   check(pptxText.includes('--- 幻灯片 1 ---'));
   check(pptxText.includes('PPTX_标题一'));
   check(pptxText.includes('--- 幻灯片 2 ---'));
@@ -176,61 +269,159 @@ try {
 
   // ---- .xlsx：共享串 + 各 sheet 还原 TSV（空列占位保持对齐） ----
   const xlsx = buildZip({
-    'xl/sharedStrings.xml': '<sst><si><t>字段</t></si><si><r><t>值</t></r></si><si><t>行二字段</t></si></sst>',
+    'xl/sharedStrings.xml':
+      '<sst><si><t>字段</t></si><si><r><t>值</t></r></si><si><t>行二字段</t></si></sst>',
     'xl/worksheets/sheet1.xml':
       '<worksheet><sheetData>' +
       '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
       '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>42</v></c><c r="D2"><v>跳过C列</v></c></row>' +
       '</sheetData></worksheet>',
   });
-  const xlsxText = Buffer.from(
-    (await prepareAttachments(requestAttachments({ attachments: [input('清单.xlsx', xlsx)] })))[0].dataBase64,
-    'base64',
-  ).toString('utf8');
+  const xlsxText = (
+    await prepareAttachments(requestAttachments({ attachments: [input('清单.xlsx', xlsx)] }))
+  )[0].extraction!.text!;
   check(xlsxText.includes('--- Sheet 1 ---'));
   check(xlsxText.includes('字段\t值'));
   check(xlsxText.includes('行二字段\t42\t\t跳过C列'));
 
-  // ---- .pdf：FlateDecode 流 Tj 文本提取；无文本层返回占位说明 ----
-  const pdfText = Buffer.from(
-    (await prepareAttachments(requestAttachments({ attachments: [input('文档.pdf', buildPdf('(Hello PDF world) Tj'))] })))[0].dataBase64,
-    'base64',
-  ).toString('utf8');
+  // ---- .pdf：FlateDecode 流 Tj 文本提取；无法提取时记录失败，不创建占位正文 ----
+  const pdfText = (
+    await prepareAttachments(
+      requestAttachments({ attachments: [input('文档.pdf', buildPdf('(Hello PDF world) Tj'))] }),
+    )
+  )[0].extraction!.text!;
   check(pdfText.includes('Hello PDF world'));
-  const scanned = Buffer.from(
-    (await prepareAttachments(requestAttachments({ attachments: [input('扫描.pdf', buildPdf('0 0 1 rg 10 10 100 100 re f'))] })))[0].dataBase64,
-    'base64',
-  ).toString('utf8');
-  check(scanned.includes('无文本层'));
-  await assert.rejects(prepareAttachments(requestAttachments({ attachments: [input('假.pdf', Buffer.from('not a pdf'))] }))); checks++;
+  const scanned = (
+    await prepareAttachments(
+      requestAttachments({
+        attachments: [input('扫描.pdf', buildPdf('0 0 1 rg 10 10 100 100 re f'))],
+      }),
+    )
+  )[0].extraction!.text!;
+  check(scanned === undefined);
+  check(
+    (
+      await prepareAttachments(
+        requestAttachments({ attachments: [input('假.pdf', Buffer.from('not a pdf'))] }),
+      )
+    )[0].extraction?.status === 'failed',
+  );
+
+  // 原件下载字节不变，正文独立 .txt；续聊清单同时保留原件与正文引用。
+  const publishedDoc = publishAttachments(ws, 'document-test', preparedDocx).views[0];
+  const downloadedDoc = readDownloadChecked(ws, publishedDoc.path);
+  check(downloadedDoc.ok && downloadedDoc.buffer.equals(docx));
+  check(publishedDoc.extraction?.path?.endsWith('.txt'));
+  check(
+    fs
+      .readFileSync(path.join(ws, publishedDoc.extraction!.path!), 'utf8')
+      .includes('DOCX_SENTINEL_91'),
+  );
+  check(
+    attachmentManifest([
+      publishedDoc as import('../src/attachment-types.js').TextAttachmentRef,
+    ]).includes(publishedDoc.extraction!.path!),
+  );
+  for (const item of [publishedDoc, publishedDoc.extraction!]) {
+    const filePath = path.join(ws, item.path!);
+    fs.unlinkSync(filePath);
+    restoreAttachment(ws, item.path!, item.sha256!);
+    check(fs.existsSync(filePath));
+  }
+  const beforeFailedPublish = fs.readdirSync(path.join(ws, 'input/attachments')).sort();
+  assert.throws(() =>
+    publishAttachments(ws, 'failed-batch', [
+      preparedDocx[0],
+      { name: 'empty.png', mimeType: 'image/png', dataBase64: '' },
+    ]),
+  );
+  checks++;
+  check(
+    JSON.stringify(fs.readdirSync(path.join(ws, 'input/attachments')).sort()) ===
+      JSON.stringify(beforeFailedPublish),
+  );
+
+  const rawPdf = Buffer.from(
+    '%PDF-1.4\n<< /Length 33 >>\nstream\nBT (Uncompressed sentinel) Tj ET\nendstream',
+  );
+  const rawPrepared = (await prepareAttachments([input('plain.pdf', rawPdf)]))[0];
+  check(rawPrepared.extraction?.text === 'Uncompressed sentinel');
+  check(rawPrepared.extraction?.status === 'partial');
+  const mappedPdf = (
+    await prepareAttachments([input('mapped.pdf', Buffer.from('%PDF-1.4 /Type0 /ToUnicode'))])
+  )[0];
+  check(mappedPdf.extraction?.status === 'failed');
+  check(Buffer.from(mappedPdf.dataBase64, 'base64').toString() === '%PDF-1.4 /Type0 /ToUnicode');
+  const oversizedXml = buildMinimalDocx('a'.repeat(9 * 1024 * 1024));
+  const boundedDoc = (await prepareAttachments([input('large.docx', oversizedXml)]))[0];
+  check(boundedDoc.extraction?.status === 'failed');
+  check(boundedDoc.extraction?.message?.includes('超限'));
+  const largePdf = Buffer.alloc(9 * 1024 * 1024);
+  fs.writeFileSync(path.join(ws, 'large.pdf'), largePdf);
+  const downloadLarge = readDownloadChecked(ws, 'large.pdf');
+  check(downloadLarge.ok && downloadLarge.buffer.equals(largePdf));
 
   // ---- .doc/.ppt：旧版二进制原样保留（mimeType 透传，字节不变） ----
   const docBytes = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00, 0x00]);
-  const docPrepared = await prepareAttachments(requestAttachments({ attachments: [input('旧方案.doc', docBytes, 'application/msword')] }));
+  const docPrepared = await prepareAttachments(
+    requestAttachments({ attachments: [input('旧方案.doc', docBytes, 'application/msword')] }),
+  );
   check(docPrepared[0].mimeType === 'application/msword');
   check(Buffer.from(docPrepared[0].dataBase64, 'base64').equals(docBytes));
-  check(attachmentManifest([{ name: '旧方案.doc', path: 'x.doc', kind: 'binary' }]).includes('二进制附件'));
-  check(!attachmentManifest([{ name: 'a.txt', path: 'a.txt', kind: 'text' }]).includes('二进制附件'));
+  check(
+    attachmentManifest([{ name: '旧方案.doc', path: 'x.doc', kind: 'binary' }]).includes(
+      '二进制附件',
+    ),
+  );
+  check(
+    attachmentManifest([{ name: 'a.txt', path: 'a.txt', kind: 'text' }]).includes('文本用 read'),
+  );
   check(fs.readFileSync(local).equals(bytes));
   check(readDownloadChecked(ws, saved.relPath).ok);
   check(!readDownloadChecked(ws, '../objects-store').ok);
   fs.symlinkSync(root, path.join(ws, 'escape'));
   check(!readDownloadChecked(ws, 'escape/objects-store').ok);
-  assert.throws(() => restoreTextAttachment(ws, 'escape/nope.txt', saved.sha256)); checks++;
+  assert.throws(() => restoreAttachment(ws, 'escape/nope.txt', saved.sha256));
+  checks++;
 
-  const ref = { name: '配置.json', path: saved.relPath, sizeBytes: bytes.length, sha256: saved.sha256 };
-  const harness = new DefaultContextHarness({ permissionMode: 'read-only', model: 'attachment-test' });
-  harness.setTextAttachments([ref]);
+  const ref = {
+    name: '配置.json',
+    path: saved.relPath,
+    sizeBytes: bytes.length,
+    sha256: saved.sha256,
+  };
+  const harness = new DefaultContextHarness({
+    permissionMode: 'read-only',
+    model: 'attachment-test',
+  });
+  harness.setTextAttachments([ref, { ...publishedDoc, kind: 'binary' }]);
   const transcript = harness.createTranscript('检查附件');
   check(transcript.at(-1)?.content.includes(saved.relPath));
   check(!transcript.at(-1)?.content.includes('ATTACHMENT_SENTINEL_47'));
   check(transcript.at(-1)?.images === undefined);
-  const historyHarness = new DefaultContextHarness({ permissionMode: 'read-only', model: 'attachment-test' });
-  const history = historyHarness.createTranscript('继续检查', [...transcript, { role: 'assistant', content: 'done' }]);
+  const historyHarness = new DefaultContextHarness({
+    permissionMode: 'read-only',
+    model: 'attachment-test',
+  });
+  const history = historyHarness.createTranscript('继续检查', [
+    ...transcript,
+    { role: 'assistant', content: 'done' },
+  ]);
   check(history[1].textAttachments?.[0].sha256 === saved.sha256);
-  historyHarness.restoreState({ conversationSummary: '已看过配置', summarizedMessageCount: 2, plan: { revision: 0, items: [] } });
+  historyHarness.restoreState({
+    conversationSummary: '已看过配置',
+    summarizedMessageCount: 2,
+    plan: { revision: 0, items: [] },
+  });
   const view = await historyHarness.prepareTurn(history, createScratchpad('继续检查'), []);
-  check(view.messages.some((message) => message.role === 'user' && message.content.includes(saved.relPath)));
+  check(
+    view.messages.some(
+      (message) => message.role === 'user' && message.content.includes(saved.relPath),
+    ),
+  );
+
+  check(view.messages.some((message) => message.content.includes(publishedDoc.extraction!.path!)));
+  check(history[1].textAttachments?.[1].extraction?.sha256 === publishedDoc.extraction?.sha256);
 
   // 模型替身只根据附件清单发 read，第二轮必须收到真实文件工具结果。
   let calls = 0;
@@ -238,20 +429,62 @@ try {
   globalThis.fetch = (async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     seen.push(body.messages);
-    const message = calls++ === 0 ? { role: 'assistant', content: '', tool_calls: [{ id: 'read-att', type: 'function', function: { name: 'read', arguments: JSON.stringify({ path: saved.relPath }) } }] } : { role: 'assistant', content: 'ATTACHMENT_SENTINEL_47' };
-    return new Response(JSON.stringify({ choices: [{ message }] }), { headers: { 'Content-Type': 'application/json' } });
+    const readPath = calls === 0 ? saved.relPath : publishedDoc.extraction!.path;
+    const message =
+      calls++ < 2
+        ? {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: `read-${calls}`,
+                type: 'function',
+                function: { name: 'read', arguments: JSON.stringify({ path: readPath }) },
+              },
+            ],
+          }
+        : { role: 'assistant', content: 'ATTACHMENT_SENTINEL_47' };
+    return new Response(JSON.stringify({ choices: [{ message }] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }) as typeof fetch;
   const result = await runAgent('读取上传配置', undefined, {
-    executionContext: createAgentExecutionContext({ runId: 'text-attachment-run', workspaceRoot: ws, permissionMode: 'read-only' }),
-    ...createDefaultRuntimeServices(), observer: silentRuntimeObserver,
+    executionContext: createAgentExecutionContext({
+      runId: 'text-attachment-run',
+      workspaceRoot: ws,
+      permissionMode: 'read-only',
+    }),
+    ...createDefaultRuntimeServices(),
+    observer: silentRuntimeObserver,
     contextHarness: harness,
-    modelConfig: { model: 'attachment-test', baseUrl: 'https://attachment.test/v1', apiKey: 'test-only', vision: false },
+    modelConfig: {
+      model: 'attachment-test',
+      baseUrl: 'https://attachment.test/v1',
+      apiKey: 'test-only',
+      vision: false,
+    },
   });
   check(result === 'ATTACHMENT_SENTINEL_47');
-  check(seen[1].some((message) => message.role === 'tool' && message.content.includes('ATTACHMENT_SENTINEL_47')));
+  check(
+    seen[1].some(
+      (message) => message.role === 'tool' && message.content.includes('ATTACHMENT_SENTINEL_47'),
+    ),
+  );
+  check(
+    seen[2].some(
+      (message) => message.role === 'tool' && message.content.includes('DOCX_SENTINEL_91'),
+    ),
+  );
   const checkpoint = loadCheckpoint('text-attachment-run');
-  check(checkpoint?.messages.some((message) => message.textAttachments?.[0].sha256 === saved.sha256));
+  check(
+    checkpoint?.messages.some((message) => message.textAttachments?.[0].sha256 === saved.sha256),
+  );
   check(!JSON.stringify(checkpoint).includes(prepared[0].dataBase64));
+  check(
+    checkpoint?.messages.some(
+      (message) => message.textAttachments?.[1].extraction?.path === publishedDoc.extraction?.path,
+    ),
+  );
 
   // 回归（Host 集成）：旧式 per-run 工作区要等 startAgent 才创建，而附件落盘
   // 更早 —— 默认工作区的首个带附件 Run 曾必现「workspace 根不存在或不可访问」
@@ -274,11 +507,31 @@ try {
     try {
       const created = manager.createInSession('读取上传配置', undefined, {
         permissionMode: 'read-only',
-        attachments: [{ name: '配置.json', mimeType: 'text/plain', dataBase64: prepared[0].dataBase64 }],
+        attachments: [prepared[0], preparedDocx[0]],
       });
-      const attachmentDir = path.join(root, 'sandbox', 'workspaces', created.runId, 'input', 'attachments');
+      const started = store
+        .listEvents(created.runId)
+        .map(({ event }) => event)
+        .find((event) => event.type === 'run_started');
+      check(
+        started?.type === 'run_started' &&
+          started.attachments?.[1].extraction?.status === 'extracted',
+      );
+      check(!JSON.stringify(started).includes(docxText));
+      const attachmentDir = path.join(
+        root,
+        'sandbox',
+        'workspaces',
+        created.runId,
+        'input',
+        'attachments',
+      );
       check(fs.existsSync(attachmentDir));
-      check(fs.readdirSync(attachmentDir).some((file) => fs.readFileSync(path.join(attachmentDir, file)).equals(bytes)));
+      check(
+        fs
+          .readdirSync(attachmentDir)
+          .some((file) => fs.readFileSync(path.join(attachmentDir, file)).equals(bytes)),
+      );
       const deadline = Date.now() + 8000;
       while (Date.now() < deadline) {
         const status = manager.get(created.runId)?.status;

@@ -190,7 +190,7 @@ function toWorkspaceRel(workspaceRoot: string, absolutePath: string): string {
 }
 
 // 只恢复缺失的文本副本；已有文件不覆盖。失败由调用方保留为可见缺失。
-export function restoreTextAttachment(workspaceRoot: string, relPath: string, sha256: string): void {
+export function restoreAttachment(workspaceRoot: string, relPath: string, sha256: string): void {
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('非法附件内容键');
   const target = resolveWorkspacePath(workspaceRoot, relPath);
   assertInsideRoot(workspaceRoot, target);

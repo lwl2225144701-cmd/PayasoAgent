@@ -5,7 +5,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PermissionMode } from '../../permission-mode.js';
-import { prepareAttachments } from '../../runtime/attachment-normalize.js';
+import { prepareAttachments } from '../attachments/normalize.js';
 import type { CreateRunAttachmentInput, RunManager } from '../run-manager.js';
 import {
   bad,

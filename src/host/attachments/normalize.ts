@@ -1,3 +1,4 @@
+// Host 上传预处理：验证图片/文本，提取文档正文；不属于 Agent 执行循环。
 // 附件解码校验与归一化（docs/attachment-v2-content-store.md P1 期）。
 // 设计要点：
 // - sharp 动态加载：安装失败/加载抛错 → 降级为"仅魔数嗅探"，功能不回退、
@@ -11,12 +12,18 @@
 // - 入库字节 = 归一化后字节（内容寻址对归一化结果去重），originalDimensions
 //   记录归一化前原图尺寸
 
-import { attachmentKind, decodeAttachmentText, MAX_OFFICE_BYTES, MAX_PDF_BYTES, MAX_TEXT_BYTES } from '../attachment-policy.js';
-import { extractDocxText } from './attachment-docx.js';
-import { extractPptxText } from './attachment-pptx.js';
-import { extractXlsxText } from './attachment-xlsx.js';
-import { extractPdfText } from './attachment-pdf.js';
-import type { CreateRunAttachmentInput } from '../attachment-types.js';
+import {
+  attachmentKind,
+  decodeAttachmentText,
+  MAX_OFFICE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_TEXT_BYTES,
+} from '../../attachment-policy.js';
+import { extractDocxText } from './docx.js';
+import { extractPptxText } from './pptx.js';
+import { extractXlsxText } from './xlsx.js';
+import { extractPdfText } from './pdf.js';
+import type { CreateRunAttachmentInput } from './types.js';
 
 export const ATTACHMENT_PIXEL_LIMIT = 64 * 1024 * 1024;
 export const ATTACHMENT_SIDE_LIMIT = 16_384;
@@ -26,12 +33,7 @@ export const NORMALIZE_BYTES_TARGET = 4 * 1024 * 1024;
 type SharpModule = typeof import('sharp')['default'];
 type SharpInstance = ReturnType<SharpModule>;
 
-export interface PreparedAttachment extends CreateRunAttachmentInput {
-  width?: number;
-  height?: number;
-  /** 归一化发生时的原图尺寸，如 "5000x3000"（未缩放则缺省） */
-  originalDimensions?: string;
-}
+export type PreparedAttachment = CreateRunAttachmentInput;
 
 let sharpPromise: Promise<SharpModule | null> | null = null;
 let sharpUnavailableWarned = false;
@@ -82,7 +84,12 @@ export async function prepareAttachments(
   list: CreateRunAttachmentInput[],
   injectSharp?: SharpModule | null,
 ): Promise<PreparedAttachment[]> {
-  const sharp = injectSharp !== undefined ? injectSharp : list.some((item) => attachmentKind(item.name, item.mimeType) === 'image') ? await loadSharp() : null;
+  const sharp =
+    injectSharp !== undefined
+      ? injectSharp
+      : list.some((item) => attachmentKind(item.name, item.mimeType) === 'image')
+        ? await loadSharp()
+        : null;
   return Promise.all(list.map((item) => prepareAttachment(sharp, item)));
 }
 
@@ -94,29 +101,62 @@ async function prepareAttachment(
   const kind = attachmentKind(item.name, item.mimeType);
   if (kind === 'text') {
     if (bytes.length > MAX_TEXT_BYTES) throw new Error(`附件 ${item.name} 超过 2 MiB 上限`);
-    try { decodeAttachmentText(bytes); } catch { throw new Error(`附件 ${item.name} 不是 UTF-8 文本，请转码后重试`); }
+    try {
+      decodeAttachmentText(bytes);
+    } catch {
+      throw new Error(`附件 ${item.name} 不是 UTF-8 文本，请转码后重试`);
+    }
     return { name: item.name, mimeType: 'text/plain', dataBase64: bytes.toString('base64') };
   }
   if (kind === 'docx' || kind === 'pptx' || kind === 'xlsx' || kind === 'pdf') {
-    // 文档类在 prepare 阶段解包成纯文本：下游（落盘/清单/时间线）从此把它
-    // 当普通文本附件，零特判。提取后的文本同样受 2MiB 读取预算约束。
+    // 原件不变，正文单独保存。提取失败仍接受原件，供后续工具处理。
     const limit = kind === 'pdf' ? MAX_PDF_BYTES : MAX_OFFICE_BYTES;
     if (bytes.length > limit) throw new Error(`附件 ${item.name} 超过大小上限`);
-    const text =
-      kind === 'docx' ? extractDocxText(bytes)
-      : kind === 'pptx' ? extractPptxText(bytes)
-      : kind === 'xlsx' ? extractXlsxText(bytes)
-      : extractPdfText(bytes);
-    if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) {
-      throw new Error(`附件 ${item.name} 正文超过 2 MiB，请拆分后上传`);
+    try {
+      const text =
+        kind === 'docx'
+          ? extractDocxText(bytes)
+          : kind === 'pptx'
+            ? extractPptxText(bytes)
+            : kind === 'xlsx'
+              ? extractXlsxText(bytes)
+              : extractPdfText(bytes);
+      if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES)
+        throw new Error('提取正文超过 2 MiB，请拆分文档');
+      if (!text.trim())
+        throw new Error('未能提取文字；可能无文本层或格式不受支持，需要其他工具处理原件');
+      return {
+        ...item,
+        extraction: {
+          status: kind === 'pdf' ? 'partial' : 'extracted',
+          text,
+          ...(kind === 'pdf'
+            ? {
+                message:
+                  'PDF 为简易提取，可能遗漏文字或布局；不支持 OCR 和字体字符映射，必要时使用其他工具处理原件',
+              }
+            : {}),
+        },
+      };
+    } catch (error) {
+      return {
+        ...item,
+        extraction: {
+          status: 'failed',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
     }
-    return { name: item.name, mimeType: 'text/plain', dataBase64: Buffer.from(text, 'utf8').toString('base64') };
   }
   if (kind === 'binary') {
     // .doc/.ppt 旧版 OLE2：无法零依赖解包，原样保留字节（mimeType 透传），
     // 由 Agent 在沙箱里用系统工具（textutil/antiword/python 等）转换。
     if (bytes.length > MAX_OFFICE_BYTES) throw new Error(`附件 ${item.name} 超过 8 MiB 上限`);
-    return { name: item.name, mimeType: item.mimeType || 'application/octet-stream', dataBase64: bytes.toString('base64') };
+    return {
+      name: item.name,
+      mimeType: item.mimeType || 'application/octet-stream',
+      dataBase64: bytes.toString('base64'),
+    };
   }
   if (bytes.length === 0) throw new Error(`附件 ${item.name} 内容为空`);
   const sniffed = sniffImageMime(bytes);

@@ -185,7 +185,7 @@ export function requestModelSelection(body: Record<string, unknown>): {
   return { providerId: body.providerId.trim(), model: body.model.trim() };
 }
 
-// 解析并校验消息图片附件：MIME 白名单、数量上限、单张 ≤8MB（base64 估算）。
+// 解析消息附件：共享类型策略、数量/字节上限及 base64 校验。
 // 文件名只取 basename 并交由落盘层二次清洗，任何穿越尝试都到不了磁盘。
 export function requestAttachments(body: Record<string, unknown>): CreateRunAttachmentInput[] {
   if (body.attachments === undefined) return [];

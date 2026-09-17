@@ -2,7 +2,8 @@
 // 文本节点里（DrawingML）。每张幻灯片一节，段落（</a:p>）转换行，换行符
 // （<a:br/>）转 \n，制表（<a:tab/>）转 \t，其余结构剥掉。
 // 开节点判定收紧为 '<a:t>' 或 '<a:t ' —— 避免把 <a:tab/> 等当成文本节点。
-import { zipEntry, zipEntryNames } from './attachment-zip.js';
+import { MAX_TEXT_BYTES } from '../../attachment-policy.js';
+import { openZip } from './zip.js';
 
 const SLIDE_RE = /^ppt\/slides\/slide(\d+)\.xml$/;
 
@@ -33,7 +34,8 @@ function slideXmlToText(xml: string): string {
       const close = xml.indexOf('</a:t>', tagEnd);
       if (close < 0) break;
       text += xml.slice(tagEnd + 1, close);
-      position = close;
+      position = close + 6;
+      continue;
     }
     position = tagEnd + 1;
   }
@@ -42,18 +44,26 @@ function slideXmlToText(xml: string): string {
 
 /** 提取 .pptx 全部幻灯片文本；每张幻灯片以 "--- 幻灯片 N ---" 分节。 */
 export function extractPptxText(bytes: Buffer): string {
-  const slides = zipEntryNames(bytes)
+  const zip = openZip(bytes);
+  const slides = zip.names
     .map((name) => SLIDE_RE.exec(name))
     .filter((match): match is RegExpExecArray => match !== null)
     .sort((a, b) => Number(a[1]) - Number(b[1]));
   if (slides.length === 0) throw new Error('.pptx 缺少幻灯片（ppt/slides/slideN.xml）');
   const parts: string[] = [];
+  let outputBytes = 0;
   for (const match of slides) {
-    const xml = zipEntry(bytes, match[0]);
+    const xml = zip.read(match[0]);
     if (!xml) continue;
-    const text = slideXmlToText(xml.toString('utf8')).replace(/\n{3,}/g, '\n\n').trim();
+    const text = slideXmlToText(xml.toString('utf8'))
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    outputBytes += Buffer.byteLength(text, 'utf8') + 64;
+    if (outputBytes > MAX_TEXT_BYTES) throw new Error('提取正文超过 2 MiB');
     if (text) parts.push(`--- 幻灯片 ${match[1]} ---\n${text}`);
   }
   if (parts.length === 0) throw new Error('.pptx 未提取到文本');
-  return parts.join('\n\n');
+  const result = parts.join('\n\n');
+  if (Buffer.byteLength(result, 'utf8') > MAX_TEXT_BYTES) throw new Error('提取正文超过 2 MiB');
+  return result;
 }

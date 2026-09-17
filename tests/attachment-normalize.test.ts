@@ -14,7 +14,7 @@ import {
   type PreparedAttachment,
   prepareAttachments,
   sniffImageMime,
-} from '../src/runtime/attachment-normalize.js';
+} from '../src/host/attachments/normalize.js';
 
 let passed = 0;
 let failed = 0;

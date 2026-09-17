@@ -7,7 +7,7 @@
 import type { PermissionMode } from '../permission-mode.js';
 import type { StoredRunStatus } from './persistence/store.js';
 
-export type { CreateRunAttachmentInput } from '../attachment-types.js';
+export type { CreateRunAttachmentInput } from './attachments/types.js';
 
 export type HostRunStatus = StoredRunStatus;
 

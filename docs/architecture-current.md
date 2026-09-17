@@ -163,6 +163,18 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/host/secrets/memory-secret-store.ts`         | MemorySecretStore（仅测试/注入）与 UnsupportedSecretStore（非 macOS 明确失败，不回退明文）                                                                                                          |
 | `src/host/index.ts`                               | Host 启动入口（PORT 可覆盖，默认 4500；组合根：创建 SecretStore 并注入）                                                                                                                             |
 
+### 3.1.1 消息附件分层（2026-09-17）
+
+- **Host**：`src/host/attachments/` 负责上传预处理、文档正文提取和文件发布；在创建 Run 前执行。文档原件保持不变，正文另存为 `.txt`，不把上传解析放入 Runtime 循环。
+- **共享存储**：`src/attachments/store.ts` 负责内容寻址、工作区副本及缺失恢复；Host 发布附件、Runtime 物化图片共用，不包含提示词和格式解析。
+- **Harness**：`src/harness/attachment-manifest.ts` 仅生成模型可见的附件清单；`src/attachment-types.ts` 定义持久引用。历史、checkpoint 和压缩后的清单保留原件及正文路径。
+- **工具 / Runtime**：`src/tools/filesystem.ts` 实现通用 `read`；模型决定何时读取，Runtime 执行工具并回传结果。文本正文不自动全文注入上下文。
+- **Web**：拖放/粘贴入口；预览使用 `extraction.path`，下载使用原件 `path`。没有新增文件选择按钮。
+
+`run_started.attachments` 的 `path`、`sha256`、`sizeBytes` 描述上传文件。文档的可选 `extraction` 包含 `status`（`extracted` / `partial` / `failed`）、正文路径/哈希/大小及说明，不包含正文。失败仍保留原件，供后续工具转换。旧事件无此字段时继续按原路径处理；旧版已经丢失的文档原件无法自动恢复。
+
+Office 提取仅覆盖文字/单元格，不保证保留排版、图片或图表。PDF 为简易提取，结果始终标注 `partial`；字体映射、加密、不支持的流或无可提取文字记录失败，不断言文件是扫描件。ZIP/PDF 单条解压上限 8 MiB、累计 32 MiB，正文上限 2 MiB；超限终止提取，保留原件。上传数量和大小沿用公共策略，下载允许最大 16 MiB 的 PDF。
+
 ### 3.2 Web 前端
 
 ```
@@ -269,7 +281,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 ### 4.3 关键保证（与测试对应）
 
-* **Tool Output Guard**：`validateResult` 看工具返回的 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果。普通文本 read 提供行号续读；这不保证所有输出都能恢复：超大文件字节窗口、超长单行和后台 shell 的生产端截断仍需分别处理，Runtime 无法恢复在工具内部已省略的内容。
+* **Tool Output Guard**：`validateResult` 看工具返回的 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果。所有文本 read 统一以 offset 表示起始行号、limit 表示行数（默认/最大 500）；工具层分块扫描并统计总行数，只保留目标窗口，每行最多保留 64 KiB 前缀。超长单行和后台 shell 的生产端截断仍需其他工具处理，Runtime 无法恢复在工具内部已省略的内容。
 
 * **Side-Effect Safety**：`executing → succeeded | uncertain`；`succeeded` 同 key 回放不重跑；`executing/uncertain` 不再自动执行；execute 前必须先持久化 executing。
 

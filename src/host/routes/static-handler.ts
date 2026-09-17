@@ -1,3 +1,4 @@
+import { MAX_PDF_BYTES } from '../../attachment-policy.js';
 // 模块: 静态资源与工作区文件读取 —— 白名单 MIME、路径穿越防护、SPA fallback。
 //
 // 为什么单独存在：静态服务（web/dist 产物 + SPA fallback）与 Run 工作区内的
@@ -218,7 +219,7 @@ export function readDownloadChecked(root: string, rel: string): { ok: true; buff
     const real = resolveWorkspacePath(root, rel);
     assertInsideRoot(root, real);
     const stat = fs.statSync(real);
-    if (!stat.isFile() || stat.size > MAX_IMAGE_FILE_BYTES) return { ok: false, error: '文件类型或大小不支持下载' };
+    if (!stat.isFile() || stat.size > MAX_PDF_BYTES) return { ok: false, error: '文件类型或大小不支持下载' };
     return { ok: true, buffer: fs.readFileSync(real) };
   } catch { return { ok: false, error: '路径被拒绝或不存在' }; }
 }
