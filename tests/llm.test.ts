@@ -171,6 +171,25 @@ try {
     assert.equal(calls, 2);
   });
 
+  await test('429 rate limit honors Retry-After: 0 (immediate retry) and recovers', async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { message: 'RPM limit', type: 'rate_limited' } }), {
+          status: 429,
+          headers: { 'Retry-After': '0' },
+        });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'recovered' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    assert.equal((await chat([{ role: 'user', content: 'hello' }])).content, 'recovered');
+    assert.equal(calls, 2);
+  });
+
   await test('non-retryable 4xx fails once', async () => {
     let calls = 0;
     globalThis.fetch = async () => {

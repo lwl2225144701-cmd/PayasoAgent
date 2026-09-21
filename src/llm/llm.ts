@@ -421,6 +421,8 @@ interface FetchDiagnostics {
   error?: Error;
   status?: number;
   body?: string;
+  // 429/503 时的服务端建议等待秒数（Retry-After）；限速退避依据，缺失则用指数退避。
+  retryAfterMs?: number;
   toolNamesById?: Map<string, string>;
   toolArgumentsById?: Map<string, string>;
   // v2.3 分层超时：连接超时需要在 fetch 边界中止"本次 HTTP 尝试"的控制权，
@@ -586,6 +588,16 @@ async function piFetch(
   if (!response.ok) {
     diagnostics.status = response.status;
     diagnostics.body = (await response.clone().text()).slice(0, 2_000);
+    // 限速响应常带 Retry-After（秒或 HTTP 日期）；解析失败时留空走指数退避。
+    const retryAfter = response.headers.get('retry-after');
+    if (retryAfter && (response.status === 429 || response.status === 503)) {
+      const seconds = Number(retryAfter);
+      const parsed = Number.isFinite(seconds)
+        ? seconds * 1000
+        : Date.parse(retryAfter) - Date.now();
+      // 允许 0：服务端显式要求立即重试（现有测试依赖此快路径）。
+      if (Number.isFinite(parsed) && parsed >= 0) diagnostics.retryAfterMs = Math.min(parsed, 120_000);
+    }
     return response;
   }
 
@@ -688,11 +700,9 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
       );
     }
     return {
-      // 自定义 Provider 的 baseUrl 是用户配置的权威值；只有内置 pi-ai Provider
-      // 继续沿用其已有的厂商路由兼容逻辑。
-      baseUrl: modelConfig.piProviderId
-        ? resolveKnownProviderBaseUrl(modelConfig.baseUrl, modelConfig.model)
-        : modelConfig.baseUrl,
+      // Host 已经解析并固定本轮 Provider。baseUrl 是用户配置的权威值，传输层
+      // 不得再根据模型名静默切换计费或订阅通道。
+      baseUrl: modelConfig.baseUrl,
       apiKey: modelConfig.apiKey,
       model: modelConfig.model,
       providerId: modelConfig.providerId || 'payaso-configured',
@@ -705,32 +715,14 @@ function resolveEndpointConfig(modelConfig?: ModelConfig): {
     };
   }
   return {
-    baseUrl: resolveKnownProviderBaseUrl(BASE_URL, MODEL),
+    // CLI/env fallback 同样尊重显式地址；路由纠正应由配置入口提示用户，而不是
+    // 在发请求时悄悄改成另一个端点。
+    baseUrl: BASE_URL,
     apiKey: API_KEY,
     model: MODEL,
     providerId: 'payaso-env',
     vision: false,
   };
-}
-
-function resolveKnownProviderBaseUrl(baseUrl: string, model: string): string {
-  try {
-    const url = new URL(baseUrl);
-    // StepFun 的 step_plan 通道只接受 step-router-v1；标准模型应走 /v1。
-    if (
-      url.hostname === 'api.stepfun.com' &&
-      url.pathname.replace(/\/$/, '') === '/step_plan/v1' &&
-      model !== 'step-router-v1'
-    ) {
-      url.pathname = '/v1';
-      url.search = '';
-      url.hash = '';
-      return url.toString().replace(/\/$/, '');
-    }
-  } catch {
-    // 保持原值，让 pi-ai 返回可诊断的 URL 错误。
-  }
-  return baseUrl;
 }
 
 function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>): {
@@ -873,7 +865,18 @@ function shouldRetry(result: AssistantMessage, diagnostics: FetchDiagnostics): b
   return diagnostics.error !== undefined && !isAbortOrTimeoutMessage(diagnostics.error.message);
 }
 
-function retryDelay(attempt: number): Promise<void> {
+function retryDelay(attempt: number, diagnostics: FetchDiagnostics): Promise<void> {
+  // 429 限速：毫秒级退避无意义，采用秒级指数退避（5s→10s→20s…上限 60s），
+  // 服务端给了 Retry-After 时以其为准。其余错误保持原有快速退避语义；
+  // 503 仅在显式携带 Retry-After 时按建议值等待，否则维持毫秒级。
+  if (diagnostics.status === 429) {
+    return new Promise((resolve) =>
+      setTimeout(resolve, Math.min(diagnostics.retryAfterMs ?? 5_000 * 2 ** attempt, 60_000)),
+    );
+  }
+  if (diagnostics.status === 503 && diagnostics.retryAfterMs !== undefined) {
+    return new Promise((resolve) => setTimeout(resolve, diagnostics.retryAfterMs));
+  }
   return new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
 }
 
@@ -1029,7 +1032,7 @@ export async function chat(
         return Object.assign(message, usage === undefined ? {} : { usage });
       }
       if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
-        await retryDelay(attempt);
+        await retryDelay(attempt, diagnostics);
         continue;
       }
       throw formatTransportError(result, diagnostics, totalAttempts);
