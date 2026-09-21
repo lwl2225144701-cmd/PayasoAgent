@@ -12,6 +12,8 @@
     "cli": "tsx --env-file=.env src/cli.ts",
     "test": "tsx --env-file=.env tests/agent.test.ts",
     "test:all": "tsx tests/run-all.ts",
+    "test:baseline": "node --env-file=.env --import tsx tests/baseline/run.ts",
+    "test:delivery": "node --env-file=.env --import tsx tests/task-delivery-e2e.test.ts",
     "test:stress": "tsx --env-file=.env tests/stress.test.ts",
     "test:sandbox": "tsx tests/sandbox-manager.test.ts",
     "test:contract": "tsx tests/tool-contract.test.ts",

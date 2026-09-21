@@ -10,6 +10,8 @@ export interface AgentExecutionContext {
   sessionId?: string;
   workspaceRoot: string;
   permissionMode: PermissionMode;
+  /** Host 固化的精确相对路径；undefined 不限，空集合禁止全部写入。 */
+  writeScope?: readonly string[];
   // Host/bootstrap-owned startup snapshot; contains no host paths.
   toolchain?: RuntimeToolchainCapabilities;
   // Project-level instructions from PAYASO.md (only loaded when permission >= workspace-write).

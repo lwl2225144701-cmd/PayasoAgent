@@ -279,7 +279,7 @@ export async function runAgent(
       const assistantMsg = await chat(
         modelMessages,
         schemas,
-        opts.onStreamDelta,
+        contextHarness.reviewFinalAnswer ? undefined : opts.onStreamDelta,
         opts.modelConfig,
         opts.signal,
         // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
@@ -307,6 +307,7 @@ export async function runAgent(
         messageCount: messages.length,
         iteration: i + 1,
         response: assistantMsg.content,
+        ...(contextHarness.reviewFinalAnswer && state.toolCalls > 0 && !assistantMsg.tool_calls?.length ? { purpose: 'final_draft' as const } : {}),
         reasoning: reasoning_content,
         usage: requestUsage,
         hasToolCalls: !!assistantMsg.tool_calls?.length,
@@ -320,7 +321,7 @@ export async function runAgent(
           continue;
         }
         observer.log('[LLM 决策] 未选择工具 → 检查是否为最终答案');
-        const answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
+        let answer = contextHarness.sanitizeFinalAnswer(assistantMsg.content);
 
         // v1.8 空回合不变量：没有工具调用且没有可见内容 → 不是答案。
         // 按 Harness 策略追加提示并重试（有界）；用尽后 fail loudly。
@@ -383,6 +384,26 @@ export async function runAgent(
             incompleteDecision.reason ?? 'incomplete turn',
             incompleteTurnRecoveries,
           );
+        }
+
+        // Runtime 仅执行 Harness 的可选交付策略；检查调用无工具、无副作用重放。
+        if (contextHarness.reviewFinalAnswer && state.toolCalls > 0) {
+          answer = await contextHarness.reviewFinalAnswer({
+            messages: ctx.messages,
+            answer,
+            call: async reviewMessages => {
+              throwIfAborted(opts.signal);
+              emit({ type: 'llm_call_started', iteration: i + 1, messageCount: reviewMessages.length });
+              const reviewed = await chat(reviewMessages, [], undefined, opts.modelConfig, opts.signal,
+                attempt => emit({ type: 'llm_request_sent', iteration: i + 1, attempt }));
+              emit({ type: 'llm_call', purpose: 'final_review', iteration: i + 1,
+                messageCount: reviewMessages.length, response: reviewed.content,
+                reasoning: reviewed.reasoning_content, hasToolCalls: !!reviewed.tool_calls?.length, usage: reviewed.usage });
+              return reviewed;
+            },
+          });
+          throwIfAborted(opts.signal);
+          messages[messages.length - 1] = { role: 'assistant', content: answer };
         }
 
         // Trace: 计划收尾审计 —— 仍留有未完成项时留痕（不阻断收尾；Harness 只报告）。

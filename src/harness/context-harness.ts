@@ -2,6 +2,8 @@ import type { ChatMessage, MessageImage, ModelConfig, ToolSchema } from '../llm/
 import { getNetworkMode } from '../network-mode.js';
 import type { PermissionMode } from '../permission-mode.js';
 import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
+import type { TaskConstraints } from '../task-constraints.js';
+import { reviewFinalAnswer, type FinalReviewInput } from './final-review.js';
 import { ContextManager, type ContextUsage } from './context-manager.js';
 import {
   type ContextHarnessState,
@@ -73,6 +75,7 @@ export interface PreparedModelTurn {
 }
 
 export interface AgentContextHarness {
+  reviewFinalAnswer?: (input: FinalReviewInput) => Promise<string>;
   readonly modelContext: ModelContextConfig;
   createTranscript(
     task: string,
@@ -111,6 +114,9 @@ export interface AgentContextHarness {
   emptyTurnPolicy?(): EmptyTurnPolicy;
   // 文本完成度属于 Harness 策略；缺省/返回 undefined 表示接受此回答。
   incompleteTurnPolicy?(answer: string): IncompleteTurnPolicy | undefined;
+  // 任务约束（Host 在 Run 创建时固化，非模型可控）：仅影响指令内容，
+  // 权限由 Runtime/工具层强制，Harness 文案不得承诺或扩大权限。
+  setTaskConstraints?(constraints: TaskConstraints | undefined): void;
 }
 
 function stripThink(text: string): string {
@@ -119,13 +125,16 @@ function stripThink(text: string): string {
   return output.trim();
 }
 
-import { attachmentManifest } from './attachment-manifest.js';
 import type { TextAttachmentRef } from '../attachment-types.js';
+import { attachmentManifest } from './attachment-manifest.js';
 
 export class DefaultContextHarness implements AgentContextHarness {
+  reviewFinalAnswer?: (input: FinalReviewInput) => Promise<string>;
   private textAttachments: TextAttachmentRef[] = [];
 
-  setTextAttachments(files: TextAttachmentRef[]): void { this.textAttachments = files; }
+  setTextAttachments(files: TextAttachmentRef[]): void {
+    this.textAttachments = files;
+  }
   readonly modelContext: ModelContextConfig;
   private readonly contextManager: ContextManager;
   private readonly composer: InstructionComposer;
@@ -143,6 +152,7 @@ export class DefaultContextHarness implements AgentContextHarness {
     toolchain?: RuntimeToolchainCapabilities;
     workspaceName?: string;
     projectInstructions?: string;
+    finalReview?: boolean;
   }) {
     const resolvedContext =
       options.modelContext ??
@@ -153,6 +163,7 @@ export class DefaultContextHarness implements AgentContextHarness {
         maxOutputTokens: options.modelConfig?.maxOutputTokens,
       });
     this.modelContext = resolvedContext;
+    if (options.finalReview) this.reviewFinalAnswer = input => reviewFinalAnswer(input, this.modelContext.maxInputTokens);
     this.contextManager = new ContextManager(this.modelContext.maxInputTokens);
     this.toolchain = options.toolchain;
     this.composer = new InstructionComposer();
@@ -212,6 +223,53 @@ export class DefaultContextHarness implements AgentContextHarness {
     }
   }
 
+  // 任务约束段（Host 固化后传入，运行中不变）：写范围与证据模式输出契约。
+  // 只描述模型可见的行为边界；真正的强制在 Runtime/工具/沙箱层，文案不得越权承诺。
+  setTaskConstraints(constraints: TaskConstraints | undefined): void {
+    // 来源摘录已有独立的 Host 原文投影，不能让语义检查重写它的 JSON 协议。
+    if (constraints?.evidence) this.reviewFinalAnswer = undefined;
+    const has = this.composer.has('task.constraints');
+    if (!constraints) {
+      if (has) this.composer.removeSegment('task.constraints');
+      return;
+    }
+    const parts: string[] = [];
+    if (constraints.writeScope !== undefined) {
+      parts.push(
+        constraints.writeScope.length === 0
+          ? '- Write scope: this run is read-only. No file may be created or modified (write/edit and Shell writes are enforced read-only).'
+          : `- Write scope (Host-enforced): ONLY these workspace-relative files may be written: ${constraints.writeScope.join(', ')}. Every other path is read-only; creating directories, scripts or scratch files is denied. Deliver changes through write/edit on exactly these files.`,
+      );
+    }
+    if (constraints.evidence) {
+      const items = constraints.evidence.items.map((item, i) => `- item ${i}: ${item}`).join('\n');
+      const sources = constraints.evidence.sources
+        .map((s, i) => `- source ${i}: ${s.path}`)
+        .join('\n');
+      parts.push(
+        [
+          '- Evidence mode: answer ONLY with excerpts from the pinned sources; add no facts of your own.',
+          '- Your final answer must be exactly this JSON and nothing else:',
+          '  [{"item": <item index>, "citations": [{"source": <source index>, "start": <first line>, "end": <last line>}]}]',
+          items,
+          sources,
+          '- start/end are 1-based line numbers; each span covers at most 40 lines; use an empty citations array when a question has no supporting text.',
+          '- The Host verifies every citation against the pinned file versions and renders the excerpts itself. Free-form prose is rejected and not shown to the user.',
+        ].join('\n'),
+      );
+    }
+    if (parts.length === 0) {
+      if (has) this.composer.removeSegment('task.constraints');
+      return;
+    }
+    const content = `## Task Constraints\n\n${parts.join('\n')}`;
+    if (has) this.composer.removeSegment('task.constraints');
+    this.composer.addSegment({
+      id: 'task.constraints', priority: 25, content,
+      budgetTokens: estimateTextTokens(content), mutability: 'per_run',
+    });
+  }
+
   // 项目级指令动态更新（一般 per-run 不变，这里保留接口备 Host 侧运行时按需刷新）。
   // 空字符串视为无项目指令：若 composer 里有就移除，没有就不动。
   setProjectInstructions(content: string): void {
@@ -252,7 +310,9 @@ export class DefaultContextHarness implements AgentContextHarness {
       .map((message) => ({
         role: message.role,
         content: message.content,
-        ...(message.textAttachments?.length ? { textAttachments: message.textAttachments.map((file) => ({ ...file })) } : {}),
+        ...(message.textAttachments?.length
+          ? { textAttachments: message.textAttachments.map((file) => ({ ...file })) }
+          : {}),
         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
         ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
         ...(message.images?.length
@@ -270,7 +330,9 @@ export class DefaultContextHarness implements AgentContextHarness {
       {
         role: 'user',
         content: task + attachmentManifest(this.textAttachments),
-        ...(this.textAttachments.length ? { textAttachments: this.textAttachments.map((file) => ({ ...file })) } : {}),
+        ...(this.textAttachments.length
+          ? { textAttachments: this.textAttachments.map((file) => ({ ...file })) }
+          : {}),
         ...(attachments.length > 0
           ? {
               images: attachments.map((image) => ({
@@ -326,7 +388,10 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.composer.updateContent('env.context', envContextPrompt());
     // Budget target: 15% of maxInputTokens for system prompt overhead.
     const systemBudget = Math.max(512, Math.floor(this.modelContext.maxInputTokens * 0.15));
-    return this.composer.compose(systemBudget).content;
+    const composed = this.composer.compose(systemBudget);
+    const constraints = composed.diagnostics.find(d => d.id === 'task.constraints');
+    if (constraints?.truncated || constraints?.dropped) throw new Error('任务约束超出模型上下文预算，请缩短项目或文件列表');
+    return composed.content;
   }
 
   snapshotState(): ContextHarnessState {
@@ -375,12 +440,18 @@ export class DefaultContextHarness implements AgentContextHarness {
       this.state.summarizedMessageCount = 0;
       modelView.unshift(systemMessage);
     }
-    const visiblePaths = new Set(modelView.flatMap((message) => message.textAttachments ?? []).map((file) => file.path));
-    const archived = transcript.flatMap((message) => message.textAttachments ?? []).filter((file) => !visiblePaths.has(file.path));
+    const visiblePaths = new Set(
+      modelView.flatMap((message) => message.textAttachments ?? []).map((file) => file.path),
+    );
+    const archived = transcript
+      .flatMap((message) => message.textAttachments ?? [])
+      .filter((file) => !visiblePaths.has(file.path));
     if (archived.length) {
       const latestUser = modelView.map((message) => message.role).lastIndexOf('user');
-      if (latestUser >= 0) modelView[latestUser].content += attachmentManifest(archived.slice(-16)) +
-        (archived.length > 16 ? '\n更早附件可用 ls 查看 input/attachments/。' : '');
+      if (latestUser >= 0)
+        modelView[latestUser].content +=
+          attachmentManifest(archived.slice(-16)) +
+          (archived.length > 16 ? '\n更早附件可用 ls 查看 input/attachments/。' : '');
     }
     return modelView;
   }

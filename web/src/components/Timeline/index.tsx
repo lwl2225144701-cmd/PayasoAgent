@@ -1,8 +1,8 @@
+import { RunDelivery } from './RunDelivery';
 import { FileAttachment } from './FileAttachment';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelToolchainPreparation,
-  openFileInDefaultBrowser,
   resolveApproval,
   resolveToolchainPreparation,
   workspaceFileUrl,
@@ -21,7 +21,6 @@ import type { LanguageMode } from '../../preferences';
 import type {
   ApprovalRequestedEvent,
   ContextUsageEvent,
-  FileEntry,
   HostEvent,
   HostRun,
   HostRunStatus,
@@ -36,7 +35,6 @@ import type {
 } from '../../types';
 import { CollapsibleText } from '../CollapsibleText';
 import { CopyButton } from '../CopyButton';
-import { FileModal } from '../FileModal';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
@@ -362,19 +360,9 @@ export const Timeline = memo(function Timeline({
     isLive ? 'live' : 'snapshot',
     !optimistic && run?.status === 'running' ? onRunTerminal : undefined,
   );
-  const [openFile, setOpenFile] = useState<FileEntry | null>(null);
-  // 产出文件默认收起，只在用户需要时展开，避免长文件列表遮挡对话内容。
-  const [filesOpen, setFilesOpen] = useState(false);
-  const [openedInBrowser, setOpenedInBrowser] = useState<string | null>(null);
-  const [fileActionError, setFileActionError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const getScrollContainer = useCallback(() => findScrollContainer(scrollRef.current), []);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 切到另一轮时必须收起文件面板——runId 是触发条件，刻意不在回调体内引用
-  useEffect(() => {
-    setFilesOpen(false);
-  }, [run?.runId]);
 
   const onScroll = useCallback(() => {
     const el = getScrollContainer();
@@ -407,17 +395,6 @@ export const Timeline = memo(function Timeline({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [embedded, events, getScrollContainer]);
-
-  const openInBrowser = async (file: FileEntry) => {
-    if (!run) return;
-    setFileActionError(null);
-    try {
-      await openFileInDefaultBrowser(run.runId, file.name);
-      setOpenedInBrowser(file.name);
-    } catch {
-      setFileActionError(t('timeline.files.openError'));
-    }
-  };
 
   // ---- 答案派生：引用稳定时跳过全串正则（stripThinkTags 是剩余最大单点成本）----
   // rawFinalAnswer：优先级与 buildStructure 原逻辑一致（final_answer > run_completed.result
@@ -566,7 +543,6 @@ export const Timeline = memo(function Timeline({
     finalAnswer,
     finalTimestamp,
     finalError,
-    producedFiles: files,
     lastStepRunning,
     toolSteps,
     globalThinking,
@@ -787,73 +763,11 @@ export const Timeline = memo(function Timeline({
               <div className={styles.finalBlock}>
                 <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
                 {finalError && <div className={styles.finalError}>{finalError}</div>}
-                {files.length > 0 && (
-                  <div className={styles.artifacts}>
-                    <button
-                      type="button"
-                      className={styles.artifactsSummary}
-                      onClick={() => setFilesOpen((value) => !value)}
-                      aria-expanded={filesOpen}
-                    >
-                      <span className={styles.artifactsSummaryIcon}>
-                        <FileIcon />
-                      </span>
-                      <span>{t('timeline.files.changedCount', { count: files.length })}</span>
-                      <span className={styles.artifactsSummaryPreview}>
-                        {files.length === 1
-                          ? files[0].name
-                          : t('timeline.files.andMore', { name: files[0].name })}
-                      </span>
-                      <ChevronRightIcon
-                        size={14}
-                        className={`${styles.artifactsChevron} ${filesOpen ? styles.artifactsChevronOpen : ''}`}
-                      />
-                    </button>
-                    {filesOpen && (
-                      <ul className={styles.attachList}>
-                        {files.map((f) => (
-                          <li key={f.name}>
-                            <div className={styles.attachCard}>
-                              <span className={styles.attachIcon}>
-                                <FileIcon />
-                              </span>
-                              <span className={styles.attachInfo}>
-                                <span className={styles.attachName}>{f.name}</span>
-                                {typeof f.size === 'number' && (
-                                  <span className={styles.attachSize}>{formatBytes(f.size)}</span>
-                                )}
-                              </span>
-                              <span className={styles.attachActions}>
-                                <button
-                                  type="button"
-                                  className={styles.attachAction}
-                                  onClick={() => setOpenFile(f)}
-                                >
-                                  {t('timeline.files.view')}
-                                </button>
-                                <button
-                                  type="button"
-                                  className={styles.attachBrowserAction}
-                                  onClick={() => void openInBrowser(f)}
-                                >
-                                  {openedInBrowser === f.name
-                                    ? t('timeline.files.opened')
-                                    : t('timeline.files.open')}
-                                </button>
-                              </span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {fileActionError && (
-                      <div className={styles.fileActionError}>{fileActionError}</div>
-                    )}
-                  </div>
-                )}
+
               </div>
             )}
             {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
+            <RunDelivery key={run.runId} runId={run.runId} status={run.status} events={events} />
             <RunUsage run={run} events={events} />
           </section>
         ) : (
@@ -861,32 +775,9 @@ export const Timeline = memo(function Timeline({
           <section className={styles.agentBlock} aria-hidden="true" />
         )}
       </div>
-
-      {openFile && run && (
-        <FileModal runId={run.runId} file={openFile} onClose={() => setOpenFile(null)} />
-      )}
     </div>
   );
 });
-
-function FileIcon() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}
 
 // --- Data aggregation -----------------------------------------------------
 
@@ -895,8 +786,6 @@ interface BuildOut {
   finalAnswer: string | null;
   finalTimestamp: string;
   finalError: string | null;
-  /** 本次 run 实际写入/编辑过的文件（来自成功的 write/edit 工具调用），不是整个工作区。 */
-  producedFiles: FileEntry[];
   toolSteps: ToolStepGroup[];
   lastStepRunning: boolean;
   /** Global reasoning bucket for disclosure (currently unused by default UI). */
@@ -1034,7 +923,7 @@ function buildStructure(
     const stepEvents = byStep.get(step) ?? [];
     let reasoning: ReasoningBlock | null = null;
     {
-      const llmCalls = stepEvents.filter((e): e is LlmCallEvent => e.type === 'llm_call');
+      const llmCalls = stepEvents.filter((e): e is LlmCallEvent => e.type === 'llm_call' && !e.purpose);
       const llm = llmCalls[llmCalls.length - 1];
       if (llm) {
         const { response: parsedResponse, reasoning: parsedReasoning } = parseLlmCallText(llm);
@@ -1106,19 +995,6 @@ function buildStructure(
 
   const lastStepRunning = run.status === 'running';
 
-  // 「生成的文件」= 本次 run 通过 write/edit 实际落盘的文件（成功调用，去重）。
-  // 不再列整个工作区：读过的文件（如熟悉项目时）不代表产物。
-  const producedFiles: FileEntry[] = [];
-  const seenWritten = new Set<string>();
-  for (const card of flatCards) {
-    if ((card.tool === 'write' || card.tool === 'edit') && card.status === 'completed') {
-      const p = (card.args as { path?: unknown } | null)?.path;
-      if (typeof p === 'string' && p.trim() && !seenWritten.has(p.trim())) {
-        seenWritten.add(p.trim());
-        producedFiles.push({ name: p.trim() });
-      }
-    }
-  }
 
   return {
     runStarted,
@@ -1128,7 +1004,6 @@ function buildStructure(
       (completedEv && 'timestamp' in completedEv ? completedEv.timestamp : undefined) ??
       run.updatedAt,
     finalError,
-    producedFiles,
     toolSteps,
     lastStepRunning,
     globalThinking: globalThinkingAcc,

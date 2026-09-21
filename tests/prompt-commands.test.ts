@@ -93,6 +93,22 @@ try {
     );
   }
 
+  // 预览与真正发送共用相同展开函数；只读模式不载入模板。
+  {
+    const preview = async (permissionMode: string) => fetch(`${base}/prompts/preview`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: '/test math', permissionMode }),
+    });
+    const response = await preview('workspace-write');
+    check('模板预览与执行展开一致', (await response.json()).text === 'Write tests for: math\nFallback example: all');
+    check('只读模式不展开工作区模板', (await (await preview('read-only')).json()).text === null);
+    check('非法权限预览返回 400', (await preview('invalid')).status === 400);
+    const { scanPromptCommands } = await import('../src/host/prompt-command.js');
+    const samples = scanPromptCommands(process.cwd(), 'workspace-write');
+    check('两个工作区样例可用并包含参数提示', ['compare-docs', 'review-project'].every(name => samples.some(cmd => cmd.name === name && cmd.argumentHint)));
+    check('参数中的占位符不被重复解释', expandPromptCommand('/test $1', [{ name: 'test', description: '', template: '$1 / $@' }]) === '$1 / $1');
+  }
+
   // ---- expandPromptCommand ----
   {
     const commands = [

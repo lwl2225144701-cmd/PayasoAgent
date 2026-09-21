@@ -2,7 +2,7 @@
 // 用法: npx tsx tests/tool-output-budget.test.ts
 // 覆盖：
 //   1. sliceTextToBudget：预算内恒等 / 超预算首尾保留 / UTF-8 边界安全 / 自定义预算硬上限
-//   2. sliceNumberedWindow：预算内恒等 / 超预算保留整行首尾 + 精确续读区间
+//   2. sliceNumberedWindow：预算内恒等 / 超预算连续整行 + 唯一续读位置
 //   3. 分页完备性：按提示的 offset/limit 逐页读取，内容无丢失、每页均在预算内
 //   4. 契约一致性：Runtime guard 与 read 使用同一份预算（read 结果永不触发 guard）
 
@@ -88,19 +88,15 @@ test('窗口在预算内：恒等，不标记截断', () => {
   assert.equal(s.omittedLines, 0);
 });
 
-test('窗口超预算：保留整行首尾 + 精确续读区间', () => {
+test('窗口超预算：只保留连续整行，游标紧接返回正文', () => {
   const lines = numbered(2_000);
   const s = sliceNumberedWindow(lines, 1);
   assert.equal(s.truncated, true);
-  assert.ok(s.text.includes('[READ TRUNCATED]'), '含续读标记');
-  assert.ok(s.omittedLines > 0, '应省略中间行');
-  assert.equal(s.omittedFromLine, 1 + (s.resumeOffset - 1));
-  assert.equal(s.omittedToLine - s.omittedFromLine + 1, s.omittedLines);
-  assert.ok(s.text.includes(`offset=${s.resumeOffset}`), '提示必须含精确 offset');
-  assert.ok(s.text.includes(`limit=${s.resumeLimit}`), '提示必须含精确 limit');
-  // 首行与末行都在文本里（首尾保留）
-  assert.ok(s.text.startsWith(lines[0]), '头部从第一行开始');
-  assert.ok(s.text.includes(lines[lines.length - 1]), '尾部包含最后一行');
+  const returned = s.text.split('\n');
+  assert.deepEqual(returned, lines.slice(0, returned.length));
+  assert.equal(s.resumeOffset, returned.length + 1);
+  assert.equal(s.omittedLines, lines.length - returned.length);
+  assert.ok(!s.text.includes(lines.at(-1)!));
 });
 
 // ---- 3. 分页完备性：逐页读取不丢内容 ----
@@ -128,8 +124,7 @@ test('分页完备性：按 offset/limit 逐页读取，行集合与原文一致
     if (slice.omittedLines === 0) break;
     // 省略区间由下一页取回
     offset = slice.resumeOffset;
-    // 尾部已显示，但为了避免重复，下一页从省略区间开始（read 语义）
-    // 这里只推进到省略区间末尾之前，模拟模型逐段精读。
+    // 下一页从未读正文开始，不重读已显示的行。
     const nextWindow = lines.slice(offset - 1);
     const nextSlice = sliceNumberedWindow(nextWindow, offset);
     const headCount = nextSlice.truncated ? nextSlice.resumeOffset - offset : nextWindow.length;

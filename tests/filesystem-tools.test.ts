@@ -260,23 +260,26 @@ test('read 行数超 500 → 截断并给 offset 续读', async () => {
   assert.ok(res.includes('500'), `应显示到约500行: ${res.slice(-200)}`);
 });
 
-// v1.8：窗口超输出预算 + 文件仍有后续行 → 两条续读提示必须同时存在，
-// 否则模型会误以为已经读到文件末尾。
-test('read 超预算窗口 + 后续行 → 中间续读与窗口续读提示并存', async () => {
-  const long = 'x'.repeat(200);
-  fs.writeFileSync(
-    path.join(root, 'work', 'wide.txt'),
-    Array.from({ length: 600 }, (_, i) => `${i + 1} ${long}`).join('\n'),
-  );
-  const res = await execute('read', { path: 'work/wide.txt' }, ctx);
-  assert.ok(res.includes('[READ TRUNCATED]'), `应有截断标记: ${res.slice(0, 200)}`);
-  assert.ok(res.includes('省略中间'), `应说明省略中间: ${res.slice(-400)}`);
-  assert.ok(res.includes('续读该段'), `应给出中间续读区间: ${res.slice(-400)}`);
-  assert.ok(res.includes('续读剩余'), `应给出窗口后的续读提示: ${res.slice(-300)}`);
-  assert.ok(
-    Buffer.byteLength(res, 'utf8') <= 16 * 1024,
-    `read 输出必须落在共享预算内，实际 ${Buffer.byteLength(res, 'utf8')}`,
-  );
+test('read 连续分页：唯一游标推进，完整遍历无跳行且不超预算', async () => {
+  const lines = Array.from({ length: 600 }, (_, i) => `${i + 1} ${'x'.repeat(200)}`);
+  fs.writeFileSync(path.join(root, 'work', 'wide.txt'), lines.join('\n'));
+  let offset = 1;
+  const seen: number[] = [];
+  while (offset <= lines.length) {
+    const res = await execute('read', { path: 'work/wide.txt', offset }, ctx);
+    assert.ok(Buffer.byteLength(res, 'utf8') <= 16 * 1024);
+    const returned = [...res.matchAll(/^\s*(\d+)→/gm)].map(m => Number(m[1]));
+    assert.ok(returned.length);
+    assert.deepEqual(returned, Array.from({ length: returned.length }, (_, i) => offset + i));
+    seen.push(...returned);
+    const cursors = [...res.matchAll(/offset=(\d+)/g)];
+    offset += returned.length;
+    if (offset <= lines.length) {
+      assert.equal(cursors.length, 1, '只允许一个下一页位置');
+      assert.equal(Number(cursors[0][1]), offset);
+    } else assert.equal(cursors.length, 0);
+  }
+  assert.deepEqual(seen, Array.from({ length: 600 }, (_, i) => i + 1));
 });
 
 // ---- 7. Schema 无泄露 ----

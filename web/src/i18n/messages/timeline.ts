@@ -16,7 +16,7 @@ export const timelineMessages = {
   'timeline.execution.statusStopping': { 'zh-CN': '正在停止', 'en-US': 'Stopping' },
   'timeline.execution.statusStopped': { 'zh-CN': '已停止', 'en-US': 'Stopped' },
   'timeline.execution.statusInterrupted': { 'zh-CN': '已中断', 'en-US': 'Interrupted' },
-  'timeline.execution.statusDone': { 'zh-CN': '任务完成', 'en-US': 'Task complete' },
+  'timeline.execution.statusDone': { 'zh-CN': '本轮结束', 'en-US': 'Run finished' },
 
   // 执行面板：摘要行（操作数 / 用时 / 失败数）
   'timeline.execution.toolCount': {
@@ -200,4 +200,76 @@ export const timelineMessages = {
     'en-US':
       '(This is an explicit retry I initiated after dependency preparation finished; if the command is still unavailable, tell me why.)',
   },
+  'delivery.files': { 'zh-CN': '交付文件', 'en-US': 'Deliverables' },
+  'delivery.recorded': { 'zh-CN': '已记录写入', 'en-US': 'Recorded write' },
+  'delivery.reported': { 'zh-CN': 'Agent 报告的文件', 'en-US': 'Agent-reported file' },
+  'delivery.available': { 'zh-CN': '可用', 'en-US': 'Available' },
+  'delivery.changed': { 'zh-CN': '结束后有修改', 'en-US': 'Modified after this run' },
+  'delivery.unavailable': { 'zh-CN': '不可用', 'en-US': 'Unavailable' },
+  'delivery.currentFiles': {
+    'zh-CN': '打开和下载的是工作区当前文件，不是历史快照。',
+    'en-US': 'Open and download access current workspace files, not historical snapshots.',
+  },
+  'delivery.refresh': { 'zh-CN': '刷新交付信息', 'en-US': 'Refresh delivery' },
+  'delivery.loadFailed': {
+    'zh-CN': '交付信息加载失败，请重试。',
+    'en-US': 'Could not load delivery information. Please retry.',
+  },
+  'delivery.evidence': { 'zh-CN': '完成依据', 'en-US': 'Completion evidence' },
+  'delivery.noChecks': {
+    'zh-CN': '未识别到检查命令，请结合执行记录判断。',
+    'en-US': 'No check commands identified; consult the execution records.',
+  },
+  'delivery.checkNote': {
+    'zh-CN': '以下为疑似检查命令及实际退出状态；退出成功不等于任务已验证完成。',
+    'en-US':
+      'Candidate check commands and observed exit status; a successful exit does not prove task completion.',
+  },
+  'delivery.passed': { 'zh-CN': '退出成功', 'en-US': 'Exited successfully' },
+  'delivery.failed': { 'zh-CN': '执行失败', 'en-US': 'Failed' },
+  'delivery.unknown': { 'zh-CN': '尚无确定结果', 'en-US': 'No confirmed result' },
+  'delivery.unfinished': { 'zh-CN': '计划中未完成事项', 'en-US': 'Unfinished plan items' },
+  'delivery.noUnfinished': {
+    'zh-CN': '无未完成计划记录；其他缺口以最终回复为准。',
+    'en-US': 'No unfinished plan items recorded; see the final response for other gaps.',
+  },
+  'delivery.interrupted': {
+    'zh-CN': '本轮未正常完成，请结合错误或停止原因检查剩余工作。',
+    'en-US': 'This run did not complete normally; review its error or stop reason.',
+  },
+  'delivery.diagnostics': { 'zh-CN': '执行诊断', 'en-US': 'Execution diagnostics' },
+  'delivery.stats': {
+    'zh-CN': '工具 {calls} 次 · 工具耗时 {seconds}s · 已记录 token {tokens}',
+    'en-US': '{calls} tool calls · {seconds}s tool time · {tokens} recorded tokens',
+  },
+  'delivery.diagnosticNote': {
+    'zh-CN': '提示仅供排查，不拦截执行。步骤编号对应本轮执行记录；读取修改后的文件可能是正常复查。',
+    'en-US':
+      'Hints do not block execution. Step numbers refer to this run; rereading changed files may be appropriate.',
+  },
+  'delivery.repeatRead': { 'zh-CN': '疑似重复读取', 'en-US': 'Possible repeated read' },
+  'delivery.repeatFailure': {
+    'zh-CN': '相同参数再次失败',
+    'en-US': 'Repeated failure with identical arguments',
+  },
+  'delivery.slow': { 'zh-CN': '调用耗时较长', 'en-US': 'Slow call' },
+  'delivery.step': { 'zh-CN': '步骤 {step}', 'en-US': 'Step {step}' },
+  'delivery.actionFailed': {
+    'zh-CN': '文件操作失败，已刷新文件状态。',
+    'en-US': 'File action failed; file status refreshed.',
+  },
+  'delivery.binary': {
+    'zh-CN': '此文件请下载后用对应应用打开。',
+    'en-US': 'Download this file and open it in its application.',
+  },
+  'delivery.previewTemplate': { 'zh-CN': '预览展开后的任务', 'en-US': 'Preview expanded task' },
+  'delivery.previewFailed': {
+    'zh-CN': '模板不可用或预览失败。',
+    'en-US': 'Template unavailable or preview failed.',
+  },
+  'delivery.applyTemplate': {
+    'zh-CN': '使用此内容并继续编辑',
+    'en-US': 'Use this content and edit',
+  },
+  'delivery.record': { 'zh-CN': '查看对应调用记录', 'en-US': 'View corresponding call' },
 } as const;

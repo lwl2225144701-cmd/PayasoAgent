@@ -25,6 +25,7 @@ export function publicActiveView(run: HostRun): HostRun {
     model: run.model,
     providerId: run.providerId,
     baseUrl: run.baseUrl,
+    constraints: run.constraints,
     permissionMode: run.permissionMode,
   };
 }
@@ -44,6 +45,7 @@ export function publicStoredView(run: StoredRun): HostRun {
     model: run.model,
     providerId: run.providerId,
     baseUrl: run.baseUrl,
+    constraints: run.constraints,
     permissionMode: storedPermissionMode(run.permissionMode),
   };
 }

@@ -29,6 +29,7 @@ interface RunRow {
   workspace_root: string;
   workspace_name: string;
   permission_mode: string;
+  constraints_json: string | null;
   created_at: string;
   updated_at: string;
   result: string | null;
@@ -71,6 +72,7 @@ function mapRun(row: RunRow): StoredRun {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.constraints_json) run.constraints = JSON.parse(row.constraints_json);
   if (row.result !== null) run.result = row.result;
   if (row.error !== null) run.error = row.error;
   if (row.deleted_at !== null) run.deletedAt = row.deleted_at;
@@ -202,6 +204,8 @@ export class SqliteRunStore implements RunStore {
         this.migrateLegacyRuns();
         this.migrateStoppingStatus();
         this.migratePermissionMode();
+        const columns = this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>;
+        if (!columns.some(c => c.name === 'constraints_json')) this.db.exec('ALTER TABLE runs ADD COLUMN constraints_json TEXT');
         this.db.exec(`
           CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);
@@ -580,8 +584,8 @@ export class SqliteRunStore implements RunStore {
       .prepare(`
       INSERT INTO runs (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url, constraints_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         run.runId,
@@ -600,6 +604,7 @@ export class SqliteRunStore implements RunStore {
         nullable(run.model),
         nullable(run.providerId),
         nullable(run.baseUrl),
+        run.constraints ? JSON.stringify(run.constraints) : null,
       );
   }
 
@@ -609,7 +614,7 @@ export class SqliteRunStore implements RunStore {
       UPDATE runs SET
         session_id = ?, turn_index = ?, task = ?, status = ?, workspace_root = ?, workspace_name = ?,
         permission_mode = ?, created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?,
-        model = ?, provider_id = ?, base_url = ?
+        model = ?, provider_id = ?, base_url = ?, constraints_json = ?
       WHERE run_id = ?
     `)
       .run(
@@ -628,6 +633,7 @@ export class SqliteRunStore implements RunStore {
         nullable(run.model),
         nullable(run.providerId),
         nullable(run.baseUrl),
+        run.constraints ? JSON.stringify(run.constraints) : null,
         run.runId,
       );
     if (result.changes !== 1) throw new Error(`Run not found: ${run.runId}`);

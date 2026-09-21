@@ -45,6 +45,7 @@ export interface StoredRun {
   workspaceRoot: string;
   workspaceName: string;
   permissionMode?: PermissionMode;
+  constraints?: import('../../task-constraints.js').TaskConstraints;
   createdAt: string;
   updatedAt: string;
   result?: string;

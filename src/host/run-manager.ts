@@ -20,7 +20,7 @@ import { EventStreamService } from './event-stream-service.js';
 import { ModelService } from './model-service.js';
 import { createDefaultRunStore } from './persistence/sqlite-store.js';
 import type { RunStore } from './persistence/store.js';
-import { scanPromptCommands } from './prompt-command.js';
+import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
 import { type InternalRun, RunLifecycleService } from './run-lifecycle-service.js';
 import { SessionService } from './session-service.js';
 import { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
@@ -190,6 +190,7 @@ export class RunManager {
     opts?: {
       workspaceName?: string;
       startAgent?: boolean;
+      constraints?: import('../task-constraints.js').TaskConstraintsInput;
       permissionMode?: PermissionMode;
       providerId?: string;
       model?: string;
@@ -334,7 +335,7 @@ export class RunManager {
 
   // 当前工作区可用的 Prompt 命令（name + description）。只返回元数据，不暴露模板正文。
   // read-only 权限 / 无工作区 / 无 .payaso/prompts 目录 → 空数组（fail-closed）。
-  listPromptCommands(): Array<{ name: string; description: string }> {
+  listPromptCommands(): Array<{ name: string; description: string; argumentHint?: string }> {
     const workspace = getWorkspace();
     if (!workspace?.rootPath) return [];
     // 当前会话默认权限：以最近一次 Run 或默认档为准。这里沿用默认权限门控；
@@ -342,7 +343,14 @@ export class RunManager {
     return scanPromptCommands(workspace.rootPath, DEFAULT_PERMISSION_MODE).map((cmd) => ({
       name: cmd.name,
       description: cmd.description,
+      ...(cmd.argumentHint ? { argumentHint: cmd.argumentHint } : {}),
     }));
+  }
+
+  previewPromptCommand(task: string, permissionMode: PermissionMode): string | null {
+    const workspace = getWorkspace();
+    if (!workspace?.rootPath) return null;
+    return expandPromptCommand(task, scanPromptCommands(workspace.rootPath, permissionMode));
   }
 
   // ---- SSE 订阅（归 EventStreamService）----

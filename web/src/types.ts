@@ -95,6 +95,7 @@ export interface WorkspacePickerState {
 export interface PromptCommand {
   name: string;
   description: string;
+  argumentHint?: string;
 }
 
 export interface FileEntry {
@@ -216,6 +217,7 @@ export interface TokenUsage {
 
 export interface LlmCallEvent extends TraceEventBase {
   type: 'llm_call';
+  purpose?: 'final_review' | 'final_draft';
   messageCount: number;
   iteration: number;
   response: string;

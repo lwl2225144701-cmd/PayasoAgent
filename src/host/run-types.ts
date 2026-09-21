@@ -31,6 +31,7 @@ export interface HostRun {
   providerId?: string;
   baseUrl?: string;
   permissionMode: PermissionMode;
+  constraints?: import('../task-constraints.js').TaskConstraints;
 }
 
 export interface HostSession {

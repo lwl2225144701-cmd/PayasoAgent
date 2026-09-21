@@ -10,7 +10,15 @@ import {
   refreshRuntimeToolchainCapabilities,
 } from '../../sandbox/toolchain-manager.js';
 import type { RunManager } from '../run-manager.js';
-import { checkOrigin, notFound, requireAuth, sendJson } from './route-context.js';
+import {
+  bad,
+  checkOrigin,
+  notFound,
+  readBody,
+  requestPermissionMode,
+  requireAuth,
+  sendJson,
+} from './route-context.js';
 
 export async function handleRuntime(
   s: string[],
@@ -34,6 +42,20 @@ export async function handleRuntime(
   // 供前端在输入框 / 前缀下做命令补全；read-only 权限 / 无工作区返回空列表。
   if (s.length === 1 && s[0] === 'prompts' && method === 'GET') {
     return sendJson(res, 200, { prompts: manager.listPromptCommands() });
+  }
+  if (s.length === 2 && s[0] === 'prompts' && s[1] === 'preview' && method === 'POST') {
+    checkOrigin(req, port);
+    requireAuth(req);
+    const body = await readBody(req);
+    if (typeof body.task !== 'string' || body.task.length > 64 * 1024)
+      return bad(res, 'invalid prompt preview');
+    try {
+      return sendJson(res, 200, {
+        text: manager.previewPromptCommand(body.task, requestPermissionMode(body.permissionMode)),
+      });
+    } catch {
+      return bad(res, 'invalid prompt preview');
+    }
   }
   if (
     s.length === 3 &&

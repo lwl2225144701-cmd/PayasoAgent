@@ -24,6 +24,8 @@ export interface AgentExecutionContextInput {
   sessionId?: string;
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
+  /** Host 固化的精确相对路径；undefined 不限，空集合禁止全部写入。 */
+  writeScope?: readonly string[];
   projectInstructions?: string;
 }
 
@@ -59,6 +61,7 @@ export function createAgentExecutionContext(
     workspaceRoot,
     permissionMode: input.permissionMode ?? DEFAULT_PERMISSION_MODE,
     toolchain: getRuntimeToolchainCapabilities(),
+    writeScope: input.writeScope === undefined ? undefined : Object.freeze([...input.writeScope]),
     projectInstructions: input.projectInstructions ?? '',
   };
 }

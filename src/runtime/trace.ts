@@ -14,6 +14,7 @@ export interface TraceImage {
 export type TraceEvent =
   | {
       type: 'llm_call';
+      purpose?: 'final_review' | 'final_draft';
       step: number;
       timestamp: string;
       messageCount: number; // 调用时输入消息数量
@@ -261,6 +262,7 @@ export type TraceEvent =
 export type TraceEventInput =
   | {
       type: 'llm_call';
+      purpose?: 'final_review' | 'final_draft';
       messageCount: number;
       iteration: number;
       response: string;

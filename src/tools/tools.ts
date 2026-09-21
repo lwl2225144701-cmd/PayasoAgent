@@ -22,6 +22,8 @@ export interface ToolContext {
   // Host 在 Run 创建时固化的文件系统能力；缺省仅用于兼容旧 CLI/测试调用。
   // Agent Tool Schema 不包含此字段，LLM 无法自行升级。
   permissionMode?: PermissionMode;
+  /** Host 固化的精确相对路径；undefined 不限，空集合禁止全部写入。 */
+  writeScope?: readonly string[];
   // v2.0 Network Control：当前全局网络模式（Runtime 注入，LLM 不可控制）。
   // 工具读取它做自身裁定（如 shell 选择 sandbox 网络策略）；Network Capability
   // Check 本身集中在 tools.execute()，不依赖各 Tool 自行判断。

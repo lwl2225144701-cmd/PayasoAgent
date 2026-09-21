@@ -11,6 +11,7 @@ export interface PromptCommand {
   name: string;
   description: string;
   template: string;
+  argumentHint?: string;
 }
 
 export function scanPromptCommands(workspaceRoot: string, permissionMode: string): PromptCommand[] {
@@ -40,6 +41,7 @@ export function scanPromptCommands(workspaceRoot: string, permissionMode: string
         name: fm.name || name,
         description: fm.description || '',
         template: body.trim(),
+        ...(fm.argumentHint ? { argumentHint: fm.argumentHint } : {}),
       });
     } catch {
       /* 单个命令损坏不影响整体 */
@@ -48,7 +50,11 @@ export function scanPromptCommands(workspaceRoot: string, permissionMode: string
   return commands.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function parsePromptFrontmatter(content: string): { name?: string; description?: string } {
+function parsePromptFrontmatter(content: string): {
+  name?: string;
+  description?: string;
+  argumentHint?: string;
+} {
   if (!content.startsWith('---\n')) return {};
   const end = content.indexOf('\n---', 4);
   if (end < 0) return {};
@@ -62,7 +68,11 @@ function parsePromptFrontmatter(content: string): { name?: string; description?:
     if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
     result[match[1]] = value;
   }
-  return { name: result.name, description: result.description };
+  return {
+    name: result.name,
+    description: result.description,
+    argumentHint: result['argument-hint'],
+  };
 }
 
 function stripFrontmatter(content: string): string {
@@ -75,20 +85,13 @@ function stripFrontmatter(content: string): string {
 
 // 参数插值：支持 $1 $2 ... / $@ / ${1:-default}
 function interpolatePrompt(template: string, args: string[]): string {
-  let result = template;
-  // 先处理 ${N:-default} 形式
-  result = result.replace(/\$\{(\d+):-([^}]*)\}/g, (_, n, def) => {
-    const idx = Number(n) - 1;
-    return idx >= 0 && idx < args.length ? args[idx] : def;
-  });
-  // 再处理 $N 形式（避免和 ${N:-} 冲突，先长后短）
-  result = result.replace(/\$(\d+)/g, (_, n) => {
-    const idx = Number(n) - 1;
-    return idx >= 0 && idx < args.length ? args[idx] : '';
-  });
-  // 最后处理 $@
-  result = result.replace(/\$@/g, args.join(' '));
-  return result;
+  return template.replace(
+    /\$\{(\d+):-([^}]*)\}|\$(\d+)|\$@/g,
+    (match, withDefault, fallback, plain) => {
+      if (match === '$@') return args.join(' ');
+      return args[Number(withDefault ?? plain) - 1] ?? fallback ?? '';
+    },
+  );
 }
 
 // 展开 /cmd 命令：匹配成功返回展开后的 user message，失败返回 null。

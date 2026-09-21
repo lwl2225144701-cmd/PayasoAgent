@@ -1,3 +1,4 @@
+import { PromptPreview } from './PromptPreview';
 import {
   type ClipboardEvent,
   type CompositionEvent,
@@ -122,17 +123,15 @@ export function InputBar({
   const [promptCommands, setPromptCommands] = useState<PromptCommand[]>([]);
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptIndex, setPromptIndex] = useState(0);
-  const promptLoadedRef = useRef(false);
   const suggestRef = useRef<HTMLDivElement>(null);
 
-  // 命令列表懒加载一次（工作区级元数据，量小）
+  // 切换工作区后刷新，避免沿用上一工作区的模板。
   useEffect(() => {
-    if (promptLoadedRef.current) return;
-    promptLoadedRef.current = true;
-    listPromptCommands()
-      .then(({ prompts }) => setPromptCommands(prompts))
-      .catch(() => setPromptCommands([]));
-  }, []);
+    let active = true;
+    setPromptCommands([]);
+    listPromptCommands().then(({ prompts }) => { if (active) setPromptCommands(prompts); }).catch(() => {});
+    return () => { active = false; };
+  }, [workspaceName]);
 
   // 当前输入匹配的命令：第一个词以 / 开头 → 进入补全模式（裸 / 即展示全量列表）
   // 内置命令优先，其后是工作区提示词模板
@@ -141,6 +140,8 @@ export function InputBar({
   const filteredPrompts: CommandCandidate[] = isPromptPrefix
     ? mergeCommandCandidates(firstWord.slice(1), promptCommands)
     : [];
+  const selectedTemplate = permissionMode === 'read-only' ? undefined : promptCommands.find(cmd => `/${cmd.name}` === firstWord);
+  const templatePreview = selectedTemplate && <PromptPreview task={text} command={selectedTemplate} permissionMode={permissionMode} onApply={setText} />;
   // 输入已与唯一候选完全一致 → 收起菜单（否则选中后菜单会一直挂在原命令上）
   const exactCommandTyped =
     filteredPrompts.length === 1 && filteredPrompts[0].name === firstWord.slice(1);
@@ -482,6 +483,7 @@ export function InputBar({
         <div className={styles.heroInputWrapper} onDragOver={handleDragOver} onDrop={handleDrop}>
           {attachmentStrip}
           {visionWarning}
+          {templatePreview}
           <ComposerTextarea
             ref={textareaRef}
             variant="hero"
@@ -580,6 +582,7 @@ export function InputBar({
             </div>
           </div>
         )}
+        {templatePreview}
         <ComposerTextarea
           ref={textareaRef}
           variant="conversation"

@@ -281,7 +281,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 ### 4.3 关键保证（与测试对应）
 
-* **Tool Output Guard**：`validateResult` 看工具返回的 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果。所有文本 read 统一以 offset 表示起始行号、limit 表示行数（默认/最大 500）；工具层分块扫描并统计总行数，只保留目标窗口，每行最多保留 64 KiB 前缀。超长单行和后台 shell 的生产端截断仍需其他工具处理，Runtime 无法恢复在工具内部已省略的内容。
+* **Tool Output Guard**：`validateResult` 看工具返回的 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果。所有文本 read 统一以 offset 表示起始行号、limit 表示行数（默认/最大 500）；工具层分块扫描并统计总行数，只保留目标窗口，每行最多保留 64 KiB 前缀。模型可见正文按预算返回连续整行前缀，唯一续读 offset 紧接实际返回行；不再拼接窗口首尾或同时提供两个续读游标。超长单行和后台 shell 的生产端截断仍需其他工具处理，Runtime 无法恢复在工具内部已省略的内容。
 
 * **Side-Effect Safety**：`executing → succeeded | uncertain`；`succeeded` 同 key 回放不重跑；`executing/uncertain` 不再自动执行；execute 前必须先持久化 executing。
 
@@ -293,7 +293,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 * **Context Compaction V1**：输入估算超过当前 Run 模型预算的 80% 时，Harness 从最旧完整轮开始选取前缀并增量更新结构化 summary，目标回落到约 65%；模型视图使用 `system + bounded scratchpad + summary + recent complete rounds + current turn`。完整 transcript 永不因 compaction 删除，summary 状态随 checkpoint/resume 恢复；`context_compaction` trace 可审计。
 
-* **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力（`tests/model-binding.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
+* **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力，LLM 传输层也不得按厂商或模型名改写 Host 已固定的 `baseUrl`（`tests/model-binding.test.ts` 与 `tests/stepfun-endpoint.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
 
 * **True Cancellation（v1.6）**：AbortSignal 是唯一取消机制，传播链 Host AbortController → runAgent（迭代边界 + tool\_call 间检查）→ chat（HTTP/流式）→ ToolContext.signal → shell 进程组终止（detached spawn + SIGTERM→SIGKILL）。状态机 running→stopping（abort 已发出）→stopped（执行真正退出）；重复 stop 幂等。non\_idempotent 工具被 abort 打断时保持 uncertain 语义（`tests/cancellation.test.ts` 锁定）。
 
@@ -427,3 +427,16 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 2. **契约测试**：`tests/docs-contract.test.ts` 用 §3.3 的机器可读 JSON 块锁定 **工具清单** 与 **Trace 事件清单**。改代码不改文档 → `npm run test:all` 红。
 3. **清单纪律**：§3 模块清单按"新增/删除文件"同步增删；§8 缺口在修复后移入"已修复"并在对应测试标注，防止家丑清单失效。
 4. **新增文档**：新文档一律带版本锚点 + Superseded 关系说明，防止出现第四份无主文档。
+
+
+### 显式任务约束
+
+Host API 可随 Run 接收结构化 `constraints`，验证文件范围、固定来源版本并持久化到 `constraints_json`；恢复时复用原约束。Runtime 只传递私有 `writeScope`，不向模型工具 Schema 暴露授权字段。内置文件工具执行前检查范围，受限任务的 Shell 使用已有只读沙箱。普通 Web 输入仍只使用统一的 Read Only / Workspace Write / Full access 权限入口，不展示第二套约束控件。
+
+来源摘录由 Harness 提供输出契约，Host 根据指定版本和行号提取原文。未验证的模型正文不发布为公开流或最终答案，下一轮上下文使用已核验结果；校验失败直接失败。文件解析和事实投影均在 Host，不放入 Runtime。具体入口和限制见 [使用说明](task-constraints-usage.md)。
+
+### 任务交付与模板预览
+
+Host 的 `run-delivery.ts` 从既有 Trace 汇总交付文件、疑似检查命令的退出结果、未完成计划与执行诊断。`GET /runs/:id/delivery` 同时校验已知文件的当前状态；不扫描工作区，不新增 Runtime 事件。文件工具的写入记录与最终回复报告的路径分开标注，下载继续复用现有文件接口。
+
+`POST /prompts/preview` 使用 Host 已有模板展开函数，前端只展示预览。工作区 `.payaso/prompts/*.md` 可通过 `argument-hint` 提供参数提示；仓库提供文档对比和项目审查两个样例。Harness 提醒 Agent 在最终回复中说明文件、检查和缺口，执行结束不代表验证通过。

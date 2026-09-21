@@ -1,3 +1,4 @@
+import { parseTaskConstraints } from '../task-constraints.js';
 // 模块: Runs 域 handler —— /runs*（创建/列出/resume/stop/events/approval/toolchain/files）。
 //
 // 为什么单独存在：runs 域承载「Run 生命周期端点 + SSE 事件流 + 工作区文件读取」
@@ -5,6 +6,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
+import { inspectRunDelivery } from '../run-delivery.js';
 import type { PermissionMode } from '../../permission-mode.js';
 import { prepareAttachments } from '../attachments/normalize.js';
 import { openFileInDefaultBrowser } from '../default-browser.js';
@@ -137,9 +139,10 @@ export async function handleRuns(
           workspaceName,
           permissionMode,
           attachments,
+          constraints: parseTaskConstraints(body.constraints),
           ...modelSelection,
         });
-        return sendJson(res, 202, { ...created, status: 'running', permissionMode });
+        return sendJson(res, 202, { ...created, status: 'running', permissionMode: manager.get(created.runId)?.permissionMode ?? permissionMode });
       } catch (err) {
         return bad(res, (err as Error).message);
       }
@@ -162,6 +165,15 @@ export async function handleRuns(
   }
 
   switch (s[2]) {
+    case 'delivery': {
+      if (method !== 'GET' || s.length !== 3) return notFound(res);
+      checkOrigin(req, port);
+      requireAuth(req);
+      const run = manager.get(runId);
+      const events = manager.listRunEvents(runId);
+      if (!run || !events) return notFound(res);
+      return sendJson(res, 200, inspectRunDelivery(events, manager.getWorkspaceRoot(runId), run.updatedAt, run.result));
+    }
     case 'events': {
       if (method !== 'GET') return notFound(res);
       // SSE：验证 token（通过 Authorization header，不使用 query）

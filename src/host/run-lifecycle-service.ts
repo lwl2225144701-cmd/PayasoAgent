@@ -10,10 +10,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { TextAttachmentRef } from '../attachment-types.js';
+import { restoreAttachment } from '../attachments/store.js';
 import {
   createAgentExecutionContext,
   createDefaultRuntimeServices,
 } from '../bootstrap/runtime-bootstrap.js';
+import { attachmentManifest } from '../harness/attachment-manifest.js';
 import { DefaultContextHarness } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
 import type { ChatMessage, ChatStreamDelta, MessageImage, ModelConfig } from '../llm/llm.js';
@@ -24,13 +27,10 @@ import {
 } from '../permission-mode.js';
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
 import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
-import { attachmentManifest } from '../harness/attachment-manifest.js';
-import type { TextAttachmentRef } from '../attachment-types.js';
-import { restoreAttachment } from '../attachments/store.js';
-import { publishAttachments } from './attachments/publish.js';
-import { getRunWorkspaceRoot, createWorkspace } from '../sandbox/sandbox-manager.js';
+import { createWorkspace, getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
 import { isAbortError } from '../util/abort.js';
 import type { ApprovalCoordinator } from './approval-coordinator.js';
+import { publishAttachments } from './attachments/publish.js';
 import type { EventStreamService } from './event-stream-service.js';
 import type { ModelService } from './model-service.js';
 import {
@@ -51,10 +51,19 @@ type TextLikeAttachment = Omit<HostAttachment, 'kind'> & { kind?: 'text' | 'bina
 function asTextAttachmentRefs(views: HostAttachment[]): TextAttachmentRef[] {
   return views
     .filter((item): item is TextLikeAttachment => item.kind === 'text' || item.kind === 'binary')
-    .map(({ name, path, sizeBytes, sha256, kind, extraction }) => ({ name, path, sizeBytes, sha256, kind, extraction }));
+    .map(({ name, path, sizeBytes, sha256, kind, extraction }) => ({
+      name,
+      path,
+      sizeBytes,
+      sha256,
+      kind,
+      extraction,
+    }));
 }
+
 import type { SessionService } from './session-service.js';
 import { PLAN_DIRECTIVE } from './session-service.js';
+import { prepareTaskConstraints, renderEvidence } from './task-constraints.js';
 import type { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
 import { getWorkspace } from './workspace.js';
 import { readProjectInstructions, scanWorkspaceSkills } from './workspace-instructions.js';
@@ -135,6 +144,7 @@ export class RunLifecycleService {
     opts?: {
       workspaceName?: string;
       startAgent?: boolean;
+      constraints?: import('../task-constraints.js').TaskConstraintsInput;
       permissionMode?: PermissionMode;
       providerId?: string;
       model?: string;
@@ -153,7 +163,11 @@ export class RunLifecycleService {
     // 视觉强校验（在 session 落库之前拒绝，不产生孤儿会话）：模型配置已显式
     // 解析且视觉未开启 → 拒绝带图请求（400）。前端发前已警告；env 兜底模型
     // 能力未知，保持宽容不拒（物化阶段仍会剥图并注明）。
-    if (opts?.attachments?.some((item) => item.mimeType.startsWith('image/')) && resolved && resolved.vision !== true) {
+    if (
+      opts?.attachments?.some((item) => item.mimeType.startsWith('image/')) &&
+      resolved &&
+      resolved.vision !== true
+    ) {
       throw new Error('当前模型已关闭视觉输入，已拒绝图片附件（可在设置中开启该模型的视觉能力）');
     }
     let session: StoredSession;
@@ -166,7 +180,6 @@ export class RunLifecycleService {
         throw new Error('Session already has a running Run');
       }
       session = { ...persisted, updatedAt: now };
-      this.store.updateSession(session);
     } else {
       let workspace = getWorkspace();
       if (opts?.workspaceName) {
@@ -181,7 +194,6 @@ export class RunLifecycleService {
         createdAt: now,
         updatedAt: now,
       };
-      this.store.createSession(session);
     }
     const previousRuns = this.store.listRunsBySession(session.sessionId);
     const { messages: conversationHistory, harnessState: previousHarnessState } =
@@ -220,7 +232,16 @@ export class RunLifecycleService {
     // 落附件早于那一步，必须先确保根存在，否则 assertInsideRoot 对不存在
     // 的根直接拒绝 ——「默认工作区 + 会话首个 Run + 带附件」必现 400。
     if (run.workspaceRoot === getRunWorkspaceRoot(runId)) createWorkspace(runId);
-    const { images: attachmentImages, views: attachmentViews } = publishAttachments(run.workspaceRoot, runId, opts?.attachments ?? []);
+    run.constraints = prepareTaskConstraints(run.workspaceRoot, opts?.constraints);
+    if (run.constraints?.evidence) run.permissionMode = 'read-only';
+    const { images: attachmentImages, views: attachmentViews } = publishAttachments(
+      run.workspaceRoot,
+      runId,
+      opts?.attachments ?? [],
+    );
+
+    if (requestedSessionId) this.store.updateSession(session);
+    else this.store.createSession(session);
 
     // Persist before execution starts, so every Runtime event has a parent Run.
     this.store.createRun(this.toStoredRun(run));
@@ -290,11 +311,19 @@ export class RunLifecycleService {
       providerId: persisted.providerId,
       baseUrl: persisted.baseUrl,
       permissionMode: persistedPermission,
+      constraints: persisted.constraints,
     };
     this.store.updateRun(this.toStoredRun(run));
     this.runs.set(runId, run);
-    const originalStart = run.events.find((event) => event.type === 'run_started' && event.attachments?.length);
-    this.record(run, { type: 'run_started', runId, timestamp: now, ...(originalStart?.type === 'run_started' ? { attachments: originalStart.attachments } : {}) });
+    const originalStart = run.events.find(
+      (event) => event.type === 'run_started' && event.attachments?.length,
+    );
+    this.record(run, {
+      type: 'run_started',
+      runId,
+      timestamp: now,
+      ...(originalStart?.type === 'run_started' ? { attachments: originalStart.attachments } : {}),
+    });
     this.startAgent(run, checkpoint.task, checkpoint);
     return true;
   }
@@ -599,6 +628,7 @@ export class RunLifecycleService {
       workspaceRoot: run.workspaceRoot,
       workspaceName: run.workspace?.name ?? '',
       permissionMode: run.permissionMode,
+      constraints: run.constraints,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       result: run.result,
@@ -623,6 +653,15 @@ export class RunLifecycleService {
     for (let index = 0; index < runs.length; index++) {
       const run = runs[index];
       if (run.status === 'running' || run.status === 'interrupted') continue;
+      const rejectedDraft = run.status !== 'completed' && this.store.listEvents(run.runId)
+        .some(({ event }) => event.type === 'llm_call' && event.purpose === 'final_draft');
+      if (run.constraints?.evidence || rejectedDraft) {
+        messages.push({ role: 'user', content: run.task });
+        messages.push({ role: 'assistant', content: run.status === 'completed' && run.result ? run.result : '上一轮交付未通过验证' });
+        harnessState = undefined;
+        lastCheckpointIndex = index;
+        continue;
+      }
       const checkpoint = loadCheckpoint(run.runId);
       if (checkpoint?.messages?.length) {
         messages = checkpoint.messages.filter((message) => message.role !== 'system');
@@ -636,9 +675,17 @@ export class RunLifecycleService {
     for (let index = lastCheckpointIndex + 1; index < runs.length; index++) {
       const run = runs[index];
       if (run.status === 'running' || run.status === 'interrupted') continue;
-      const started = this.store.listEvents(run.runId).map((item) => item.event).find((event) => event.type === 'run_started' && event.attachments?.length);
-      const files = started?.type === 'run_started' ? asTextAttachmentRefs(started.attachments ?? []) : [];
-      messages.push({ role: 'user', content: run.task + attachmentManifest(files), ...(files.length ? { textAttachments: files } : {}) });
+      const started = this.store
+        .listEvents(run.runId)
+        .map((item) => item.event)
+        .find((event) => event.type === 'run_started' && event.attachments?.length);
+      const files =
+        started?.type === 'run_started' ? asTextAttachmentRefs(started.attachments ?? []) : [];
+      messages.push({
+        role: 'user',
+        content: run.task + attachmentManifest(files),
+        ...(files.length ? { textAttachments: files } : {}),
+      });
       if (run.status === 'completed' && run.result) {
         messages.push({ role: 'assistant', content: run.result });
       } else {
@@ -712,7 +759,11 @@ export class RunLifecycleService {
               if (file.kind === 'image' || !file.sha256) continue;
               for (const ref of [file, file.extraction]) {
                 if (!ref?.path || !ref.sha256) continue;
-                try { restoreAttachment(run.workspaceRoot, ref.path, ref.sha256); } catch { /* 清单保留路径，工具读取时报告缺失。 */ }
+                try {
+                  restoreAttachment(run.workspaceRoot, ref.path, ref.sha256);
+                } catch {
+                  /* 清单保留路径，工具读取时报告缺失。 */
+                }
               }
             }
           }
@@ -724,6 +775,7 @@ export class RunLifecycleService {
           sessionId: run.sessionId,
           workspaceRoot: run.workspaceRoot,
           permissionMode: run.permissionMode,
+          writeScope: run.constraints?.writeScope,
           projectInstructions,
         });
         const result = await runAgent(task, resume, {
@@ -743,17 +795,27 @@ export class RunLifecycleService {
               toolchain: executionContext.toolchain,
               projectInstructions,
               workspaceName: run.workspace?.name ?? '',
+              // 候选功能先走独立真实任务验收，通过后才启用默认行为。
+              finalReview: process.env.PAYASO_FINAL_REVIEW === '1',
             });
+            harness.setTaskConstraints?.(run.constraints);
             harness.setSkills(skills);
             harness.setTextAttachments(textAttachments);
             return harness;
           })(),
           previousHarnessState,
           signal: abortController.signal,
-          onStreamDelta: queueDelta,
+          onStreamDelta: run.constraints?.evidence ? undefined : queueDelta,
           onTrace: (event) => {
             flushDelta();
-            this.record(run, event);
+            // 证据模式只发布 Host 校验后的答复，原始 JSON 留在私有 checkpoint。
+            if (run.constraints?.evidence && event.type === 'final_answer') return;
+            this.record(
+              run,
+              run.constraints?.evidence && event.type === 'llm_call'
+                ? { ...event, response: '', reasoning: undefined }
+                : event,
+            );
           },
         });
         flushDelta();
@@ -763,7 +825,10 @@ export class RunLifecycleService {
           return;
         }
         // v1.6：completed 终态原子落盘（status + run_completed 同一事务）
-        this.finalizeRun(run, 'completed', { result });
+        const delivered = run.constraints?.evidence
+          ? renderEvidence(run.workspaceRoot, run.constraints.evidence, result)
+          : result;
+        this.finalizeRun(run, 'completed', { result: delivered });
       } catch (err) {
         flushDelta();
         if (err instanceof AgentStopRequestedError) {

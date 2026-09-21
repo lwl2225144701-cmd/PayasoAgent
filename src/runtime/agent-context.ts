@@ -96,6 +96,7 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
     sessionId,
     workspaceRoot,
     permissionMode,
+    writeScope: opts.executionContext.writeScope,
     networkMode: getNetworkMode(),
     approvalPort: resolveApprovalPort(opts.approvalPort),
     toolchain,

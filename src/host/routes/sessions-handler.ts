@@ -1,3 +1,4 @@
+import { parseTaskConstraints } from '../task-constraints.js';
 // 模块: Sessions 域 handler —— /sessions*（CRUD / stats / export / compact / goal / plan / feedback / runs）。
 //
 // 为什么单独存在：sessions 域承载「会话元数据 + 内置会话命令 + 会话内 Run」三类
@@ -202,9 +203,10 @@ export async function handleSessions(
         const created = manager.createInSession(task, sessionId, {
           permissionMode,
           attachments,
+          constraints: parseTaskConstraints(body.constraints),
           ...modelSelection,
         });
-        return sendJson(res, 202, { ...created, status: 'running', permissionMode });
+        return sendJson(res, 202, { ...created, status: 'running', permissionMode: manager.get(created.runId)?.permissionMode ?? permissionMode });
       } catch (err) {
         return bad(res, (err as Error).message);
       }

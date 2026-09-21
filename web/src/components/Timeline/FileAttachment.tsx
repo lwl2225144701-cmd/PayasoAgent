@@ -1,6 +1,6 @@
 // 附件卡片：预览提取正文或普通文本，下载始终使用原件路径。
 import { useEffect, useRef, useState } from 'react';
-import { readFile, workspaceFileUrl } from '../../api';
+import { readFile, downloadWorkspaceFile } from '../../api';
 import { useI18n } from '../../i18n';
 import type { RunAttachment } from '../../types';
 import { FileIcon } from '../icons';
@@ -46,18 +46,7 @@ export function FileAttachment({ runId, file }: { runId: string; file: RunAttach
     setDownloading(true);
     setError('');
     try {
-      const response = await fetch(`${workspaceFileUrl(runId, file.path)}?download=1`, {
-        mode: 'cors',
-      });
-      if (!response.ok) throw new Error(await response.text());
-      const url = URL.createObjectURL(await response.blob());
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = file.name;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await downloadWorkspaceFile(runId, file.path, file.name);
     } catch (err) {
       if (active.current) setError(String(err));
     } finally {

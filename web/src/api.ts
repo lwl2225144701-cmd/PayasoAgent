@@ -508,3 +508,25 @@ export function previewAvailableModels(input: {
     body: JSON.stringify(input),
   });
 }
+
+/** 交付汇总始终重新读取文件现状。 */
+export function fetchRunDelivery(runId: string): Promise<import('../../src/host/run-delivery').RunDelivery> {
+  return jsonFetch(`/runs/${runId}/delivery`, { cache: 'no-store' });
+}
+
+export async function downloadWorkspaceFile(runId: string, name: string, downloadName = name.split('/').pop() || name): Promise<void> {
+  const response = await fetch(`${workspaceFileUrl(runId, name)}?download=1`, { mode: 'cors' });
+  if (!response.ok) throw new Error('Download failed');
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = downloadName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function previewPromptCommand(task: string, permissionMode: PermissionMode): Promise<{ text: string | null }> {
+  return jsonFetch('/prompts/preview', { method: 'POST', body: JSON.stringify({ task, permissionMode }) });
+}

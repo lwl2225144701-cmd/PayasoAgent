@@ -110,7 +110,7 @@ export function deriveRunTokenUsage(events: HostEvent[]): RunTokenUsage {
   let cacheWrite = 0;
   let reasoning = 0;
   let bucketCalls = 0;
-  const contributed = new Map<number, Contribution>();
+  const contributed = new Map<string, Contribution>();
 
   for (const event of events) {
     if (event.type !== 'llm_call') continue;
@@ -122,7 +122,9 @@ export function deriveRunTokenUsage(events: HostEvent[]): RunTokenUsage {
     if (contribution.buckets) bucketCalls++;
 
     // last-wins：同一迭代的旧贡献先撤掉，再计入新贡献。
-    const previous = contributed.get(event.iteration);
+    // 检查调用是同一迭代内独立计费的请求，不能覆盖执行调用或另一轮检查。
+    const callKey = event.purpose === 'final_review' ? `review:${event.step}` : `turn:${event.iteration}`;
+    const previous = contributed.get(callKey);
     if (previous !== undefined) {
       tokens -= previous.tokens;
       input -= previous.input;
@@ -137,7 +139,7 @@ export function deriveRunTokenUsage(events: HostEvent[]): RunTokenUsage {
     cacheRead += contribution.cacheRead;
     cacheWrite += contribution.cacheWrite;
     reasoning += contribution.reasoning;
-    contributed.set(event.iteration, contribution);
+    contributed.set(callKey, contribution);
   }
 
   return {

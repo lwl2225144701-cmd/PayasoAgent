@@ -9,6 +9,7 @@
 //       图片省略提示；其他二进制（NUL/大量控制字符）返回省略提示并指路 shell
 //       工具（file/wc/xxd），不再把乱码文本喂给模型。
 
+import { assertWriteScope } from '../sandbox/write-scope.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readTextWindow } from './read-text-window.js';
@@ -20,9 +21,7 @@ import {
 } from '../sandbox/sandbox-manager.js';
 import {
   type SliceBudget,
-  TOOL_OUTPUT_HEAD_BYTES,
   TOOL_OUTPUT_MAX_BYTES,
-  TOOL_OUTPUT_TAIL_BYTES,
   utf8ByteLength,
   utf8Head,
 } from '../tool-output-budget.js';
@@ -50,7 +49,7 @@ function readFileRange(real: string, offset: number, length: number): Buffer {
 
 // ---- 行感知输出预算切片 ----
 // read 的窗口可能远大于模型可见预算（例如 500 行 × 长行）。这里按整行边界
-// 保留头部 + 尾部，把中间省略掉，并给出**精确**的续读区间，使每一页都必然
+// 保留连续整行前缀，并给出精确的下一页位置，使每一页都必然
 // 落在预算内、且模型能逐段读完整文件（不丢内容，只分页）。
 export interface NumberedWindowSlice {
   text: string;
@@ -71,79 +70,30 @@ export function sliceNumberedWindow(
   budget: SliceBudget = {},
 ): NumberedWindowSlice {
   const maxBytes = budget.maxBytes ?? TOOL_OUTPUT_MAX_BYTES;
-  const headBudget = budget.headBytes ?? TOOL_OUTPUT_HEAD_BYTES;
-  const tailBudget = budget.tailBytes ?? TOOL_OUTPUT_TAIL_BYTES;
-  const marker = budget.marker ?? '[READ TRUNCATED]';
-
-  const full = numberedLines.join('\n');
-  if (utf8ByteLength(full) <= maxBytes) {
-    return {
-      text: full,
-      omittedLines: 0,
-      omittedFromLine: 0,
-      omittedToLine: 0,
-      resumeOffset: 0,
-      resumeLimit: 0,
-      truncated: false,
-    };
+  // 为续读信息保留预算；正文仅显示连续前缀，避免首尾拼接造成“已读完”错觉。
+  const contentBudget = Math.max(1, maxBytes - 2048);
+  let count = 0;
+  let bytes = 0;
+  for (const line of numberedLines) {
+    const size = utf8ByteLength(line) + (count ? 1 : 0);
+    if (bytes + size > contentBudget) break;
+    bytes += size;
+    count++;
   }
-
-  // 头部：整行累加；首个超长行允许字节截断，保证头部必有内容。
-  let headCount = 0;
-  let headBytes = 0;
-  for (let i = 0; i < numberedLines.length; i++) {
-    const lineBytes = utf8ByteLength(numberedLines[i]) + 1;
-    if (i > 0 && headBytes + lineBytes > headBudget) break;
-    headCount++;
-    headBytes += lineBytes;
-    if (headBytes > headBudget) break;
-  }
-  let headText = numberedLines.slice(0, headCount).join('\n');
-  const headLineTruncated = headCount === 1 && utf8ByteLength(headText) > headBudget;
-  if (headLineTruncated) headText = utf8Head(headText, headBudget);
-
-  // 尾部：从末尾整行累加，且不与头部重叠。
-  let tailStart = numberedLines.length;
-  let tailBytes = 0;
-  for (let i = numberedLines.length - 1; i >= headCount; i--) {
-    const lineBytes = utf8ByteLength(numberedLines[i]) + 1;
-    if (tailBytes + lineBytes > tailBudget) break;
-    tailBytes += lineBytes;
-    tailStart = i;
-  }
-  const tailText = numberedLines.slice(tailStart).join('\n');
-
-  const omittedLines = Math.max(0, tailStart - headCount);
-  const omittedFromLine = startLine + headCount;
-  const omittedToLine = startLine + tailStart - 1;
-  const lastLine = startLine + numberedLines.length - 1;
-
-  const hint: string[] = [];
-  if (omittedLines > 0) {
-    hint.push(
-      `[READ 提示] 本次窗口第 ${startLine}-${lastLine} 行共 ${numberedLines.length} 行，` +
-        `受 ${maxBytes} 字节输出预算省略中间 ${omittedLines} 行（第 ${omittedFromLine}-${omittedToLine} 行）。` +
-        `用 offset=${omittedFromLine} limit=${omittedLines} 续读该段；或用 grep 先定位再精读。`,
-    );
-  } else if (headLineTruncated) {
-    hint.push(
-      `[READ 提示] 第 ${startLine} 行单行超过 ${headBudget} 字节，已按字节截断显示。` +
-        `可用 shell: sed -n '${startLine}p' <file> | head -c 128K 查看片段。`,
-    );
-  } else {
-    hint.push(
-      `[READ 提示] 本次窗口第 ${startLine}-${lastLine} 行超过 ${maxBytes} 字节输出预算，已保留首尾并省略中间。`,
-    );
-  }
-
+  const partialLine = count === 0 && numberedLines.length > 0;
+  if (partialLine) count = 1;
+  const omittedLines = numberedLines.length - count;
+  const text = partialLine
+    ? utf8Head(numberedLines[0], contentBudget) + '\n[READ TRUNCATED]\n[READ 提示] 当前单行过长，仅显示前缀；行号分页不能读取该行余下字节，请用其他文件处理工具。'
+    : numberedLines.slice(0, count).join('\n');
   return {
-    text: [headText, marker, tailText, ...hint].filter(Boolean).join('\n'),
+    text,
     omittedLines,
-    omittedFromLine: omittedLines > 0 ? omittedFromLine : 0,
-    omittedToLine: omittedLines > 0 ? omittedToLine : 0,
-    resumeOffset: omittedFromLine,
+    omittedFromLine: omittedLines ? startLine + count : 0,
+    omittedToLine: omittedLines ? startLine + numberedLines.length - 1 : 0,
+    resumeOffset: omittedLines ? startLine + count : 0,
     resumeLimit: omittedLines,
-    truncated: true,
+    truncated: partialLine || omittedLines > 0,
   };
 }
 
@@ -261,6 +211,7 @@ const WRITABLE_TOP_LEVEL = new Set(['work', 'output']);
 
 // 权限规则的字符串级首段校验：禁止写入 input/，也禁止任何非白名单顶层目录
 export function assertWritableZone(rel: string, context: ToolContext): void {
+  assertWriteScope(context.workspaceRoot, rel, context.writeScope);
   const permissionMode = storedPermissionMode(context.permissionMode);
   if (permissionMode === 'read-only') {
     throw new Error('操作被拒绝：当前 Run 为 Read Only，禁止修改文件系统');
@@ -363,7 +314,7 @@ const MAX_IMAGE_READ_BYTES = 8 * 1024 * 1024;
 register({
   name: 'read',
   description:
-    '读取文本或图片。文本返回“行号→内容”，edit 的 oldText 不要包含行号。offset 始终是起始行号，limit 是行数（默认/最大 500），不随文件大小改变。输出预算 16KB，超限保留首尾并提示续读行号；超长单行可能截断，需其他工具处理。支持视觉的模型可查看工作区内图片（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 仅限工作区；Full access 可用绝对路径。',
+    '读取文本或图片。文本返回“行号→内容”，edit 的 oldText 不要包含行号。offset 始终是起始行号，limit 是行数（默认/最大 500），不随文件大小改变。输出预算 16KB，每页返回连续行并给出唯一的下一页 offset；超长单行可能截断，需其他工具处理。支持视觉的模型可查看工作区内图片（JPEG/PNG/GIF/WebP/BMP，≤8MB），否则返回省略提示。Read Only/Workspace Write 仅限工作区；Full access 可用绝对路径。',
   effect: 'read',
   getOperationKey: (args, context) => {
     const rel = String(args.path ?? '').trim();
@@ -378,7 +329,7 @@ register({
       path: { type: 'string', description: '工作区内相对文件路径，如 input/demo.txt' },
       offset: {
         type: 'number',
-        description: '起始行号（1-based，含该行），默认 1。续读时用上一次返回末尾提示的行号。',
+        description: '起始行号（1-based），默认 1。续读使用上次返回的 offset。',
       },
       limit: {
         type: 'number',
@@ -478,19 +429,15 @@ register({
       );
     }
 
-    // 窗口之后仍有内容：始终给出窗口续读提示（超预算时与"中间省略区间"
-    // 提示并存——两者指向不同区段，缺一模型就会以为文件读完了）。
-    if (hasMoreLines) {
+    // 只给一个游标：实际返回的连续页之后，而非请求窗口之后。
+    const sliced = sliceNumberedWindow(numberedLines, startLine);
+    const nextOffset = sliced.omittedLines ? sliced.resumeOffset : lastShownLine + 1;
+    if (sliced.omittedLines || hasMoreLines) {
       hints.push(
-        `[READ 提示] 本次窗口显示到第 ${lastShownLine} 行，共 ${totalLines} 行。` +
-          `用 offset=${lastShownLine + 1} 续读剩余 ${totalLines - lastShownLine} 行。`,
+        `[READ 提示] 本页连续显示第 ${startLine}-${nextOffset - 1} 行，共 ${totalLines} 行；其后内容尚未读取。` +
+        `用 offset=${nextOffset} 续读剩余 ${totalLines - nextOffset + 1} 行。`,
       );
     }
-
-    // 输出预算：与 Runtime guard 同一份预算（tool-output-budget.ts）。
-    // 超预算时保留整行头部 + 整行尾部，并给出**精确**的中间续读区间，
-    // 每一页都必然可被模型完整读取（分页而非丢内容）。
-    const sliced = sliceNumberedWindow(numberedLines, startLine);
     return [sliced.text, ...hints].filter(Boolean).join('\n');
   },
   validateResult: (result) => {
@@ -514,7 +461,7 @@ register({
     properties: {
       path: {
         type: 'string',
-        description: '当前 Workspace 内相对文件路径，如 src/note.txt 或 work-test.txt',
+        description: '用户允许写入的工作区相对路径；只准修改指定文件时，不得新建测试脚本或临时文件',
       },
       content: { type: 'string', description: '要写入的 UTF-8 文本内容' },
     },

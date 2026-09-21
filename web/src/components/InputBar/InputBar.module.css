@@ -602,3 +602,8 @@
 .fileInfo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .fileName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .fileMeta { color: var(--text-secondary); font-size: 11px; }
+
+.templatePreview { padding: 10px 14px; font-size: 12px; }
+.templatePreview small { display: block; margin-bottom: 5px; opacity: .7; }
+.templatePreview pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.templatePreview button { color: inherit; background: transparent; border: 1px solid #8884; border-radius: 6px; padding: 3px 8px; cursor: pointer; }

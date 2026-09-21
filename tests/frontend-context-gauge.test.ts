@@ -448,5 +448,12 @@ check(
   })(),
 );
 
+check('同轮交付检查独立计费，重放同一检查事件不重复累计', (() => {
+  const event = { type: 'llm_call' as const, step: 1, timestamp: '2026-09-20', iteration: 1, messageCount: 2,
+    response: '', hasToolCalls: false, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+  const first = { ...event, step: 2, purpose: 'final_review' as const };
+  const second = { ...event, step: 3, purpose: 'final_review' as const };
+  return deriveRunTokenUsage([event, first, second, first]).tokens === 45;
+})());
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);
