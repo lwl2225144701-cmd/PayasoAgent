@@ -1,4 +1,4 @@
-// 套件: Background Job 完成通知（Session 级，docs/long-task-timeout-plan.md 步骤 5）
+// 套件: Background Job 完成通知（Session 级，docs/plans/long-task-timeout-plan.md 步骤 5）
 // 用法: npx tsx tests/job-notification.test.ts
 // 覆盖:
 //   1. 模型收尾竞态：LLM 调用期间作业完成 → 通知注入并继续，模型用 shellJob

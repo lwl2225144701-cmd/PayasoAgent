@@ -36,7 +36,7 @@
 
 ## 收尾批次（44 个任务）
 
-收尾方案见 `docs/quality-repair-closure-plan.md`：原题三轮 + 八个变体共 44 个任务，同版本、同模型、同参数执行，`PAYASO_FINAL_REVIEW=1` 开启最终交付检查。
+收尾方案见 `docs/plans/quality-repair-closure-plan.md`：原题三轮 + 八个变体共 44 个任务，同版本、同模型、同参数执行，`PAYASO_FINAL_REVIEW=1` 开启最终交付检查。
 
 运行：`npx tsx tests/baseline/closure.ts`，依次执行四批 `original-1/2/3` 与 `variants`，结果目录 `docs/baseline/closure-<UTC时间>/`。
 

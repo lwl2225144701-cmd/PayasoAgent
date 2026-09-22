@@ -143,7 +143,7 @@
 ## 4. 决策点（实现时的取舍）
 
 1. **统一走 `streamSimple`**：比逐个 API 拼 `reasoningEffort/thinkingEnabled` 干净，
-   且 pi-ai 官方指南（`docs/pi-ai-使用指南.md` §6）推荐该入口。
+   且 pi-ai 官方指南（`docs/guides/pi-ai-使用指南.md` §6）推荐该入口。
 2. **档次是「按模型」配置**（进 `modelCapabilities`），不是 Provider 级：与现有
    contextWindow/maxOutputTokens/vision 一致，粒度最细。
 3. **`off` 显式关思考** vs 空值不设置：两者都保留。`off` 用于 DeepSeek 这类默认开思考的模型

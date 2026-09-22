@@ -132,7 +132,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
 | `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）
 | `src/sandbox/shell-executor.ts`                   | 统一 Shell 执行入口与平台选择（darwin→Seatbelt / win32+gate→Windows ACL / 其余→无沙箱门控）；结果附 executor/enforcement；`shellIsolationCapabilities()` 诚实分级能力报告（GET /runtime/capabilities 的 shellIsolation 字段）
-| `src/sandbox/windows-acl-sandbox.ts` + `win-acl-runner.mjs` | Windows ACL 受限令牌执行器（gate `PAYASO_SHELL_WINDOWS_ACL` 默认关，真机验证清单见 docs/cross-platform-sandbox-plan.md）：薄 runner 子进程复用 DeepSeek AclSandbox；read-only→仅 scratch 可写、workspace-write→workspace+scratch；runner 失败（exit 127+签名）fail-closed 不回退；enforcement=partial（读/网络不受限，Everyone/硬链接例外）
+| `src/sandbox/windows-acl-sandbox.ts` + `win-acl-runner.mjs` | Windows ACL 受限令牌执行器（gate `PAYASO_SHELL_WINDOWS_ACL` 默认关，真机验证清单见 docs/sandbox/cross-platform-sandbox-plan.md）：薄 runner 子进程复用 DeepSeek AclSandbox；read-only→仅 scratch 可写、workspace-write→workspace+scratch；runner 失败（exit 127+签名）fail-closed 不回退；enforcement=partial（读/网络不受限，Everyone/硬链接例外）
 | `src/sandbox/shell-scratch.ts`                    | 受管可写 scratch（HOME/TMPDIR）：read-only 下命令仍可写缓存，工作区保持只读；**根目录刻意取短路径**（macOS 默认 /private/tmp/payaso-shell，避开 /var/folders 的 AF_UNIX 108 字节限制）
 | `src/sandbox/shell-timeout.ts`                    | Shell 超时策略（默认 120s / 上限 600s / env 可配 / 模型可请求 `timeoutMs`）                                                                               |
 | `src/sandbox/sandbox-policy.ts`                   | seatbelt 策略生成（default-deny + 白名单 + `networkAccess` 网络能力开关，默认 false）                                                                                                            |
@@ -173,7 +173,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 
 `run_started.attachments` 的 `path`、`sha256`、`sizeBytes` 描述上传文件。文档的可选 `extraction` 包含 `status`（`extracted` / `partial` / `failed`）、正文路径/哈希/大小及说明，不包含正文。失败仍保留原件，供后续工具转换。旧事件无此字段时继续按原路径处理；旧版已经丢失的文档原件无法自动恢复。
 
-Office 提取仅覆盖文字/单元格，不保证保留排版、图片或图表。PDF 为简易提取，结果始终标注 `partial`；字体映射、加密、不支持的流或无可提取文字记录失败，不断言文件是扫描件。ZIP/PDF 单条解压上限 8 MiB、累计 32 MiB，正文上限 2 MiB；超限终止提取，保留原件。上传数量和大小沿用公共策略，下载允许最大 16 MiB 的 PDF。
+Office 提取仅覆盖文字/单元格，不保证保留排版、图片或图表。PDF 为简易提取，结果始终标注 `partial`；字体映射、加密、不支持的流或无可提取文字记录失败，不断言文件是扫描件。ZIP/PDF 单条解压上限 8 MiB、累计 32 MiB，正文上限 2 MiB；超限终止提取，保留原件。上传数量和大小沿用公共策略，下载允许最大 16 MiB 的 PDF。PDF 提取不够用时（`partial`/`failed`，或需要表格、OCR、表单），附件清单与 extraction message 会指向工作区 `pdf-official` skill（`.payaso/skills/`，Python venv 安装在受管 scratch），由 Agent 用 `loadSkill` 加载处理原件；skill 缺失时该指引用条件语气表述，不致误导。
 
 ### 3.2 Web 前端
 
@@ -242,7 +242,7 @@ for (i = startIter; ; i++):
 
 Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**重试上限（v1.8 起由 `tool-error-classifier.ts` 判定，确定性错误只执行一次）。模型持续产生工具调用时循环继续，停止由模型自然收尾、AbortSignal、工具/请求错误或可选 `Harness.shouldStopAfterTurn` 决定。
 
-**超时是分层的，不由 Agent Loop 统一计时（v2.3，docs/long-task-timeout-plan.md）**：
+**超时是分层的，不由 Agent Loop 统一计时（v2.3，docs/plans/long-task-timeout-plan.md）**：
 - LLM：连接超时（`PAYASO_LLM_CONNECT_TIMEOUT_MS`，默认 30s）+ 流空闲看门狗（`PAYASO_LLM_IDLE_TIMEOUT_MS`，默认 120s）——持续输出不断续期，只有停滞才触发；超时不重试。
 - 普通工具：Tool 声明自己的超时预算（缺省 `PAYASO_TOOL_TIMEOUT_MS` 默认 5 分钟），由 `ToolInvocationProcessManager` 以 deadline 包裹 execute；到期返回结构化 `TOOL_TIMEOUT`（不重试、非业务失败）。
 - Shell 前台：保留命令级有界超时 + 进程树硬终止（`PAYASO_SHELL_TIMEOUT_MS` / `_MAX_MS`）。
@@ -417,7 +417,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 * 用户鉴权 / 多租户（runId 单租户；Host 仅监听 127.0.0.1）
 
-* 非 macOS 上的 shell 沙箱：Windows ACL 执行器已就绪但 **gate 默认关**（`PAYASO_SHELL_WINDOWS_ACL`，真机验证清单见 docs/cross-platform-sandbox-plan.md §5；enforcement=partial）；Linux 沙箱未实施（无沙箱门控路径需 `PAYASO_SHELL_UNSANDBOXED=1` 显式放行）。**macOS 上 sandbox-exec 不可用时 shell 自动禁用**（fail-closed，见 §8 #8）
+* 非 macOS 上的 shell 沙箱：Windows ACL 执行器已就绪但 **gate 默认关**（`PAYASO_SHELL_WINDOWS_ACL`，真机验证清单见 docs/sandbox/cross-platform-sandbox-plan.md §5；enforcement=partial）；Linux 沙箱未实施（无沙箱门控路径需 `PAYASO_SHELL_UNSANDBOXED=1` 显式放行）。**macOS 上 sandbox-exec 不可用时 shell 自动禁用**（fail-closed，见 §8 #8）
 
 ***
 

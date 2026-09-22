@@ -1,4 +1,4 @@
-// 模块: 跨平台 Shell 载体与进程树终止测试（docs/windows-mac-compat.md §3）。
+// 模块: 跨平台 Shell 载体与进程树终止测试（docs/sandbox/windows-mac-compat.md §3）。
 // 用法: npx tsx tests/platform-shell-host.test.ts
 // 验收：载体发现三平台分支（注入 platform/env，无需真实 Windows）；
 // 进程树终止守卫（pid<=0 不波及自身）；无沙箱执行（unix/wslLegacy stdin 通道）。

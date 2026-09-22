@@ -1,4 +1,4 @@
-// 内容寻址附件库（docs/attachment-v2-content-store.md P0 期）。
+// 内容寻址附件库（docs/attachment/attachment-v2-content-store.md P0 期）。
 // 设计要点：
 // - 字节按 sha256 去重：同一份图片/文件全库只有一个对象，永不覆盖
 // - 原子发布：tmp/ 暂存 → fsync → hardlink 至 objects/<前2>/<sha256> → chmod 0444

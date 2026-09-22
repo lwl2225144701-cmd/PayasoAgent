@@ -1,6 +1,6 @@
 # npm 发布操作手册（payaso-agent）
 
-状态：**已执行完成（2026-09-15）** —— payaso-agent@2.2.0 已发布至 npm（账号 pigsylu，2FA 走 Security Key passkey，浏览器 WebAuthn 确认），真实 `npx payaso-agent@2.2.0` 线上复验通过（registry 拉取、HTTP 200、capabilities 正常）。下文流程保留作为后续发版参考；前置验收记录见 docs/npx-distribution-plan.md。
+状态：**已执行完成（2026-09-15）** —— payaso-agent@2.2.0 已发布至 npm（账号 pigsylu，2FA 走 Security Key passkey，浏览器 WebAuthn 确认），真实 `npx payaso-agent@2.2.0` 线上复验通过（registry 拉取、HTTP 200、capabilities 正常）。下文流程保留作为后续发版参考；前置验收记录见 docs/distribute/npx-distribution-plan.md。
 
 ## 0. 发布决策（人工确认项）
 

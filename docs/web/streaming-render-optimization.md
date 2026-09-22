@@ -162,7 +162,7 @@ O(累计文本) 的解析，但代价用户看得见——流式期间 `**加粗
 降为 O(尾部)：实测真实语料单帧 0.13ms（19.5x），每帧解析字符量降 96.8%。
 
 完整记录（原理、实现、两个正确性陷阱、实测表、`TAIL_PARSE_LIMIT` 硬上界的由来、
-SSR 逐帧验收证据、未验证项）见 **`docs/streaming-markdown-incremental.md`**。
+SSR 逐帧验收证据、未验证项）见 **`docs/web/streaming-markdown-incremental.md`**。
 
 | | §3① 流式纯文本 | 分块增量（现行） |
 |---|---|---|

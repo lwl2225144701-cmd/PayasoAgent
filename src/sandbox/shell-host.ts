@@ -1,4 +1,4 @@
-// Shell 载体发现与跨平台进程执行（docs/windows-mac-compat.md §3）。
+// Shell 载体发现与跨平台进程执行（docs/sandbox/windows-mac-compat.md §3）。
 // 设计要点：
 // - 「载体」与「沙箱」解耦：macOS 由 runtime-tools 走 MacOSSandbox（Seatbelt 是
 //   增强而非前提）；本模块只负责"找到可用的解释器" + 提供无沙箱路径的

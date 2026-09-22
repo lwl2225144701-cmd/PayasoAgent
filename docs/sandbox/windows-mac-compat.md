@@ -98,7 +98,7 @@ Git Bash 查找顺序（对齐 pi）：`%ProgramFiles%\Git\bin\bash.exe` → `%P
 Windows/Linux 无 sandbox-exec，不能静默降级。三通道（2026-09 起由统一执行器 `src/sandbox/shell-executor.ts` 分派，平台分支已移出 runtime-tools）：
 
 - macOS：Seatbelt 沙箱（enforcement=full）；
-- Windows：`PAYASO_SHELL_WINDOWS_ACL=1`（默认关）→ ACL 受限令牌执行器（enforcement=**partial**：写入部分隔离——Everyone 与 NTFS 硬链接例外，读与网络不受限；workspace-write 会在工作区留下持续性授权 ACE，清理入口见下）。**真机验证清单完成前保持关闭**（docs/cross-platform-sandbox-plan.md §5）；
+- Windows：`PAYASO_SHELL_WINDOWS_ACL=1`（默认关）→ ACL 受限令牌执行器（enforcement=**partial**：写入部分隔离——Everyone 与 NTFS 硬链接例外，读与网络不受限；workspace-write 会在工作区留下持续性授权 ACE，清理入口见下）。**真机验证清单完成前保持关闭**（docs/sandbox/cross-platform-sandbox-plan.md §5）；
 - 其余（含 gate 关闭的 win32、linux）：**仍拒绝**（延续「绝不静默降低遏制」原则）；放行条件：显式环境开关 `PAYASO_SHELL_UNSANDBOXED=1`。
 
 能力报告：`GET /runtime/capabilities` 的 `shellIsolation` 字段（executor / enforcement / writeIsolation / readIsolation / networkIsolation 诚实分级），设置 UI「通用 → Shell 隔离」行展示 partial 警示与 standing ACE 披露。partial 必须可见，不静默放宽权限语义。

@@ -1,6 +1,6 @@
 # npm / npx 分发改造方案
 
-状态：**已完成（2026-09-15）** —— payaso-agent@2.2.0 已发布 npm 并通过真实 `npx payaso-agent@2.2.0` 线上复验；发布流程见 `docs/npm-publish-runbook.md`。原始方案与验收记录如下。日期：2026-09-14。
+状态：**已完成（2026-09-15）** —— payaso-agent@2.2.0 已发布 npm 并通过真实 `npx payaso-agent@2.2.0` 线上复验；发布流程见 `docs/distribute/npm-publish-runbook.md`。原始方案与验收记录如下。日期：2026-09-14。
 
 ## 1. 目标
 
@@ -93,7 +93,7 @@ npx payaso-agent@latest
 以 `PAYASO_HOME=演练目录` 启动包实例：启动无错误，`GET /runs` 返回完整历史且内容可读；设置 → 模型页人工复验，提供方列表完整加载（密钥仅掩码返回，Keychain 引用正常）——**演练通过**。
 
 发现（符合 §4 预期，写入迁移注意）：47 个历史 workspace_root 中 32 个已不存在（旧 `sandbox/workspaces/<uuid>` 被清理、部分为已过期的 `/private/tmp` 路径）——历史会话可查看，但**对已消失 workspace 的旧 run 执行恢复/文件读取会失败**，属预期行为；恢复旧任务前应先在 UI 重新选择有效工作区。
-3. Windows：本方案不改变 Windows 实验 gate 状态；安装成功不代表 Windows 沙箱已验收（见 `docs/cross-platform-sandbox-plan.md` §5）。
+3. Windows：本方案不改变 Windows 实验 gate 状态；安装成功不代表 Windows 沙箱已验收（见 `docs/sandbox/cross-platform-sandbox-plan.md` §5）。
 
 ### 旧数据迁移（不自动搬迁，手动成组操作）
 
@@ -113,4 +113,4 @@ npx payaso-agent@latest
 - `package.json`、`tsconfig.json`、`web/vite.config.ts`：启动与构建。
 - `src/host/index.ts`、`src/host/routes/static-handler.ts`：Host 生命周期与静态文件。
 - `src/host/persistence/sqlite-store.ts`、`src/persistence/file-checkpoint-store.ts`、`src/sandbox/sandbox-manager.ts`：当前依赖源码目录或启动目录的数据路径。
-- `docs/cross-platform-sandbox-plan.md`：独立的跨平台沙箱实施与验收边界。
+- `docs/sandbox/cross-platform-sandbox-plan.md`：独立的跨平台沙箱实施与验收边界。

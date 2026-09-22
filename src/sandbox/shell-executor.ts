@@ -1,5 +1,5 @@
 // 模块: Shell Executor — 统一 Shell 执行入口与平台选择（跨平台沙箱改造）
-// 设计（docs/cross-platform-sandbox-plan.md §2）：
+// 设计（docs/sandbox/cross-platform-sandbox-plan.md §2）：
 // - 「工具语义」「载体」「沙箱」三层解耦：runtime-tools 只管 scratch 生命周期与
 //   denied/缺失工具等工具层错误语义；本模块负责"在哪个平台用哪种执行器跑命令"。
 // - darwin → macOS Seatbelt（行为与既有版本完全一致，自 runtime-tools 原样搬运）

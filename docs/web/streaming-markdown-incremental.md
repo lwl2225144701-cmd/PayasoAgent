@@ -3,7 +3,7 @@
 > 状态：已实施（commit `45419df`）。本文是该改造的完整记录：问题、原理、实现、实测、
 > 边界与验收证据。
 >
-> 前置：`docs/streaming-render-optimization.md`（第一轮，commit `dba4101`）。**本文反转了
+> 前置：`docs/web/streaming-render-optimization.md`（第一轮，commit `dba4101`）。**本文反转了
 > 那份文档 §3① 的一个取舍**，反转理由见 §2。
 
 ---

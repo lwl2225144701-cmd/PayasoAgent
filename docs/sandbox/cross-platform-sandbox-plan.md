@@ -115,4 +115,4 @@ Windows 真机验收其余条目仍未完成，gate 保持默认关闭。
 
 - DeepSeek：`packages/sandbox/sandbox/`（接口）、`sandbox-local/`（平台选择）、`sandbox-windows-acl/`（ACL runner），源码位于相邻 `deepseek-harness` 仓库；npm 发布物 `@deepseek-ai/dsh-sandbox-windows-acl@0.1.5-rc.2`。
 - Payaso：`src/sandbox/shell-executor.ts`、`windows-acl-sandbox.ts`、`win-acl-runner.mjs`、`sandbox-policy.ts`、`macos-sandbox.ts`、`shell-host.ts`、`src/tools/runtime-tools.ts`；测试 `tests/shell-executor.test.ts`、`tests/windows-acl-sandbox.test.ts`。
-- 本方案补充 `docs/windows-mac-compat.md` 的 Shell 隔离部分；现状以当前源码为准。
+- 本方案补充 `docs/sandbox/windows-mac-compat.md` 的 Shell 隔离部分；现状以当前源码为准。

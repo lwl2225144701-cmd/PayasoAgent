@@ -117,7 +117,7 @@ const SUITES: { name: string; file: string }[] = [
   // v1.8 内核不变量（空回合 / 参数契约 / 错误分类 / 输出预算 / shell 执行环境）
   { name: 'tool-output-budget', file: 'tests/tool-output-budget.test.ts' },
   { name: 'shell-execution', file: 'tests/shell-execution.test.ts' },
-  // 跨平台 Shell 沙箱（docs/cross-platform-sandbox-plan.md）：统一执行器平台矩阵
+  // 跨平台 Shell 沙箱（docs/sandbox/cross-platform-sandbox-plan.md）：统一执行器平台矩阵
   // + Windows ACL argv/失败契约（gate 默认关，真机验证清单见该文档）
   { name: 'shell-executor', file: 'tests/shell-executor.test.ts' },
   { name: 'windows-acl-sandbox', file: 'tests/windows-acl-sandbox.test.ts' },
@@ -132,7 +132,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'tool-call-arguments', file: 'tests/tool-call-arguments.test.ts' },
   { name: 'scratchpad-view', file: 'tests/scratchpad-view.test.ts' },
   { name: 'background-jobs', file: 'tests/background-jobs.test.ts' },
-  // v2.3 长任务与分层超时（docs/long-task-timeout-plan.md）：统一超时原语 / 工具级
+  // v2.3 长任务与分层超时（docs/plans/long-task-timeout-plan.md）：统一超时原语 / 工具级
   // TOOL_TIMEOUT / 后台作业 Session 所有权与完成通知（LLM 看门狗用例并入 llm.test.ts）
   { name: 'timeout-primitives', file: 'tests/timeout-primitives.test.ts' },
   { name: 'tool-timeout', file: 'tests/tool-timeout.test.ts' },

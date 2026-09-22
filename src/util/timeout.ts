@@ -1,5 +1,5 @@
 // Module: Shared Timeout Primitives — one place for the layered-timeout
-// vocabulary used across the Runtime (docs/long-task-timeout-plan.md step 1).
+// vocabulary used across the Runtime (docs/plans/long-task-timeout-plan.md step 1).
 //
 // Why this module exists:
 // Timeout responsibility moves from a single fixed total deadline to the

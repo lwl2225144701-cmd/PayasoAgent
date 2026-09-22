@@ -1,7 +1,7 @@
 // Deterministic Host timeout test (no real network / LLM).
 // 两个不变量：
 //   1. 挂死的模型请求由 LLM 层连接超时兜底并落 failed，而不是留下无界 Run。
-//      （docs/long-task-timeout-plan.md 步骤 2：超时由阻塞层负责。）
+//      （docs/plans/long-task-timeout-plan.md 步骤 2：超时由阻塞层负责。）
 //   2. Host 不再有固定总运行时限：旧 AGENT_RUN_TIMEOUT_MS 保险丝已删除，
 //      运行时间超过该值的正常 Run 必须完整跑完、正常 completed。
 //      （步骤 6；这也是"活跃 Run 超过旧时限仍可执行"的确定性代理验证。）

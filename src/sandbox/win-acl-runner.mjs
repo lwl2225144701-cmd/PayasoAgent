@@ -8,7 +8,7 @@
 //    '--workspace', <dir>, '--scratch', <dir>, '--mode', <read-only|workspace-write>,
 //    '--', <bash 路径>, '-c', <命令>]
 //
-// 权限模式 → AclSandbox 授权形状（docs/cross-platform-sandbox-plan.md §3）：
+// 权限模式 → AclSandbox 授权形状（docs/sandbox/cross-platform-sandbox-plan.md §3）：
 //  - read-only：scratch 由 AclWriteGrant 可撤销授权，AclSandbox 不管理 DACL。
 //    workspace 不在 writableDirs → 无 capability ACE → 只读；历史 workspace-write
 //    留下的 standing workspace ACE 因 workspaceWriteSid 不在 restricting 列表而惰性。

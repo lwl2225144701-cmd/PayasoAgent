@@ -1,4 +1,4 @@
-// 套件: Tool Timeout — 工具级超时预算（docs/long-task-timeout-plan.md 步骤 3）
+// 套件: Tool Timeout — 工具级超时预算（docs/plans/long-task-timeout-plan.md 步骤 3）
 // 用法: npx tsx tests/tool-timeout.test.ts
 // 覆盖:
 //   1. 挂死工具在 deadline 到期后不再无限等待（结构化 TOOL_TIMEOUT 回传模型）

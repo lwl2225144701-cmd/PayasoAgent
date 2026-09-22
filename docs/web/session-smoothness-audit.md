@@ -6,7 +6,7 @@
 > 审计对象：PayasoAgent Web 前端（`web/`，React 18.3.1）会话展示链路。
 > 方法与边界：纯静态代码证据 + 真实持久化数据（`.data/payaso.db`，只读）+ 真实语料解析微基准。
 > **未修改任何源码**（本文档除外）。
-> 前置文档：`docs/streaming-render-optimization.md`（第一轮，已实施于 commit `dba4101`）。
+> 前置文档：`docs/web/streaming-render-optimization.md`（第一轮，已实施于 commit `dba4101`）。
 
 ---
 
@@ -349,7 +349,7 @@ contain-intrinsic-size: auto 800px;   /* 高度估值，避免滚动条跳动 */
 
 ## 5. 验收与测量配方（必须实测，不接受推断）
 
-第一轮已建立「headless Chrome + CDP Tracing」方法（`docs/streaming-render-optimization.md` §4），本轮复用：
+第一轮已建立「headless Chrome + CDP Tracing」方法（`docs/web/streaming-render-optimization.md` §4），本轮复用：
 
 1. **会话打开耗时**：headless Chrome 加载应用 → 点击侧栏会话 `722feaac…` →
    `performance.mark` 到「最后一个 mermaid `<svg>` 出现 + 一次 `requestIdleCallback`」；

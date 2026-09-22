@@ -67,7 +67,7 @@ import { ToolInvocationStateMachine } from './state-machine.js';
 /** 工具执行最大重试次数（总尝试 = 1 + MAX_RETRY）。 */
 export const MAX_RETRY = 2;
 
-// ---- v2.3 工具级超时预算（docs/long-task-timeout-plan.md 步骤 3）----
+// ---- v2.3 工具级超时预算（docs/plans/long-task-timeout-plan.md 步骤 3）----
 // 超时由"声明预算的工具"负责，不由 Agent Loop 统一计时：
 // - Tool.timeoutMs 声明自己的 deadline（函数形式可参考运行时策略，如 shell）；
 // - 未声明 → 全局策略默认（env 可覆盖）；
@@ -356,7 +356,7 @@ export async function invokeToolCall(
     lifecycle.transition('intent_persisted');
   }
   const effectiveRetries = effect === 'non_idempotent' ? 0 : MAX_RETRY;
-  // v2.3 工具级超时（docs/long-task-timeout-plan.md 步骤 3）：每次调用一个派生
+  // v2.3 工具级超时（docs/plans/long-task-timeout-plan.md 步骤 3）：每次调用一个派生
   // deadline。Tool 声明 / 全局策略的预算内未 settle → 以 TimeoutAbortError 中止
   // 本次调用并返回结构化 TOOL_TIMEOUT；用户取消经由父信号仍以标准 AbortError
   // 传播（语义与 v1.6 取消路径一致）。execute settle 即释放 timer 与上游监听。

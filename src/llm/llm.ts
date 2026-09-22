@@ -31,7 +31,7 @@ const API_KEY = process.env.OPENAI_API_KEY || '';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const MAX_RETRIES = 2;
 
-// ---- 分层超时策略（docs/long-task-timeout-plan.md 步骤 2）----
+// ---- 分层超时策略（docs/plans/long-task-timeout-plan.md 步骤 2）----
 // LLM 层不再设"单请求总时限"（那会掐断持续输出中的长生成），改为两个边界：
 // - connectMs：HTTP 请求发出到响应头返回（覆盖 TCP/TLS/排队挂死）
 // - idleMs：流式事件之间的最大空档（prefill 首 token 等待也计入；收到数据即续期，

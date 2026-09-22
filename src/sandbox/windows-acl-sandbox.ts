@@ -1,5 +1,5 @@
 // 模块: Windows ACL Shell 执行器（跨平台沙箱改造步骤 2）
-// 设计（docs/cross-platform-sandbox-plan.md §2/§3）：
+// 设计（docs/sandbox/cross-platform-sandbox-plan.md §2/§3）：
 // - Payaso 不在自身进程内加载任何 Win32 FFI：受限令牌创建/ACL 授权/Job Object
 //   全部在薄 runner 子进程（win-acl-runner.mjs）内完成，复用
 //   @deepseek-ai/dsh-sandbox-windows-acl 的 AclSandbox（受限令牌 + 能力 SID 写授权 +

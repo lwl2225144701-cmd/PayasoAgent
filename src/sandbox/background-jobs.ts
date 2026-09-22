@@ -6,7 +6,7 @@
 // burned the whole turn) or gave up. This registry lets a command run detached
 // from the loop while the agent keeps working, then poll or kill it.
 //
-// v2.3 (docs/long-task-timeout-plan.md steps 4-5):
+// v2.3 (docs/plans/long-task-timeout-plan.md steps 4-5):
 // - Ownership moved from Run to Session: a job survives the Run that started
 //   it (terminal Run states no longer dispose the registry) and stays visible
 //   to later Runs of the same Session.

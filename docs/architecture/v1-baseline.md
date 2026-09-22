@@ -385,7 +385,7 @@ npm run cli -- --run-id <id> "任务"
 如果决定基线化，建议流程：
 
 1. 用户确认上述 Web 改动是否纳入 v1；
-2. 用户授权后 commit（或单独 commit docs/v1-baseline.md）；
+2. 用户授权后 commit（或单独 commit docs/architecture/v1-baseline.md）；
 3. 用户授权后创建 tag：
 
 ```bash
@@ -397,7 +397,7 @@ git push origin v1.0.0-local-mvp
 
 ## O. 文档同步说明
 
-本次新增本文档 [`docs/v1-baseline.md`](./v1-baseline.md) 作为 v1 正式基线，未大规模重写历史文档。
+本次新增本文档 [`docs/architecture/v1-baseline.md`](./v1-baseline.md) 作为 v1 正式基线，未大规模重写历史文档。
 
 已确认历史文档状态：
 

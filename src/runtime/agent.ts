@@ -160,7 +160,7 @@ export async function runAgent(
   // 无限触发额外请求）。
   let incompleteTurnRecoveries = 0;
 
-  // ---- v2.3 Background Job 完成通知（docs/long-task-timeout-plan.md 步骤 5）----
+  // ---- v2.3 Background Job 完成通知（docs/plans/long-task-timeout-plan.md 步骤 5）----
   // 作业归属 Session；本 Run 在迭代边界抽取会话的完成通知并注入模型视图。
   // 连续唤醒有上限（每轮 Run 独立计数）：通知风暴下模型既不被锁死在通知循环里，
   // 未消费的通知也仍留在会话队列（后续 Run / 显式 list 可继续消费）。

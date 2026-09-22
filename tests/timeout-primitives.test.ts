@@ -1,4 +1,4 @@
-// 套件: Shared Timeout Primitives — 分层超时的统一原语（docs/long-task-timeout-plan.md 步骤 1）
+// 套件: Shared Timeout Primitives — 分层超时的统一原语（docs/plans/long-task-timeout-plan.md 步骤 1）
 // 用法: npx tsx tests/timeout-primitives.test.ts
 // 覆盖: clampTimeoutMs 收敛 / deadline 组合上游取消与本地超时 / idleWatchdog 续期 / timeoutOf 来源识别
 

@@ -1,5 +1,5 @@
 // 收尾批次的续跑计划：纯函数，不碰文件系统，便于确定性单测。
-// 规则与 docs/quality-repair-closure-plan.md 对齐：
+// 规则与 docs/plans/quality-repair-closure-plan.md 对齐：
 // - 只有源码/验收样例指纹完全一致才能续跑，禁止换版本混用；
 // - 已“等待内容复核”的批次不重跑（省额度且不可冒名）；
 // - provider_blocked / runner_failed / 中断残留的 running 一律重跑，失败不计通过。
