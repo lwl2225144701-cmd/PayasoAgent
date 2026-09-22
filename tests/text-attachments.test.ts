@@ -9,8 +9,10 @@ import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
 import { requestAttachments } from '../src/host/routes/route-context.js';
 import { prepareAttachments } from '../src/host/attachments/normalize.js';
 import { writeAttachmentFile, publishAttachments } from '../src/host/attachments/publish.js';
-import { getAttachmentStoreRoot, restoreAttachment } from '../src/attachments/store.js';
+import { getAttachmentStoreRoot, restoreAttachment, putAttachmentObject } from '../src/attachments/store.js';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
+import { needsExtractionRefresh } from '../src/host/attachments/refresh-extraction.js';
+import { EXTRACTOR_VERSION } from '../src/host/attachments/extraction-version.js';
 import {
   createAgentExecutionContext,
   createDefaultRuntimeServices,
@@ -636,6 +638,93 @@ try {
         }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
+    } finally {
+      await manager.close();
+    }
+  }
+
+  // ---- 恢复刷新：旧版本提取产物在新一轮 Run 启动时被现行逻辑重提 ----
+  // 复刻真实故障：冯子微 PDF（无 ToUnicode）在乱码闸门上线前落盘了二进制 .txt，
+  // 事件不可变、同会话重试只按 sha 还原旧字节 —— 修复后必须让旧会话也读到新产物。
+  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt', extractorVersion: EXTRACTOR_VERSION } }, ws) === false);
+  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'failed' } }, ws) === false);
+  check(needsExtractionRefresh({ path: 'a.pdf' }, ws) === false);
+  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt' } }, ws) === true);
+  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt', extractorVersion: '1' } }, ws) === true);
+  {
+    const store = new SqliteRunStore(':memory:', new MemorySecretStore());
+    const manager = new RunManager(store);
+    store.addModelProvider({
+      name: 'attachment-provider',
+      baseUrl: 'https://attachment.test/v1',
+      apiKey: 'test-only',
+      models: ['attachment-test'],
+    });
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+        { headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+    const waitTerminal = async (runId: string): Promise<string | null> => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        const status = manager.get(runId)?.status;
+        if (status === 'completed' || status === 'failed' || status === 'stopped') return status;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return null;
+    };
+    try {
+      const preparedGarbage = (await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())]))[0];
+      const first = manager.createInSession('上传附件', undefined, {
+        permissionMode: 'read-only',
+        attachments: [preparedGarbage],
+      });
+      const firstStarted = store
+        .listEvents(first.runId)
+        .map(({ event }) => event)
+        .find((event) => event.type === 'run_started');
+      const real = firstStarted?.attachments?.[0];
+      check(Boolean(real?.extraction?.path));
+      check((await waitTerminal(first.runId)) === 'completed');
+
+      // 「做旧」成修复前的状态：store 里存入 builtin 解出的乱码字节，事件引用它的
+      // sha 且不带 extractorVersion —— 恢复时会按 sha 还原这段乱码。
+      const legacyBytes = Buffer.from('\u008a\u008c\u008eAB', 'latin1');
+      const legacyObject = putAttachmentObject(getAttachmentStoreRoot(), legacyBytes);
+      const legacyRef = {
+        name: real!.name,
+        path: real!.path,
+        sha256: real!.sha256,
+        kind: 'binary' as const,
+        mimeType: real!.mimeType,
+        extraction: {
+          status: 'partial' as const,
+          path: real!.extraction!.path!,
+          sha256: legacyObject.sha256,
+        },
+      };
+      store.appendEvent(first.runId, {
+        type: 'run_started',
+        runId: first.runId,
+        timestamp: new Date().toISOString(),
+        attachments: [legacyRef],
+      });
+
+      // 第二轮同会话读取：恢复循环还原乱码后按版本重提，磁盘产物应变成现行逻辑的输出。
+      // 复用会话的 workspace 是会话级（第一轮的），恢复与重提都落在那里。
+      const second = manager.createInSession('再读一次', first.sessionId, {
+        permissionMode: 'read-only',
+      });
+      check((await waitTerminal(second.runId)) === 'completed');
+      const sessionWorkspace = store.getSession(first.sessionId)?.workspaceRoot ?? '';
+      check(Boolean(sessionWorkspace));
+      const refreshed = fs.readFileSync(path.join(sessionWorkspace, legacyRef.extraction.path), 'utf8');
+      check(refreshed === 'ŠŒŽAB');
+      // 刷新后保持只读语义（与其余附件文件一致，agent 不可改）。
+      check((fs.statSync(path.join(sessionWorkspace, legacyRef.extraction.path)).mode & 0o222) === 0);
+      // 刷新记账在宿主侧台账：同一 workspace 再判不再过期。
+      check(!needsExtractionRefresh(legacyRef, sessionWorkspace));
     } finally {
       await manager.close();
     }

@@ -82,6 +82,7 @@ export function publishAttachments(
               extraction: {
                 status: attachment.extraction.status,
                 message: attachment.extraction.message,
+                extractorVersion: attachment.extraction.extractorVersion,
                 ...(extracted
                   ? {
                       path: extracted.relPath,

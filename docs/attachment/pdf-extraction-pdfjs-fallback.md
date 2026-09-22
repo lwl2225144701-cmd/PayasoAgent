@@ -148,6 +148,25 @@ for (let i = 1; i <= doc.numPages; i++) {
 - **版本 API 漂移**：pdfjs-dist 版本间 worker/模块入口差异，落地时锁定版本并固化用法。
 - **包体积/冷启动**：pdfjs-dist 体积不小，靠 `optional` + 懒加载规避对主路径的影响。
 
+## 6.5 提取产物的版本与过期刷新（2026-09-22 补）
+
+乱码闸门上线后发现一个二阶问题：**提取产物一旦落盘就固化了**——历史事件不可变，
+同会话重试只是按 sha256 恢复旧字节，于是「代码已修、旧会话读到的还是旧产物」
+（真实案例：冯子微 PDF 的二进制 .txt 在修复后的重试中依然被读出）。解法：
+
+- `attachment-types.ts` 的 `extraction.extractorVersion` + `attachments/extraction-version.ts`
+  的 `EXTRACTOR_VERSION`：**提升提取行为时 +1**。normalize/publish 把版本随产物写入事件；
+  publish 曾逐字段重建 extraction 丢过该字段（已修并有测试护栏）。
+- `attachments/refresh-extraction.ts`：Run 启动的恢复循环里，对版本旧于现行（含无版本的
+  历史产物）且 `path` 指向存在产物的附件，用现行提取逻辑（按扩展名路由
+  pdf/docx/pptx/xlsx）重提并**覆盖**落盘文件；恢复产物带 0o444 只读 mode，须先删再写、
+  写完保持只读。`failed` 状态无产物可刷（旧判定保持 failed，可走 skill）。
+- 刷新台账在宿主侧（`appDataPath('extraction-refresh/')`，按 workspace 哈希，JSON 记
+  `extraction.path → 版本`），不进工作区、agent 无感、跨会话共享；刷新失败静默跳过，
+  下一轮 Run 启动自然重试。
+- 测试：`tests/text-attachments.test.ts` 端到端复刻——往 store 注入乱码字节 + 无版本事件，
+  同会话第二轮 Run 启动后产物被重提为现行输出（ŠŒŽAB），且保持只读、台账去重。
+
 ## 7. 后续（第二层，不在本方案）
 
 skill 换血：`.payaso/skills/pdf-official/scripts/*.py` → `*.mjs`，用 `node` 直跑；

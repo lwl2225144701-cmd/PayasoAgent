@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { TextAttachmentRef } from '../attachment-types.js';
 import { restoreAttachment } from '../attachments/store.js';
+import { refreshExtraction } from './attachments/refresh-extraction.js';
 import {
   createAgentExecutionContext,
   createDefaultRuntimeServices,
@@ -752,6 +753,9 @@ export class RunLifecycleService {
       try {
         // 恢复当前会话已上传的文本/二进制副本（图片走 content store 之外
         // 的物化路径，不在此列）；不能恢复时让 read/工具调用返回明确错误。
+        // 产物按版本刷新：提取逻辑升级后，旧事件里的过期产物（如乱码闸门上线前
+        // 落盘的二进制 .txt）在原件恢复后用现行逻辑重提覆盖，避免「代码已修、
+        // 旧会话读到的还是旧产物」。失败静默跳过，保留旧产物下轮再试。
         for (const previous of this.store.listRunsBySession(run.sessionId)) {
           for (const { event } of this.store.listEvents(previous.runId)) {
             if (event.type !== 'run_started') continue;
@@ -763,6 +767,13 @@ export class RunLifecycleService {
                   restoreAttachment(run.workspaceRoot, ref.path, ref.sha256);
                 } catch {
                   /* 清单保留路径，工具读取时报告缺失。 */
+                }
+              }
+              if (file.extraction) {
+                try {
+                  await refreshExtraction(file, run.workspaceRoot);
+                } catch {
+                  /* 刷新失败不影响 Run 启动，旧产物保留。 */
                 }
               }
             }

@@ -20,6 +20,7 @@ import {
   MAX_TEXT_BYTES,
 } from '../../attachment-policy.js';
 import { extractDocxText } from './docx.js';
+import { EXTRACTOR_VERSION } from './extraction-version.js';
 import { extractPdfText } from './pdf.js';
 import { extractPptxText } from './pptx.js';
 import type { CreateRunAttachmentInput } from './types.js';
@@ -130,6 +131,7 @@ async function prepareAttachment(
         extraction: {
           status: kind === 'pdf' ? 'partial' : 'extracted',
           text,
+          extractorVersion: EXTRACTOR_VERSION,
           ...(kind === 'pdf'
             ? {
                 message:
@@ -145,6 +147,7 @@ async function prepareAttachment(
         ...item,
         extraction: {
           status: 'failed',
+          extractorVersion: EXTRACTOR_VERSION,
           message:
             kind === 'pdf'
               ? `${message}；原件已保留，若工作区提供 pdf-official skill，可用 loadSkill 加载它处理原件`
