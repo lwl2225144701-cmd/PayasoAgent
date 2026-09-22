@@ -114,13 +114,13 @@ async function prepareAttachment(
     if (bytes.length > limit) throw new Error(`附件 ${item.name} 超过大小上限`);
     try {
       const text =
-        kind === 'docx'
-          ? extractDocxText(bytes)
-          : kind === 'pptx'
-            ? extractPptxText(bytes)
-            : kind === 'xlsx'
-              ? extractXlsxText(bytes)
-              : extractPdfText(bytes);
+        kind === 'pdf'
+          ? await extractPdfText(bytes)
+          : kind === 'docx'
+            ? extractDocxText(bytes)
+            : kind === 'pptx'
+              ? extractPptxText(bytes)
+              : extractXlsxText(bytes);
       if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES)
         throw new Error('提取正文超过 2 MiB，请拆分文档');
       if (!text.trim())

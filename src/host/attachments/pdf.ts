@@ -1,6 +1,7 @@
-// Host 的 PDF 简易文本提取：支持原始与 FlateDecode 流，设置解压预算。
-// 不处理 OCR、加密和字体字符映射；调用方保留原件并标记 partial / failed。
+// Host 的 PDF 文本提取：手写快路径（零依赖）+ pdfjs 兜底（策略链）。
+// 不处理 OCR；调用方保留原件并标记 partial / failed。
 import { inflateRawSync, inflateSync } from 'node:zlib';
+
 const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
 
@@ -41,15 +42,15 @@ function decodeHex(raw: string): string {
   return out;
 }
 
+// FlateDecode：内置收益有限、但依赖更全的引擎可解，故标为「能力不足」以触发回退。
 function decodeStream(raw: Buffer): Buffer {
-  // PDF 的 FlateDecode 用 zlib 包裹；个别工具产出裸 deflate，依次尝试。
   try {
     return inflateSync(raw, { maxOutputLength: MAX_STREAM_BYTES });
   } catch {
     try {
       return inflateRawSync(raw, { maxOutputLength: MAX_STREAM_BYTES });
     } catch {
-      throw new Error('PDF 内容流解压失败');
+      throw new UnsupportedPdfError('PDF 内容流解压失败');
     }
   }
 }
@@ -88,32 +89,99 @@ function contentStreamToText(stream: Buffer): string {
   return lines.join('\n');
 }
 
-/** 简易提取，不推断“扫描件”；不支持的编码交给后续工具处理原件。 */
-export function extractPdfText(bytes: Buffer): string {
+/** 提取后统一清理：去掉行尾空白与多余空行。 */
+function cleanupText(text: string): string {
+  return text
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// ---- 提取策略 ----
+
+/**
+ * 内建引擎能力不足（编码/字体/流不受支持），应由后续引擎兜底。
+ * 与「真·坏文件」（缺 %PDF 头、解压超预算）区分：后者直接失败，不触发回退。
+ */
+class UnsupportedPdfError extends Error {}
+
+/** PDF 文本提取策略：输入字节、输出文本；能力不足时抛 UnsupportedPdfError。 */
+interface PdfTextExtractor {
+  readonly name: string;
+  extract(bytes: Buffer): Promise<string>;
+}
+
+/** 手写快路径（零依赖，同步核心）：覆盖简单 ASCII / FlateDecode 文本。 */
+function extractBuiltinText(bytes: Buffer): string {
   const raw = bytes.toString('latin1');
-  if (!raw.startsWith('%PDF-')) throw new Error('不是有效的 PDF 文件（缺 %PDF 头）');
-  if (/\/Encrypt\b|\/Type0\b|\/ToUnicode\b/.test(raw))
-    throw new Error('PDF 加密或字体字符映射不受简易提取器支持');
+  if (/\/Encrypt\b|\/Type0\b|\/ToUnicode\b/.test(raw)) {
+    throw new UnsupportedPdfError('PDF 加密或字体字符映射不受简易提取器支持');
+  }
   const parts: string[] = [];
   let total = 0;
-  // 字典用于识别流编码；复杂对象结构可能遗漏，调用方始终标注 partial。
+  // 字典用于识别流编码；复杂对象结构可能遗漏，返回的文本始终标注 partial。
   for (const match of raw.matchAll(/<<((?:(?!>>)[\s\S])*)>>\s*stream\r?\n([\s\S]*?)endstream/g)) {
     const dictionary = match[1];
     if (/\/Subtype\s*\/Image\b/.test(dictionary)) continue;
     const filters = /\/Filter\s*(\[[^\]]*\]|\/\w+)/.exec(dictionary)?.[1];
-    if (filters && !/^\/FlateDecode$|^\[\s*\/FlateDecode\s*\]$/.test(filters))
-      throw new Error('PDF 内容流编码不受支持');
+    if (filters && !/^\/FlateDecode$|^\[\s*\/FlateDecode\s*\]$/.test(filters)) {
+      throw new UnsupportedPdfError('PDF 内容流编码不受支持');
+    }
     const encoded = Buffer.from(match[2], 'latin1');
     const decoded = filters ? decodeStream(encoded) : encoded;
     total += decoded.length;
-    if (decoded.length > MAX_STREAM_BYTES || total > MAX_DOCUMENT_BYTES)
+    if (decoded.length > MAX_STREAM_BYTES || total > MAX_DOCUMENT_BYTES) {
+      // 安全预算超限不回退：换引擎同样要解压，不能借回退绕过预算。
       throw new Error('PDF 解压大小超限');
+    }
     const text = contentStreamToText(decoded).trim();
     if (text) parts.push(text);
   }
-  return parts
-    .join('\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return cleanupText(parts.join('\n'));
+}
+
+/** pdfjs 兜底：懒加载 legacy build，完整支持 Type0/ToUnicode（中文）字体映射。 */
+async function extractPdfjsText(bytes: Buffer): Promise<string> {
+  let pdfjs: typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+  try {
+    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  } catch {
+    throw new Error(
+      '未安装 pdfjs-dist（可选依赖），无法提取中文/复杂 PDF；请运行 npm install pdfjs-dist 后重试',
+    );
+  }
+  const doc = await pdfjs.getDocument({
+    data: new Uint8Array(bytes),
+    useWorkerFetch: false,
+    disableFontFace: true,
+    verbosity: 0,
+  }).promise;
+  let out = '';
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    out += `${content.items.map((item) => ('str' in item ? item.str : '')).join(' ')}\n`;
+  }
+  return cleanupText(out);
+}
+
+const EXTRACTORS: readonly PdfTextExtractor[] = [
+  { name: 'builtin', extract: (bytes) => Promise.resolve(extractBuiltinText(bytes)) },
+  { name: 'pdfjs', extract: extractPdfjsText },
+];
+
+/** 简易提取，不推断「扫描件」；按策略顺序尝试，前一个能力不足才轮到下一个。 */
+export async function extractPdfText(bytes: Buffer): Promise<string> {
+  if (!bytes.toString('latin1').startsWith('%PDF-')) {
+    throw new Error('不是有效的 PDF 文件（缺 %PDF 头）');
+  }
+  for (const extractor of EXTRACTORS) {
+    try {
+      return await extractor.extract(bytes);
+    } catch (err) {
+      if (err instanceof UnsupportedPdfError) continue;
+      throw err;
+    }
+  }
+  throw new UnsupportedPdfError('PDF 提取失败：所有引擎均无法处理');
 }

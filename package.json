@@ -55,5 +55,8 @@
     "dist/",
     "web/dist/",
     "THIRD_PARTY_NOTICES.md"
-  ]
+  ],
+  "optionalDependencies": {
+    "pdfjs-dist": "6.3.289"
+  }
 }

@@ -80,6 +80,52 @@ function buildPdf(content: string): Buffer {
   ]);
 }
 
+// 含 Type0 + ToUnicode 的最小中文 PDF：builtin 快路径遇 /Type0 抛 Unsupported，
+// pdfjs 兜底用 ToUnicode CMap 把 CID <0001><0002> 映射为「你好」。
+function buildCjkPdf(): Buffer {
+  const content = 'BT /F1 12 Tf 72 720 Td <0001 0002> Tj ET\n';
+  const toUnicode = `/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+2 beginbfchar
+<0001> <4F60>
+<0002> <597D>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type0 /BaseFont /TestFont /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 7 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+    '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestFont /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 8 0 R /CIDToGIDMap /Identity /W [0 [600]] >>',
+    `<< /Length ${toUnicode.length} >>\nstream\n${toUnicode}\nendstream`,
+    '<< /Type /FontDescriptor /FontName /TestFont /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (let i = 0; i < objs.length; i++) {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefPos = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objs.length; i++) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Root 1 0 R /Size ${objs.length + 1} >>\nstartxref\n${xrefPos}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-text-att-'));
 process.env.PAYASO_HOME = root;
 process.env.PAYASO_ATTACHMENT_STORE = path.join(root, 'objects-store');
@@ -356,6 +402,10 @@ try {
   check(mappedPdf.extraction?.message?.includes('pdf-official'));
   check(mappedPdf.extraction?.message?.includes('原件已保留'));
   check(Buffer.from(mappedPdf.dataBase64, 'base64').toString() === '%PDF-1.4 /Type0 /ToUnicode');
+  // 中文 PDF（Type0 + ToUnicode）：builtin 抛 Unsupported → pdfjs 兜底提取出中文
+  const cjkPdf = (await prepareAttachments([input('cjk.pdf', buildCjkPdf())]))[0];
+  check(cjkPdf.extraction?.status === 'partial');
+  check(cjkPdf.extraction?.text?.includes('你好'));
   const oversizedXml = buildMinimalDocx('a'.repeat(9 * 1024 * 1024));
   const boundedDoc = (await prepareAttachments([input('large.docx', oversizedXml)]))[0];
   check(boundedDoc.extraction?.status === 'failed');
