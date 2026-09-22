@@ -5,3 +5,7 @@ copyFileSync(
   new URL('../src/sandbox/win-acl-runner.mjs', import.meta.url),
   new URL('../dist/sandbox/win-acl-runner.mjs', import.meta.url),
 );
+copyFileSync(
+  new URL('../src/host/attachments/pdf-extract-worker.mjs', import.meta.url),
+  new URL('../dist/host/attachments/pdf-extract-worker.mjs', import.meta.url),
+);

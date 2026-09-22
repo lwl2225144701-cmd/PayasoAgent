@@ -8,6 +8,7 @@ import { RunManager } from '../src/host/run-manager.js';
 import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
 import { requestAttachments } from '../src/host/routes/route-context.js';
 import { prepareAttachments } from '../src/host/attachments/normalize.js';
+import { extractPdfText } from '../src/host/attachments/pdf.js';
 import { writeAttachmentFile, publishAttachments } from '../src/host/attachments/publish.js';
 import { getAttachmentStoreRoot, restoreAttachment, putAttachmentObject } from '../src/attachments/store.js';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
@@ -439,6 +440,23 @@ try {
   const garbageFontPdf = (await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())]))[0];
   check(garbageFontPdf.extraction?.status === 'partial');
   check(garbageFontPdf.extraction?.text === 'ŠŒŽAB');
+  // 超时保护：Run 创建路径上的附件提取不得被畸形/超复杂 PDF 挂死（1ms 预算必超时）。
+  {
+    const previous = process.env.PAYASO_PDF_EXTRACT_TIMEOUT_MS;
+    process.env.PAYASO_PDF_EXTRACT_TIMEOUT_MS = '1';
+    try {
+      const timeoutError = await extractPdfText(buildCjkPdf()).then(
+        () => null,
+        (err: Error) => err,
+      );
+      check(timeoutError !== null && /超时/.test(timeoutError.message));
+      // 超时错误是结构化 TimeoutAbortError：不冒充「引擎能力不足」，不会触发回退死循环。
+      check((timeoutError as { name?: string } | null)?.name === 'TimeoutAbortError');
+    } finally {
+      if (previous === undefined) delete process.env.PAYASO_PDF_EXTRACT_TIMEOUT_MS;
+      else process.env.PAYASO_PDF_EXTRACT_TIMEOUT_MS = previous;
+    }
+  }
   const oversizedXml = buildMinimalDocx('a'.repeat(9 * 1024 * 1024));
   const boundedDoc = (await prepareAttachments([input('large.docx', oversizedXml)]))[0];
   check(boundedDoc.extraction?.status === 'failed');

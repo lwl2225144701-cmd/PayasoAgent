@@ -108,6 +108,21 @@ for (let i = 1; i <= doc.numPages; i++) {
 > ⚠️ 精确 API 随所选 pdfjs-dist 版本有差异（v4/v5/v6 的 worker 配置与模块入口不同），
 > **落地时按锁定的版本验证**，以上为结构示意，不作为最终实现契约。
 
+**2026-09-22 实施修订（重要）**：上述同线程方案有两个实测问题，落地时已改为
+**隔离 worker**（`src/host/attachments/pdf-extract-worker.mjs`）：
+
+1. pdfjs-dist 6.x 的 `DocumentInitParameters` 已无 `isEvalSupported`。
+2. **同线程 `Promise.race` + setTimeout 的超时是无效的**——pdfjs 解析占满事件循环，
+   实测 1 页 PDF 的 `getDocument` 就让主线程 390ms 内定时器零发射机会，竞速超时
+   根本抢不到。改为 worker 线程执行提取（`new Worker(new URL('./pdf-extract-worker.mjs', import.meta.url))`）：
+   - Host 事件循环不被冻结（实测 300 页提取 1136ms 期间主线程 5ms 心跳 201 次，
+     同线程方案下为 0 次）；
+   - 超时后 `worker.terminate()` 是真取消，同线程竞速只是不等了。
+   - 代价：每次提取多一次 worker 启动 + worker 内 pdfjs 首次 import（冷启约 0.5s），
+     可接受；worker 由 `scripts/copy-runtime.mjs` 复制进 dist。
+   - 内置预算 60s（`PAYASO_PDF_EXTRACT_TIMEOUT_MS` 可覆盖），超时抛
+   `TimeoutAbortError('tool')` → normalize 记 `failed` + 原件保留。
+
 ### 3.4 `normalize.ts` 调用点
 
 第 123 行 `extractPdfText(bytes)` 已在 `async` 函数内，改为 `await extractPdfText(bytes)`。
@@ -123,6 +138,7 @@ for (let i = 1; i <= doc.numPages; i++) {
 | 扫描件（无文本层） | pdfjs `getTextContent` 返回空 → 沿用「未能提取文字」`failed`，指路 OCR |
 | **内置结果乱码（无 ToUnicode 的字体子集）** | 内置引擎逐字节解出大量 C0/C1/私用区字符（曾以 `partial` 落盘二进制 .txt）→ `looksLikeGarbage` 闸门（不可读字符 > 5%）判 `UnsupportedPdfError` → 转 pdfjs；pdfjs 走字体 cmap 反查常能解出正确文本。**2026-09-22 真实故障修复**：某中文简历 PDF（无 ToUnicode）从 14911 乱码字符变为 4004 汉字正确提取 |
 | pdfjs-dist 自身抛错/超时 | 保留 pdfjs 错误信息，`failed` + 原错误，不静默降级 |
+| **提取超时（畸形/超复杂 PDF）** | worker 内跑 pdfjs，预算默认 60s（`PAYASO_PDF_EXTRACT_TIMEOUT_MS` 可覆盖）→ 超时即 `worker.terminate()` 硬取消，`TimeoutAbortError` 上报，`failed` + 原件保留；Host 事件循环全程不被冻结（实测见 §3.3 修订注记） |
 | 超大 PDF | 仍受 `MAX_PDF_BYTES`（16 MiB）上限约束，进 pdfjs 前已在策略层拦截 |
 
 **`partial` 语义保持不变**：pdfjs 提取同样可能遗漏文字/布局，结果始终标注 `partial`，

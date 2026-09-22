@@ -1,6 +1,8 @@
 // Host 的 PDF 文本提取：手写快路径（零依赖）+ pdfjs 兜底（策略链）。
 // 不处理 OCR；调用方保留原件并标记 partial / failed。
+import { Worker } from 'node:worker_threads';
 import { inflateRawSync, inflateSync } from 'node:zlib';
+import { createDeadline, positiveIntMs, TimeoutAbortError } from '../../util/timeout.js';
 
 const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
@@ -169,34 +171,52 @@ function extractBuiltinText(bytes: Buffer): string {
   return extracted;
 }
 
-/** pdfjs 兜底：懒加载 legacy build，完整支持 Type0/ToUnicode（中文）字体映射。 */
+/**
+ * pdfjs 兜底的默认超时预算。附件提取同步发生在 Run 创建路径上（用户发消息的
+ * 请求里），比「普通工具 5 分钟」收紧得多：超时要能尽快把控制权还给调用方，
+ * 畸形/超复杂 PDF 不能把发消息接口挂死。可用 PAYASO_PDF_EXTRACT_TIMEOUT_MS 覆盖。
+ */
+const DEFAULT_PDF_EXTRACT_TIMEOUT_MS = 60_000;
+
+/**
+ * pdfjs 兜底：在隔离 Worker 里执行，超时可硬终止。
+ * 为什么用 worker 而不是同线程 Promise.race：pdfjs 解析占满事件循环（实测 1 页
+ * PDF 就让主线程 390ms 不轮转定时器），同线程竞速的 setTimeout 根本抢不到发射
+ * 机会；worker 里跑则 Host 循环不被冻结，超时后 terminate() 是真取消。
+ */
 async function extractPdfjsText(bytes: Buffer): Promise<string> {
-  let pdfjs: typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+  const timeoutMs =
+    positiveIntMs(process.env.PAYASO_PDF_EXTRACT_TIMEOUT_MS) ?? DEFAULT_PDF_EXTRACT_TIMEOUT_MS;
+  const deadline = createDeadline(undefined, timeoutMs, () =>
+    new TimeoutAbortError('tool', `PDF 提取超时（预算 ${timeoutMs}ms），文件可能异常复杂或损坏`),
+  );
+  const abortRejection = new Promise<never>((_, reject) => {
+    deadline.signal.addEventListener('abort', () => reject(deadline.signal.reason), { once: true });
+  });
+  const worker = new Worker(new URL('./pdf-extract-worker.mjs', import.meta.url), {
+    workerData: bytes,
+  });
   try {
-    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  } catch {
-    throw new Error(
-      '未安装 pdfjs-dist（可选依赖），无法提取中文/复杂 PDF；请运行 npm install pdfjs-dist 后重试',
-    );
+    const extracted = await Promise.race([
+      new Promise<string>((resolve, reject) => {
+        worker.on('message', (msg: { ok?: boolean; text?: string; error?: string }) => {
+          if (msg?.ok) resolve(msg.text ?? '');
+          else reject(new Error(msg?.error ?? 'PDF 提取失败'));
+        });
+        worker.on('error', (err) => reject(err));
+      }),
+      abortRejection,
+    ]);
+    const cleaned = cleanupText(extracted);
+    // 连 pdfjs 都只解出乱码 → 文本层确实没有 Unicode 映射，如实失败（通常需 OCR）。
+    if (looksLikeGarbage(cleaned)) {
+      throw new Error('PDF 文本层不可读（字体无 Unicode 映射的字符码），简易提取无法处理；可能需要 OCR');
+    }
+    return cleaned;
+  } finally {
+    deadline.dispose();
+    void worker.terminate();
   }
-  const doc = await pdfjs.getDocument({
-    data: new Uint8Array(bytes),
-    useWorkerFetch: false,
-    disableFontFace: true,
-    verbosity: 0,
-  }).promise;
-  let out = '';
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    out += `${content.items.map((item) => ('str' in item ? item.str : '')).join(' ')}\n`;
-  }
-  const extracted = cleanupText(out);
-  // 连 pdfjs 都只解出乱码 → 文本层确实没有 Unicode 映射，如实失败（通常需 OCR）。
-  if (looksLikeGarbage(extracted)) {
-    throw new Error('PDF 文本层不可读（字体无 Unicode 映射的字符码），简易提取无法处理；可能需要 OCR');
-  }
-  return extracted;
 }
 
 const EXTRACTORS: readonly PdfTextExtractor[] = [
