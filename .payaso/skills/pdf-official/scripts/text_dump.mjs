@@ -3,25 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { CliError, readPdfBytes, run } from './lib.mjs';
-
-/** 展开 "1-3,5,8-" 为升序页码（1-based，末尾 - 表示到最后）。 */
-function expandSelection(spec, total) {
-  if (!spec) return null;
-  const picks = new Set();
-  for (const token of spec.split(',')) {
-    const m = /^\s*(\d*)\s*(-)?\s*(\d*)\s*$/.exec(token);
-    if (!m || token.trim() === '') throw new CliError(`非法范围: ${token}`, 2);
-    const [, lo, dash, hi] = m;
-    const start = dash === undefined ? Number(lo) : lo ? Number(lo) : 1;
-    const end = dash === undefined ? Number(lo) : hi ? Number(hi) : total;
-    if (!(1 <= start && start <= end && end <= total)) {
-      throw new CliError(`范围 ${token} 超出 1..${total}`, 2);
-    }
-    for (let n = start; n <= end; n++) picks.add(n);
-  }
-  return [...picks].sort((a, b) => a - b);
-}
+import { CliError, expandPageSelection, readPdfBytes, run } from './lib.mjs';
 
 async function extract(filePath, pages) {
   const bytes = readPdfBytes(filePath);
@@ -69,7 +51,7 @@ run(async (argv) => {
     disableFontFace: true,
     verbosity: 0,
   }).promise;
-  const pages = select ? expandSelection(select, doc.numPages) : null;
+  const pages = expandPageSelection(select, doc.numPages);
   const text = await extract(filePath, pages);
 
   if (out) {

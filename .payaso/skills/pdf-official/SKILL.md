@@ -19,7 +19,7 @@ version: 2.1.0
 | 合并多个 PDF | `combine.mjs` | ✅ Node（pdf-lib） |
 | 拆分（按范围/逐页/固定块） | `carve.mjs` | ✅ Node（pdf-lib） |
 | 旋转页面 | `reorient.mjs` | ✅ Node（pdf-lib） |
-| 表格/坐标级文本 | — | ⏳ 待实现（pdfjs 坐标自拼） |
+| 表格结构还原 | `table_dump.mjs` | ✅ Node（坐标聚类，算法层可单测） |
 | 表单探测 | `probe_fields.mjs` | ✅ Node（pdf-lib，仅 widgets 模式） |
 | 表单填充 | `apply_values.mjs` | ✅ Node（pdf-lib，支持 `--flatten`） |
 | 覆盖文本（不可填处补字） | `overlay_text.mjs` | ✅ Node（pdf-lib，CJK 需 `--font` TTF） |
@@ -36,6 +36,7 @@ Homebrew 二进制「能读不能执行」），不要尝试，明确告知用�
 |---|---|
 | 探测 / 分诊 | `node scripts/survey.mjs 文件.pdf --pretty` |
 | 提取纯文本 | `node scripts/text_dump.mjs 文件.pdf [--out out.txt] [--select 1-3,5]` |
+| 表格结构还原 | `node scripts/table_dump.mjs 文件.pdf [--format markdown\|json] [--pages 1-3]` |
 | 合并 | `node scripts/combine.mjs A.pdf B.pdf --out out.pdf [--preserve-metadata FIRST\|NONE]` |
 | 拆分 | `node scripts/carve.mjs 文件.pdf --by-range 1-3 4-6 --dest DIR/` |
 | 旋转 | `node scripts/reorient.mjs 文件.pdf --angle 90 --targets 1,3-5 --out out.pdf` |
@@ -90,7 +91,17 @@ node .payaso/skills/pdf-official/scripts/survey.mjs 文件.pdf --pretty
 
 所有脚本统一：`0` 成功 · `1` 运行失败 · `2` 用法错误（参数/路径）；`apply_values.mjs`
 额外用 `3` 表示校验失败（字段缺失 / 值不在可选集）。`scripts/lib.mjs` 提供
-`run` / `CliError` / `readPdfBytes` / `pdfFieldKind` 四个复用原语，新脚本沿用即可。
+`run` / `CliError` / `readPdfBytes` / `pdfFieldKind` / `expandPageSelection` 五个复用原语，新脚本沿用即可。
+
+## 表格还原的算法与边界
+
+`table-layout.mjs` 是纯函数算法层（不 import pdfjs/node 模块，`table-layout.test.mjs` 合成数据单测，
+已注册进仓库 `npm run test:all`）：行聚类（y 容差 2pt，实测行内抖动 ≤1.11pt/行距 ≥16.5pt）→
+行内切列（x 间隔 > 行均字宽 × 1.2，长度加权平均适配中西混排）→ 跨行列检测（≥2 行复现的起点才算列）。
+
+- 跨行复现列的行 → markdown 表格（首行表头）；版式行（单行多 cell）→ ` | ` 分隔文本行；散文原样。
+- 边界（明确不做）：合并单元格、跨页表头、嵌套表格——这些 pdfplumber 也做不好，且消费者是
+  LLM，结构保真到可还原行列即可，`--format json` 提供原始行列数据供需要时自行判断。
 
 ## 常见坑
 

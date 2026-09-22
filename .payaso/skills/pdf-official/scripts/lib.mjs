@@ -51,3 +51,23 @@ export function pdfFieldKind(field) {
       return 'unknown';
   }
 }
+/**
+ * 展开页码选择 "1-3,5,8-" 为升序页码数组（1-based，末尾 - 表示到最后）。
+ * spec 为空返回 null（全部页）。非法规格抛 CliError（exit 2）。
+ */
+export function expandPageSelection(spec, total) {
+  if (!spec) return null;
+  const picks = new Set();
+  for (const token of spec.split(',')) {
+    const m = /^\s*(\d*)\s*(-)?\s*(\d*)\s*$/.exec(token);
+    if (!m || token.trim() === '') throw new CliError(`非法范围: ${token}`, 2);
+    const [, lo, dash, hi] = m;
+    const start = dash === undefined ? Number(lo) : lo ? Number(lo) : 1;
+    const end = dash === undefined ? Number(lo) : hi ? Number(hi) : total;
+    if (!(1 <= start && start <= end && end <= total)) {
+      throw new CliError(`范围 ${token} 超出 1..${total}`, 2);
+    }
+    for (let n = start; n <= end; n++) picks.add(n);
+  }
+  return [...picks].sort((a, b) => a - b);
+}
