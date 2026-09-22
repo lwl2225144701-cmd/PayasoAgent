@@ -33,3 +33,21 @@ export function readPdfBytes(filePath) {
   }
   return buf;
 }
+
+/** 由 pdf-lib 字段实例的类名判定字段类型（纯字符串判断，无 PDF 库依赖）。 */
+export function pdfFieldKind(field) {
+  switch (field?.constructor?.name) {
+    case 'PDFTextField':
+      return 'text';
+    case 'PDFCheckBox':
+      return 'checkbox';
+    case 'PDFRadioGroup':
+      return 'radio_group';
+    case 'PDFDropdown':
+      return 'choice';
+    case 'PDFSignature':
+      return 'signature';
+    default:
+      return 'unknown';
+  }
+}
