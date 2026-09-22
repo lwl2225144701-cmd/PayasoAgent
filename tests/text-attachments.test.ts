@@ -347,10 +347,14 @@ try {
   const rawPrepared = (await prepareAttachments([input('plain.pdf', rawPdf)]))[0];
   check(rawPrepared.extraction?.text === 'Uncompressed sentinel');
   check(rawPrepared.extraction?.status === 'partial');
+  check(rawPrepared.extraction?.message?.includes('pdf-official'));
+  check(rawPrepared.extraction?.message?.includes('若工作区提供'));
   const mappedPdf = (
     await prepareAttachments([input('mapped.pdf', Buffer.from('%PDF-1.4 /Type0 /ToUnicode'))])
   )[0];
   check(mappedPdf.extraction?.status === 'failed');
+  check(mappedPdf.extraction?.message?.includes('pdf-official'));
+  check(mappedPdf.extraction?.message?.includes('原件已保留'));
   check(Buffer.from(mappedPdf.dataBase64, 'base64').toString() === '%PDF-1.4 /Type0 /ToUnicode');
   const oversizedXml = buildMinimalDocx('a'.repeat(9 * 1024 * 1024));
   const boundedDoc = (await prepareAttachments([input('large.docx', oversizedXml)]))[0];
@@ -375,6 +379,16 @@ try {
   );
   check(
     attachmentManifest([{ name: 'a.txt', path: 'a.txt', kind: 'text' }]).includes('文本用 read'),
+  );
+  check(
+    attachmentManifest([
+      {
+        name: 'plain.pdf',
+        path: 'plain.pdf',
+        kind: 'binary',
+        extraction: { status: 'partial', path: 'plain.txt' },
+      },
+    ]).includes('pdf-official'),
   );
   check(fs.readFileSync(local).equals(bytes));
   check(readDownloadChecked(ws, saved.relPath).ok);

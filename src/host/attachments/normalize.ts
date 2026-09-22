@@ -1,5 +1,5 @@
 // Host 上传预处理：验证图片/文本，提取文档正文；不属于 Agent 执行循环。
-// 附件解码校验与归一化（docs/attachment-v2-content-store.md P1 期）。
+// 附件解码校验与归一化（docs/attachment/attachment-v2-content-store.md P1 期）。
 // 设计要点：
 // - sharp 动态加载：安装失败/加载抛错 → 降级为"仅魔数嗅探"，功能不回退、
 //   启动不阻塞（console.warn 一次）
@@ -20,10 +20,10 @@ import {
   MAX_TEXT_BYTES,
 } from '../../attachment-policy.js';
 import { extractDocxText } from './docx.js';
-import { extractPptxText } from './pptx.js';
-import { extractXlsxText } from './xlsx.js';
 import { extractPdfText } from './pdf.js';
+import { extractPptxText } from './pptx.js';
 import type { CreateRunAttachmentInput } from './types.js';
+import { extractXlsxText } from './xlsx.js';
 
 export const ATTACHMENT_PIXEL_LIMIT = 64 * 1024 * 1024;
 export const ATTACHMENT_SIDE_LIMIT = 16_384;
@@ -133,17 +133,22 @@ async function prepareAttachment(
           ...(kind === 'pdf'
             ? {
                 message:
-                  'PDF 为简易提取，可能遗漏文字或布局；不支持 OCR 和字体字符映射，必要时使用其他工具处理原件',
+                  'PDF 为简易提取，可能遗漏文字或布局；不支持 OCR 和字体字符映射。' +
+                  '需要完整内容、表格、OCR 或表单时，若工作区提供 pdf-official skill，可用 loadSkill 加载它处理原件',
               }
             : {}),
         },
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         ...item,
         extraction: {
           status: 'failed',
-          message: error instanceof Error ? error.message : String(error),
+          message:
+            kind === 'pdf'
+              ? `${message}；原件已保留，若工作区提供 pdf-official skill，可用 loadSkill 加载它处理原件`
+              : message,
         },
       };
     }
