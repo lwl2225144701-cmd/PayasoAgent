@@ -97,6 +97,30 @@ function cleanupText(text: string): string {
     .trim();
 }
 
+/**
+ * 提取结果是否是不可读乱码。PDF 字体子集缺 ToUnicode 映射时，内容流的字符码
+ * （CID / 自定义编码）不是 Unicode，逐字节解码会产出大量 C0/C1 控制字符与
+ * Latin-1 补充区字符。此时应判定「能力不足」交给 pdfjs（它走字体 cmap 反查，
+ * 常常仍能解出正确文本），而不是把乱码当成功结果交给调用方。
+ */
+function looksLikeGarbage(text: string): boolean {
+  const chars = [...text];
+  if (chars.length === 0) return false;
+  let unreadable = 0;
+  for (const ch of chars) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (
+      (cp < 0x20 && cp !== 9 && cp !== 10 && cp !== 12 && cp !== 13) || // C0（放行 \t\n\f\r）
+      (cp >= 0x7f && cp < 0xa0) || // C1
+      (cp >= 0xa0 && cp <= 0xff) || // Latin-1 补充区（重音字符以外无正常文本）
+      (cp >= 0xe000 && cp <= 0xf8ff) // 私用区
+    ) {
+      unreadable++;
+    }
+  }
+  return unreadable / chars.length > 0.05;
+}
+
 // ---- 提取策略 ----
 
 /**
@@ -137,7 +161,12 @@ function extractBuiltinText(bytes: Buffer): string {
     const text = contentStreamToText(decoded).trim();
     if (text) parts.push(text);
   }
-  return cleanupText(parts.join('\n'));
+  const extracted = cleanupText(parts.join('\n'));
+  // 乱码（常见于无 ToUnicode 的字体子集）是能力不足，交给 pdfjs 而非当成功返回。
+  if (looksLikeGarbage(extracted)) {
+    throw new UnsupportedPdfError('内建提取结果不可读（字体字符编码无 Unicode 映射），改用 pdfjs');
+  }
+  return extracted;
 }
 
 /** pdfjs 兜底：懒加载 legacy build，完整支持 Type0/ToUnicode（中文）字体映射。 */
@@ -162,7 +191,12 @@ async function extractPdfjsText(bytes: Buffer): Promise<string> {
     const content = await page.getTextContent();
     out += `${content.items.map((item) => ('str' in item ? item.str : '')).join(' ')}\n`;
   }
-  return cleanupText(out);
+  const extracted = cleanupText(out);
+  // 连 pdfjs 都只解出乱码 → 文本层确实没有 Unicode 映射，如实失败（通常需 OCR）。
+  if (looksLikeGarbage(extracted)) {
+    throw new Error('PDF 文本层不可读（字体无 Unicode 映射的字符码），简易提取无法处理；可能需要 OCR');
+  }
+  return extracted;
 }
 
 const EXTRACTORS: readonly PdfTextExtractor[] = [

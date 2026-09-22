@@ -121,7 +121,8 @@ for (let i = 1; i <= doc.numPages; i++) {
 | Type0/ToUnicode/加密/不支持流 | 回退 pdfjs-dist；加密仍失败 → `failed` + 原错误，指路 skill |
 | pdfjs-dist 未安装（optional 缺失） | 回退路径报「未安装 pdfjs-dist，无法提取中文/复杂 PDF」，`failed` 保留原件 |
 | 扫描件（无文本层） | pdfjs `getTextContent` 返回空 → 沿用「未能提取文字」`failed`，指路 OCR |
-| pdfjs-dist 自身抛错/超时 | 吞掉 pdfjs 错误、退回原手写错误？**否**——保留 pdfjs 错误信息，`failed` + 原错误，不静默降级 |
+| **内置结果乱码（无 ToUnicode 的字体子集）** | 内置引擎逐字节解出大量 C0/C1/私用区字符（曾以 `partial` 落盘二进制 .txt）→ `looksLikeGarbage` 闸门（不可读字符 > 5%）判 `UnsupportedPdfError` → 转 pdfjs；pdfjs 走字体 cmap 反查常能解出正确文本。**2026-09-22 真实故障修复**：某中文简历 PDF（无 ToUnicode）从 14911 乱码字符变为 4004 汉字正确提取 |
+| pdfjs-dist 自身抛错/超时 | 保留 pdfjs 错误信息，`failed` + 原错误，不静默降级 |
 | 超大 PDF | 仍受 `MAX_PDF_BYTES`（16 MiB）上限约束，进 pdfjs 前已在策略层拦截 |
 
 **`partial` 语义保持不变**：pdfjs 提取同样可能遗漏文字/布局，结果始终标注 `partial`，

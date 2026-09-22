@@ -126,6 +126,32 @@ end`;
   return Buffer.from(pdf, 'latin1');
 }
 
+// WinAnsiEncoding + 十六进制高位字节文本：内建逐字节解出 C1 控制字符（不可读），
+// pdfjs 按编码表解出 Š/Œ/Ž —— 复刻真实故障「无 ToUnicode 字体子集」的最小夹具。
+function buildGarbageFontPdf(): Buffer {
+  const content = 'BT /F1 12 Tf 72 720 Td <8A 8C 8E 41 42> Tj ET';
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (let i = 0; i < objs.length; i++) {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefPos = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objs.length; i++) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Root 1 0 R /Size ${objs.length + 1} >>\nstartxref\n${xrefPos}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-text-att-'));
 process.env.PAYASO_HOME = root;
 process.env.PAYASO_ATTACHMENT_STORE = path.join(root, 'objects-store');
@@ -406,6 +432,11 @@ try {
   const cjkPdf = (await prepareAttachments([input('cjk.pdf', buildCjkPdf())]))[0];
   check(cjkPdf.extraction?.status === 'partial');
   check(cjkPdf.extraction?.text?.includes('你好'));
+  // 无 ToUnicode 字体子集：builtin 逐字节解出 C1 乱码（曾以 partial 落盘二进制 .txt），
+  // 乱码闸门判定能力不足 → pdfjs 按 WinAnsiEncoding 解出真实文本。
+  const garbageFontPdf = (await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())]))[0];
+  check(garbageFontPdf.extraction?.status === 'partial');
+  check(garbageFontPdf.extraction?.text === 'ŠŒŽAB');
   const oversizedXml = buildMinimalDocx('a'.repeat(9 * 1024 * 1024));
   const boundedDoc = (await prepareAttachments([input('large.docx', oversizedXml)]))[0];
   check(boundedDoc.extraction?.status === 'failed');
