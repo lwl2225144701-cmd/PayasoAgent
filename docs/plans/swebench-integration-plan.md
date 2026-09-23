@@ -9,8 +9,13 @@ setWorkspace + RunManager（弃 CLI）；③ patch 捕获基于 base_commit 显�
 
 把 PayasoAgent 接入 **SWE-bench Verified**：agent 侧在「克隆的实例仓库」里直接改代码，
 产出基于 base_commit 的 `git diff` 作为 `model_patch`，按官方 prediction 格式落盘；
-判分完全交给官方 harness（Docker 跑 FAIL_TO_PASS/PASS_TO_PASS）。**先跑 50 实例子集**，
-目标是「管线跑通 + 可复现的起点分」，不是冲榜。**判分管线在跑第 1 题前就已用 gold patch 验证过。**
+判分交给官方开源的 harness。**先跑 50 实例子集**，目标是「管线跑通 + 可复现的起点分」，
+不是冲榜。**判分管线在跑第 1 题前就已用 gold patch 验证过。**
+
+> **术语澄清（防误读）**：「官方 harness」= princeton-nlp/SWE-bench 开源仓库里的判分代码
+> （Python 包）。流程是 `pip install` 到本地 + 本地 Docker 运行，**全程在本机完成，
+> 不存在提交给外部服务或排队等待的环节**；agent 交卷到判分出结果都是分钟级。
+> 用他们的代码是为了分数与榜单同标准（自己写判分 = 自己给自己打分，数字无外部意义）。
 
 ## 1. 目标与非目标
 
@@ -41,7 +46,7 @@ SWE-bench Verified  │  per instance（逐题隔离，workspace = 克隆的实�
                     └──────────────────────────────────────────────────────────────────────────────────┘
                                                     │ preds.jsonl
                                                     ▼
-                    ┌──────────────────────── 判分侧（官方 harness，Docker）─────────────────────────────┐
+                    ┌──────────────────────── 判分侧（官方开源 harness，本地 Docker 运行）───────────────┐
                     │  swebench.harness.run_evaluation --predictions_path preds.jsonl                   │
                     │  → 每实例 apply model_patch → apply test_patch → 跑测试 → resolved 判定              │
                     └──────────────────────────────────────────────────────────────────────────────────┘
@@ -184,4 +189,5 @@ git diff --cached --binary --full-index <base_commit> -- .
 | 模型端点 |  step-5-preview，**由用户配置**（`.env`：OPENAI_BASE_URL/API_KEY/MODEL）；P0 附配置 checklist |
 | 子集规模 | **50 实例**，清单写死进 repo |
 | 预算 | 总配额不设控（用户确认 50 题吃不掉 codingplan）；**单实例墙钟 60min + token 4M** 防跑飞 + 保可比（D4） |
-| patch-only | **接受**（D3）：v1 盲改交卷，官方判分；in-container 为 P6+ 增强 |
+| patch-only | **接受**（D3）：v1 盲改交卷，本地官方 harness 判分；in-container 为 P6+ 增强 |
+| 运行环境 | **Docker 由用户安装**（判分侧唯一支持的运行方式，`docker ps` 验证）；harness 用 `python@3.12` venv（Homebrew 默认 3.14 不被依赖支持）。两项均 P0 关口，P1 适配器不依赖它们、可先行 |
