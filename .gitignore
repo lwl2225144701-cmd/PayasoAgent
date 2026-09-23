@@ -27,6 +27,9 @@ web/dist/
 # baseline 套件运行时产物（tests/baseline 输出落盘，timestamp 子目录）
 docs/baseline/
 
+# SWE-bench 评测产物（tests/swebench 输出落盘，timestamp 目录，含完整 patch/trace）
+docs/swebench/
+
 # 会话运行期附件落盘（内容寻址存储硬链接进工作区 input/attachments/）
 input/
 
