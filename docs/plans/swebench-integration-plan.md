@@ -163,8 +163,8 @@ git diff --cached --binary --full-index <base_commit> -- .
 
 | 阶段 | 内容 | 出入口 |
 |---|---|---|
-| **P0 前置** | .env 配好 step-5-preview（用户负责，附 checklist）；**锁定数据集版本 + 官方 harness 版本**并记录 | 两版本号写进 manifest 模板 |
-| **P1 适配器** | `tests/swebench/`：dataset loader、repo checkout、task 包装、setWorkspace+RunManager 接线、patch 捕获/预检、preds/results 落盘、policy 检测 | 产物结构正确，5 实例 dry-run |
+| **P0 前置** | 环境 checklist（全部本地）：① **Docker**（用户负责安装——Docker Desktop 或 Colima，装完 `docker ps` 验证 daemon）；② `brew install python@3.12` + harness 专用 venv（Homebrew 默认 3.14 不被 harness 依赖支持）；③ .env 配 step-5-preview（用户负责，附 checklist）；④ **锁定数据集版本 + 官方 harness 版本**（commit 级） | 四项全过，版本号写进 manifest 模板 |
+| **P1 适配器** | `tests/swebench/`：dataset loader、repo checkout、task 包装、setWorkspace+RunManager 接线、patch 捕获/预检、preds/results 落盘、policy 检测 | 产物结构正确，5 实例 dry-run（**不依赖 Docker/Python harness，P0 未完也可开工**） |
 | **P2 判分管线验证** | **先用 1 个 gold patch 跑通官方 harness**（Docker/harness/测试环境本身没问题），输出「gold 应全绿」的基线 | gold 实例 resolved（grader 可信） |
 | **P3 单题端到端** | Payaso 跑 1 个实例 → **立即官方判分**（不等 50） | patch apply --check 过；判分链路通 |
 | **P4 5 题 pilot** | 跑 5 题 + 官方判分，核对成本均值与失败模式 | 单实例成本/时长均值出来；无系统性故障 |
