@@ -145,6 +145,10 @@ export class RunManager {
     return this.runLifecycle.listActiveRuns();
   }
 
+  runExecution(runId: string): Promise<void> | undefined {
+    return this.runLifecycle.runExecution(runId);
+  }
+
   removeActiveRun(runId: string): CleanupError[] {
     return this.runLifecycle.removeActiveRun(runId);
   }

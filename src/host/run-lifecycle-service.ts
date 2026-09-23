@@ -522,6 +522,16 @@ export class RunLifecycleService {
     }));
   }
 
+  /**
+   * 该 Run 的执行链 Promise（不存在/未启动时 undefined）。无人值守 harness
+   * （如 tests/swebench）需要等执行链真正 settle 才算「写入已停止」——终态事件
+   * 与 checkpoint 都不能证明 Agent 已停止（close 路径允许 cap 后强制收态）。
+   * 只读暴露既有内部状态，不改任何行为。
+   */
+  runExecution(runId: string): Promise<void> | undefined {
+    return this.runs.get(runId)?.agentPromise;
+  }
+
   removeActiveRun(runId: string): CleanupError[] {
     this.runs.delete(runId);
     this.events.closeRun(runId);

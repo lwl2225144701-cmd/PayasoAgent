@@ -57,6 +57,10 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'attachment-normalize', file: 'tests/attachment-normalize.test.ts' },
   // skill 自带算法单测（纯函数、零依赖）：进套件防腐烂
   { name: 'table-layout', file: '.payaso/skills/pdf-official/scripts/table-layout.test.mjs' },
+  // SWE-bench 评测适配器单测（纯函数：抽样/policy/决策）
+  { name: 'swebench-sampling', file: 'tests/swebench/sampling.test.ts' },
+  { name: 'swebench-policy', file: 'tests/swebench/policy.test.ts' },
+  { name: 'swebench-decision', file: 'tests/swebench/decision.test.ts' },
   { name: 'frontend-image-prepare', file: 'tests/frontend-image-prepare.test.ts' },
   { name: 'platform-shell-host', file: 'tests/platform-shell-host.test.ts' },
   { name: 'sandbox-manager', file: 'tests/sandbox-manager.test.ts' },

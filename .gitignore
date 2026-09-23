@@ -30,6 +30,9 @@ docs/baseline/
 # SWE-bench 评测产物（tests/swebench 输出落盘，timestamp 目录，含完整 patch/trace）
 docs/swebench/
 
+# SWE-bench 锁定数据集缓存（含 gold patch/test_patch，绝不进版本库）
+tests/swebench/.cache/
+
 # 会话运行期附件落盘（内容寻址存储硬链接进工作区 input/attachments/）
 input/
 
