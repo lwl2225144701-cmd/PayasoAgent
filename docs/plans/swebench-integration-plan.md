@@ -76,7 +76,9 @@ task 包装、patch 捕获与预检、prediction/results 落盘。
 
 ### D3 agent 侧环境是「裸 repo + 我们的沙箱」——patch-only，接受这个分数天花板
 
-agent 不改装测试依赖、不在仓库环境跑测试（沙箱禁止 workspace 外写、装不了 pip 包）。
+agent 侧**没有预装官方测试环境**（评测镜像是判分侧的事），测试运行不保证——这不是当前代码的
+硬限制，是 v1 的部署约定；若要严格保证「盲改交卷」，adapter 须显式限制测试命令（task 声明
+禁用 + policy 检测 trace/shell 中的测试调用，见 A2）。
 **v1 为 patch-only**：盲改交卷，判分侧才跑测试。SWE-bench 上「能跑测试迭代」的 agent 显著占优，
 首跑分数低于榜单是**结构性预期**，不是模型不行。官方端到端验证前置（§6 P2）保证我们至少知道
 每一分丢在哪。后续增强 = in-container 模式（P6+）。
@@ -116,7 +118,7 @@ agent 不改装测试依赖、不在仓库环境跑测试（沙箱禁止 workspa
 ```
 docs/swebench/<UTC时间>/
 ├── manifest.json          # 模型指纹、数据集/harness 版本、子集定义、预算、源码哈希、policy 版本
-├── preds.jsonl            # 每行 {"instance_id": "...", "model_name_or_path": "step-5-preview", "model_patch": "..."}
+├── preds.jsonl            # 恰好 50 行（每个选中实例必有且仅有一条）：{"instance_id": "...", "model_name_or_path": "step-5-preview", "model_patch": "..."}
 ├── results.json           # 逐实例：status、tokens、duration、工具调用数、agent 步数、
 │                          #   diff 统计、policy 判定（ok / policy_invalid + 命中规则）
 └── <instance_id>/
@@ -144,7 +146,8 @@ git diff --cached --binary --full-index <base_commit> -- .
 - `--binary`：仓库含二进制改动时不可少；
 - `--full-index`：保证 patch 在干净 checkout 上可 apply；
 - **预检**：在「同一 base_commit 的干净 checkout」上 `git apply --check`，不过记
-  `status: patch_invalid`（该题 unresolved，不静默提交坏 patch）。
+  `status: patch_invalid`；**正式 predictions 中该实例以空 patch 提交**（SWE-bench 惯例：
+  空 patch = 无改动，合法且判为 unresolved），原始坏 patch 留档供审计。规则统一见 §5.4。
 
 ### 5.3 测试完整性政策（v1.1 新增，替代「告警」）
 
@@ -154,10 +157,34 @@ git diff --cached --binary --full-index <base_commit> -- .
 |---|---|
 | A1 | agent 可见材料只含 problem_statement + 一行约束；gold patch / test_patch / 测试判分列表一律不出现（§4） |
 | A2 | diff 触及以下路径即判 `policy_invalid`：① 测试文件（模式匹配：`test_*.py` / `*_test.py` / `/tests/` / `/test/` / `testing/` / `conftest.py`）；② 测试基础设施与 hook（`pytest.ini` / `tox.ini` / `setup.cfg` 的 test 段 / `pyproject.toml` 的 `[tool.pytest]`）；③ **test_patch 实际触及的路径**（由数据集推导，进 manifest policy 段） |
-| A3 | `policy_invalid` 实例：**不计入正式 resolve rate**；原始 patch 与命中规则**保留供审计** |
+| A3 | `policy_invalid` 实例：**计为未解决**（不从分母剔除——剔分母会虚高分数）；正式预测以空 patch 提交，原始 patch 与命中规则留档；违规数量单独报告 |
 | A4 | policy 版本号进 manifest；规则演进时旧结果可重判 |
 
 防的是「agent 改测试/改 hook 让测试假绿」这类作弊路径——比「记录了但照样计分」严一代。
+
+### 5.4 计分与提交规则（v1.2 统一，诚信口径）
+
+**分母固定，绝不剔除**：
+
+- 正式分数 = `resolved / 50`——**50 个选中实例全部进分母**，policy_invalid、patch_invalid、
+  timeout、空 patch 一律**计为未解决**。从分母剔除违规/失败题会虚高分数，不作为报告口径。
+- 违规数量、无效 patch 数量、空 patch 数量、超时数量作为**辅助指标单独报告**（对齐官方报告
+  区分 submitted / resolved / 空 patch 等状态的习惯），只用于诊断，不改写正式分。
+
+**preds.jsonl 提交契约**：
+
+| 实例状态 | preds.jsonl 里的 model_patch | results.json 记录 |
+|---|---|---|
+| `ok`（apply --check 通过、policy 干净） | 实际 patch | status + 指标 |
+| `patch_invalid`（apply 不过） | **空 patch** | status: patch_invalid + 失败原因 |
+| `policy_invalid`（碰测试） | **空 patch** | status: policy_invalid + 命中规则 |
+| `timeout` / `budget_exceeded` | 有 diff 则照交（未完成也合法）；无 diff 则空 patch | status + 已跑时长/tokens |
+| 空 diff（agent 没改任何东西） | 空 patch | status: empty_patch |
+
+- 原始（含坏/违规）patch **全部留档**在 `<instance_id>/patch.diff` 与 `raw/` 供审计，
+  predictions 与档案分离：档案求真，提交求净。
+- **50 行进、50 行出**：每个选中实例无论结局如何在 preds.jsonl 中都占一行——这是「固定分母」
+  在数据层面的落地。
 
 ## 6. 实施步骤（v1.1 重排：官方验证前置）
 
@@ -165,7 +192,7 @@ git diff --cached --binary --full-index <base_commit> -- .
 |---|---|---|
 | **P0 前置** | 环境 checklist（全部本地）：① **Docker**（用户负责安装——Docker Desktop 或 Colima，装完 `docker ps` 验证 daemon）；② `brew install python@3.12` + harness 专用 venv（Homebrew 默认 3.14 不被 harness 依赖支持）；③ .env 配 step-5-preview（用户负责，附 checklist）；④ **锁定数据集版本 + 官方 harness 版本**（commit 级） | 四项全过，版本号写进 manifest 模板 |
 | **P1 适配器** | `tests/swebench/`：dataset loader、repo checkout、task 包装、setWorkspace+RunManager 接线、patch 捕获/预检、preds/results 落盘、policy 检测 | 产物结构正确，5 实例 dry-run（**不依赖 Docker/Python harness，P0 未完也可开工**） |
-| **P2 判分管线验证** | **先用 1 个 gold patch 跑通官方 harness**（Docker/harness/测试环境本身没问题），输出「gold 应全绿」的基线 | gold 实例 resolved（grader 可信） |
+| **P2 判分管线验证** | **先用 1 条 gold patch 跑通官方 harness**，验证 Docker/harness/命令链路。完整命令（示例实例以锁定数据集时核对为准，gold 由数据集构造保证可通过）：`python -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Verified --instance_ids <instance_id> --predictions_path <gold_pred.json> --run_id <run_id>` | 该 gold 实例 resolved。**边界**：单条 gold 通过只证明这一实例的判分链路可用，不证明整个 grader 全绿——全量可信度由 P4 pilot 5 题的结果分布支撑 |
 | **P3 单题端到端** | Payaso 跑 1 个实例 → **立即官方判分**（不等 50） | patch apply --check 过；判分链路通 |
 | **P4 5 题 pilot** | 跑 5 题 + 官方判分，核对成本均值与失败模式 | 单实例成本/时长均值出来；无系统性故障 |
 | **P5 50 题全跑** | 按 P4 核算的成本放开跑 + 官方判分出正式起点分 | preds.jsonl 完整 + resolve rate + 过程指标 |
@@ -174,7 +201,7 @@ git diff --cached --binary --full-index <base_commit> -- .
 ## 7. 风险与边界
 
 1. **成本**：P4 用 5 题实测单实例均值再核算 50 题总量；token 闸门（D4）是成本保险。
-2. **patch 为空 / apply 失败**：照常提交记 `patch_invalid`（unresolved），不重试。
+2. **patch 为空 / apply 失败 / policy_invalid**：preds.jsonl 对每个选中实例**必有且仅有一条记录**，无效或违规题用空 patch；原因写进 results.json，原始 patch 留档；不重试。规则见 §5.4。
 3. **patch-only 天花板**（D3）：低于会跑测试的 agent 是预期；首跑是起点不是排名。
 4. **agent 侧沙箱**：本机 macOS 跑则 seatbelt 完整隔离；若迁 Linux CI 需
    `PAYASO_SHELL_UNSANDBOXED=1` 且能力报告如实标 `enforcement: none`（容器即边界）。
