@@ -38,7 +38,7 @@ SWE-bench Verified  │  per instance（逐题隔离，workspace = 克隆的实�
   50 实例子集        │   1. git clone repo → checkout base_commit（版本锁定，见 P0）                       │
   (HF/swe-bench.org)│   2. setWorkspace(该仓库)                                                        │
                     │   3. RunManager.createInSession(problem_statement)  ← 与 baseline 同一路径           │
-                    │      （step-5-preview，workspace-write + network on，非 TTY 自动 fail-closed）      │
+                    │      （step-5-preview，workspace-write + 显式 network on，接线见 D6）                │
                     │   4. 等待 Run 终态（completed/failed/stopped），读 Trace 与统计                      │
                     │   5. git add -A && git diff --cached --binary --full-index <base_commit> -- .      │
                     │   6. 干净 checkout 上 git apply --check 预检                                       │
@@ -77,9 +77,10 @@ task 包装、patch 捕获与预检、prediction/results 落盘。
 ### D3 agent 侧环境是「裸 repo + 我们的沙箱」——patch-only，接受这个分数天花板
 
 agent 侧**没有预装官方测试环境**（评测镜像是判分侧的事），测试运行不保证——这不是当前代码的
-硬限制，是 v1 的部署约定；若要严格保证「盲改交卷」，adapter 须显式限制测试命令（task 声明
-禁用 + policy 检测 trace/shell 中的测试调用，见 A2）。
-**v1 为 patch-only**：盲改交卷，判分侧才跑测试。SWE-bench 上「能跑测试迭代」的 agent 显著占优，
+硬限制，是 v1 的部署约定。**v1 不承诺「严格盲改」**：Trace 检测只能事后记录 agent 跑过测试，
+不能事前阻止；真正的执行前拦截（如 shell 命令denylist）属 agent 核心能力，v1 非目标、列为后续。
+因此口径是：*允许 agent 尝试运行环境中已有的测试，尝试行为记录于 trace 备查*。
+**v1 为 patch-only**：盲改交卷为主，判分侧才做权威判定。SWE-bench 上「能跑测试迭代」的 agent 显著占优，
 首跑分数低于榜单是**结构性预期**，不是模型不行。官方端到端验证前置（§6 P2）保证我们至少知道
 每一分丢在哪。后续增强 = in-container 模式（P6+）。
 
@@ -104,6 +105,27 @@ agent 侧**没有预装官方测试环境**（评测镜像是判分侧的事）�
   才是可比的分
 - manifest 记录：模型指纹（base_url + model + key 脱敏哈希）、数据集/harness 版本、子集定义、
   源码 git 提交 + 未提交改动哈希、预算参数、每实例实际消耗
+
+### D6 无人值守接线：network mode / 审批 / 预检（v1.2 新增）
+
+方案已弃用 CLI（D2），`--network-mode` 是 CLI 参数——RunManager 路径上必须由 adapter 显式
+接线，不能沿用宿主进程的隐式状态：
+
+1. **显式设置全局 network mode**：adapter 启动时 `setNetworkMode('on')`（`network-mode.ts`
+   的全局单例）。不依赖默认值（当前默认恰为 on，但默认值会变、宿主进程可能被别处改过），
+   实际模式记入 manifest。
+2. **无人值守审批语义（已核实现状）**：审批只有网络一类（`ApprovalPort.request` 仅
+   NetworkApprovalRequest）；`needsNetworkApproval` 仅在 networkMode === 'ask' 时为真。
+   因此 **mode='on' + workspace-write ⇒ 审批永远不会触发**，`ApprovalCoordinator` 的
+   60s fail-closed 超时（APPROVAL_TIMEOUT_MS）在此配置下不可达。协调器没有程序化自动
+   应答入口（唯一裁决路径是 HTTP `POST /runs/:id/approval`），无人值守 harness 里
+   触发审批 = 干等 60s 后被拒——这是**可检测的故障信号**（该实例墙钟 +60s），
+   results.json 记录并在报告中标出，而不是静默吞掉。
+3. **预检（P1 第一站，agent 启动前）**：node 版本、git 可用、模型端点连通（一次最小
+   chat completion 探活）、数据集缓存与实例清单完好、实例 repo 可 clone。任一不过即
+   整个批次拒绝启动——不在第 30 题才发现端点是坏的。
+4. 判分侧前置（Docker/harness）是 P2 的事，P1 只预检 agent 侧依赖（D1 的部署形态决定
+   两者天然分离）。
 
 ## 4. 数据集
 
@@ -156,7 +178,7 @@ git diff --cached --binary --full-index <base_commit> -- .
 | # | 规则 |
 |---|---|
 | A1 | agent 可见材料只含 problem_statement + 一行约束；gold patch / test_patch / 测试判分列表一律不出现（§4） |
-| A2 | diff 触及以下路径即判 `policy_invalid`：① 测试文件（模式匹配：`test_*.py` / `*_test.py` / `/tests/` / `/test/` / `testing/` / `conftest.py`）；② 测试基础设施与 hook（`pytest.ini` / `tox.ini` / `setup.cfg` 的 test 段 / `pyproject.toml` 的 `[tool.pytest]`）；③ **test_patch 实际触及的路径**（由数据集推导，进 manifest policy 段） |
+| A2 | **提交的 diff** 触及以下路径即判 `policy_invalid`：① 测试文件（模式匹配：`test_*.py` / `*_test.py` / `/tests/` / `/test/` / `testing/` / `conftest.py`）；② 测试基础设施与 hook（`pytest.ini` / `tox.ini` / `setup.cfg` 的 test 段 / `pyproject.toml` 的 `[tool.pytest]`）；③ **test_patch 实际触及的路径**（由数据集推导，进 manifest policy 段）。注：diff 是最终提交物，对它的检测是可靠的；trace 里的测试*执行*只作记录，不作判定依据（执行无法事前拦截，见 D3） |
 | A3 | `policy_invalid` 实例：**计为未解决**（不从分母剔除——剔分母会虚高分数）；正式预测以空 patch 提交，原始 patch 与命中规则留档；违规数量单独报告 |
 | A4 | policy 版本号进 manifest；规则演进时旧结果可重判 |
 
@@ -178,13 +200,16 @@ git diff --cached --binary --full-index <base_commit> -- .
 | `ok`（apply --check 通过、policy 干净） | 实际 patch | status + 指标 |
 | `patch_invalid`（apply 不过） | **空 patch** | status: patch_invalid + 失败原因 |
 | `policy_invalid`（碰测试） | **空 patch** | status: policy_invalid + 命中规则 |
-| `timeout` / `budget_exceeded` | 有 diff 则照交（未完成也合法）；无 diff 则空 patch | status + 已跑时长/tokens |
+| `timeout` / `budget_exceeded` | diff **先过 policy + apply 预检**：都过才照交（未完成也合法）；任一不过 → 空 patch | status + 已跑时长/tokens |
 | 空 diff（agent 没改任何东西） | 空 patch | status: empty_patch |
 
 - 原始（含坏/违规）patch **全部留档**在 `<instance_id>/patch.diff` 与 `raw/` 供审计，
   predictions 与档案分离：档案求真，提交求净。
 - **50 行进、50 行出**：每个选中实例无论结局如何在 preds.jsonl 中都占一行——这是「固定分母」
   在数据层面的落地。
+- **判定优先级（唯一）**：无论何种收尾状态（completed/timeout/budget_exceeded），交不交实际 patch
+  **只由两道检查决定**——① policy 干净 ② `git apply --check` 通过。两道都过才交实际 diff，
+  任一不过一律空 patch。超时不构成免检金牌。
 
 ## 6. 实施步骤（v1.1 重排：官方验证前置）
 
@@ -192,7 +217,7 @@ git diff --cached --binary --full-index <base_commit> -- .
 |---|---|---|
 | **P0 前置** | 环境 checklist（全部本地）：① **Docker**（用户负责安装——Docker Desktop 或 Colima，装完 `docker ps` 验证 daemon）；② `brew install python@3.12` + harness 专用 venv（Homebrew 默认 3.14 不被 harness 依赖支持）；③ .env 配 step-5-preview（用户负责，附 checklist）；④ **锁定数据集版本 + 官方 harness 版本**（commit 级） | 四项全过，版本号写进 manifest 模板 |
 | **P1 适配器** | `tests/swebench/`：dataset loader、repo checkout、task 包装、setWorkspace+RunManager 接线、patch 捕获/预检、preds/results 落盘、policy 检测 | 产物结构正确，5 实例 dry-run（**不依赖 Docker/Python harness，P0 未完也可开工**） |
-| **P2 判分管线验证** | **先用 1 条 gold patch 跑通官方 harness**，验证 Docker/harness/命令链路。完整命令（示例实例以锁定数据集时核对为准，gold 由数据集构造保证可通过）：`python -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Verified --instance_ids <instance_id> --predictions_path <gold_pred.json> --run_id <run_id>` | 该 gold 实例 resolved。**边界**：单条 gold 通过只证明这一实例的判分链路可用，不证明整个 grader 全绿——全量可信度由 P4 pilot 5 题的结果分布支撑 |
+| **P2 判分管线验证** | 选 1 条 gold patch 跑通官方 harness，验证 Docker/harness/命令链路。**gold 不是「构造保证可通过」——须实际验证**：跑 gold → resolved 才采用为该管线基线实例；未过就换一条重试，直到有一条通过；最终实例 ID 与验证证据写进报告。完整命令：`python -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Verified --instance_ids <instance_id> --predictions_path <gold_pred.json> --run_id <run_id>` | 选定 gold 实例 resolved（附证据）。**边界**：单条 gold 通过只证明这一实例的判分链路可用，不证明整个 grader 全绿——全量可信度由 P4 pilot 5 题的结果分布支撑 |
 | **P3 单题端到端** | Payaso 跑 1 个实例 → **立即官方判分**（不等 50） | patch apply --check 过；判分链路通 |
 | **P4 5 题 pilot** | 跑 5 题 + 官方判分，核对成本均值与失败模式 | 单实例成本/时长均值出来；无系统性故障 |
 | **P5 50 题全跑** | 按 P4 核算的成本放开跑 + 官方判分出正式起点分 | preds.jsonl 完整 + resolve rate + 过程指标 |
