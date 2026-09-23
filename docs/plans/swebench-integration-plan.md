@@ -39,11 +39,11 @@ SWE-bench Verified  │  per instance（逐题隔离，workspace = 克隆的实�
   (HF/swe-bench.org)│   2. setWorkspace(该仓库)                                                        │
                     │   3. RunManager.createInSession(problem_statement)  ← 与 baseline 同一路径           │
                     │      （step-5-preview，workspace-write + 显式 network on，接线见 D6）                │
-                    │   4. 等待 Run 终态，并验收「写入已停止」：① 终态（completed/failed/stopped）  │
-                    │      ② checkpoint 落盘（执行链 settle 观测点）③ settle 窗口内 workspace     │
-                    │      无新写入（mtime 校验）+ 后台 Shell 任务已结束——确认不了记 runner 故障、  │
-                    │      交空 patch，不交可能仍在变化的 patch（依据：close 路径允许 10s cap 强制收口、│
-                    │      执行链 settle 仅 2s、后台 job 有独立生命周期）                          │
+                    │   4. 等待 Run 终态，并验收「写入已停止」：① 终态事件（run_completed/failed/   │
+│      stopped）② 该 Run 执行 Promise 真正结束（agentPromise，权威信号——checkpoint 在       │
+│      tool_result 时也保存、不能证明 Agent 已停止）③ 后台任务结束确认（无公开查询接口，      │
+│      经 mtime 静默窗口 + trace 兜底，mtime 只是辅助）——确认不了记 runner 故障、交空 patch， │
+│      不交可能仍在变化的 patch                                                │
                     │   5. git add -A && git diff --cached --binary --full-index <base_commit> -- .      │
                     │   6. 干净 checkout 上 git apply --check 预检                                       │
                     │   7. 落盘：preds.jsonl + 每实例 trace/tokens/diff/status                           │
@@ -130,10 +130,10 @@ agent 侧**没有预装官方测试环境**（评测镜像是判分侧的事）�
      **缺受管工具（Node/npm）时 `ToolchainPreparationCoordinator` 发起
      `toolchain_preparation_requested` 并走同一条 60s fail-closed 超时**
      （APPROVAL_TIMEOUT_MS，唯一裁决路径同为 HTTP 端点）。这是 D6 初版漏掉的第二类。
-   - 两者共同前提：**adapter 无法程序化应答审批**（唯一入口是 HTTP 端点）⇒ 无人值守下
-     任何审批触发 = 干等 60s 后被拒。处置：**preflight 先消除触发条件**（git/node/npm
-     实测可用 + network on），运行中若仍观测到 `toolchain_preparation_requested`
-     记 **runner 故障**（该实例空 patch + 报告标出），绝不静默吞。
+   - **程序化处置（已核实现状）**：RunManager 公开 `resolveApproval` /
+     `resolveToolchainPreparation`——adapter 监听事件，一旦出现审批请求**立即以
+     denied 自动驳回**（不等 60s）并记 **runner 故障**；preflight 先消除触发条件
+     （git/node/npm 实测可用 + network on），双管齐下：消除为主、自动驳回兜底。
 3. **预检（P1 第一站，agent 启动前）**：node 版本、git 可用、模型端点连通（一次最小
    chat completion 探活）、数据集缓存与实例清单完好、实例 repo 可 clone。任一不过即
    整个批次拒绝启动——不在第 30 题才发现端点是坏的。
