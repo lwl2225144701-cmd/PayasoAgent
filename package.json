@@ -15,6 +15,7 @@
     "test:baseline": "node --env-file=.env --import tsx tests/baseline/run.ts",
     "test:delivery": "node --env-file=.env --import tsx tests/task-delivery-e2e.test.ts",
     "test:stress": "tsx --env-file=.env tests/stress.test.ts",
+    "eval:swebench": "tsx --env-file=eval/.env eval/run.ts",
     "test:sandbox": "tsx tests/sandbox-manager.test.ts",
     "test:contract": "tsx tests/tool-contract.test.ts",
     "test:model-selection": "tsx tests/model-selection.test.ts",

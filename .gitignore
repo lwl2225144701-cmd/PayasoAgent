@@ -45,3 +45,9 @@ docs/archify/*.visual-check.*
 dist/
 *.tgz
 THIRD_PARTY_NOTICES.md
+
+# SWE-bench 评测外挂（eval/）产物：锁定数据集(含gold)/clone缓存/隔离被测agent数据/输出/凭证
+eval/.cache/
+eval/runs/
+eval/.ai-home/
+eval/.env
