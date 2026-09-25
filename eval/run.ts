@@ -11,6 +11,7 @@
 //   tsx eval/run.ts --dry-run --limit 1                  # 不调模型：验 clone/workspace/policy/apply/决策
 //   tsx --env-file=eval/.env eval/run.ts --pilot --limit 1  # 真跑第 1 题（agent CLI + step-5-preview）
 //   tsx --env-file=eval/.env eval/run.ts                 # 跑 50 题
+//   tsx --env-file=eval/.env eval/run.ts --concurrency 2  # 并发跑几题（默认 2；或 EVAL_CONCURRENCY）
 // 产物 eval/runs/<UTC>/（已 gitignore）；判分侧命令见 docs/plans/swebench-progress.md。
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -170,6 +171,32 @@ function cacheRepoDirOf(workDir: string): string {
   return workDir;
 }
 
+// per-repo 串行锁：并发跑不同实例时，同一 repo 的 clone / worktree(add·remove) /
+// applyCheck 都在其缓存 bare 上做 git 操作，必须串行（不同 repo 互不阻塞）。重的 agent
+// 执行在锁外，所以并发几乎线性提速，只在短暂的 git 操作上让路。
+const repoLocks = new Map<string, Promise<unknown>>();
+function withRepoLock<T>(repoKey: string, fn: () => T | Promise<T>): Promise<T> {
+  const prev = repoLocks.get(repoKey) ?? Promise.resolve();
+  const next = (async () => {
+    await prev.catch(() => undefined);
+    return await fn();
+  })();
+  repoLocks.set(repoKey, next.catch(() => undefined));
+  return next;
+}
+async function ensureAndAddWorktree(repo: string, cacheRepo: string, workDir: string, baseCommit: string): Promise<void> {
+  await withRepoLock(cacheRepo, () => {
+    ensureRepoCache(repo);
+    git(cacheRepo, ['worktree', 'add', '--detach', '--quiet', workDir, baseCommit]);
+  });
+}
+async function applyCheckLocked(cacheRepo: string, baseCommit: string, patch: string): Promise<{ ok: boolean; error?: string }> {
+  return withRepoLock(cacheRepo, () => applyCheck(cacheRepo, baseCommit, patch));
+}
+async function removeWorktreeLocked(cacheRepo: string, workDir: string): Promise<void> {
+  await withRepoLock(cacheRepo, () => removeWorktree(cacheRepo, workDir));
+}
+
 interface AgentRunOutcome {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -244,14 +271,14 @@ async function probeModel(cfg: EvalConfig): Promise<{ ok: boolean; detail: strin
 }
 
 /** dry-run 自检：用合成编辑把 §5.4 判定链完整烧一遍（不调模型）。 */
-function selfTestDecisionChain(workDir: string, baseCommit: string): Record<string, 'pass' | 'fail'> {
+async function selfTestDecisionChain(workDir: string, baseCommit: string): Promise<Record<string, 'pass' | 'fail'>> {
   const out: Record<string, 'pass' | 'fail'> = {};
   const tracked = git(workDir, ['ls-files'])
     .split('\n')
     .filter((line) => line.trim().length > 0);
   const sourceTarget = tracked.find((f) => f.endsWith('.py') && !matchTestPath(f));
   const testTarget = tracked.find((f) => matchTestPath(f));
-  const scenario = (target: string | undefined, expected: 'ok' | 'policy_invalid'): void => {
+  const scenario = async (target: string | undefined, expected: 'ok' | 'policy_invalid'): Promise<void> => {
     if (!target) {
       out[`${expected}(无目标文件)`] = 'fail';
       return;
@@ -259,13 +286,13 @@ function selfTestDecisionChain(workDir: string, baseCommit: string): Record<stri
     fs.appendFileSync(path.join(workDir, target), '\n# swebench self-test synthetic edit\n');
     const { patch, changedPaths } = capturePatch(workDir, baseCommit);
     const policy = detectTestPollution(changedPaths, []);
-    const apply = patch.trim() ? applyCheck(cacheRepoDirOf(workDir), baseCommit, patch) : { ok: false };
+    const apply = patch.trim() ? await applyCheckLocked(cacheRepoDirOf(workDir), baseCommit, patch) : { ok: false };
     const decision = decideSubmission({ runnerFaults: [], patch, policy, applyOk: apply.ok });
     out[`${expected}(${target})`] = decision.status === expected ? 'pass' : 'fail';
     resetWorkdir(workDir);
   };
-  scenario(sourceTarget, 'ok');
-  scenario(testTarget, 'policy_invalid');
+  await scenario(sourceTarget, 'ok');
+  await scenario(testTarget, 'policy_invalid');
   return out;
 }
 
@@ -372,10 +399,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const results: InstanceResult[] = [];
-  const predsLines: string[] = [];
+  const concurrency = Math.max(
+    1,
+    Number(argValue('--concurrency')) || Number(process.env.EVAL_CONCURRENCY) || 2,
+  );
 
-  for (const instance of targets) {
+  /** 单实例全流程（可并发）：重的 agent 执行在锁外，repo 级 git 操作走 per-repo 锁。 */
+  const runOne = async (
+    instance: SwebenchInstance,
+  ): Promise<{ result: InstanceResult; predLine: string }> => {
     console.log(`\n=== ${instance.instance_id}（${dryRun ? 'dry-run' : 'live'}）===`);
     const startedAt = Date.now();
     const instanceFaults: string[] = [];
@@ -384,14 +416,11 @@ async function main(): Promise<void> {
     fs.mkdirSync(path.dirname(workDir), { recursive: true });
     const cacheRepo = cacheRepoDir(instance.repo);
 
-    // 1) repo 缓存 + worktree 到 base_commit
+    // 1) repo 缓存 + worktree 到 base_commit（per-repo 锁内）
     try {
-      ensureRepoCache(instance.repo);
-      git(cacheRepo, ['worktree', 'add', '--detach', '--quiet', workDir, instance.base_commit]);
+      await ensureAndAddWorktree(instance.repo, cacheRepo, workDir, instance.base_commit);
     } catch (err) {
-      instanceFaults.push(
-        `clone/checkout 失败: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      instanceFaults.push(`clone/checkout 失败: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // 2) task 包装：problem_statement + 一行约束
@@ -399,7 +428,7 @@ async function main(): Promise<void> {
       `${instance.problem_statement}\n\n` +
       '[约束] 只修改源代码，不要修改或新增测试文件（tests/、conftest.py、pytest 配置等）。';
 
-    // 3) 真跑：spawn agent CLI（进程退出 = agent 已停止，权威信号）
+    // 3) 真跑：spawn agent CLI（锁外；进程退出 = agent 已停止，权威信号）
     const logFile = path.join(runDir, instance.instance_id, 'agent.log');
     if (!instanceFaults.length && !dryRun) {
       fs.mkdirSync(path.dirname(logFile), { recursive: true });
@@ -442,7 +471,7 @@ async function main(): Promise<void> {
       } else {
         const policy = detectTestPollution(changedPaths, []);
         policyHits.push(...policy.hits);
-        const apply = patch.trim() ? applyCheck(cacheRepo, instance.base_commit, patch) : { ok: false };
+        const apply = patch.trim() ? await applyCheckLocked(cacheRepo, instance.base_commit, patch) : { ok: false };
         const decision = decideSubmission({
           runnerFaults: instanceFaults.filter((f) => f.startsWith('runner_fault')),
           patch,
@@ -458,25 +487,23 @@ async function main(): Promise<void> {
     // 5) dry-run 自检
     let selfTest: Record<string, 'pass' | 'fail'> | undefined;
     if (dryRun && !fatalClone) {
-      selfTest = selfTestDecisionChain(workDir, instance.base_commit);
+      selfTest = await selfTestDecisionChain(workDir, instance.base_commit);
       console.log(`自检: ${JSON.stringify(selfTest)}`);
     }
 
-    // 6) 落档（档案求真）+ predictions（提交求净）
+    // 6) 落档（档案求真）。agent.log 已由 runAgentCli 实时写到 instanceDir/agent.log（不再自拷贝，那会清零）
     const instanceDir = path.join(runDir, instance.instance_id);
     fs.mkdirSync(instanceDir, { recursive: true });
     fs.writeFileSync(path.join(instanceDir, 'task.md'), taskText);
     if (patch) fs.writeFileSync(path.join(instanceDir, 'patch.diff'), patch);
     if (instanceFaults.length) fs.writeFileSync(path.join(instanceDir, 'faults.json'), JSON.stringify(instanceFaults, null, 2));
-    if (fs.existsSync(logFile)) fs.copyFileSync(logFile, path.join(instanceDir, 'agent.log'));
-    predsLines.push(
-      JSON.stringify({
-        instance_id: instance.instance_id,
-        model_name_or_path: cfg.modelName,
-        model_patch: approvedPatch ? patch : '',
-      }),
-    );
-    results.push({
+
+    const predLine = JSON.stringify({
+      instance_id: instance.instance_id,
+      model_name_or_path: cfg.modelName,
+      model_patch: approvedPatch ? patch : '',
+    });
+    const result: InstanceResult = {
       instance_id: instance.instance_id,
       status,
       durationMs: Date.now() - startedAt,
@@ -488,10 +515,46 @@ async function main(): Promise<void> {
       approvedPatch,
       faults: instanceFaults,
       ...(selfTest ? { selfTest } : {}),
-    });
+    };
+    if (fs.existsSync(workDir)) await removeWorktreeLocked(cacheRepo, workDir);
+    return { result, predLine };
+  };
 
-    if (fs.existsSync(workDir)) removeWorktree(cacheRepo, workDir);
-  }
+  // ---- 并发池：N 条同时跑，结果按题号(target 顺序)归集 → 确定性输出 ----
+  const outcomes: Array<{ result: InstanceResult; predLine: string } | undefined> = new Array(targets.length);
+  let cursor = 0;
+  const pump = async (): Promise<void> => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= targets.length) return;
+      try {
+        outcomes[i] = await runOne(targets[i]);
+      } catch (err) {
+        // runOne 已把绝大多数错误记为 fault；此处兜底防单个 worker 崩拖垮整池。
+        console.error(`runOne 顶层异常 (${targets[i].instance_id}):`, err);
+        outcomes[i] = {
+          result: {
+            instance_id: targets[i].instance_id,
+            status: 'runner_fault',
+            durationMs: 0,
+            agentExitCode: null,
+            agentTimedOut: false,
+            policyHits: [],
+            patchBytes: 0,
+            changedPaths: [],
+            approvedPatch: false,
+            faults: [`runner_fault: ${(err as Error).message}`],
+          },
+          predLine: JSON.stringify({ instance_id: targets[i].instance_id, model_name_or_path: cfg.modelName, model_patch: '' }),
+        };
+      }
+    }
+  };
+  const effectiveConcurrency = Math.min(concurrency, targets.length) || 1;
+  console.log(`并发：${effectiveConcurrency} 路 / 共 ${targets.length} 题`);
+  await Promise.all(Array.from({ length: effectiveConcurrency }, () => pump()));
+  const results = outcomes.map((o) => o!.result);
+  const predsLines = outcomes.map((o) => o!.predLine);
 
   // ---- 汇总 ----
   fs.writeFileSync(path.join(runDir, 'preds.jsonl'), `${predsLines.join('\n')}${predsLines.length ? '\n' : ''}`);
@@ -518,7 +581,7 @@ async function main(): Promise<void> {
         },
         dataset: { revision: dataset.revision, sha256: dataset.sha256, cacheDir: CACHE_DIR },
         selection: { algorithm: 'stratified-largest-remainder', size: SELECTION_SIZE, listSha256: listHash },
-        config: { instanceTimeoutMs: cfg.instanceTimeoutMs, permissionMode: cfg.permissionMode, networkMode: cfg.networkMode },
+        config: { concurrency: effectiveConcurrency, instanceTimeoutMs: cfg.instanceTimeoutMs, permissionMode: cfg.permissionMode, networkMode: cfg.networkMode },
         evalSourceSha: evalSourceHash(),
       },
       null,
