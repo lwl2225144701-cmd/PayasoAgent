@@ -203,7 +203,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","background_job_notified","error"]
+["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","progress_reminder","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","background_job_notified","error"]
 ```
 
 <!-- /docs-contract:events -->
@@ -292,6 +292,8 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 * **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1` 重跑可能未完成的当前轮；workspace 沿用不清理。每次 Host 执行（含 resume）独立启动总运行时限，不存在 Runtime 迭代预算。
 
 * **Context Compaction V1**：输入估算超过当前 Run 模型预算的 80% 时，Harness 从最旧完整轮开始选取前缀并增量更新结构化 summary，目标回落到约 65%；模型视图使用 `system + bounded scratchpad + summary + recent complete rounds + current turn`。完整 transcript 永不因 compaction 删除，summary 状态随 checkpoint/resume 恢复；`context_compaction` trace 可审计。
+
+* **只读调查进展提醒**：成功且结果有效的工具按实际 `resolveEffect` 分类，每个模型工具回合最多累计一次；`updatePlan` 为中性动作，写入、失败、无效和无法确认的调用清空只读连续性。默认连续 **8** 个只读回合且累计 **120 秒实际执行时间**后排队一次 `progress_reminder`，下次模型视图要求核对目标/证据后选择执行、答复或针对性调查，允许合法只读任务继续。提醒计入上下文预算；pending/已投递状态与计数随 checkpoint 恢复，新 Run 重置。请求失败/取消时保留 pending，模型成功响应后消费，随原有 checkpoint 保存；尚未持久化的请求允许恢复重投。该机制不判定任务完成，不阻断或强制工具调用。`PAYASO_PROGRESS_REMINDER=off` 可在启动 Host/CLI 前关闭；SDK 可通过 `DefaultContextHarness.progressReminder` 关闭或覆盖阈值。实现见 `harness/progress-reminder.ts`，确定性集成验证见 `tests/progress-reminder.test.ts`。
 
 * **Run 模型绑定（v1.6）**：每个 Run 的 model snapshot（provider/baseUrl/apiKey/model 原子元组）是 Context Budget、`context_usage` trace 与 LLM `max_tokens` 的唯一模型来源；环境变量仅作为无显式 ModelConfig 时的 fallback。Runtime 拿到 Run 模型后不得再读 `OPENAI_MODEL` 决定能力，LLM 传输层也不得按厂商或模型名改写 Host 已固定的 `baseUrl`（`tests/model-binding.test.ts` 与 `tests/stepfun-endpoint.test.ts` 锁定该保证，`context_usage.configSource="run_model"` 可审计）。
 

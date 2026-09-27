@@ -132,7 +132,12 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
       modelConfig: opts.modelConfig,
       toolchain,
     });
-  contextHarness.restoreState(resume?.harnessState ?? opts.previousHarnessState);
+  // 摘要/计划跨 Run 延续，调查提醒只属于本 Run；resume 则保留提醒计数和投递状态。
+  contextHarness.restoreState(
+    resume
+      ? resume.harnessState
+      : opts.previousHarnessState && { ...opts.previousHarnessState, progressReminder: undefined },
+  );
   // v2.2 Plan：计划状态由 Harness 持有（随 harnessState 进 checkpoint）。Runtime 只把
   // 写入口装饰成"语义 → plan_update 事件"：Harness 不碰 trace，工具只见文本。
   const planPort = contextHarness.planPort?.();

@@ -335,6 +335,7 @@ export function connectSSE(
     'context_usage',
     'context_compaction',
     'recovery_decision',
+    'progress_reminder',
     'empty_turn_recovered',
     'finalization_guard',
     'side_effect_skip',

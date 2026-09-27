@@ -200,6 +200,7 @@ export async function runAgent(
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
       throwIfAborted(opts.signal);
+      const turnStartedAt = performance.now();
       // v2.3 后台任务完成通知：迭代边界注入（本轮 LLM 调用即看到）。
       // 注意：计数只在"模型做出真实进展（执行工具调用）"时重置——绝不能在这里
       // 因为顶部抽空就清零，否则上一轮收尾注入的计数会被立即抹掉，上限形同虚设。
@@ -298,6 +299,9 @@ export async function runAgent(
       const { usage: requestUsage, ...messageForHistory } = assistantMsg;
       const assistantHistoryMessage = contextHarness.sanitizeAssistantMessage(messageForHistory);
       messages.push(assistantHistoryMessage);
+      // 成功响应后消费提醒；随本轮原有的工具/终态 checkpoint 保存。
+      // 若响应尚未持久化即崩溃，恢复时 pending 提醒和该请求一起重新投影。
+      contextHarness.acknowledgeProgressReminder?.();
       // 记录本次真实用量，供下一轮 context_usage 的 pressureTokens 锚点使用。
       if (requestUsage !== undefined) lastRequestUsage = requestUsage;
 
@@ -307,7 +311,11 @@ export async function runAgent(
         messageCount: messages.length,
         iteration: i + 1,
         response: assistantMsg.content,
-        ...(contextHarness.reviewFinalAnswer && state.toolCalls > 0 && !assistantMsg.tool_calls?.length ? { purpose: 'final_draft' as const } : {}),
+        ...(contextHarness.reviewFinalAnswer &&
+        state.toolCalls > 0 &&
+        !assistantMsg.tool_calls?.length
+          ? { purpose: 'final_draft' as const }
+          : {}),
         reasoning: reasoning_content,
         usage: requestUsage,
         hasToolCalls: !!assistantMsg.tool_calls?.length,
@@ -391,14 +399,31 @@ export async function runAgent(
           answer = await contextHarness.reviewFinalAnswer({
             messages: ctx.messages,
             answer,
-            call: async reviewMessages => {
+            call: async (reviewMessages) => {
               throwIfAborted(opts.signal);
-              emit({ type: 'llm_call_started', iteration: i + 1, messageCount: reviewMessages.length });
-              const reviewed = await chat(reviewMessages, [], undefined, opts.modelConfig, opts.signal,
-                attempt => emit({ type: 'llm_request_sent', iteration: i + 1, attempt }));
-              emit({ type: 'llm_call', purpose: 'final_review', iteration: i + 1,
-                messageCount: reviewMessages.length, response: reviewed.content,
-                reasoning: reviewed.reasoning_content, hasToolCalls: !!reviewed.tool_calls?.length, usage: reviewed.usage });
+              emit({
+                type: 'llm_call_started',
+                iteration: i + 1,
+                messageCount: reviewMessages.length,
+              });
+              const reviewed = await chat(
+                reviewMessages,
+                [],
+                undefined,
+                opts.modelConfig,
+                opts.signal,
+                (attempt) => emit({ type: 'llm_request_sent', iteration: i + 1, attempt }),
+              );
+              emit({
+                type: 'llm_call',
+                purpose: 'final_review',
+                iteration: i + 1,
+                messageCount: reviewMessages.length,
+                response: reviewed.content,
+                reasoning: reviewed.reasoning_content,
+                hasToolCalls: !!reviewed.tool_calls?.length,
+                usage: reviewed.usage,
+              });
               return reviewed;
             },
           });
@@ -447,6 +472,8 @@ export async function runAgent(
 
       const toolNames = assistantMsg.tool_calls.map((c) => c.function.name).join(', ');
       observer.log(`[LLM 决策] 选择工具: ${toolNames}`);
+      let readCalls = 0;
+      let otherCalls = 0;
 
       // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
       for (const call of assistantMsg.tool_calls) {
@@ -455,7 +482,7 @@ export async function runAgent(
         throwIfAborted(opts.signal);
         // 一次工具调用的完整生命周期（parse → 审批 → 执行 → 校验 → 重试 →
         // 恢复）由 ToolInvocationProcessManager 负责；返回即该 call 处理完毕。
-        await invokeToolCall(
+        const outcome = await invokeToolCall(
           {
             runId,
             toolContext,
@@ -471,7 +498,11 @@ export async function runAgent(
             // 流式通道（不落 trace）。messageId 取本次工具调用 id，前端据此归行。
             onToolOutput: opts.onStreamDelta
               ? (chunk: string) =>
-                  opts.onStreamDelta?.({ messageId: call.id, type: 'shell_output_delta', delta: chunk })
+                  opts.onStreamDelta?.({
+                    messageId: call.id,
+                    type: 'shell_output_delta',
+                    delta: chunk,
+                  })
               : undefined,
             emit,
             save,
@@ -482,6 +513,22 @@ export async function runAgent(
           },
           call,
         );
+        if (!outcome) otherCalls++;
+        else if (outcome.tool !== 'updatePlan') {
+          // 更新计划是中性动作，不伪装成写入进展。
+          if (outcome.effect === 'read') readCalls++;
+          else otherCalls++;
+        }
+      }
+
+      if (contextHarness.observeToolTurn) {
+        const reminder = contextHarness.observeToolTurn({
+          activity: otherCalls > 0 ? 'other' : readCalls > 0 ? 'read' : 'neutral',
+          durationMs: performance.now() - turnStartedAt,
+        });
+        if (reminder) emit({ type: 'progress_reminder', iteration: i + 1, ...reminder });
+        // 工具本身的 checkpoint 在回合统计之前；此处保存回合计数与 pending 状态。
+        save();
       }
 
       // v2.3 连续唤醒计数重置：本迭代确实执行了工具（模型在做真实工作），

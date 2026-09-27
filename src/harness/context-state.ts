@@ -1,4 +1,5 @@
 import { createPlan, normalizePlan, type Plan } from './plan.js';
+import { normalizeProgressReminderState, type ProgressReminderState } from './progress-reminder.js';
 
 export interface ContextHarnessState {
   conversationSummary: string;
@@ -6,6 +7,8 @@ export interface ContextHarnessState {
   // Agent 自述的任务清单：由 Harness 持有，随 checkpoint 的 harnessState 一起持久化
   // （因此不需要给 CheckpointSnapshot 加字段）。旧 checkpoint 无此字段 → 空计划。
   plan: Plan;
+  // 每 Run 独立；resume 保留，新 Run 继承会话历史时重置。旧 checkpoint 可缺省。
+  progressReminder?: ProgressReminderState;
 }
 
 export function createContextHarnessState(): ContextHarnessState {
@@ -24,5 +27,10 @@ export function normalizeContextHarnessState(
         ? value.summarizedMessageCount
         : 0,
     plan: normalizePlan((value as { plan?: unknown }).plan),
+    ...(value.progressReminder === undefined
+      ? {}
+      : {
+          progressReminder: normalizeProgressReminderState(value.progressReminder),
+        }),
   };
 }

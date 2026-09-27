@@ -3,7 +3,6 @@ import { getNetworkMode } from '../network-mode.js';
 import type { PermissionMode } from '../permission-mode.js';
 import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
 import type { TaskConstraints } from '../task-constraints.js';
-import { reviewFinalAnswer, type FinalReviewInput } from './final-review.js';
 import { ContextManager, type ContextUsage } from './context-manager.js';
 import {
   type ContextHarnessState,
@@ -14,6 +13,7 @@ import {
   type ConversationSummarizer,
   LlmConversationSummarizer,
 } from './conversation-summarizer.js';
+import { type FinalReviewInput, reviewFinalAnswer } from './final-review.js';
 import { InstructionComposer } from './instruction-composer.js';
 import {
   buildBaseSegments,
@@ -35,6 +35,15 @@ import {
   type PlanReport,
   renderBoundedPlanView,
 } from './plan.js';
+import {
+  advanceProgressReminder,
+  DEFAULT_PROGRESS_REMINDER_POLICY,
+  normalizeProgressReminderState,
+  type ProgressReminder,
+  type ProgressReminderPolicy,
+  renderProgressReminder,
+  type ToolTurnProgress,
+} from './progress-reminder.js';
 import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
 
 export interface ContextCompactionResult {
@@ -90,6 +99,10 @@ export interface AgentContextHarness {
   ): Promise<PreparedModelTurn>;
   restoreState(state: ContextHarnessState | undefined): void;
   snapshotState(): ContextHarnessState;
+  // 只观察已结束的工具回合；触发后返回审计数据，由 Runtime 发事件并保存。
+  observeToolTurn?(turn: ToolTurnProgress): ProgressReminder | undefined;
+  // 模型成功响应后才消费待发送提醒；请求失败/取消时保留，供恢复后继续投影。
+  acknowledgeProgressReminder?(): boolean;
   // v2.2 Plan：Harness 持有的任务清单写入口。Runtime 只负责把返回的 changed 变成
   // `plan_update` 事件（Harness 不碰 trace）；fake Harness 不实现也不影响编译，
   // 此时 updatePlan 工具 fail-closed 报错。
@@ -140,6 +153,7 @@ export class DefaultContextHarness implements AgentContextHarness {
   private readonly composer: InstructionComposer;
   private toolchain: RuntimeToolchainCapabilities | undefined;
   private readonly summarizer: ConversationSummarizer;
+  private readonly progressReminderPolicy: ProgressReminderPolicy | undefined;
   private state = createContextHarnessState();
 
   constructor(options: {
@@ -153,7 +167,20 @@ export class DefaultContextHarness implements AgentContextHarness {
     workspaceName?: string;
     projectInstructions?: string;
     finalReview?: boolean;
+    progressReminder?: ProgressReminderPolicy | false;
   }) {
+    this.progressReminderPolicy =
+      options.progressReminder === false || process.env.PAYASO_PROGRESS_REMINDER === 'off'
+        ? undefined
+        : { ...DEFAULT_PROGRESS_REMINDER_POLICY, ...options.progressReminder };
+    if (
+      this.progressReminderPolicy &&
+      (!Number.isSafeInteger(this.progressReminderPolicy.minReadOnlyTurns) ||
+        this.progressReminderPolicy.minReadOnlyTurns < 1 ||
+        !Number.isSafeInteger(this.progressReminderPolicy.minReadOnlyMs) ||
+        this.progressReminderPolicy.minReadOnlyMs < 0)
+    )
+      throw new Error('Invalid progress reminder policy');
     const resolvedContext =
       options.modelContext ??
       resolveModelContextConfig({
@@ -163,7 +190,9 @@ export class DefaultContextHarness implements AgentContextHarness {
         maxOutputTokens: options.modelConfig?.maxOutputTokens,
       });
     this.modelContext = resolvedContext;
-    if (options.finalReview) this.reviewFinalAnswer = input => reviewFinalAnswer(input, this.modelContext.maxInputTokens);
+    if (options.finalReview)
+      this.reviewFinalAnswer = (input) =>
+        reviewFinalAnswer(input, this.modelContext.maxInputTokens);
     this.contextManager = new ContextManager(this.modelContext.maxInputTokens);
     this.toolchain = options.toolchain;
     this.composer = new InstructionComposer();
@@ -265,8 +294,11 @@ export class DefaultContextHarness implements AgentContextHarness {
     const content = `## Task Constraints\n\n${parts.join('\n')}`;
     if (has) this.composer.removeSegment('task.constraints');
     this.composer.addSegment({
-      id: 'task.constraints', priority: 25, content,
-      budgetTokens: estimateTextTokens(content), mutability: 'per_run',
+      id: 'task.constraints',
+      priority: 25,
+      content,
+      budgetTokens: estimateTextTokens(content),
+      mutability: 'per_run',
     });
   }
 
@@ -349,6 +381,24 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.state = normalizeContextHarnessState(state);
   }
 
+  observeToolTurn(turn: ToolTurnProgress): ProgressReminder | undefined {
+    if (!this.progressReminderPolicy) return undefined;
+    const previous = normalizeProgressReminderState(this.state.progressReminder);
+    const next = advanceProgressReminder(previous, turn, this.progressReminderPolicy);
+    this.state.progressReminder = next;
+    if (previous.reminder !== 'pending' && next.reminder === 'pending') {
+      return { readOnlyTurns: next.readOnlyTurns, readOnlyMs: next.readOnlyMs };
+    }
+    return undefined;
+  }
+
+  acknowledgeProgressReminder(): boolean {
+    if (!this.progressReminderPolicy || this.state.progressReminder?.reminder !== 'pending')
+      return false;
+    this.state.progressReminder.reminder = 'delivered';
+    return true;
+  }
+
   // v2.2 Plan：计划状态与语义都在 Harness（见 plan.ts）。这里只做"改状态 + 回文本"，
   // 不发事件、不落盘——那是 Runtime 的职责（changed → plan_update → checkpoint）。
   planPort(): PlanPort {
@@ -389,8 +439,9 @@ export class DefaultContextHarness implements AgentContextHarness {
     // Budget target: 15% of maxInputTokens for system prompt overhead.
     const systemBudget = Math.max(512, Math.floor(this.modelContext.maxInputTokens * 0.15));
     const composed = this.composer.compose(systemBudget);
-    const constraints = composed.diagnostics.find(d => d.id === 'task.constraints');
-    if (constraints?.truncated || constraints?.dropped) throw new Error('任务约束超出模型上下文预算，请缩短项目或文件列表');
+    const constraints = composed.diagnostics.find((d) => d.id === 'task.constraints');
+    if (constraints?.truncated || constraints?.dropped)
+      throw new Error('任务约束超出模型上下文预算，请缩短项目或文件列表');
     return composed.content;
   }
 
@@ -424,7 +475,9 @@ export class DefaultContextHarness implements AgentContextHarness {
     const systemMessage: ChatMessage = {
       role: 'system',
       // 顺序：内核指令 → 计划（目标层）→ scratchpad（执行层）→ 旧轮摘要。
-      content: `${this.systemPromptText()}${planText}\n\n${scratchpadText}${summaryText}`,
+      content: `${this.systemPromptText()}${planText}\n\n${scratchpadText}${summaryText}${
+        this.progressReminderPolicy ? renderProgressReminder(this.state.progressReminder) : ''
+      }`,
     };
     if (systemIndex >= 0) {
       const maxSummarizable = Math.max(

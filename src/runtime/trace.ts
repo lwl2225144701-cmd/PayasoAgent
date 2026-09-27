@@ -158,6 +158,15 @@ export type TraceEvent =
       decision: string; // 恢复决策描述（交还 LLM 决策）
     }
   | {
+      // 持续只读调查已排队一次提醒，下次模型请求消费；不代表判定任务停滞或完成。
+      type: 'progress_reminder';
+      step: number;
+      timestamp: string;
+      iteration: number;
+      readOnlyTurns: number;
+      readOnlyMs: number;
+    }
+  | {
       // v1.8 空回合不变量：模型既无工具调用也无可见内容，已按 Harness 策略
       // 追加恢复提示并重试（次数用尽则 Run 落 failed，不再静默完成）。
       type: 'empty_turn_recovered';
@@ -360,6 +369,12 @@ export type TraceEventInput =
       type: 'recovery_decision';
       tool: string;
       decision: string;
+    }
+  | {
+      type: 'progress_reminder';
+      iteration: number;
+      readOnlyTurns: number;
+      readOnlyMs: number;
     }
   | {
       type: 'empty_turn_recovered';

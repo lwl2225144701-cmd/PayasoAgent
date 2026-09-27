@@ -28,6 +28,7 @@ import {
   type Tool,
   type ToolCallError,
   type ToolContext,
+  type ToolEffect,
   type ToolImage,
   type ToolSandboxEvent,
   toolNotFoundError,
@@ -124,6 +125,12 @@ interface ToolCallShape {
   function: { name: string; arguments: string };
 }
 
+// 仅成功且结果有效的调用提供观察信号；其它出口保持 undefined，不能当作只读进展。
+export interface ToolInvocationOutcome {
+  tool: string;
+  effect: ToolEffect;
+}
+
 /**
  * 执行一次工具调用（含重试 + 失败恢复 + 防死循环）。
  * 返回即表示该 call 处理完毕（成功 / 无效 / 拒绝 / 恢复消息已回传 LLM）；
@@ -132,7 +139,7 @@ interface ToolCallShape {
 export async function invokeToolCall(
   ctx: ToolInvocationContext,
   call: ToolCallShape,
-): Promise<void> {
+): Promise<ToolInvocationOutcome | undefined> {
   const lifecycle = new ToolInvocationStateMachine();
   const {
     runId,
@@ -510,7 +517,7 @@ export async function invokeToolCall(
       // Checkpoint: 工具成功后保存
       save();
       lifecycle.transition('succeeded');
-      return; // 成功，跳出重试
+      return { tool: toolDef.name, effect }; // 成功，跳出重试
     } catch (err) {
       // v2.0 Network Capability Check 拒绝：网络工具在网络关闭时被 policy 拦截。
       // 语义 = 拒绝执行（非执行失败）：

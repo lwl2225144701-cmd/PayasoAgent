@@ -44,6 +44,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'architecture-boundaries', file: 'tests/architecture-boundaries.test.ts' },
   { name: 'tool-invocation-state-machine', file: 'tests/tool-invocation-state-machine.test.ts' },
   { name: 'runtime-loop', file: 'tests/runtime-loop.test.ts' },
+  { name: 'progress-reminder', file: 'tests/progress-reminder.test.ts' },
   { name: 'host-timeout', file: 'tests/host-timeout.test.ts' },
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
   { name: 'filesystem-tools', file: 'tests/filesystem-tools.test.ts' },
