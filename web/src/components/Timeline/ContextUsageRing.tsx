@@ -1,5 +1,6 @@
-// 上下文预算环形指示器：环的填充比例 = 当前上下文占用（usageRatio），
-// 颜色随占用率分级（正常 / 警告 / 危险），悬停查看明细。
+// 上下文占用环形指示器：环的填充比例 = 当前占用 ÷ 真实上下文窗口（不是 Runtime
+// 的输入预算），颜色随占用率分级（正常 / 警告 / 危险），悬停查看分项明细。
+// 占用优先取 provider 真实上报值，否则用内部估算；口径统一见 contextGaugeView。
 // 数据来自最近一条 context_usage 事件（终态 Run 亦回放可见）。
 
 import { useId } from 'react';
@@ -7,7 +8,7 @@ import { useI18n } from '../../i18n';
 import type { ContextUsageEvent } from '../../types';
 import {
   contextGaugeTitle,
-  formatBudgetDerivation,
+  contextGaugeView,
   formatContextTokens,
   gaugeLevel,
 } from './context-gauge';
@@ -21,14 +22,12 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
   const tooltipId = useId();
   const { t, language } = useI18n();
-  // 锚点优先：有 provider 实际上报的 prompt 侧压力时用它当占用口径，
-  // 否则回落启发式估算（与 DSH token-meter 的 pressure 优先一致）。
-  const pressure = usage.pressureTokens;
-  const anchored = pressure !== undefined && pressure > 0;
-  const displayTokens = anchored ? pressure : usage.estimatedInputTokens;
-  const budget = usage.inputBudgetTokens || 1;
-  const ratio = Math.max(0, Math.min(1, displayTokens / budget));
-  const percent = Math.round(ratio * 100);
+  // 单一展示口径：分母=真实上下文窗口，占用优先 provider 上报（见 contextGaugeView）。
+  // 内部输入预算（窗口 − 输出预留 − 安全）只进 trace，不呈现给用户。
+  const view = contextGaugeView(usage);
+  const displayTokens = view.displayTokens;
+  const percent = view.percent;
+  const anchored = view.anchored;
   const parts =
     usage.systemTokens == null
       ? [
@@ -60,7 +59,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             swatch: styles.swatchMessages,
           },
         ];
-  const level = gaugeLevel(ratio);
+  const level = gaugeLevel(view.ratio);
   const levelClass =
     level === 'danger'
       ? styles.gaugeDanger
@@ -95,7 +94,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
           strokeWidth={STROKE}
           strokeLinecap="round"
           strokeDasharray={CIRCUMFERENCE}
-          strokeDashoffset={CIRCUMFERENCE * (1 - ratio)}
+          strokeDashoffset={CIRCUMFERENCE * (1 - view.ratio)}
           transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
         />
       </svg>
@@ -105,13 +104,13 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             {t('widgets.contextRing.used')} <strong>{percent}%</strong>
           </span>
           <span>
-            ~{formatContextTokens(displayTokens)} / {formatContextTokens(usage.inputBudgetTokens)}
+            ~{formatContextTokens(displayTokens)} / {formatContextTokens(view.capacityTokens)}
           </span>
         </span>
         {anchored && (
           <span className={styles.gaugeTooltipDetail} role="note">
             {t('widgets.contextRing.anchoredDetail', {
-              pressure: formatContextTokens(pressure),
+              pressure: formatContextTokens(usage.pressureTokens as number),
               estimate: formatContextTokens(usage.estimatedInputTokens),
             })}
           </span>
@@ -122,7 +121,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
               key={part.label}
               className={part.swatch}
               style={{
-                width: `${(part.tokens / Math.max(usage.inputBudgetTokens, usage.estimatedInputTokens, 1)) * 100}%`,
+                width: `${(part.tokens / Math.max(view.capacityTokens, view.displayTokens, 1)) * 100}%`,
               }}
             />
           ))}
@@ -134,11 +133,6 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
             <span>~{formatContextTokens(part.tokens)}</span>
           </span>
         ))}
-        {usage.contextWindowTokens > 0 && (
-          <span className={styles.gaugeTooltipDetail} role="note">
-            {formatBudgetDerivation(usage, language)}
-          </span>
-        )}
         {usage.configSource === 'fallback' && (
           <span className={styles.gaugeTooltipNotice}>
             {t('widgets.contextRing.fallbackNotice')}

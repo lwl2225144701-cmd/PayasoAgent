@@ -123,7 +123,8 @@ export function deriveRunTokenUsage(events: HostEvent[]): RunTokenUsage {
 
     // last-wins：同一迭代的旧贡献先撤掉，再计入新贡献。
     // 检查调用是同一迭代内独立计费的请求，不能覆盖执行调用或另一轮检查。
-    const callKey = event.purpose === 'final_review' ? `review:${event.step}` : `turn:${event.iteration}`;
+    const callKey =
+      event.purpose === 'final_review' ? `review:${event.step}` : `turn:${event.iteration}`;
     const previous = contributed.get(callKey);
     if (previous !== undefined) {
       tokens -= previous.tokens;
@@ -309,23 +310,55 @@ export function formatTokenBreakdown(
   return parts.join(' · ');
 }
 
-/** 悬停明细（模型 / 已用 / 预算 / 占比 / 真实压力锚点 / 特殊状态）。 */
+/**
+ * 环形指示器的展示口径（单位：tokens）。
+ *
+ * 分母取模型的**真实上下文窗口**（未知或缺失时回退内部输入预算），让用户看到
+ * 「1M 窗口」而不是 Runtime 的内部预算拆分。Runtime 的输入预算
+ * （窗口 − 输出预留 − 安全余量）只是内部收缩策略，不再呈现给用户，仅保留在
+ * trace 事件字段里供诊断。占用优先取 provider 真实上报的 prompt 侧用量
+ * （首轮或未上报时回落内部估算），环的填充比例由同一口径决定。
+ */
+export interface ContextGaugeView {
+  /** 展示用已用 token：真实上报优先，否则内部估算。 */
+  displayTokens: number;
+  /** 展示用分母：真实上下文窗口，缺失时回退内部输入预算。 */
+  capacityTokens: number;
+  /** 填充比例，已夹到 [0, 1]。 */
+  ratio: number;
+  /** 整数百分比，与 ratio 同口径。 */
+  percent: number;
+  /** 占用是否来自 provider 真实上报（而非估算）。 */
+  anchored: boolean;
+}
+
+export function contextGaugeView(usage: ContextUsageEvent): ContextGaugeView {
+  const capacityTokens =
+    usage.contextWindowTokens > 0 ? usage.contextWindowTokens : usage.inputBudgetTokens || 1;
+  const anchored = usage.pressureTokens !== undefined && usage.pressureTokens > 0;
+  const displayTokens = anchored ? (usage.pressureTokens as number) : usage.estimatedInputTokens;
+  const ratio = Math.max(0, Math.min(1, displayTokens / capacityTokens));
+  return { displayTokens, capacityTokens, ratio, percent: Math.round(ratio * 100), anchored };
+}
+
+/** 悬停明细（模型 / 已用 / 窗口 / 占比 / 真实压力锚点 / 特殊状态）。 */
 export function contextGaugeTitle(
   usage: ContextUsageEvent,
   language: LanguageMode = 'zh-CN',
 ): string {
+  const view = contextGaugeView(usage);
   const parts = [
     translate(language, 'widgets.contextGauge.title.context', {
-      used: formatContextTokens(usage.estimatedInputTokens),
-      budget: formatContextTokens(usage.inputBudgetTokens),
-      percent: Math.round(usage.usageRatio * 100),
+      used: formatContextTokens(view.displayTokens),
+      window: formatContextTokens(view.capacityTokens),
+      percent: view.percent,
     }),
     translate(language, 'widgets.contextGauge.title.model', { model: usage.model }),
   ];
-  if (usage.pressureTokens !== undefined && usage.pressureTokens > 0) {
+  if (view.anchored) {
     parts.push(
       translate(language, 'widgets.contextGauge.title.pressure', {
-        value: formatContextTokens(usage.pressureTokens),
+        value: formatContextTokens(usage.pressureTokens as number),
       }),
     );
   }
@@ -395,20 +428,4 @@ export function applyCompactUsage(
     trimmedMessages: 0,
     overBudget: usage.estimatedInputTokens > usage.inputBudgetTokens,
   };
-}
-
-/**
- * 预算推导说明：窗口 = 输入预算 + 输出预留 + 安全余量。
- * 解释分母为何小于用户配置的上下文窗口（如 1M 窗口显示 976K 预算）。
- */
-export function formatBudgetDerivation(
-  usage: ContextUsageEvent,
-  language: LanguageMode = 'zh-CN',
-): string {
-  return translate(language, 'widgets.contextGauge.budgetDerivation', {
-    window: formatContextTokens(usage.contextWindowTokens),
-    budget: formatContextTokens(usage.inputBudgetTokens),
-    output: formatContextTokens(usage.maxOutputTokens),
-    safety: formatContextTokens(usage.safetyTokens),
-  });
 }

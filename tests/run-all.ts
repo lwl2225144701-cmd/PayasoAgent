@@ -75,6 +75,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-format', file: 'tests/frontend-format.test.ts' },
   { name: 'frontend-streaming', file: 'tests/frontend-streaming.test.ts' },
   { name: 'streaming-markdown', file: 'tests/streaming-markdown.test.ts' },
+  { name: 'mermaid-normalization', file: 'tests/mermaid-normalization.test.ts' },
   { name: 'run-reconcile', file: 'tests/run-reconcile.test.ts' },
   { name: 'run-events-snapshot', file: 'tests/run-events-snapshot.test.ts' },
   { name: 'default-browser', file: 'tests/default-browser.test.ts' },

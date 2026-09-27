@@ -1,7 +1,7 @@
 // widgets 领域消息表：key 前缀 `widgets.`。
 //
 // 覆盖通用控件（复制按钮 / 弹窗 / 可折叠文本 / Mermaid 图）与用量类纯函数
-// （formatTokenBreakdown / contextGaugeTitle / compactStatusText / RunUsage / 上下文环）。
+// （formatTokenBreakdown / contextGaugeTitle / contextGaugeView / compactStatusText / RunUsage / 上下文环）。
 // 跨领域短词（相对时间、时长、Run 与工具状态词）沿用 common.*，这里不重复定义。
 
 export const widgetsMessages = {
@@ -12,10 +12,11 @@ export const widgetsMessages = {
   'widgets.usage.cacheWrite': { 'zh-CN': '缓存写 {value}', 'en-US': 'Cache write {value}' },
   'widgets.usage.reasoning': { 'zh-CN': '推理 {value}', 'en-US': 'Reasoning {value}' },
 
-  // ---- 上下文预算悬停明细（contextGaugeTitle / formatBudgetDerivation）----
+  // ---- 上下文占用环悬停明细（contextGaugeTitle / contextGaugeView）----
+  // 分母是模型的真实上下文窗口；Runtime 的输入预算拆分只进 trace，不对用户展示。
   'widgets.contextGauge.title.context': {
-    'zh-CN': '上下文 {used} / {budget} tokens（{percent}%）',
-    'en-US': 'Context {used} / {budget} tokens ({percent}%)',
+    'zh-CN': '上下文 {used} / {window} tokens（{percent}%）',
+    'en-US': 'Context {used} / {window} tokens ({percent}%)',
   },
   'widgets.contextGauge.title.model': { 'zh-CN': '模型 {model}', 'en-US': 'Model {model}' },
   'widgets.contextGauge.title.pressure': {
@@ -29,10 +30,6 @@ export const widgetsMessages = {
   'widgets.contextGauge.title.fallbackBudget': {
     'zh-CN': '模型能力未知，按保守预算估计',
     'en-US': 'Model limits unknown; estimating with a conservative budget',
-  },
-  'widgets.contextGauge.budgetDerivation': {
-    'zh-CN': '窗口 {window} = 预算 {budget} + 输出预留 {output} + 安全 {safety}',
-    'en-US': 'Window {window} = budget {budget} + output reserve {output} + safety {safety}',
   },
 
   // ---- /compact 状态行（compactStatusText）----

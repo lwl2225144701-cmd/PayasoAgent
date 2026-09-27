@@ -5,11 +5,11 @@ import {
   applyCompactUsage,
   compactStatusText,
   contextGaugeTitle,
+  contextGaugeView,
   deriveModelWaitState,
   deriveRunStreamMetrics,
   deriveRunTokenUsage,
   findLatestContextUsage,
-  formatBudgetDerivation,
   formatContextTokens,
   formatTokenBreakdown,
   gaugeLevel,
@@ -90,11 +90,12 @@ check('格式化: 小数值原样', formatContextTokens(512) === '512');
 // ---- tooltip ----
 const title = contextGaugeTitle(usageEvent());
 check(
-  'tooltip: 含模型 / 已用 / 预算 / 占比',
+  // 占比与环同口径：8.5K ÷ 32.8K 真实窗口 = 26%（不再用内部预算当分母）
+  'tooltip: 含模型 / 已用 / 窗口 / 占比',
   title.includes('step-3.7-flash') &&
     title.includes('8.5K') &&
-    title.includes('26.6K') &&
-    title.includes('32%'),
+    title.includes('32.8K') &&
+    title.includes('26%'),
 );
 check('tooltip: fallback 提示能力未知', title.includes('能力未知'));
 check(
@@ -252,17 +253,31 @@ check(
   contextGaugeTitle(usageEvent({ pressureTokens: 6_000 })).includes('上次上报真实 6K'),
 );
 
-// ---- 预算推导说明（解释分母为何小于窗口，如 1M 窗口 → 976K 预算）----
+// ---- 展示口径：分母是真实上下文窗口，不是内部输入预算 ----
 check(
-  '预算推导: 1M 窗口 = 976K 预算 + 4.1K 输出 + 20K 安全',
-  formatBudgetDerivation(
-    usageEvent({
-      contextWindowTokens: 1_000_000,
-      inputBudgetTokens: 975_904,
-      maxOutputTokens: 4_096,
-      safetyTokens: 20_000,
-    }),
-  ) === '窗口 1M = 预算 976K + 输出预留 4.1K + 安全 20K',
+  '分母取真实窗口（32.8K 窗口 / 26.6K 内部预算）',
+  (() => {
+    const view = contextGaugeView(usageEvent());
+    return view.capacityTokens === 32_768 && view.displayTokens === 8_549 && view.percent === 26;
+  })(),
+);
+check(
+  '有真实上报时占用取上报值且标记 anchored',
+  (() => {
+    const view = contextGaugeView(usageEvent({ pressureTokens: 6_000 }));
+    return view.displayTokens === 6_000 && view.anchored && view.percent === 18;
+  })(),
+);
+check(
+  '窗口未知（0）回退内部输入预算，不炸出 NaN 比例',
+  (() => {
+    const view = contextGaugeView(usageEvent({ contextWindowTokens: 0 }));
+    return view.capacityTokens === 26_624 && view.ratio === 8_549 / 26_624;
+  })(),
+);
+check(
+  '超出窗口时比例夹到 1',
+  contextGaugeView(usageEvent({ estimatedInputTokens: 40_000 })).ratio === 1,
 );
 
 // ---- /compact 状态行文案 ----
@@ -448,12 +463,23 @@ check(
   })(),
 );
 
-check('同轮交付检查独立计费，重放同一检查事件不重复累计', (() => {
-  const event = { type: 'llm_call' as const, step: 1, timestamp: '2026-09-20', iteration: 1, messageCount: 2,
-    response: '', hasToolCalls: false, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
-  const first = { ...event, step: 2, purpose: 'final_review' as const };
-  const second = { ...event, step: 3, purpose: 'final_review' as const };
-  return deriveRunTokenUsage([event, first, second, first]).tokens === 45;
-})());
+check(
+  '同轮交付检查独立计费，重放同一检查事件不重复累计',
+  (() => {
+    const event = {
+      type: 'llm_call' as const,
+      step: 1,
+      timestamp: '2026-09-20',
+      iteration: 1,
+      messageCount: 2,
+      response: '',
+      hasToolCalls: false,
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    };
+    const first = { ...event, step: 2, purpose: 'final_review' as const };
+    const second = { ...event, step: 3, purpose: 'final_review' as const };
+    return deriveRunTokenUsage([event, first, second, first]).tokens === 45;
+  })(),
+);
 console.log(`\nContext gauge tests: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);

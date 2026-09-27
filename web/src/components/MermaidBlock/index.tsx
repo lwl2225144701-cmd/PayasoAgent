@@ -4,6 +4,7 @@ import type { MessageKey } from '../../i18n/messages';
 import type { MessageParams } from '../../i18n/translate';
 import { readThemeMode, resolveThemeMode } from '../../theme';
 import styles from './MermaidBlock.module.css';
+import { normalizeMermaidChart } from './normalize-chart';
 
 // 聊天内 Mermaid 渲染：```mermaid 代码块 → 矢量图（主题自适应，懒加载）。
 // mermaid 体积大（~1MB），通过动态 import 拆成独立 chunk，只有真的出现
@@ -83,42 +84,6 @@ function mermaidThemeVariables(dark: boolean, fontSize: number) {
         fontFamily: MERMAID_FONT_FAMILY,
         fontSize: `${fontSize}px`,
       };
-}
-
-/**
- * Make common LLM-generated flowchart labels valid Mermaid syntax.
- *
- * Models often emit `\\n` for a line break inside an unquoted node label,
- * e.g. `UI[React Web UI\\n(web/)]`. Mermaid expects HTML breaks and treats
- * parentheses as shape syntax unless the label is quoted.
- */
-export function normalizeMermaidChart(chart: string, stackWideChart = false): string {
-  const normalizedBreaks = chart
-    .replace(/\r\n?/g, '\n')
-    .replace(/(?:\\r)?\\n/g, '<br/>')
-    .replace(/\\t/g, ' ');
-  const responsiveChart = stackWideChart
-    ? normalizedBreaks.replace(/^(\s*(?:flowchart|graph)\s+)(?:LR|RL)\b/m, '$1TD')
-    : normalizedBreaks;
-
-  return responsiveChart
-    .split('\n')
-    .map((line) =>
-      line.replace(
-        /(^|[^\w-])([A-Za-z_][\w-]*)\[([^\]\r\n]*)\]/g,
-        (_match, prefix: string, nodeId: string, label: string) => {
-          const trimmed = label.trim();
-          if (!trimmed || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
-            return `${prefix}${nodeId}[${label}]`;
-          }
-          // Mermaid supports entity codes inside quoted labels, which keeps
-          // model-generated quotes from prematurely closing the node label.
-          const safeLabel = trimmed.replace(/"/g, '#quot;');
-          return `${prefix}${nodeId}["${safeLabel}"]`;
-        },
-      ),
-    )
-    .join('\n');
 }
 
 // ---- 全局渲染互斥队列 ----

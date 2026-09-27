@@ -1,5 +1,3 @@
-import { RunDelivery } from './RunDelivery';
-import { FileAttachment } from './FileAttachment';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelToolchainPreparation,
@@ -38,8 +36,10 @@ import { CopyButton } from '../CopyButton';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
+import { FileAttachment } from './FileAttachment';
 import { derivePlan, derivePlanNotes, type PlanNote, type PlanView } from './plan-state';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
+import { RunDelivery } from './RunDelivery';
 import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
 import styles from './Timeline.module.css';
@@ -148,9 +148,7 @@ function ExecutionPanel({
   // 但 ToolActionRow 只在 open 时才挂载 —— 面板不展开，"逐行出现"就永远看不到。
   // 折中：首个实时增量出现时自动展开一次；用户中途手动收起后不再抢焦点（autoOpened
   // 记得住），Run 结束时仍由下方既有逻辑统一收起。
-  const hasLiveOutput = tools.some(
-    (tool) => tool.status === 'running' && Boolean(tool.liveOutput),
-  );
+  const hasLiveOutput = tools.some((tool) => tool.status === 'running' && Boolean(tool.liveOutput));
   const autoOpenedForLiveRef = useRef(false);
   const elapsed = running && startedAt ? elapsedSeconds(startedAt) : 0;
   const startMs = startedAt ? new Date(startedAt).getTime() : NaN;
@@ -581,25 +579,27 @@ export const Timeline = memo(function Timeline({
             runStarted.attachments &&
             runStarted.attachments.length > 0 && (
               <div className={styles.userAttachments}>
-                {runStarted.attachments.map((att) => att.kind === 'text' || !att.mimeType.startsWith('image/') ? (
-                  <FileAttachment key={att.path} runId={run.runId} file={att} />
-                ) : (
-                  <a
-                    key={att.path}
-                    className={styles.userAttachmentLink}
-                    href={workspaceFileUrl(run.runId, att.path)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={att.name}
-                  >
-                    <img
-                      className={styles.userAttachmentImg}
-                      src={workspaceFileUrl(run.runId, att.path)}
-                      alt={att.name}
-                      loading="lazy"
-                    />
-                  </a>
-                ))}
+                {runStarted.attachments.map((att) =>
+                  att.kind === 'text' || !att.mimeType.startsWith('image/') ? (
+                    <FileAttachment key={att.path} runId={run.runId} file={att} />
+                  ) : (
+                    <a
+                      key={att.path}
+                      className={styles.userAttachmentLink}
+                      href={workspaceFileUrl(run.runId, att.path)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={att.name}
+                    >
+                      <img
+                        className={styles.userAttachmentImg}
+                        src={workspaceFileUrl(run.runId, att.path)}
+                        alt={att.name}
+                        loading="lazy"
+                      />
+                    </a>
+                  ),
+                )}
               </div>
             )}
           <div className={styles.userMeta}>
@@ -763,7 +763,6 @@ export const Timeline = memo(function Timeline({
               <div className={styles.finalBlock}>
                 <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
                 {finalError && <div className={styles.finalError}>{finalError}</div>}
-
               </div>
             )}
             {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
@@ -923,7 +922,9 @@ function buildStructure(
     const stepEvents = byStep.get(step) ?? [];
     let reasoning: ReasoningBlock | null = null;
     {
-      const llmCalls = stepEvents.filter((e): e is LlmCallEvent => e.type === 'llm_call' && !e.purpose);
+      const llmCalls = stepEvents.filter(
+        (e): e is LlmCallEvent => e.type === 'llm_call' && !e.purpose,
+      );
       const llm = llmCalls[llmCalls.length - 1];
       if (llm) {
         const { response: parsedResponse, reasoning: parsedReasoning } = parseLlmCallText(llm);
@@ -994,7 +995,6 @@ function buildStructure(
   }
 
   const lastStepRunning = run.status === 'running';
-
 
   return {
     runStarted,
