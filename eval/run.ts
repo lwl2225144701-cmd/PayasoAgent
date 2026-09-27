@@ -12,6 +12,7 @@
 //   tsx --env-file=eval/.env eval/run.ts --pilot --limit 1  # 真跑第 1 题（agent CLI + step-5-preview）
 //   tsx --env-file=eval/.env eval/run.ts                 # 跑 50 题
 //   tsx --env-file=eval/.env eval/run.ts --concurrency 2  # 并发跑几题（默认 2；或 EVAL_CONCURRENCY）
+//   tsx --env-file=eval/.env eval/run.ts --offset 10 --limit 10   # 跳过前10、跑第11–20题（分批不跑全量时用）
 // 产物 eval/runs/<UTC>/（已 gitignore）；判分侧命令见 docs/plans/swebench-progress.md。
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -62,8 +63,29 @@ const argValue = (flag: string): string | undefined => {
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
 
+/** 同步睡：用于资源类瞬时错误(ENOBUFS/EMFILE 等)后的重试等待。 */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, ms);
+}
+/** git 执行 + 对瞬时资源类错误(ENOBUFS/EMFILE/ENFILE/spawn 失败)自动重试。
+ *  实测：长时间并发跑时系统 fd/socket 缓冲区偶尔耗尽，git 会抛 ENOBUFS——重试即愈。
+ *  非资源类错误不重试、直接抛（避免掩盖真实失败）。 */
+function gitRetry<T>(attempts: number, fn: () => T): T {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? `${err.message} ${(err as { code?: string }).code ?? ''}` : String(err);
+      if (!/ENOBUFS|EMFILE|ENFILE|spawnSync/i.test(msg)) throw err;
+      if (i < attempts - 1) sleepSync(1500);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return gitRetry(3, () => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
 }
 function sha256Text(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -83,9 +105,13 @@ function ensureRepoCache(repo: string): void {
   const dir = cacheRepoDir(repo);
   if (fs.existsSync(path.join(dir, '.git'))) return;
   fs.mkdirSync(path.dirname(dir), { recursive: true });
-  execFileSync('git', ['clone', '--quiet', `https://github.com/${repo}.git`, dir], {
-    stdio: 'ignore',
-    timeout: 30 * 60_000,
+  // 克隆是网络密集型，瞬时失败(网络抖动/ENOBUFS)常见——重试 3 次，每次清掉半截 clone
+  gitRetry(3, () => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return execFileSync('git', ['clone', '--quiet', `https://github.com/${repo}.git`, dir], {
+      stdio: 'ignore',
+      timeout: 30 * 60_000,
+    });
   });
 }
 function removeWorktree(cacheRepo: string, workDir: string): void {
@@ -211,6 +237,23 @@ interface AgentRunOutcome {
  * - PAYASO_HOME 隔离：checkpoint / sandbox scratch / 凭证全落 eval/.ai-home，不污染本机数据。
  * - 进程退出即权威「agent 已停止」信号；timeout 强杀（SIGTERM→SIGKILL）。
  */
+/** 杀掉 agent CLI 及其整个进程组（负 pid = 进程组）。
+ *  为什么需要：detached 启动后，agent CLI 的 pip/shell/编译等子进程若不一起杀，超时后它们
+ *  仍会写 worktree → "写入已停止"检查不过 → 已改的 diff 抓不到 → 被迫交空卷(弃权)。
+ *  连子进程一起杀,worktree 才真正安静,才能把超时前的 diff 收上来照常提交。 */
+function killTree(pid: number | undefined, signal: NodeJS.Signals): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal); // 进程组已散则至少杀主进程
+    } catch {
+      /* 进程已退出，无需处理 */
+    }
+  }
+}
+
 async function runAgentCli(
   cfg: EvalConfig,
   opts: { workDir: string; instanceId: string; taskText: string; logFile: string },
@@ -235,6 +278,7 @@ async function runAgentCli(
     cwd: REPO_ROOT,
     env: { ...process.env, PAYASO_HOME: cfg.aiHome },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true, // 独立进程组：超时才能真正连子进程一起杀（见 killTree）
   });
   const logStream = fs.createWriteStream(opts.logFile, { flags: 'w' });
   child.stdout?.pipe(logStream);
@@ -242,8 +286,8 @@ async function runAgentCli(
   let timedOut = false;
   const killTimer = setTimeout(() => {
     timedOut = true;
-    child.kill('SIGTERM');
-    setTimeout(() => child.kill('SIGKILL'), 5_000).unref();
+    killTree(child.pid, 'SIGTERM'); // 连子进程组一起杀，worktree 才会真的安静
+    setTimeout(() => killTree(child.pid, 'SIGKILL'), 5_000).unref();
   }, cfg.instanceTimeoutMs);
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.on('error', reject);
@@ -363,8 +407,16 @@ async function main(): Promise<void> {
   const byId = new Map(dataset.instances.map((i) => [i.instance_id, i]));
   const ordered = listIds.map((id) => byId.get(id)!);
   let targets: SwebenchInstance[] = arg('--pilot') ? pilotFromSelection(ordered, PILOT_SIZE) : ordered;
+  const offset = Number(argValue('--offset'));
+  if (Number.isFinite(offset) && offset > 0) targets = targets.slice(offset);
   const instanceCap = Number(argValue('--limit'));
   if (Number.isFinite(instanceCap) && instanceCap > 0) targets = targets.slice(0, instanceCap);
+  // 单独重跑指定题(逗号分隔 instance_id):用于救回克隆失败/ENOBUFS 等基建挂掉的题
+  const onlyIds = argValue('--only')?.split(',').map((s) => s.trim()).filter(Boolean);
+  if (onlyIds && onlyIds.length) {
+    targets = onlyIds.map((id) => byId.get(id)).filter((x): x is SwebenchInstance => Boolean(x));
+    console.log(`--only 指定 ${targets.length} 题：${targets.map((t) => t.instance_id).join(', ')}`);
+  }
 
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const runDir = path.join(cfg.outputRoot, runId);
@@ -435,8 +487,16 @@ async function main(): Promise<void> {
       try {
         const outcome = await runAgentCli(cfg, { workDir, instanceId: instance.instance_id, taskText, logFile });
         agentExitCode = outcome.exitCode;
-        if (outcome.timedOut) instanceFaults.push('label:timeout');
-        if (outcome.exitCode !== 0) instanceFaults.push(`label:agent_exit_nonzero(${outcome.exitCode ?? outcome.signal})`);
+        if (outcome.timedOut) {
+          instanceFaults.push('label:timeout');
+          console.log(
+            `  ⏱ [${instance.instance_id}] 超时:用满单题墙钟 ${Math.round(cfg.instanceTimeoutMs / 60000)}min → SIGTERM 强停;稍后按 policy+apply 提交当时 diff`,
+          );
+        }
+        if (outcome.exitCode !== 0 && !outcome.timedOut) {
+          instanceFaults.push(`label:agent_exit_nonzero(${outcome.exitCode ?? outcome.signal})`);
+          console.log(`  ⚠ [${instance.instance_id}] agent 非零退出 (exit=${outcome.exitCode ?? outcome.signal})`);
+        }
       } catch (err) {
         instanceFaults.push(`runner_fault: agent CLI spawn 失败: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -517,6 +577,11 @@ async function main(): Promise<void> {
       ...(selfTest ? { selfTest } : {}),
     };
     if (fs.existsSync(workDir)) await removeWorktreeLocked(cacheRepo, workDir);
+    const durMin = ((Date.now() - startedAt) / 60000).toFixed(1);
+    const labels = instanceFaults.filter((f) => f.startsWith('label:'));
+    console.log(
+      `  → [${instance.instance_id}] status=${status} 用时${durMin}min patch=${Buffer.byteLength(patch, 'utf8')}B${labels.length ? ` ${labels.join(' ')}` : ''}`,
+    );
     return { result, predLine };
   };
 
