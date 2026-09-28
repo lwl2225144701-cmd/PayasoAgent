@@ -264,13 +264,6 @@ export function readFile(
   return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}`);
 }
 
-export function openFileInDefaultBrowser(
-  runId: string,
-  filePath: string,
-): Promise<{ runId: string; name: string; opened: true }> {
-  return jsonFetch(`/runs/${runId}/files/${encodeURIComponent(filePath)}/open`, { method: 'POST' });
-}
-
 /**
  * 在途快照请求的合并表。
  *
@@ -508,11 +501,6 @@ export function previewAvailableModels(input: {
     method: 'POST',
     body: JSON.stringify(input),
   });
-}
-
-/** 交付汇总始终重新读取文件现状。 */
-export function fetchRunDelivery(runId: string): Promise<import('../../src/host/run-delivery').RunDelivery> {
-  return jsonFetch(`/runs/${runId}/delivery`, { cache: 'no-store' });
 }
 
 export async function downloadWorkspaceFile(runId: string, name: string, downloadName = name.split('/').pop() || name): Promise<void> {

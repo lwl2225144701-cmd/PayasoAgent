@@ -39,7 +39,7 @@ import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } fro
 import { FileAttachment } from './FileAttachment';
 import { derivePlan, derivePlanNotes, type PlanNote, type PlanView } from './plan-state';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
-import { RunDelivery } from './RunDelivery';
+
 import { RunUsage } from './RunUsage';
 import { ThinkBlock } from './ThinkBlock';
 import styles from './Timeline.module.css';
@@ -766,7 +766,7 @@ export const Timeline = memo(function Timeline({
               </div>
             )}
             {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
-            <RunDelivery key={run.runId} runId={run.runId} status={run.status} events={events} />
+
             <RunUsage run={run} events={events} />
           </section>
         ) : (
