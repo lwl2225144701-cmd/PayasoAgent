@@ -169,6 +169,7 @@ export const timelineMessages = {
     'en-US': '{count} items still unfinished at the end',
   },
   'timeline.plan.summaryActive': { 'zh-CN': '进行中：{title}', 'en-US': 'In progress: {title}' },
+  'timeline.plan.statusAbandoned': { 'zh-CN': '未完成', 'en-US': 'Not finished' },
   'timeline.plan.summaryPending': { 'zh-CN': '待办 {count} 项', 'en-US': '{count} pending' },
 
   // 计划变更说明（挂在发生变更的那个 step 上）

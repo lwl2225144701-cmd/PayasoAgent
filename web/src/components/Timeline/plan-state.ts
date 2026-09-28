@@ -8,10 +8,19 @@ import type { HostEvent, PlanUpdateEvent } from '../../types';
 
 export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
 
+/**
+ * 渲染用的项状态：比数据层多一个 `abandoned`。
+ * Run 已结束但仍留在 in_progress 的项（模型忘了在收尾时更新计划）在视觉上
+ * 不能继续显示「进行中」——那与「回复已经输出完」矛盾。见 derivePlan 的收尾折叠。
+ */
+export type PlanItemRenderStatus = PlanItemStatus | 'abandoned';
+
 export interface PlanItemView {
   id: string;
   title: string;
   status: PlanItemStatus;
+  /** 渲染状态：run 结束后未完成的 in_progress 项降级为 abandoned。 */
+  renderStatus: PlanItemRenderStatus;
 }
 
 export interface PlanView {
@@ -22,6 +31,8 @@ export interface PlanView {
   total: number;
   /** 全部完成（空计划不算完成——那种情况直接返回 null）。 */
   allDone: boolean;
+  /** Run 已收尾且仍有未完成项（含被降级为 abandoned 的进行中项）。 */
+  finishedIncomplete: boolean;
 }
 
 const STATUSES: readonly string[] = ['pending', 'in_progress', 'completed'];
@@ -35,15 +46,36 @@ function sanitizeItems(items: PlanUpdateEvent['items']): PlanItemView[] {
     if (!title) continue;
     const status = STATUSES.includes(raw.status) ? (raw.status as PlanItemStatus) : 'pending';
     const id = typeof raw.id === 'string' && raw.id ? raw.id : `t${index + 1}`;
-    views.push({ id, title, status });
+    views.push({ id, title, status, renderStatus: status });
   }
   return views;
 }
 
-function toView(event: PlanUpdateEvent): PlanView | null {
+/** Run 已收尾的事件类型（任一个出现即认为本轮不再运行）。 */
+const TERMINAL_EVENT_TYPES = new Set([
+  'run_completed',
+  'run_failed',
+  'run_stopped',
+  'run_interrupted',
+  'plan_incomplete_at_finish',
+]);
+
+function isRunFinished(events: HostEvent[]): boolean {
+  return events.some((event) => TERMINAL_EVENT_TYPES.has(event.type));
+}
+
+function toView(event: PlanUpdateEvent, finished: boolean): PlanView | null {
   const items = sanitizeItems(event.items);
   // 空清单 = 模型主动清空计划 → 面板不渲染（旧会话、清空后都零变化）。
   if (items.length === 0) return null;
+  // 收尾折叠：Run 已结束但某项仍停在 in_progress（模型忘了在收尾时更新计划）——
+  // 如实降级为 abandoned，不再显示「进行中」。pending 项保持 pending（它本来就
+  // 没开始过，不存在"进行中"的误导）。
+  if (finished) {
+    for (const item of items) {
+      if (item.status === 'in_progress') item.renderStatus = 'abandoned';
+    }
+  }
   const completed = items.filter((item) => item.status === 'completed').length;
   return {
     revision: event.revision,
@@ -51,6 +83,7 @@ function toView(event: PlanUpdateEvent): PlanView | null {
     completed,
     total: items.length,
     allDone: completed === items.length,
+    finishedIncomplete: finished && completed < items.length,
   };
 }
 
@@ -69,7 +102,7 @@ export function derivePlan(events: HostEvent[]): PlanView | null {
     if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) continue;
     if (!latest || candidate.revision > latest.revision) latest = candidate;
   }
-  return latest ? toView(latest) : null;
+  return latest ? toView(latest, isRunFinished(events)) : null;
 }
 
 /** 时间线里的计划变更说明（挂在发生变更的那个 step 上）。 */

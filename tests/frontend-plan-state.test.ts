@@ -209,6 +209,86 @@ check('derivePlanNotes：乱序回放按 revision 排序，说明不会错位', 
   assert.equal(notes.get(9)?.kind, 'done');
 });
 
+// ---- 收尾折叠（v2.4）：run 结束后不再显示「进行中」----
+//
+// 真实事故（2026-09-28 turn 17）：模型建了计划、干完活、输出了完整结论，
+// 但忘了调 updatePlan 把进行中的项标完成。run_completed 之后面板仍显示
+// 「▶ 进行中」，与「回复已经输出完」自相矛盾。
+
+check('运行中：in_progress 保持原状（不收尾就不降级）', () => {
+  const view = derivePlan([planEvent(1, THREE)]);
+  assert.ok(view);
+  assert.equal(view.finishedIncomplete, false);
+  assert.deepEqual(
+    view.items.map((item) => item.renderStatus),
+    ['completed', 'in_progress', 'pending'],
+  );
+});
+
+check('run_completed 后：进行中项降级为 abandoned，“进行中”不再出现', () => {
+  const events = [
+    planEvent(1, THREE),
+    {
+      type: 'run_completed',
+      step: 9,
+      timestamp: base.timestamp,
+      result: 'done',
+    },
+  ] as unknown as HostEvent[];
+  const view = derivePlan(events);
+  assert.ok(view);
+  assert.equal(view.finishedIncomplete, true);
+  assert.deepEqual(
+    view.items.map((item) => item.renderStatus),
+    ['completed', 'abandoned', 'pending'],
+  );
+  // 数据层 status 不变：渲染降级不篡改事实。
+  assert.deepEqual(
+    view.items.map((item) => item.status),
+    ['completed', 'in_progress', 'pending'],
+  );
+  assert.equal(view.completed, 1, '进度仍按真实完成数：1/3');
+});
+
+check('plan_incomplete_at_finish 也能触发降级（等价终态信号）', () => {
+  const events = [
+    planEvent(1, THREE),
+    {
+      type: 'plan_incomplete_at_finish',
+      step: 9,
+      timestamp: base.timestamp,
+      revision: 1,
+      completed: 1,
+      total: 3,
+      unfinished: [{ id: 't2', title: '第二步', status: 'in_progress' }],
+    },
+  ] as unknown as HostEvent[];
+  assert.equal(derivePlan(events)?.items[1].renderStatus, 'abandoned');
+});
+
+check('run_failed / run_stopped / run_interrupted 同样触发降级', () => {
+  for (const type of ['run_failed', 'run_stopped', 'run_interrupted'] as const) {
+    const events = [
+      planEvent(1, THREE),
+      { type, step: 9, timestamp: base.timestamp },
+    ] as unknown as HostEvent[];
+    assert.equal(derivePlan(events)?.items[1].renderStatus, 'abandoned', `${type} 未降级`);
+  }
+});
+
+check('已全部完成：终态不收尾折叠、finishedIncomplete=false', () => {
+  const view = derivePlan([
+    planEvent(2, [
+      { id: 'a', title: 'A', status: 'completed' },
+      { id: 'b', title: 'B', status: 'completed' },
+    ]),
+    { type: 'run_completed', step: 9, timestamp: base.timestamp, result: 'ok' },
+  ] as unknown as HostEvent[]);
+  assert.ok(view);
+  assert.equal(view.allDone, true);
+  assert.equal(view.finishedIncomplete, false);
+});
+
 console.log(`\n前端计划派生汇总: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);
 console.log('验收：空态 / 进度 / revision 权威序 / 重放幂等 / 清空隐藏 / 坏字段容错 ✓');

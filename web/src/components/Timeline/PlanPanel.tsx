@@ -8,19 +8,22 @@ import { translate } from '../../i18n/translate';
 import type { LanguageMode } from '../../preferences';
 import { ChevronDownIcon } from '../icons';
 import styles from './PlanPanel.module.css';
-import type { PlanItemStatus, PlanView } from './plan-state';
+import type { PlanItemRenderStatus, PlanView } from './plan-state';
 
-const STATUS_MARK: Record<PlanItemStatus, string> = {
+const STATUS_MARK: Record<PlanItemRenderStatus, string> = {
   pending: '○',
   in_progress: '▶',
   completed: '✓',
+  // 收尾时仍未完成的进行中项：不再用「▶」，避免与"回复已输出完"矛盾。
+  abandoned: '⊘',
 };
 
 // 用户可见的「计划项状态」按语言取的 key：状态词本体在 common 消息表（跨领域复用）。
-const STATUS_TEXT_KEY: Record<PlanItemStatus, MessageKey> = {
+const STATUS_TEXT_KEY: Record<PlanItemRenderStatus, MessageKey> = {
   pending: 'common.status.pending',
   in_progress: 'common.status.inProgress',
   completed: 'common.status.completed',
+  abandoned: 'timeline.plan.statusAbandoned',
 };
 
 export const PlanPanel = memo(function PlanPanel({
@@ -61,12 +64,12 @@ export const PlanPanel = memo(function PlanPanel({
       {expanded && (
         <ol className={styles.list} aria-live="polite">
           {plan.items.map((item) => (
-            <li key={item.id} className={`${styles.item} ${styles[item.status]}`}>
+            <li key={item.id} className={`${styles.item} ${styles[item.renderStatus]}`}>
               <span className={styles.mark} aria-hidden="true">
-                {STATUS_MARK[item.status]}
+                {STATUS_MARK[item.renderStatus]}
               </span>
               <span className={styles.itemTitle}>{item.title}</span>
-              <span className={styles.statusText}>{t(STATUS_TEXT_KEY[item.status])}</span>
+              <span className={styles.statusText}>{t(STATUS_TEXT_KEY[item.renderStatus])}</span>
             </li>
           ))}
         </ol>
@@ -85,7 +88,7 @@ function summarize(plan: PlanView, running: boolean, language: LanguageMode): st
       count: plan.total - plan.completed,
     });
   }
-  const active = plan.items.find((item) => item.status === 'in_progress');
+  const active = plan.items.find((item) => item.renderStatus === 'in_progress');
   return active
     ? translate(language, 'timeline.plan.summaryActive', { title: active.title })
     : translate(language, 'timeline.plan.summaryPending', { count: plan.total - plan.completed });

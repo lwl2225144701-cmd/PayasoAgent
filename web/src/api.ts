@@ -339,6 +339,7 @@ export function connectSSE(
     'scratchpad_update',
     'plan_update',
     'plan_incomplete_at_finish',
+    'plan_finalize_reminder',
     'background_job_notified',
     'error',
     'approval_requested',

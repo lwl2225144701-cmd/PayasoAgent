@@ -159,6 +159,8 @@ export async function runAgent(
   // Finalization guard 恢复计数（每次 Run 独立；只允许有限次，避免模型以计划文本
   // 无限触发额外请求）。
   let incompleteTurnRecoveries = 0;
+  // v2.4 计划收尾提醒：每次 Run 只提醒一次（不循环）；提醒后无论模型是否收尾都继续收尾。
+  let planFinalizeReminded = false;
 
   // ---- v2.3 Background Job 完成通知（docs/plans/long-task-timeout-plan.md 步骤 5）----
   // 作业归属 Session；本 Run 在迭代边界抽取会话的完成通知并注入模型视图。
@@ -392,6 +394,29 @@ export async function runAgent(
             incompleteDecision.reason ?? 'incomplete turn',
             incompleteTurnRecoveries,
           );
+        }
+
+        // v2.4 计划收尾提醒（一次性）：模型准备收尾但计划仍有未完成项时，
+        // 先提醒它自己把计划收尾（Runtime 不代写计划，只给一次机会）。
+        // 放在 finalization guard 之后：后者针对"文本看起来没说完"，这里针对
+        // "话已说完，但计划状态没跟着收敛"——这是两个独立的信号。
+        if (!planFinalizeReminded) {
+          const finalizePolicy = contextHarness.planFinalizePolicy?.();
+          if (finalizePolicy) {
+            planFinalizeReminded = true;
+            observer.log(
+              `[计划收尾] 收尾时仍有 ${finalizePolicy.unfinished} 项未完成，追加提醒一次`,
+            );
+            emit({
+              type: 'plan_finalize_reminder',
+              unfinished: finalizePolicy.unfinished,
+            });
+            updateState(state, { currentStep: 'plan_finalize_reminder' });
+            observeState('summary');
+            messages.push({ role: 'user', content: finalizePolicy.nudge });
+            save();
+            continue;
+          }
         }
 
         // Runtime 仅执行 Harness 的可选交付策略；检查调用无工具、无副作用重放。

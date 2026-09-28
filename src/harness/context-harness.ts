@@ -73,6 +73,21 @@ export interface IncompleteTurnPolicy extends EmptyTurnPolicy {
   reason: string;
 }
 
+/**
+ * 收尾前计划收尾提醒（v2.4）：模型准备输出最终答案、但计划里仍有未完成项时，
+ * 先注入一次提醒让模型自己把计划收尾（标 completed，或如实保留并说明原因）。
+ *
+ * 为什么不让 Runtime 直接改计划：计划内容是模型的表述，Runtime 代写会失真；
+ * 这里只提供"提醒一次"的机会，收不收尾仍由模型判断。
+ * 也不做成硬约束——一次性提醒，不阻断收尾（对应 plan_incomplete_at_finish 仅留痕的既有约定）。
+ */
+export interface PlanFinalizePolicy {
+  /** 追加到 transcript 的提醒文本。 */
+  nudge: string;
+  /** 未完成项数（仅用于事件审计）。 */
+  unfinished: number;
+}
+
 export interface PreparedModelTurn {
   messages: ChatMessage[];
   usage: ContextUsage;
@@ -110,6 +125,10 @@ export interface AgentContextHarness {
   // v2.2 Plan：收尾审计 —— 回答「Run 结束时计划还剩什么没做完」。只报告不改行为
   // （刻意不做成"未完成就不许收尾"的硬约束）；Runtime 据此发审计事件。
   planReport?(): PlanReport;
+  // v2.4 Plan：收尾前的最后提醒 —— 计划仍有未完成项、模型又准备收尾时，
+  // 由 Runtime 注入一次提醒（已有预算约束），让模型自己决定是否收尾。
+  // 返回 undefined 表示不需要提醒（计划已完成 / 无计划）。
+  planFinalizePolicy?(): PlanFinalizePolicy | undefined;
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage;
   sanitizeFinalAnswer(text: string): string;
   // Optional Harness policy hook. Called after a tool turn and before the
@@ -413,6 +432,29 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   planReport(): PlanReport {
     return buildPlanReport(this.state.plan);
+  }
+
+  planFinalizePolicy(): PlanFinalizePolicy | undefined {
+    const report = buildPlanReport(this.state.plan);
+    if (report.unfinished.length === 0) return undefined;
+    // 只在有 in_progress 项时提醒：那是"输出完了却显示进行中"的真实矛盾。
+    // 只剩 pending（模型从没开始／有意跳过）不打扰——面板会如实显示"待办"，
+    // 不值得为它多花一次 LLM 往返。
+    const active = report.unfinished.filter((item) => item.status === 'in_progress');
+    if (active.length === 0) return undefined;
+    const lines = report.unfinished
+      .map((item) => `  - ${item.title}（${item.status === 'in_progress' ? '进行中' : '待办'}）`)
+      .join('\n');
+    return {
+      unfinished: report.unfinished.length,
+      nudge:
+        `你的任务计划里还有 ${report.unfinished.length} 项未完成，其中 ${active.length} 项标着"进行中"：\n${lines}\n` +
+        '在给出最终答复前，先判断它们是否真的完成了：\n' +
+        '- 若已完成：调用 updatePlan 把它们标为 completed，再收尾；\n' +
+        '- 若确实没做完（放弃/改方案/受阻塞）：调用 updatePlan 如实收敛计划，' +
+        '并在最终答复里说明原因。\n' +
+        '不要留下进行中的项就结束。',
+    };
   }
 
   /**

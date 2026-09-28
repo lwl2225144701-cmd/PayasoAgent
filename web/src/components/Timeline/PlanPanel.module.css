@@ -137,3 +137,16 @@
 .completed .itemTitle {
   color: var(--text-secondary);
 }
+
+/* 收尾时仍未完成的进行中项：与未开始的 pending 同层级，用弱化的警告色 +
+   删除线表达"没做完就结束了"，而不是继续冒充进行中。 */
+.abandoned .mark,
+.abandoned .statusText {
+  color: var(--color-warning, #d29922);
+}
+
+.abandoned .itemTitle {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--color-warning, #d29922) 55%, transparent);
+}

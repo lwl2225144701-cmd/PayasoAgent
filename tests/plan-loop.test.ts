@@ -118,7 +118,9 @@ await check('发出一条 plan_update：全量清单 + revision=1 + 进度 0/3',
 
 await check('第二轮请求的 system 里能看到计划（模型不失忆）', () => {
   const systems = systemTexts(bodies);
-  assert.equal(systems.length, 2);
+  // 注意：v2.4 起本剧本会多一次请求 —— 模型输出文本时计划仍有 in_progress 项，
+  // 触发一次 plan_finalize_reminder（见文末 C 组测试）。前两轮语义不变。
+  assert.ok(systems.length >= 2, `至少两次请求，实际 ${systems.length}`);
   assert.doesNotMatch(systems[0], /\[当前计划\]/, '第一轮还没有计划');
   assert.match(systems[1], /\[当前计划\] 0\/3 完成（revision 1）/);
   assert.match(systems[1], /第一步/);
@@ -321,6 +323,109 @@ await check('没有计划（未调用 updatePlan）：不发审计事件', () =>
   assert.ok(!noPort.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
 });
 
+// ---- 6. v2.4 收尾前的计划收尾提醒（C）----
+//
+// 真实事故（2026-09-28 turn 17）：模型干完活直接输出结论，忘了把进行中的
+// 计划项标完成 → 面板永久停在「进行中」。这里验证：收尾前注入一次提醒、
+// 模型可借此收尾、且提醒只发生一次（不循环）。
+
+await check('收尾前仍有 in_progress 项 → 发一次 plan_finalize_reminder 并追加提醒', () => {
+  const reminders = run.traces.filter((e) => e.type === 'plan_finalize_reminder') as Array<
+    Extract<TraceEvent, { type: 'plan_finalize_reminder' }>
+  >;
+  assert.equal(reminders.length, 1, '每次 Run 只提醒一次');
+  assert.equal(reminders[0].unfinished, 3, '三项均未完成');
+  // 提醒必须排在 final_answer 之前（同一轮收尾路径内）
+  const types = run.traces.map((event) => event.type);
+  assert.ok(
+    types.indexOf('plan_finalize_reminder') < types.indexOf('final_answer'),
+    '提醒应在 final_answer 之前发出',
+  );
+  // 提醒确实进了模型视图（下一次请求的 messages 能看到它）
+  const prompted = bodies.some((body) => JSON.stringify(body).includes('不要留下进行中的项就结束'));
+  assert.ok(prompted, '提醒文本应注入下一次模型请求');
+});
+
+await check('模型收到提醒后可以收尾：updatePlan 标完成 → 不再发审计事件', async () => {
+  const harness = createHarness();
+  const done = await runMockAgent({
+    runId: 'plan-loop-finalize',
+    task: '收尾前收敛计划',
+    workspaceRoot: WORKSPACE,
+    contextHarness: harness,
+    observer: silentRuntimeObserver,
+    script: [
+      () =>
+        toolCallResponse([
+          {
+            id: 'call-1',
+            name: 'updatePlan',
+            args: { items: [{ id: 'a', title: 'A', status: 'in_progress' }] },
+          },
+        ]),
+      // 第一次尝试收尾：计划仍有 in_progress → 触发提醒
+      () => textResponse('先到这里。'),
+      // 收到提醒后收尾：把计划标完成
+      () =>
+        toolCallResponse([
+          {
+            id: 'call-2',
+            name: 'updatePlan',
+            args: { items: [{ id: 'a', title: 'A', status: 'completed' }] },
+          },
+        ]),
+      () => textResponse('A 已完成。'),
+    ],
+  });
+  assert.equal(done.error, undefined, done.error?.message ?? 'run failed');
+  const types = done.traces.map((event) => event.type);
+  assert.ok(types.includes('plan_finalize_reminder'), '应注入过提醒');
+  assert.ok(
+    !types.includes('plan_incomplete_at_finish'),
+    '模型在提醒后收尾完成 → 不该再留未完成审计事件',
+  );
+  assert.equal(done.answer, 'A 已完成。');
+});
+
+await check('无计划 / 已全部完成 → 不发提醒（不多花一次 LLM 往返）', () => {
+  assert.ok(
+    !advance.traces.some((event) => event.type === 'plan_finalize_reminder'),
+    '3/3 完成后收尾不该提醒',
+  );
+  assert.ok(
+    !noPort.traces.some((event) => event.type === 'plan_finalize_reminder'),
+    '从未建计划不该提醒',
+  );
+});
+
+await check('只剩 pending（无 in_progress）→ 不提醒', async () => {
+  const harness = createHarness();
+  const pendingOnly = await runMockAgent({
+    runId: 'plan-loop-pending-only',
+    task: '只建不开始',
+    workspaceRoot: WORKSPACE,
+    contextHarness: harness,
+    observer: silentRuntimeObserver,
+    script: [
+      () =>
+        toolCallResponse([
+          {
+            id: 'call-1',
+            name: 'updatePlan',
+            args: { items: [{ id: 'a', title: 'A', status: 'pending' }] },
+          },
+        ]),
+      () => textResponse('还没开始。'),
+    ],
+  });
+  assert.ok(
+    !pendingOnly.traces.some((event) => event.type === 'plan_finalize_reminder'),
+    '没有进行中项就不该提醒',
+  );
+  // 但审计事件仍然如实反映未完成（只报告，不阻断）
+  assert.ok(pendingOnly.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
+});
+
 console.log(`\nPlan 闭环汇总: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);
-console.log('验收：工具 → 状态 → 事件 → 注入 → 越界报错 → 无端口 fail-closed ✓');
+console.log('验收：工具 → 状态 → 事件 → 注入 → 越界报错 → 无端口 fail-closed → 收尾提醒 ✓');

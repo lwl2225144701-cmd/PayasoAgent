@@ -418,6 +418,12 @@ export interface PlanIncompleteAtFinishEvent extends TraceEventBase {
   unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
 }
 
+/** v2.4 计划收尾提醒：Runtime 已注入一次提醒让模型自己收敛计划（仅审计）。 */
+export interface PlanFinalizeReminderEvent extends TraceEventBase {
+  type: 'plan_finalize_reminder';
+  unfinished: number;
+}
+
 /**
  * v2.3 后台任务完成通知：Agent Loop 在迭代边界把会话完成队列注入模型视图。
  * 只作观测（前端不新增恢复/继续交互）；未消费的通知仍留在会话队列。
@@ -519,6 +525,7 @@ export type TraceEvent =
   | ScratchpadUpdateEvent
   | PlanUpdateEvent
   | PlanIncompleteAtFinishEvent
+  | PlanFinalizeReminderEvent
   | BackgroundJobNotifiedEvent
   | ErrorEvent;
 

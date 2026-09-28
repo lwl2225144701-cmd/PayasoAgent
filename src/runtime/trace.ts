@@ -254,6 +254,15 @@ export type TraceEvent =
       unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
     }
   | {
+      // v2.4 Plan 收尾提醒：模型准备收尾但计划仍有未完成项，Runtime 已注入一次
+      // 提醒（每次 Run 只提醒一次），让模型自己调用 updatePlan 收敛计划。
+      // 与 plan_incomplete_at_finish 的区别：本事件是"提醒已发出"，后者是"最终仍没做完"。
+      type: 'plan_finalize_reminder';
+      step: number;
+      timestamp: string;
+      unfinished: number;
+    }
+  | {
       // v2.3 后台任务完成通知：Agent Loop 在迭代边界抽取会话通知队列并注入模型视图。
       type: 'background_job_notified';
       step: number;
@@ -434,6 +443,11 @@ export type TraceEventInput =
       completed: number;
       total: number;
       unfinished: Array<{ id: string; title: string; status: 'pending' | 'in_progress' }>;
+    }
+  | {
+      // v2.4 Plan 收尾提醒：Runtime 已注入一次提醒让模型自己收敛计划（见 agent.ts）。
+      type: 'plan_finalize_reminder';
+      unfinished: number;
     }
   | {
       type: 'background_job_notified';
