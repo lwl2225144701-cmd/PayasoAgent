@@ -571,45 +571,100 @@
 
 .tagList {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
 }
 
+/* 每个模型一张卡片：名称独占一行，能力控件在其下按网格排列。
+   以前是单行 inline-flex 把七个控件挤在一起，宽度不够时 flex 收缩，
+   数字被截、视觉按钮竖排成两行（用户截图里的“压扁”）。 */
 .tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-tertiary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 12px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-surface);
   color: var(--text-primary);
   font-size: 12.5px;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.tag:hover {
+  border-color: var(--color-border-strong);
+}
+
+.tagHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .tagValue {
-  max-width: 160px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 能力控件网格：标签在上、控件在下。容器窄于三列时自动降为两列/一列。
+   视觉开关已移出网格（放标题行），所以这里正好剩三个字段铺满一行。 */
+.tagFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.tagField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tagFieldLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tagRemove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 
 .tagRemove:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-text);
+}
+
+.tagRemove:focus-visible {
+  outline: 2px solid var(--color-brand-border);
+  outline-offset: 1px;
 }
 
 .tagAddRow {
@@ -759,7 +814,7 @@
 
 .cardActions {
   display: flex;
-  gap: 18px;
+  gap: 12px;
   flex-shrink: 0;
   align-items: center;
 }
@@ -791,12 +846,35 @@
   background: var(--bg-hover);
 }
 
-.textButtonDanger {
+/* 删除改纯图标（用户反馈：文字按钮太宽、占视线）：与「编辑」同高、同圆角，
+   只把宽改成正方形。danger 色平时弱、悬停加重，避免它比主操作还抢眼。 */
+.cardDeleteButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: transparent;
   color: var(--color-danger-text);
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 
-.textButtonDanger:hover {
-  color: var(--color-danger-text);
+.cardDeleteButton:hover {
+  border-color: var(--color-danger-border, var(--color-danger-text));
+  background: var(--color-danger-soft);
+}
+
+.cardDeleteButton:focus-visible {
+  outline: 2px solid var(--color-brand-border);
+  outline-offset: 1px;
 }
 
 @media (max-width: 520px) {
@@ -853,27 +931,31 @@
   justify-content: flex-end;
 }
 
-/* 模型目录 tag 内的数值输入（上下文窗口 / 最大输出，v1.6 按模型能力配置） */
+/* 模型卡片内的数值输入（上下文窗口 / 最大输出，v1.6 按模型能力配置）
+   宽度交给网格单元（撑满），不再写死像素——那正是数字被截的原因之一。 */
 .tagWindowInput,
 .tagOutputInput {
-  width: 88px;
-  padding: 2px 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 11.5px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 模型目录 tag 内的思考档次下拉（v1.11 思考档次按模型配置） */
+/* 模型卡片内的思考档次下拉（v1.11 思考档次按模型配置） */
 .tagThinkingSelect {
-  width: 96px;
-  padding: 2px 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .tagThinkingSelect:focus {
@@ -892,14 +974,21 @@
   border-color: var(--brand, var(--text-secondary));
 }
 
+/* 视觉开关：已从字段网格移到卡片标题行。紧凑胶囊、随内容宽度，不再被拉伸或竖排。 */
 .tagVisionToggle {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 3px 10px;
   border: 1px solid var(--border-color);
   border-radius: 999px;
   background: var(--bg-primary);
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.6;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     color 0.15s ease,
@@ -907,19 +996,34 @@
     background 0.15s ease;
 }
 
+/* 状态圆点：关闭时中空、开启时实心，比“按钮变蓝”更轻，也不会让人误以为是主操作。 */
+.tagVisionDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
 .tagVisionToggle:hover {
   color: var(--text-primary);
-  border-color: var(--brand, var(--text-secondary));
+  border-color: var(--color-border-strong);
 }
 
 .tagVisionOn {
-  color: #fff;
-  background: var(--brand, #4f7cff);
-  border-color: var(--brand, #4f7cff);
+  color: var(--color-brand-text, #7aa2ff);
+  background: var(--color-brand-soft);
+  border-color: var(--color-brand-border);
 }
 
 .tagVisionOn:hover {
-  color: #fff;
+  color: var(--color-brand-text, #7aa2ff);
+}
+
+.tagVisionOn .tagVisionDot {
+  background: currentColor;
 }
 
 @media (max-width: 760px) {
@@ -963,6 +1067,11 @@
   .tagAddRow {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  /* 窄屏下能力控件改单列：三列网格在窄容器里会挤成两列/一列 */
+  .tagFields {
+    grid-template-columns: 1fr;
   }
 
   .tagAddButton {

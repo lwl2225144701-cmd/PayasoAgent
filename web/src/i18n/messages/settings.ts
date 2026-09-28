@@ -257,6 +257,9 @@ export const settingsMessages = {
     'zh-CN': '该模型支持图片输入（视觉能力）；已按模型声明预选',
     'en-US': 'This model accepts image input (vision); pre-checked from the model declaration',
   },
+  'settings.models.removeModel': { 'zh-CN': '移除模型', 'en-US': 'Remove model' },
+
+  'settings.models.optional': { 'zh-CN': '可选', 'en-US': 'Optional' },
   'settings.models.modelIdPlaceholder': {
     'zh-CN': '输入模型标识',
     'en-US': 'Enter a model ID',

@@ -816,93 +816,121 @@ export function SettingsModal({
                         language,
                       });
                       return (
-                        <span key={tag.id} className={styles.tag}>
-                          <span className={styles.tagValue}>{tag.value}</span>
-                          <input
-                            type="number"
-                            min={1}
-                            className={styles.tagWindowInput}
-                            placeholder={t('settings.models.contextWindow')}
-                            title={t('settings.models.contextWindowTitle')}
-                            value={tag.contextWindow ?? ''}
-                            onChange={(e) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                tags: prev.tags.map((t) =>
-                                  t.id === tag.id ? { ...t, contextWindow: e.target.value } : t,
-                                ),
-                              }))
-                            }
-                          />
-                          <input
-                            type="number"
-                            min={1}
-                            className={styles.tagOutputInput}
-                            placeholder={t('settings.models.maxOutput')}
-                            title={t('settings.models.maxOutputTitle')}
-                            value={tag.maxOutputTokens ?? ''}
-                            onChange={(e) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                tags: prev.tags.map((t) =>
-                                  t.id === tag.id ? { ...t, maxOutputTokens: e.target.value } : t,
-                                ),
-                              }))
-                            }
-                          />
-                          <select
-                            className={styles.tagThinkingSelect}
-                            value={tag.thinkingLevel ?? ''}
-                            title={thinkingLevelSelectTitle(language)}
-                            aria-label={thinkingLevelSelectAriaLabel(language)}
-                            onChange={(e) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                tags: prev.tags.map((t) =>
-                                  t.id === tag.id
-                                    ? {
-                                        ...t,
-                                        thinkingLevel:
-                                          e.target.value === ''
-                                            ? undefined
-                                            : (e.target.value as ModelThinkingLevel),
-                                      }
-                                    : t,
-                                ),
-                              }))
-                            }
-                          >
-                            {thinkingOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={tag.vision ?? false}
-                            className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
-                            title={t('settings.models.visionTitle')}
-                            onClick={() =>
-                              setForm((prev) => ({
-                                ...prev,
-                                tags: prev.tags.map((t) =>
-                                  t.id === tag.id ? { ...t, vision: !t.vision } : t,
-                                ),
-                              }))
-                            }
-                          >
-                            {t('settings.models.vision')}
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.tagRemove}
-                            onClick={() => removeTag(tag.id)}
-                          >
-                            <TrashIcon size={12} />
-                          </button>
-                        </span>
+                        <div key={tag.id} className={styles.tag}>
+                          <div className={styles.tagHead}>
+                            <span className={styles.tagValue} title={tag.value}>
+                              {tag.value}
+                            </span>
+                            {/* 视觉是单个开关，不占字段网格的一格 —— 放标题行右侧更紧凑，
+                                也让下方三个数值字段正好铺满一行（之前它换行后右侧留白）。 */}
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={tag.vision ?? false}
+                              className={`${styles.tagVisionToggle} ${tag.vision ? styles.tagVisionOn : ''}`}
+                              title={t('settings.models.visionTitle')}
+                              onClick={() =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  tags: prev.tags.map((t) =>
+                                    t.id === tag.id ? { ...t, vision: !t.vision } : t,
+                                  ),
+                                }))
+                              }
+                            >
+                              <span className={styles.tagVisionDot} aria-hidden="true" />
+                              {t('settings.models.vision')}
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.tagRemove}
+                              onClick={() => removeTag(tag.id)}
+                              aria-label={t('settings.models.removeModel')}
+                              title={t('settings.models.removeModel')}
+                            >
+                              <TrashIcon size={12} />
+                            </button>
+                          </div>
+                          <div className={styles.tagFields}>
+                            <label className={styles.tagField}>
+                              <span className={styles.tagFieldLabel}>
+                                {t('settings.models.contextWindow')}
+                              </span>
+                              <input
+                                type="number"
+                                min={1}
+                                className={styles.tagWindowInput}
+                                placeholder={t('settings.models.optional')}
+                                title={t('settings.models.contextWindowTitle')}
+                                value={tag.contextWindow ?? ''}
+                                onChange={(e) =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    tags: prev.tags.map((t) =>
+                                      t.id === tag.id ? { ...t, contextWindow: e.target.value } : t,
+                                    ),
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label className={styles.tagField}>
+                              <span className={styles.tagFieldLabel}>
+                                {t('settings.models.maxOutput')}
+                              </span>
+                              <input
+                                type="number"
+                                min={1}
+                                className={styles.tagOutputInput}
+                                placeholder={t('settings.models.optional')}
+                                title={t('settings.models.maxOutputTitle')}
+                                value={tag.maxOutputTokens ?? ''}
+                                onChange={(e) =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    tags: prev.tags.map((t) =>
+                                      t.id === tag.id
+                                        ? { ...t, maxOutputTokens: e.target.value }
+                                        : t,
+                                    ),
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label className={styles.tagField}>
+                              <span className={styles.tagFieldLabel}>
+                                {t('settings.thinking.selectAria')}
+                              </span>
+                              <select
+                                className={styles.tagThinkingSelect}
+                                value={tag.thinkingLevel ?? ''}
+                                title={thinkingLevelSelectTitle(language)}
+                                aria-label={thinkingLevelSelectAriaLabel(language)}
+                                onChange={(e) =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    tags: prev.tags.map((t) =>
+                                      t.id === tag.id
+                                        ? {
+                                            ...t,
+                                            thinkingLevel:
+                                              e.target.value === ''
+                                                ? undefined
+                                                : (e.target.value as ModelThinkingLevel),
+                                          }
+                                        : t,
+                                    ),
+                                  }))
+                                }
+                              >
+                                {thinkingOptions.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -1009,10 +1037,12 @@ export function SettingsModal({
                     {m.kind === 'custom' && (
                       <button
                         type="button"
-                        className={`${styles.textButton} ${styles.textButtonDanger}`}
+                        className={styles.cardDeleteButton}
                         onClick={() => setDeletingId(m.id)}
+                        aria-label={t('common.delete')}
+                        title={t('common.delete')}
                       >
-                        {t('common.delete')}
+                        <TrashIcon size={15} />
                       </button>
                     )}
                   </div>
