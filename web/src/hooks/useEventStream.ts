@@ -25,13 +25,57 @@ const isTerminal = (ev: HostEvent): boolean => (TERMINAL_TYPES as string[]).incl
  */
 export type EventStreamMode = 'live' | 'snapshot';
 
-/** 把一批事件里的 assistant 增量拼成全文（streamedText 的数据源）。 */
-function collectDeltaText(events: HostEvent[]): string {
+/**
+ * 最终答案气泡的流式文本：只拼接**最后一个 messageId** 的 assistant 增量。
+ *
+ * 为什么：一次 Run 有多轮 LLM 调用，每轮有独立的 messageId（见 llm.ts chat()：
+ * 每次调用生成新 UUID）。工具轮的短过渡句（“现在看 X：”）已经由 llm_call 事件
+ * 渲染进执行面板，不该混进最终答案气泡。之前无差别累加全部 messageId，
+ * 导致运行中的回复气泡把 69 轮过程文本拼成一大段（真实事故 2026-09-28）。
+ *
+ * 语义：遇到新的 messageId 就重新起头（旧轮文本已被执行面板接管）；
+ * reasoning_delta / shell_output_delta 与答案无关，不参与。
+ * 乱序重放时以最后一个 messageId 为准，天然幂等。
+ */
+export function collectFinalAnswerText(events: HostEvent[]): string {
+  let lastMessageId: string | null = null;
   let text = '';
   for (const event of events) {
-    if (event.type === 'assistant_delta') text += event.delta;
+    if (event.type !== 'assistant_delta') continue;
+    if (event.messageId !== lastMessageId) {
+      lastMessageId = event.messageId;
+      text = event.delta;
+    } else {
+      text += event.delta;
+    }
   }
   return text;
+}
+
+/**
+ * 把一个批次合入当前的「最终答案流式文本」（live 增量路径）。
+ *
+ * 与 collectFinalAnswerText 同语义，但不回扫全部历史（live 下每帧都来一批，
+ * 回扫是 O(累计全文)）；用 lastMessageIdRef 记住当前所属轮，新轮出现即重新起头。
+ * SSE 单连接严格顺序投递，因此“批内 + 引用状态”等价于全量回扫。
+ */
+export function appendFinalAnswerBatch(
+  prevText: string,
+  lastMessageId: string | null,
+  batch: HostEvent[],
+): { text: string; lastMessageId: string | null } {
+  let text = prevText;
+  let current = lastMessageId;
+  for (const event of batch) {
+    if (event.type !== 'assistant_delta') continue;
+    if (event.messageId !== current) {
+      current = event.messageId;
+      text = event.delta;
+    } else {
+      text += event.delta;
+    }
+  }
+  return { text, lastMessageId: current };
 }
 
 export function useEventStream(
@@ -43,6 +87,8 @@ export function useEventStream(
   // 增量累计的 assistant_delta 全文：只在有新增 delta 时更新引用（无 delta 的事件
   // 如 context_usage 不会改变其引用），供下游 useMemo/React.memo 跳过无关重建。
   const [streamedText, setStreamedText] = useState('');
+  // streamedText 当前所属的 LLM 轮（messageId）。新轮出现即重新起头，见 appendFinalAnswerBatch。
+  const lastAnswerMessageIdRef = useRef<string | null>(null);
   // SSE 单连接按 append 顺序广播、重连回放也严格递增，seq 单调 → 只需记住最大已见 seq
   // 即可去重（等价于 Set 且 O(1) 内存；若未来服务端乱序广播，此假设不成立需回退 Set）。
   const lastSeqRef = useRef(0);
@@ -67,6 +113,7 @@ export function useEventStream(
       setEvents([]);
       setStreamedText('');
       lastSeqRef.current = 0;
+      lastAnswerMessageIdRef.current = null;
       loadedRunIdRef.current = null;
       return;
     }
@@ -80,6 +127,7 @@ export function useEventStream(
     setEvents([]);
     setStreamedText('');
     lastSeqRef.current = 0;
+    lastAnswerMessageIdRef.current = null;
     loadedRunIdRef.current = null;
 
     // ---- 已终态 Run：一次性取回 ----
@@ -89,7 +137,8 @@ export function useEventStream(
         .then(({ events: incoming }) => {
           if (cancelled) return;
           setEvents(mergeStreamingEvents([], incoming));
-          const deltaText = collectDeltaText(incoming);
+          // 快照路径一次性拿全量：直接全量回扫，不需要引用状态。
+          const deltaText = collectFinalAnswerText(incoming);
           if (deltaText) setStreamedText(deltaText);
           loadedRunIdRef.current = runId;
         })
@@ -115,10 +164,15 @@ export function useEventStream(
       const batch = pendingEvents;
       pendingEvents = [];
       setEvents((prev) => mergeStreamingEvents(prev, batch));
-      // 增量累计 assistant_delta 全文：仅在有新增 delta 时 setState（引用变化），
-      // 纯事件批次（context_usage/tool 等）不会触碰 streamedText，保持引用稳定。
-      const deltaText = collectDeltaText(batch);
-      if (deltaText) setStreamedText((prev) => prev + deltaText);
+      // 最终答案流式文本：只跟最后一个 messageId（新轮 → 重新起头，旧轮过程句
+      // 已由执行面板渲染）。仅在有 assistant 增量时 setState，保持引用稳定。
+      if (batch.some((event) => event.type === 'assistant_delta')) {
+        setStreamedText((prev) => {
+          const next = appendFinalAnswerBatch(prev, lastAnswerMessageIdRef.current, batch);
+          lastAnswerMessageIdRef.current = next.lastMessageId;
+          return next.text;
+        });
+      }
     };
 
     const cancelFlush = (): void => {
