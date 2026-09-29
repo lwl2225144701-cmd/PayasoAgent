@@ -88,8 +88,11 @@ try {
       event.type === 'context_compaction',
   );
   assert.ok(compaction && compaction.summarizedMessages > 0);
-  assert.match(requestMessages[0][0].content, /\[Conversation Summary\]/);
-  assert.equal(requestMessages[0].at(-1)?.content, 'current-task');
+  assert.match(
+    String(requestMessages[0].find((m) => String(m.content).startsWith('[Context]'))?.content),
+    /\[Conversation Summary\]/,
+  );
+  assert.ok(requestMessages[0].some((m) => m.role === 'user' && m.content === 'current-task'));
   assert.ok(!requestMessages[0].some((message) => message.content.includes('old-user-0')));
 
   const checkpoint = loadCheckpoint(runId);
@@ -131,8 +134,11 @@ try {
     },
   });
   assert.equal(resumed, 'done');
-  assert.match(requestMessages[1][0].content, /\[Conversation Summary\]/);
-  assert.match(requestMessages[1][0].content, /earlier turns compacted/);
+  const resumedContext = String(
+    requestMessages[1].find((m) => String(m.content).startsWith('[Context]'))?.content,
+  );
+  assert.match(resumedContext, /\[Conversation Summary\]/);
+  assert.match(resumedContext, /earlier turns compacted/);
   assert.ok(!requestMessages[1].some((message) => message.content.includes('old-user-0')));
   console.log('Context compaction Agent test: PASS');
 

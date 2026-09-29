@@ -62,25 +62,32 @@ const pad = {
   nextStep: null,
   lastResult: '',
 };
+
+/** v2.5 起动态上下文（含进度提醒）位于尾部 [Context] 消息，不再进 system。 */
+function contextText(messages: Array<{ role: string; content: unknown }>): string {
+  return String(
+    messages.find((message) => String(message.content).startsWith('[Context]'))?.content ?? '',
+  );
+}
 const viewHarness = harness('read-only');
 viewHarness.observeToolTurn({ activity: 'read', durationMs: 1 });
 viewHarness.observeToolTurn({ activity: 'read', durationMs: 1 });
 const transcript = viewHarness.createTranscript('只调查，不修改');
 const original = structuredClone(transcript);
 const view = await viewHarness.prepareTurn(transcript, pad, []);
-assert.match(view.messages[0].content, /\[Progress review\]/);
-assert.match(view.messages[0].content, /no edits are required/);
+assert.match(contextText(view.messages), /\[Progress review\]/);
+assert.match(contextText(view.messages), /no edits are required/);
 assert.deepEqual(transcript, original, '提醒不污染 canonical transcript');
 const pending = viewHarness.snapshotState();
 viewHarness.restoreState(pending);
 assert.match(
-  (await viewHarness.prepareTurn(transcript, pad, [])).messages[0].content,
+  contextText((await viewHarness.prepareTurn(transcript, pad, [])).messages),
   /\[Progress review\]/,
 );
 assert.equal(viewHarness.acknowledgeProgressReminder(), true);
 assert.equal(viewHarness.acknowledgeProgressReminder(), false);
 const withoutReminder = await viewHarness.prepareTurn(transcript, pad, []);
-assert.doesNotMatch(withoutReminder.messages[0].content, /\[Progress review\]/);
+assert.doesNotMatch(contextText(withoutReminder.messages), /\[Progress review\]/);
 assert.ok(
   view.usage.estimatedInputTokens > withoutReminder.usage.estimatedInputTokens,
   '提醒进入真实预算估算',
@@ -93,7 +100,7 @@ const disabled = new DefaultContextHarness({
 disabled.restoreState(pending);
 assert.equal(disabled.observeToolTurn({ activity: 'read', durationMs: 999_999 }), undefined);
 assert.doesNotMatch(
-  (await disabled.prepareTurn(transcript, pad, [])).messages[0].content,
+  contextText((await disabled.prepareTurn(transcript, pad, [])).messages),
   /\[Progress review\]/,
 );
 const previousSwitch = process.env.PAYASO_PROGRESS_REMINDER;
@@ -103,7 +110,7 @@ try {
   disabledByEnvironment.restoreState(pending);
   assert.equal(disabledByEnvironment.acknowledgeProgressReminder(), false);
   assert.doesNotMatch(
-    (await disabledByEnvironment.prepareTurn(transcript, pad, [])).messages[0].content,
+    contextText((await disabledByEnvironment.prepareTurn(transcript, pad, [])).messages),
     /\[Progress review\]/,
   );
 } finally {
@@ -184,7 +191,12 @@ function script(messages: ChatMessage[], onRequest?: (index: number) => void) {
   }) as typeof fetch;
 }
 const hasReminder = (messages: (typeof requests)[number]) =>
-  messages.some((m) => m.role === 'system' && m.content.includes('[Progress review]'));
+  messages.some(
+    (m) =>
+      m.role === 'user' &&
+      String(m.content).startsWith('[Context]') &&
+      String(m.content).includes('[Progress review]'),
+  );
 function options(runId: string, contextHarness = harness()) {
   const root = path.join(ROOT, runId);
   fs.mkdirSync(root, { recursive: true });

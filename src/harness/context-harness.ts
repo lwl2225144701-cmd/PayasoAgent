@@ -504,22 +504,16 @@ export class DefaultContextHarness implements AgentContextHarness {
     return `${text.slice(0, low)}${marker}`;
   }
 
-  private buildModelView(
-    transcript: ChatMessage[],
-    scratchpadText: string,
-    planText = this.planViewText(),
-  ): ChatMessage[] {
+  private buildModelView(transcript: ChatMessage[]): ChatMessage[] {
     const modelView = transcript.map((message) => ({ ...message }));
     const systemIndex = modelView.findIndex((message) => message.role === 'system');
-    const summaryText = this.state.conversationSummary
-      ? `\n\n[Conversation Summary]\n${this.state.conversationSummary}`
-      : '';
+    // v2.5 稳定前缀：系统提示只保留内核指令（字节级稳定，作为前缀缓存第一段）。
+    // 每轮会变的 计划/scratchpad/摘要/提醒 移到视图末尾的 [Context] 消息，
+    // 不再改写 system 头部——否则 provider 前缀缓存从 system 处断裂，整段历史
+    // 每轮全量 re-prefill（长上下文首字节超 30s 的根因）。
     const systemMessage: ChatMessage = {
       role: 'system',
-      // 顺序：内核指令 → 计划（目标层）→ scratchpad（执行层）→ 旧轮摘要。
-      content: `${this.systemPromptText()}${planText}\n\n${scratchpadText}${summaryText}${
-        this.progressReminderPolicy ? renderProgressReminder(this.state.progressReminder) : ''
-      }`,
+      content: this.systemPromptText(),
     };
     if (systemIndex >= 0) {
       const maxSummarizable = Math.max(
@@ -551,6 +545,27 @@ export class DefaultContextHarness implements AgentContextHarness {
     return modelView;
   }
 
+  /**
+   * 动态上下文块：计划（目标层）→ scratchpad（执行层）→ 旧轮摘要 → 进度提醒。
+   * 由 prepareTurn 在裁剪/压缩完成之后、发请求之前追加到视图末尾（角色 user）：
+   * - 让 [内核 system + 历史] 构成稳定前缀，供应 provider 前缀缓存命中断；
+   * - 不进 ContextManager 裁剪路径，避免抢占「最后一条 user=当前任务」边界、
+   *   也避免 compaction 的 view/canonical 消息计数错位（v2.5 稳定前缀）。
+   */
+  private dynamicContextMessage(planText: string, scratchpadText: string): ChatMessage | null {
+    const summaryText = this.state.conversationSummary
+      ? `[Conversation Summary]\n${this.state.conversationSummary}`
+      : '';
+    const reminderText = this.progressReminderPolicy
+      ? renderProgressReminder(this.state.progressReminder)
+      : '';
+    const parts = [planText, scratchpadText, summaryText, reminderText]
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    if (parts.length === 0) return null;
+    return { role: 'user', content: `[Context]\n${parts.join('\n\n')}` };
+  }
+
   async prepareTurn(
     transcript: ChatMessage[],
     scratchpad: ScratchpadView,
@@ -567,7 +582,7 @@ export class DefaultContextHarness implements AgentContextHarness {
     const scratchpadText = this.truncateToTokens(boundedScratchpad.text, maxScratchpadTokens);
     // 计划投影与本轮视图共用同一份文本：预算计量必须和实际注入的是同一个字符串。
     const planText = this.planViewText();
-    let modelView = this.buildModelView(transcript, scratchpadText, planText);
+    let modelView = this.buildModelView(transcript);
     let processed = this.contextManager.process(modelView, tools);
     let compaction: ContextCompactionResult | undefined;
 
@@ -577,20 +592,14 @@ export class DefaultContextHarness implements AgentContextHarness {
     // system 消息变大一点点就会让修剪后估值恰好落到触发线下，摘要永不发生。
     const preTrimEstimated = processed.usage.beforeMessageTokens + processed.usage.toolSchemaTokens;
     if (preTrimEstimated > triggerTokens) {
-      const compacted = await this.compactConversation(
-        transcript,
-        tools,
-        targetTokens,
-        signal,
-        scratchpadText,
-      );
+      const compacted = await this.compactConversation(transcript, tools, targetTokens, signal);
       if (compacted) {
         compaction = {
           summarizedMessages: compacted.summarizedMessages,
           totalSummarizedMessages: compacted.totalSummarizedMessages,
           summaryTokens: compacted.summaryTokens,
         };
-        modelView = this.buildModelView(transcript, scratchpadText, planText);
+        modelView = this.buildModelView(transcript);
         processed = this.contextManager.process(modelView, tools);
       }
       // 摘要失败或无可压缩历史 → 保留确定性轮边界裁剪结果（fail-soft）；
@@ -609,6 +618,24 @@ export class DefaultContextHarness implements AgentContextHarness {
         });
       }
     }
+    // v2.5 稳定前缀：动态上下文（计划/scratchpad/摘要/提醒）在裁剪与压缩全部
+    // 完成后追加到视图末尾，不进裁剪路径（见 dynamicContextMessage）。
+    // 其 tokens 仍计入真实预算估算，保证 overBudget / usageRatio 不失真。
+    const contextMessage = this.dynamicContextMessage(planText, scratchpadText);
+    if (contextMessage) {
+      const contextTokens = this.contextManager.estimateMessageTokens(contextMessage);
+      const estimated = processed.usage.estimatedInputTokens + contextTokens;
+      processed.messages.push(contextMessage);
+      processed.usage = {
+        ...processed.usage,
+        afterMessages: processed.usage.afterMessages + 1,
+        messageTokens: processed.usage.messageTokens + contextTokens,
+        estimatedInputTokens: estimated,
+        usageRatio: Number((estimated / this.modelContext.maxInputTokens).toFixed(4)),
+        overBudget: estimated > this.modelContext.maxInputTokens,
+      };
+    }
+
     return {
       messages: processed.messages,
       usage: processed.usage,
@@ -624,7 +651,6 @@ export class DefaultContextHarness implements AgentContextHarness {
    * prepareTurn 的阈值路径共用同一套逻辑）：把最旧的完整历史轮摘要进
    * conversationSummary 并推进 summarizedMessageCount。canonical transcript
    * 不改写——视图裁剪发生在 buildModelView，摘要即"逻辑删除"。
-   * @param scratchpadText - 模型视图的 Scratchpad 文本；独立压缩传空串（仅影响 sizing）。
    * @returns 压缩明细；无可压缩历史或摘要失败返回 null（状态不被改写）。
    */
   async compactConversation(
@@ -632,7 +658,6 @@ export class DefaultContextHarness implements AgentContextHarness {
     tools: ToolSchema[],
     targetTokens?: number,
     signal?: AbortSignal,
-    scratchpadText = '',
   ): Promise<{
     summarizedMessages: number;
     totalSummarizedMessages: number;
@@ -640,7 +665,7 @@ export class DefaultContextHarness implements AgentContextHarness {
     compactedTokens: number;
   } | null> {
     const effectiveTarget = targetTokens ?? Math.floor(this.modelContext.maxInputTokens * 0.65);
-    const modelView = this.buildModelView(transcript, scratchpadText);
+    const modelView = this.buildModelView(transcript);
     const compacted = this.contextManager.process(modelView, tools, effectiveTarget);
     const removedCount = compacted.usage.trimmedMessages;
     if (removedCount <= 0) return null;
@@ -675,7 +700,7 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   /** 估算当前 transcript 的模型视图输入占用（/compact 完成后即时刷新占用率用）。 */
   estimateViewUsage(transcript: ChatMessage[], _tools: ToolSchema[]) {
-    return this.contextManager.process(this.buildModelView(transcript, '')).usage;
+    return this.contextManager.process(this.buildModelView(transcript)).usage;
   }
 
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage {

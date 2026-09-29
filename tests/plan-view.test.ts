@@ -86,14 +86,18 @@ await check(`标题超过 ${PLAN_VIEW_TITLE_CHARS} 字符：投影内裁剪并�
 });
 
 // ---- 2. 注入与计量 ----
-await check('没有计划时：system 不出现计划段，planTokens=0（零回归）', async () => {
+await check('没有计划时：不出现计划段，planTokens=0（零回归）', async () => {
   const harness = createHarness();
   const view = await harness.prepareTurn(harness.createTranscript('t'), SCRATCHPAD, []);
   assert.doesNotMatch(String(view.messages[0].content), /\[当前计划\]/);
+  assert.doesNotMatch(
+    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    /\[当前计划\]/,
+  );
   assert.equal(view.planTokens, 0);
 });
 
-await check('planPort 改状态后：下一轮 system 注入计划，planTokens>0', async () => {
+await check('planPort 改状态后：下一轮尾部 [Context] 注入计划，planTokens>0', async () => {
   const harness = createHarness();
   const port = harness.planPort();
   const applied = port.apply([
@@ -103,13 +107,15 @@ await check('planPort 改状态后：下一轮 system 注入计划，planTokens>
   assert.equal(applied.changed, true);
 
   const view = await harness.prepareTurn(harness.createTranscript('t'), SCRATCHPAD, []);
-  const system = String(view.messages[0].content);
-  assert.match(system, /\[当前计划\] 0\/2 完成（revision 1）/);
-  assert.match(system, /跑通确定性套件/);
+  const context = String(
+    view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content,
+  );
+  assert.match(context, /\[当前计划\] 0\/2 完成（revision 1）/);
+  assert.match(context, /跑通确定性套件/);
   assert.ok(view.planTokens > 0, 'planTokens 必须计入预算');
   // 计划段在 scratchpad 段之前（目标层 → 执行层）
   assert.ok(
-    system.indexOf('[当前计划]') < system.indexOf('[执行进度 Scratchpad]'),
+    context.indexOf('[当前计划]') < context.indexOf('[执行进度 Scratchpad]'),
     '计划段应排在 scratchpad 之前',
   );
 });
@@ -133,7 +139,10 @@ await check('snapshot → restore：新 Harness 仍注入同一份计划（resum
   const resumed = createHarness();
   resumed.restoreState(source.snapshotState());
   const view = await resumed.prepareTurn(resumed.createTranscript('t'), SCRATCHPAD, []);
-  assert.match(String(view.messages[0].content), /中断前的任务/);
+  assert.match(
+    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    /中断前的任务/,
+  );
   assert.equal(resumed.snapshotState().plan.revision, 1);
 });
 

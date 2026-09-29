@@ -378,12 +378,18 @@ test('Session follow-up receives prior stable turns and keeps original Workspace
     runIds.push(second.runId);
     await waitFor(() => manager.get(second.runId)?.status === 'completed');
 
-    const sentMessages = requestBodies[1]?.messages as Array<{ role: string; content: string }>;
-    assert.deepEqual(sentMessages.slice(-3), [
-      { role: 'user', content: 'first question' },
-      { role: 'assistant', content: 'first answer' },
-      { role: 'user', content: 'follow up' },
-    ]);
+    const sentMessages = (requestBodies[1]?.messages ?? []) as Array<{
+      role: string;
+      content: string;
+    }>;
+    assert.deepEqual(
+      sentMessages.filter((m) => !String(m.content).startsWith('[Context]')).slice(-3),
+      [
+        { role: 'user', content: 'first question' },
+        { role: 'assistant', content: 'first answer' },
+        { role: 'user', content: 'follow up' },
+      ],
+    );
     assert.equal(manager.getWorkspaceRoot(second.runId), canonicalWorkspace);
     assert.deepEqual(
       manager.listSessionRuns(first.sessionId)?.map((run) => run.turnIndex),
@@ -476,8 +482,10 @@ test('Session follow-up carries the full prior transcript (tool interactions inc
     );
     assert.ok(hasToolCall, 'second run must see the prior assistant tool_call');
     assert.ok(hasToolResult, 'second run must see the prior tool result');
-    // 最后一轮新增消息 = 上一轮最终答案 + 新任务
-    const lastTwo = secondMessages.slice(-2);
+    // 最后一轮新增消息 = 上一轮最终答案 + 新任务（剔除尾部 [Context]）
+    const lastTwo = secondMessages
+      .filter((m) => !String(m.content).startsWith('[Context]'))
+      .slice(-2);
     assert.equal(lastTwo[0]?.role, 'assistant');
     assert.equal(lastTwo[0]?.content, 'first answer');
     assert.equal(lastTwo[1]?.role, 'user');

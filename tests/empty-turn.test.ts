@@ -59,13 +59,11 @@ await check('空回答 → 追加 Harness 提示并恢复，第二次有内容�
   assert.equal(first.type === 'empty_turn_recovered' ? first.attempt : 0, 1);
   assert.equal(first.type === 'empty_turn_recovered' ? first.maxAttempts : 0, 2);
 
-  // 模型必须看到"上一轮是空的"这条提示
+  // 模型必须看到"上一轮是空的"这条提示（v2.5 起提示非末尾，尾部还跟着 [Context]）
   const second = requestBodies[1] as { messages?: Array<{ role: string; content: string }> };
-  const lastMessage = second?.messages?.[second.messages.length - 1];
-  assert.equal(lastMessage?.role, 'user');
   assert.ok(
-    lastMessage?.content.includes('no visible content'),
-    `提示内容不符: ${lastMessage?.content}`,
+    second?.messages?.some((m) => m.role === 'user' && m.content.includes('no visible content')),
+    '模型必须看到空回合提示',
   );
 });
 
@@ -125,9 +123,10 @@ await check('非空但承诺继续执行的回答 → Finalization Guard 恢复�
   assert.equal(guards.length, 1, '应恰好触发一次 finalization guard');
   assert.equal(guards[0]?.type === 'finalization_guard' ? guards[0].disposition : '', 'retry');
   const second = requestBodies[1] as { messages?: Array<{ role: string; content: string }> };
-  const lastMessage = second?.messages?.[second.messages.length - 1];
-  assert.equal(lastMessage?.role, 'user');
-  assert.ok(lastMessage?.content.includes('did not call a tool'));
+  assert.ok(
+    second?.messages?.some((m) => m.role === 'user' && m.content.includes('did not call a tool')),
+    '模型必须看到 finalization guard 提示',
+  );
 });
 
 await check('未完成文本恢复耗尽 → stalled/fail，绝不 completed', async () => {

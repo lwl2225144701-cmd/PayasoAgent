@@ -204,7 +204,10 @@ await test('Harness builds a temporary model view without mutating the transcrip
 
   assert.deepEqual(transcript, original, 'canonical transcript must remain unchanged');
   assert.match(view.messages[0].content, /Read Only/);
-  assert.match(view.messages[0].content, /执行进度 Scratchpad/);
+  assert.match(
+    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    /执行进度 Scratchpad/,
+  );
   assert.doesNotMatch(transcript[0].content, /执行进度 Scratchpad/);
 });
 
@@ -253,7 +256,10 @@ await test('Harness bounds the Scratchpad model view', async () => {
   );
   assert.equal(view.scratchpadTruncated, true);
   assert.ok(view.scratchpadTokens <= 450, `scratchpad tokens=${view.scratchpadTokens}`);
-  assert.match(view.messages[0].content, /已省略更早/);
+  assert.match(
+    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    /已省略更早/,
+  );
 });
 
 await test('Harness incrementally summarizes old complete turns and restores summary state', async () => {
@@ -295,9 +301,12 @@ await test('Harness incrementally summarizes old complete turns and restores sum
   const first = await harness.prepareTurn(transcript, scratchpad, []);
   assert.ok(first.compaction && first.compaction.summarizedMessages > 0);
   assert.equal(requests.length, 1);
-  assert.match(first.messages[0].content, /\[Conversation Summary\]/);
-  assert.match(first.messages[0].content, /compacted batch 1/);
-  assert.equal(first.messages.at(-1)?.content, 'current-task');
+  const firstContext = String(
+    first.messages.find((m) => String(m.content).startsWith('[Context]'))?.content,
+  );
+  assert.match(firstContext, /\[Conversation Summary\]/);
+  assert.match(firstContext, /compacted batch 1/);
+  assert.ok(first.messages.some((m) => m.role === 'user' && m.content === 'current-task'));
   assert.ok(!first.messages.some((message) => message.content.includes('old-user-0')));
 
   transcript.push({ role: 'assistant', content: `current-answer ${'x'.repeat(4_000)}` });
@@ -306,7 +315,7 @@ await test('Harness incrementally summarizes old complete turns and restores sum
   assert.ok(second.compaction && second.compaction.summarizedMessages > 0);
   assert.equal(requests.length, 2);
   assert.match(requests[1].previousSummary, /compacted batch 1/);
-  assert.equal(second.messages.at(-1)?.content, 'next-task');
+  assert.ok(second.messages.some((m) => m.role === 'user' && m.content === 'next-task'));
 
   const savedState = harness.snapshotState();
   const restored = new DefaultContextHarness({
@@ -325,7 +334,10 @@ await test('Harness incrementally summarizes old complete turns and restores sum
     [],
   );
   assert.deepEqual(restored.snapshotState(), savedState);
-  assert.match(restoredView.messages[0].content, /compacted batch 2/);
+  assert.match(
+    String(restoredView.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    /compacted batch 2/,
+  );
   assert.ok(!restoredView.messages.some((message) => message.content.includes('old-user-0')));
 });
 

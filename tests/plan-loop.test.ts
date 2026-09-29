@@ -116,14 +116,24 @@ await check('发出一条 plan_update：全量清单 + revision=1 + 进度 0/3',
   );
 });
 
-await check('第二轮请求的 system 里能看到计划（模型不失忆）', () => {
+await check('第二轮请求：计划进尾部 [Context]，不进 system（前缀稳定）', () => {
   const systems = systemTexts(bodies);
+  const contexts = bodies.map((body) => {
+    const messages =
+      (body as { messages?: Array<{ role: string; content: unknown }> }).messages ?? [];
+    const context = messages.find(
+      (m) => m.role === 'user' && String(m.content).startsWith('[Context]'),
+    );
+    return context ? String(context.content) : '';
+  });
   // 注意：v2.4 起本剧本会多一次请求 —— 模型输出文本时计划仍有 in_progress 项，
   // 触发一次 plan_finalize_reminder（见文末 C 组测试）。前两轮语义不变。
-  assert.ok(systems.length >= 2, `至少两次请求，实际 ${systems.length}`);
-  assert.doesNotMatch(systems[0], /\[当前计划\]/, '第一轮还没有计划');
-  assert.match(systems[1], /\[当前计划\] 0\/3 完成（revision 1）/);
-  assert.match(systems[1], /第一步/);
+  assert.ok(contexts.length >= 2, `至少两次请求，实际 ${contexts.length}`);
+  assert.doesNotMatch(contexts[0], /\[当前计划\]/, '第一轮还没有计划');
+  assert.match(contexts[1], /\[当前计划\] 0\/3 完成（revision 1）/);
+  assert.match(contexts[1], /第一步/);
+  // 计划不得再进 system——那正是每轮改写前缀、作废缓存的根因。
+  assert.doesNotMatch(systems[1], /\[当前计划\]/, '计划不得注入 system');
 });
 
 await check('context_usage 计入 planTokens（预算可审计）', () => {
