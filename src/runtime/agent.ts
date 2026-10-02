@@ -286,6 +286,10 @@ export async function runAgent(
         messageCount: messages.length,
         estimatedInputTokens: ctx.usage.estimatedInputTokens,
       });
+      // 请求体规模的可观测代理 ≈ HTTP body 字节数（messages + tools 序列化；
+      // 鉴权头与少量请求参数不计，恒小于真实 body）。补这个字段之前，
+      // 「请求体 ≤1.5MB / 图片不再全量 base64」这条验收项没有任何观测点。
+      const requestBodyBytes = JSON.stringify([modelMessages, schemas]).length;
       const assistantMsg = await chat(
         modelMessages,
         schemas,
@@ -299,6 +303,7 @@ export async function runAgent(
             type: 'llm_request_sent',
             iteration: i + 1,
             attempt,
+            requestBodyBytes,
           });
         },
       );
@@ -444,7 +449,13 @@ export async function runAgent(
                 undefined,
                 opts.modelConfig,
                 opts.signal,
-                (attempt) => emit({ type: 'llm_request_sent', iteration: i + 1, attempt }),
+                (attempt) =>
+                  emit({
+                    type: 'llm_request_sent',
+                    iteration: i + 1,
+                    attempt,
+                    requestBodyBytes: JSON.stringify(reviewMessages).length,
+                  }),
               );
               emit({
                 type: 'llm_call',

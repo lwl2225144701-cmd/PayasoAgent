@@ -248,6 +248,8 @@ export interface LlmRequestSentEvent extends TraceEventBase {
   type: 'llm_request_sent';
   iteration: number;
   attempt: number;
+  /** 请求体字节数（≈ HTTP body，恒略小于真实值）。 */
+  requestBodyBytes?: number;
 }
 
 export interface ToolCallEvent extends TraceEventBase {

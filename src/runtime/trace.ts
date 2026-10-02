@@ -46,6 +46,8 @@ export type TraceEvent =
       timestamp: string;
       iteration: number; // 当前迭代（从 1 开始）
       attempt: number; // 第几次尝试（从 1 开始；重试时每轮请求都发一次）
+      /** 请求体字节数（messages+tools 序列化；≈ HTTP body，恒略小于真实值）。 */
+      requestBodyBytes?: number;
     }
   | {
       type: 'tool_call';
@@ -304,6 +306,7 @@ export type TraceEventInput =
       type: 'llm_request_sent';
       iteration: number;
       attempt: number;
+      requestBodyBytes?: number;
     }
   | {
       type: 'tool_call';
