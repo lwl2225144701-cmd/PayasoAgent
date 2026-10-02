@@ -24,6 +24,50 @@ export const TOOL_OUTPUT_TAIL_BYTES = 4 * 1024;
 /** Marker inserted where content was removed. Stable: tests and tools rely on it. */
 export const TOOL_OUTPUT_MARKER = '[OUTPUT TRUNCATED]';
 
+/** One resolved budget: everything that advertises or enforces a limit uses this. */
+export interface ToolOutputBudget {
+  maxBytes: number;
+  headBytes: number;
+  tailBytes: number;
+  marker: string;
+}
+
+export const DEFAULT_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
+  maxBytes: TOOL_OUTPUT_MAX_BYTES,
+  headBytes: TOOL_OUTPUT_HEAD_BYTES,
+  tailBytes: TOOL_OUTPUT_TAIL_BYTES,
+  marker: TOOL_OUTPUT_MARKER,
+};
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * Resolve the effective budget from the environment (部署可调，不必改代码）。
+ *
+ * fail-closed：只要有一组配置会让「切完反而更大 / 根本切不动」
+ * （head + tail + marker > max），就**整体回退默认**——绝不让一份坏配置
+ * 把进入模型上下文的内容放大。这是本模块存在的意义：宣称的契约与执行的
+ * 契约永不打架，配置错误也不例外。
+ *
+ * 所有生产者（read / grep / glob / shell / background-jobs）与 Runtime guard
+ * 都必须在调用时解析同一个函数，否则调大调小都会重新引入漂移。
+ */
+export function resolveToolOutputBudget(
+  env: Record<string, string | undefined> = process.env,
+): ToolOutputBudget {
+  const maxBytes = positiveInt(env.PAYASO_TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_MAX_BYTES);
+  const headBytes = positiveInt(env.PAYASO_TOOL_OUTPUT_HEAD_BYTES, TOOL_OUTPUT_HEAD_BYTES);
+  const tailBytes = positiveInt(env.PAYASO_TOOL_OUTPUT_TAIL_BYTES, TOOL_OUTPUT_TAIL_BYTES);
+  if (headBytes + tailBytes + utf8ByteLength(TOOL_OUTPUT_MARKER) > maxBytes) {
+    return DEFAULT_TOOL_OUTPUT_BUDGET;
+  }
+  return { maxBytes, headBytes, tailBytes, marker: TOOL_OUTPUT_MARKER };
+}
+
 /** UTF-8 byte length. Never `string.length`: that counts UTF-16 code units. */
 export function utf8ByteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');

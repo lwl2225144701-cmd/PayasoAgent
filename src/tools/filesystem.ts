@@ -9,22 +9,22 @@
 //       图片省略提示；其他二进制（NUL/大量控制字符）返回省略提示并指路 shell
 //       工具（file/wc/xxd），不再把乱码文本喂给模型。
 
-import { assertWriteScope } from '../sandbox/write-scope.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { readTextWindow } from './read-text-window.js';
 import { storedPermissionMode } from '../permission-mode.js';
 import {
   assertInsideRoot,
   getRunWorkspaceRoot,
   resolveWorkspacePath,
 } from '../sandbox/sandbox-manager.js';
+import { assertWriteScope } from '../sandbox/write-scope.js';
 import {
+  resolveToolOutputBudget,
   type SliceBudget,
-  TOOL_OUTPUT_MAX_BYTES,
   utf8ByteLength,
   utf8Head,
 } from '../tool-output-budget.js';
+import { readTextWindow } from './read-text-window.js';
 import { register, registerAlias, type ToolContext } from './tools.js';
 
 // 单文件读入内存的上限/单行上限（安全阈值，不是模型可见的输出预算）。
@@ -69,7 +69,7 @@ export function sliceNumberedWindow(
   startLine: number,
   budget: SliceBudget = {},
 ): NumberedWindowSlice {
-  const maxBytes = budget.maxBytes ?? TOOL_OUTPUT_MAX_BYTES;
+  const maxBytes = budget.maxBytes ?? resolveToolOutputBudget().maxBytes;
   // 为续读信息保留预算；正文仅显示连续前缀，避免首尾拼接造成“已读完”错觉。
   const contentBudget = Math.max(1, maxBytes - 2048);
   let count = 0;
@@ -84,7 +84,8 @@ export function sliceNumberedWindow(
   if (partialLine) count = 1;
   const omittedLines = numberedLines.length - count;
   const text = partialLine
-    ? utf8Head(numberedLines[0], contentBudget) + '\n[READ TRUNCATED]\n[READ 提示] 当前单行过长，仅显示前缀；行号分页不能读取该行余下字节，请用其他文件处理工具。'
+    ? utf8Head(numberedLines[0], contentBudget) +
+      '\n[READ TRUNCATED]\n[READ 提示] 当前单行过长，仅显示前缀；行号分页不能读取该行余下字节，请用其他文件处理工具。'
     : numberedLines.slice(0, count).join('\n');
   return {
     text,
@@ -401,9 +402,14 @@ register({
       );
     }
 
-    const { lines: windowLines, totalLines, hadBom, truncatedLines } = await readTextWindow(
-      real, startLine, limit, MAX_READ_BYTES,
-    ).catch(() => { throw new Error(`读取失败: ${rel}`); });
+    const {
+      lines: windowLines,
+      totalLines,
+      hadBom,
+      truncatedLines,
+    } = await readTextWindow(real, startLine, limit, MAX_READ_BYTES).catch(() => {
+      throw new Error(`读取失败: ${rel}`);
+    });
 
     if (startLine > totalLines) {
       throw new Error(
@@ -425,7 +431,7 @@ register({
     if (truncatedLines.length) {
       hints.push(
         `[READ 提示] 第 ${truncatedLines.slice(0, 8).join('、')} 等 ${truncatedLines.length} 行超过 ${MAX_READ_BYTES} 字节，仅显示有限前缀。` +
-        'offset 始终表示行号，不能续读同一行内部；完整内容请用其他文件处理工具读取。',
+          'offset 始终表示行号，不能续读同一行内部；完整内容请用其他文件处理工具读取。',
       );
     }
 
@@ -435,7 +441,7 @@ register({
     if (sliced.omittedLines || hasMoreLines) {
       hints.push(
         `[READ 提示] 本页连续显示第 ${startLine}-${nextOffset - 1} 行，共 ${totalLines} 行；其后内容尚未读取。` +
-        `用 offset=${nextOffset} 续读剩余 ${totalLines - nextOffset + 1} 行。`,
+          `用 offset=${nextOffset} 续读剩余 ${totalLines - nextOffset + 1} 行。`,
       );
     }
     return [sliced.text, ...hints].filter(Boolean).join('\n');

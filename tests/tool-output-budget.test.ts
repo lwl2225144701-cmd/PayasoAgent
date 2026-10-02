@@ -9,6 +9,8 @@
 import assert from 'node:assert/strict';
 import { guardToolOutput } from '../src/runtime/output-guard.js';
 import {
+  DEFAULT_TOOL_OUTPUT_BUDGET,
+  resolveToolOutputBudget,
   sliceTextToBudget,
   TOOL_OUTPUT_HEAD_BYTES,
   TOOL_OUTPUT_MARKER,
@@ -155,6 +157,71 @@ test('契约一致性：guard 与预算模块使用同一常量', () => {
   const g = guardToolOutput(text);
   assert.equal(g.truncated, true);
   assert.ok(g.returnedBytes <= TOOL_OUTPUT_MAX_BYTES);
+});
+
+// ---- 5. 预算可配置（P1b）：解析器 + fail-closed + 任意配置下不漂移 ----
+
+test('env 可配：三个值都被采纳', () => {
+  const b = resolveToolOutputBudget({
+    PAYASO_TOOL_OUTPUT_MAX_BYTES: String(32 * 1024),
+    PAYASO_TOOL_OUTPUT_HEAD_BYTES: String(12 * 1024),
+    PAYASO_TOOL_OUTPUT_TAIL_BYTES: String(8 * 1024),
+  });
+  assert.equal(b.maxBytes, 32 * 1024);
+  assert.equal(b.headBytes, 12 * 1024);
+  assert.equal(b.tailBytes, 8 * 1024);
+  assert.equal(b.marker, TOOL_OUTPUT_MARKER);
+});
+
+test('未配置 / 非法值：一律回退默认', () => {
+  assert.deepEqual(resolveToolOutputBudget({}), DEFAULT_TOOL_OUTPUT_BUDGET);
+  for (const bad of ['abc', '0', '-5', '1.5', '']) {
+    assert.deepEqual(
+      resolveToolOutputBudget({ PAYASO_TOOL_OUTPUT_MAX_BYTES: bad }),
+      DEFAULT_TOOL_OUTPUT_BUDGET,
+      `非法值 ${JSON.stringify(bad)} 应回退默认`,
+    );
+  }
+});
+
+test('fail-closed：切不动的配置整体回退默认，绝不放大进入上下文的内容', () => {
+  const bad = resolveToolOutputBudget({
+    PAYASO_TOOL_OUTPUT_MAX_BYTES: '1024',
+    PAYASO_TOOL_OUTPUT_HEAD_BYTES: '1024',
+    PAYASO_TOOL_OUTPUT_TAIL_BYTES: '1024',
+  });
+  assert.deepEqual(bad, DEFAULT_TOOL_OUTPUT_BUDGET, '坏配置必须整体回退');
+  const g = guardToolOutput('x'.repeat(100 * 1024), bad);
+  assert.ok(g.returnedBytes <= DEFAULT_TOOL_OUTPUT_BUDGET.maxBytes);
+});
+
+test('契约一致性：调大预算后 guard 与 read 仍共用同一个数（不漂移）', () => {
+  const KEYS = [
+    'PAYASO_TOOL_OUTPUT_MAX_BYTES',
+    'PAYASO_TOOL_OUTPUT_HEAD_BYTES',
+    'PAYASO_TOOL_OUTPUT_TAIL_BYTES',
+  ] as const;
+  const saved = KEYS.map((k) => [k, process.env[k]] as const);
+  try {
+    process.env.PAYASO_TOOL_OUTPUT_MAX_BYTES = String(32 * 1024);
+    process.env.PAYASO_TOOL_OUTPUT_HEAD_BYTES = String(12 * 1024);
+    process.env.PAYASO_TOOL_OUTPUT_TAIL_BYTES = String(8 * 1024);
+
+    // read 从同一解析器取预算 → 产出可以超过默认 16KB，但不超过新上限
+    const slice = sliceNumberedWindow(numbered(3_000), 1);
+    const sliceBytes = utf8ByteLength(slice.text);
+    assert.ok(sliceBytes > TOOL_OUTPUT_MAX_BYTES, `read 应已用调大后的预算（实际 ${sliceBytes}）`);
+    assert.ok(sliceBytes <= 32 * 1024, `read 产出不得超过新预算（实际 ${sliceBytes}）`);
+
+    // guard 从同一 env 解析 → 对 read 的产出绝不二次截断（宣称 == 执行）
+    const guarded = guardToolOutput(slice.text);
+    assert.equal(guarded.truncated, false, 'read 结果不得被 guard 二次截断');
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 // ---- runner ----

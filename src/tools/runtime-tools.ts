@@ -29,7 +29,7 @@ import {
   SHELL_TIMEOUT_MIN_MS,
   shellTimeoutPolicy,
 } from '../sandbox/shell-timeout.js';
-import { TOOL_OUTPUT_MAX_BYTES, utf8ByteLength } from '../tool-output-budget.js';
+import { resolveToolOutputBudget, utf8ByteLength } from '../tool-output-budget.js';
 import {
   assertWritableZone,
   canonicalPathKey,
@@ -121,7 +121,8 @@ register({
       ignore: !includeIgnored,
     });
 
-    const budget = TOOL_OUTPUT_MAX_BYTES - 512; // 给汇总行留余量
+    const maxBytes = resolveToolOutputBudget().maxBytes;
+    const budget = maxBytes - 512; // 给汇总行留余量
     const groups = new Map<string, string[]>();
     let matchCount = 0;
     let filesScanned = 0;
@@ -174,7 +175,7 @@ register({
     ];
     if (budgetHit) {
       notes.push(
-        `[grep 提示] 结果已达 ${TOOL_OUTPUT_MAX_BYTES} 字节输出预算上限，仅返回前 ${matchCount} 处匹配；请用更精确的 pattern 或 path 缩小范围。`,
+        `[grep 提示] 结果已达 ${maxBytes} 字节输出预算上限，仅返回前 ${matchCount} 处匹配；请用更精确的 pattern 或 path 缩小范围。`,
       );
     }
     if (matchCount >= maxResults) notes.push(`[grep 提示] 已达 maxResults=${maxResults} 上限。`);
@@ -261,7 +262,8 @@ register({
       return `未找到匹配 "${pattern}" 的文件（起始路径 ${rel}；已扫描 ${scan.files.length} 个文件${includeIgnored ? '' : '，已忽略依赖/产物目录'}）`;
     }
 
-    const budget = TOOL_OUTPUT_MAX_BYTES - 512;
+    const maxBytes = resolveToolOutputBudget().maxBytes;
+    const budget = maxBytes - 512;
     const lines: string[] = [];
     let bytes = 0;
     let budgetHit = false;
@@ -280,7 +282,7 @@ register({
     const notes = [`找到 ${matched.length} 个匹配文件（共扫描 ${scan.files.length} 个）`];
     if (lines.length < matched.length) {
       notes.push(
-        `[glob 提示] 仅返回前 ${lines.length} 个（${budgetHit ? `${TOOL_OUTPUT_MAX_BYTES} 字节输出预算` : `maxResults=${maxResults}`} 上限）。`,
+        `[glob 提示] 仅返回前 ${lines.length} 个（${budgetHit ? `${maxBytes} 字节输出预算` : `maxResults=${maxResults}`} 上限）。`,
       );
     }
     if (scan.truncated) notes.push('[glob 提示] 文件数达到扫描上限，结果可能不完整。');
@@ -464,10 +466,12 @@ function liveShellOutput(
   onOutput?: (chunk: string) => void,
 ): ((chunk: string) => void) | undefined {
   if (!onOutput) return undefined;
+  // 每次 live 包装解析一次（不逐 chunk 解析）：与 guard 用同一个解析器。
+  const maxBytes = resolveToolOutputBudget().maxBytes;
   let forwarded = 0;
   return (chunk: string) => {
-    if (forwarded >= TOOL_OUTPUT_MAX_BYTES || !chunk) return;
-    const remaining = TOOL_OUTPUT_MAX_BYTES - forwarded;
+    if (forwarded >= maxBytes || !chunk) return;
+    const remaining = maxBytes - forwarded;
     const slice = chunk.length <= remaining ? chunk : chunk.slice(0, remaining);
     forwarded += slice.length;
     onOutput(slice);
@@ -527,7 +531,7 @@ register({
   description:
     // 注意：文案不得出现 "capabilities"（network-control 守卫：内部字段名不得进入 LLM Schema），
     // 且长度不得超出既有文案（context-compaction 套件对工具 schema token 敏感，变长会触发紧急裁剪路径）。
-    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 ${Math.round(TOOL_OUTPUT_MAX_BYTES / 1024)}KB；macOS 沙箱内执行，其余平台默认拒绝）。` +
+    `执行一条 shell 命令（cwd=Workspace，非交互，输出限 ${Math.round(resolveToolOutputBudget().maxBytes / 1024)}KB；macOS 沙箱内执行，其余平台默认拒绝）。` +
     `前台默认超时 ${Math.round(SHELL_TIMEOUT_DEFAULT_MS / 1000)}s；background=true 且未传 timeoutMs 时默认 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s；` +
     `可用 timeoutMs 调整（上限 ${Math.round(SHELL_TIMEOUT_MAX_MS / 1000)}s，下限 ${Math.round(SHELL_TIMEOUT_MIN_MS / 1000)}s）。` +
     `超时会整树终止并返回 [shell-timeout]。background=true 时立即返回 jobId，用 shellJob wait 等待（长测试、构建用），不要用 shell sleep 轮询。` +

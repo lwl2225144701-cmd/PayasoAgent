@@ -24,7 +24,7 @@
 //   and tests inject fakes. Same dependency direction as the rest of the Runtime.
 // - Per-Session isolation + bounded concurrency + bounded output (shared budget).
 
-import { sliceTextToBudget, TOOL_OUTPUT_MAX_BYTES } from '../tool-output-budget.js';
+import { resolveToolOutputBudget, sliceTextToBudget } from '../tool-output-budget.js';
 
 export type BackgroundJobStatus = 'running' | 'succeeded' | 'failed' | 'killed';
 
@@ -72,8 +72,10 @@ export interface StartBackgroundJobInput {
 /** Concurrent jobs allowed per Session; beyond this the tool call fails loudly. */
 export const MAX_JOBS_PER_SESSION = 4;
 
-/** Rolling incremental-output buffer per job (4× the completion budget). */
-const JOB_OUTPUT_BUFFER_MAX_CHARS = TOOL_OUTPUT_MAX_BYTES * 2;
+/** Rolling incremental-output buffer per job (2× the completion budget). */
+function jobOutputBufferMaxChars(): number {
+  return resolveToolOutputBudget().maxBytes * 2;
+}
 /** Per-Session completion-notification queue cap (防失控：通知风暴有界). */
 const MAX_PENDING_JOB_NOTIFICATIONS = 64;
 
@@ -162,10 +164,13 @@ export function startBackgroundJob(input: StartBackgroundJobInput): BackgroundJo
     else input.parentSignal.addEventListener('abort', abort, { once: true });
   }
 
-  const maxOutputBytes = input.maxOutputBytes ?? TOOL_OUTPUT_MAX_BYTES;
+  const budget = resolveToolOutputBudget();
+  const maxOutputBytes = input.maxOutputBytes ?? budget.maxBytes;
+  // 每个 job 解析一次（不逐 chunk 解析），与 guard / 生产者用同一个解析器。
+  const bufferMaxChars = jobOutputBufferMaxChars();
   const onOutput = (chunk: string): void => {
     if (record.outputOverflow || chunk.length === 0) return;
-    if (record.outputBuffer.length + chunk.length > JOB_OUTPUT_BUFFER_MAX_CHARS) {
+    if (record.outputBuffer.length + chunk.length > bufferMaxChars) {
       record.outputOverflow = true;
       return;
     }
