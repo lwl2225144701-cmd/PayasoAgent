@@ -142,6 +142,16 @@ export const timelineMessages = {
   'timeline.think.ariaLabel': { 'zh-CN': '模型思考', 'en-US': 'Model thinking' },
   'timeline.think.label': { 'zh-CN': '思考过程', 'en-US': 'Thinking process' },
 
+  // 每步的分析叙述（折叠行，与思考块同形状）：中间轮次的叙述属于"过程"，
+  // 默认收成一行预览，点开才展开正文——否则十几轮下来正文会堆成一堵墙。
+  'timeline.analysis.ariaLabel': { 'zh-CN': '模型分析', 'en-US': 'Model analysis' },
+  'timeline.analysis.label': { 'zh-CN': '分析', 'en-US': 'Analysis' },
+
+  // 运行中、尚无终态答案时的流式正文（折叠行，与思考块同形状）。
+  // 这时显示的其实是当前这一步正在写的内容，多半是中间叙述而非最终答案。
+  'timeline.streaming.ariaLabel': { 'zh-CN': '生成中内容', 'en-US': 'Streaming output' },
+  'timeline.streaming.label': { 'zh-CN': '生成中', 'en-US': 'Writing' },
+
   // 工具行
   'timeline.tool.ariaLabel': {
     'zh-CN': '{tool}：{args}，{status}',

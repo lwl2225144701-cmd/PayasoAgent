@@ -448,18 +448,6 @@
   margin-top: 9px;
 }
 
-.processNote {
-  margin: 3px 0 10px;
-  padding-left: 1px;
-  opacity: 0.74;
-}
-
-.processNote p {
-  margin-bottom: 8px;
-  font-size: var(--conversation-font-size, 14px);
-  line-height: 1.65;
-}
-
 /* 上下文压缩内务提示：工具步骤之间的一行弱化注释，不成卡片 */
 .compactionNote {
   display: flex;

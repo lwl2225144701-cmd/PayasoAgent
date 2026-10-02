@@ -324,9 +324,14 @@ function ExecutionPanel({
                 </ul>
               )}
               {group.reasoning?.visible && (
-                <div className={styles.processNote}>
-                  <CollapsibleText text={group.reasoning.visible} maxChars={520} />
-                </div>
+                // 每步的分析叙述收成折叠行（与思考块同形状）：以前这里用
+                // CollapsibleText 每步铺 520 字正文，十几轮下来就是一堵墙。
+                // 终态答案另有位置（finalAnswer），这里只是中间过程。
+                <ThinkBlock
+                  text={group.reasoning.visible}
+                  label={t('timeline.analysis.label')}
+                  ariaLabel={t('timeline.analysis.ariaLabel')}
+                />
               )}
             </div>
           ))}
@@ -401,17 +406,28 @@ export const Timeline = memo(function Timeline({
     () => (run ? deriveRawFinalAnswer(run, events, streamedText) : null),
     [run, events, streamedText],
   );
+  const finalAnswerText = rawFinalAnswer?.text ?? null;
+  // 当前显示的"答案"只是流式兜底 → 它是本步正在写的中间叙述，运行期间按过程折叠，
+  // 否则十几轮下来会把整屏铺满（参考实现把这一段收在「分析」里）。
+  const rawAnswerIsStreamingFallback = rawFinalAnswer?.streamedFallback ?? false;
   // stripThinkTags 三趟全串正则只随 rawFinalAnswer 引用变化重算：
   // context_usage/tool 等非 delta 帧不触碰 streamedText → 这里跳过，避免每帧 O(全文) 正则。
   const finalParsed = useMemo(
-    () => (rawFinalAnswer ? stripThinkTags(rawFinalAnswer) : null),
-    [rawFinalAnswer],
+    () => (finalAnswerText ? stripThinkTags(finalAnswerText) : null),
+    [finalAnswerText],
   );
 
   const structure = useMemo<BuildOut | null>(() => {
     if (!run) return null;
-    return buildStructure(run, events, rawFinalAnswer, finalParsed, language);
-  }, [run, events, rawFinalAnswer, finalParsed, language]);
+    return buildStructure(
+      run,
+      events,
+      finalAnswerText,
+      finalParsed,
+      language,
+      rawAnswerIsStreamingFallback,
+    );
+  }, [run, events, finalAnswerText, finalParsed, language, rawAnswerIsStreamingFallback]);
 
   // 计划清单：从事件派生（取 revision 最大的一条），无计划事件 → null。
   // 面板不再画在对话流里：这里只把派生结果上抛给宿主（输入栏上方的"当前计划"），
@@ -539,6 +555,7 @@ export const Timeline = memo(function Timeline({
   const {
     runStarted,
     finalAnswer,
+    answerIsStreamingFallback,
     finalTimestamp,
     finalError,
     lastStepRunning,
@@ -759,12 +776,26 @@ export const Timeline = memo(function Timeline({
             />
 
             {/* Final result — exactly once, no card, no success badge. */}
-            {finalAnswer && (
-              <div className={styles.finalBlock}>
-                <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
-                {finalError && <div className={styles.finalError}>{finalError}</div>}
-              </div>
-            )}
+            {finalAnswer &&
+              (lastStepRunning && answerIsStreamingFallback ? (
+                // 运行中且还没有终态答案：这时显示的其实是"当前这一步正在写的内容"
+                // （多半是中间叙述）。按过程收成一行预览——以前直接整段铺开，长任务
+                // 十几轮下来会把整屏占满（参考实现把这一段收在「分析」里）。
+                // 一旦出现真正的终态答案（final_answer / run_completed / run.result），
+                // 下面那个分支会把它按答案完整展示。
+                <div className={styles.finalBlock}>
+                  <ThinkBlock
+                    text={finalAnswer}
+                    label={t('timeline.streaming.label')}
+                    ariaLabel={t('timeline.streaming.ariaLabel')}
+                  />
+                </div>
+              ) : (
+                <div className={styles.finalBlock}>
+                  <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
+                  {finalError && <div className={styles.finalError}>{finalError}</div>}
+                </div>
+              ))}
             {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
 
             <RunUsage run={run} events={events} />
@@ -783,6 +814,8 @@ export const Timeline = memo(function Timeline({
 interface BuildOut {
   runStarted: HostEvent | undefined;
   finalAnswer: string | null;
+  /** finalAnswer 只是流式兜底（还没有真正的终态答案）→ 运行期间按过程折叠。 */
+  answerIsStreamingFallback: boolean;
   finalTimestamp: string;
   finalError: string | null;
   toolSteps: ToolStepGroup[];
@@ -810,7 +843,7 @@ function deriveRawFinalAnswer(
   run: HostRun,
   events: HostEvent[],
   streamedText: string,
-): string | null {
+): { text: string | null; streamedFallback: boolean } {
   const finalEv = events.find((e) => e.type === 'final_answer');
   const completedEv = events.find((e) => e.type === 'run_completed');
   let finalAnswer: string | null = null;
@@ -819,8 +852,10 @@ function deriveRawFinalAnswer(
     finalAnswer = (completedEv.result as unknown as string | undefined)?.trim() || null;
   }
   if (!finalAnswer && run.result) finalAnswer = String(run.result).trim() || null;
-  if (!finalAnswer) finalAnswer = streamedText || null;
-  return finalAnswer;
+  // 兜底：还没有任何终态答案时用累计的流式正文顶上。此时显示的其实是**当前这一步
+  // 正在写的内容**（多半是中间叙述），调用方据此决定"按过程折叠"还是"按答案展示"。
+  if (!finalAnswer) return { text: streamedText || null, streamedFallback: true };
+  return { text: finalAnswer, streamedFallback: false };
 }
 
 type ParsedThink = ReturnType<typeof stripThinkTags>;
@@ -851,6 +886,7 @@ function buildStructure(
   rawFinalAnswer: string | null,
   finalParsed: { visible: string; thinking: string | null } | null,
   language: LanguageMode,
+  answerIsStreamingFallback: boolean,
 ): BuildOut {
   const runStarted = events.find((e) => e.type === 'run_started');
   const completedEv = events.find((e) => e.type === 'run_completed');
@@ -999,6 +1035,7 @@ function buildStructure(
   return {
     runStarted,
     finalAnswer,
+    answerIsStreamingFallback,
     finalTimestamp:
       (finalEv && 'timestamp' in finalEv ? finalEv.timestamp : undefined) ??
       (completedEv && 'timestamp' in completedEv ? completedEv.timestamp : undefined) ??

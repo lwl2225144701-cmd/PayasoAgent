@@ -101,6 +101,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'tool-args', file: 'tests/tool-args.test.ts' },
   { name: 'finalize', file: 'tests/finalize.test.ts' },
   { name: 'docs-contract', file: 'tests/docs-contract.test.ts' },
+  // 文档索引契约：README 目录树登记完整 + 链接可解析（2026-09 docs 重组后新增）
+  { name: 'docs-index', file: 'tests/docs-index.test.ts' },
   { name: 'side-effect', file: 'tests/side-effect.test.ts' },
   { name: 'workspace-trash', file: 'tests/workspace-trash.test.ts' },
   { name: 'settings', file: 'tests/settings.test.ts' },
