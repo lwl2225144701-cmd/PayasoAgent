@@ -251,6 +251,8 @@ export async function runAgent(
           summarizedMessages: ctx.compaction.summarizedMessages,
           totalSummarizedMessages: ctx.compaction.totalSummarizedMessages,
           summaryTokens: ctx.compaction.summaryTokens,
+          sourceTokens: ctx.compaction.sourceTokens,
+          cacheAligned: ctx.compaction.cacheAligned,
         });
       }
       if (ctx.usage.beforeMessages !== ctx.usage.afterMessages) {

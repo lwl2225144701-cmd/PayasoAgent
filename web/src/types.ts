@@ -329,6 +329,8 @@ export interface ContextCompactionEvent extends TraceEventBase {
   summarizedMessages: number; // 本次新摘要的消息数
   totalSummarizedMessages: number; // 累计已摘要消息数
   summaryTokens: number; // 摘要占用 token
+  sourceTokens?: number; // 被压掉的原文 token 量（压缩比可由此算）
+  cacheAligned?: boolean; // 摘要请求是否走了"复现上一请求真前缀"的缓存快路径
 }
 
 export interface RecoveryDecisionEvent extends TraceEventBase {

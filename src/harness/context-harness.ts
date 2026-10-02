@@ -60,6 +60,10 @@ export interface ContextCompactionResult {
   summarizedMessages: number;
   totalSummarizedMessages: number;
   summaryTokens: number;
+  /** 被压掉的原文 token 量（与 summaryTokens 一起给出压缩比，可审计）。 */
+  sourceTokens: number;
+  /** 摘要请求是否走了"复现上一请求真前缀"的 KV 缓存快路径。 */
+  cacheAligned: boolean;
 }
 
 /**
@@ -627,8 +631,15 @@ export class DefaultContextHarness implements AgentContextHarness {
           summarizedMessages: compacted.summarizedMessages,
           totalSummarizedMessages: compacted.totalSummarizedMessages,
           summaryTokens: compacted.summaryTokens,
+          sourceTokens: compacted.sourceTokens,
+          cacheAligned: compacted.cacheAligned,
         };
-        modelView = this.buildModelView(transcript);
+        // 压缩后重建视图：必须与 compactConversation 用同一套投影策略，否则
+        // 这里的估值会和"摘要依据的那份视图"不一致。
+        modelView = projectStaleToolOutputs(
+          this.buildModelView(transcript),
+          this.projectionPolicy,
+        ).messages;
         processed = this.contextManager.process(modelView, tools);
       }
       // 摘要失败或无可压缩历史 → 保留确定性轮边界裁剪结果（fail-soft）；
@@ -692,37 +703,65 @@ export class DefaultContextHarness implements AgentContextHarness {
     totalSummarizedMessages: number;
     summaryTokens: number;
     compactedTokens: number;
+    /** 被压掉的原文 token 量（与 summaryTokens 一起给出压缩比，可审计）。 */
+    sourceTokens: number;
+    /** 摘要请求是否复用了上一请求的真前缀走 KV 缓存快路径。 */
+    cacheAligned: boolean;
   } | null> {
     // P2-D：未显式指定目标时用策略算出的保留量（不再写死 0.65，那等于没压）。
     const effectiveTarget =
       targetTokens ??
       resolveCompactionThresholds(this.compactionPolicy, this.modelContext.maxInputTokens).retain;
-    const modelView = this.buildModelView(transcript);
+    // P2-C 一致性：裁剪必须发生在**和主请求同一份**视图上（投影之后）。否则这里
+    // 按未投影的体积裁，会多裁掉一批本可保留的消息——摘要是有损的，多裁即多丢。
+    const modelView = projectStaleToolOutputs(
+      this.buildModelView(transcript),
+      this.projectionPolicy,
+    ).messages;
     const compacted = this.contextManager.process(modelView, tools, effectiveTarget);
     const removedCount = compacted.usage.trimmedMessages;
     if (removedCount <= 0) return null;
-    const systemIndex = transcript.findIndex((message) => message.role === 'system');
-    const start = (systemIndex >= 0 ? systemIndex + 1 : 0) + this.state.summarizedMessageCount;
-    const removedMessages = transcript.slice(start, start + removedCount);
+    // 被裁掉的正是 modelView 里 system 之后最前面的 removedCount 条，与 canonical
+    // transcript 的同一区间一一对应；取**投影后**的版本喂摘要器：既与主请求前缀
+    // 逐字节一致（E2 复用 KV 缓存），也不会把刚投影掉的内容又塞回摘要请求。
+    const viewSystemIndex = modelView.findIndex((message) => message.role === 'system');
+    const viewStart = viewSystemIndex >= 0 ? viewSystemIndex + 1 : 0;
+    const removedMessages = modelView.slice(viewStart, viewStart + removedCount);
+    const sourceTokens = this.contextManager.estimateTokens(removedMessages);
     const maxSummaryTokens = Math.max(
       128,
       Math.min(4_096, Math.floor(this.modelContext.maxInputTokens * 0.08)),
     );
     try {
+      const cacheAligned = removedMessages[0]?.role !== 'tool' && removedMessages.length > 0;
       const nextSummary = await this.summarizer.summarize({
         previousSummary: this.state.conversationSummary,
         messages: removedMessages,
         maxSummaryTokens,
         signal,
+        // P2-E：复现上一请求的真前缀（system + tools + 被压缩区域）。
+        prefix: cacheAligned ? { system: this.systemPromptText(), tools } : undefined,
       });
       if (!nextSummary.trim()) return null;
-      this.state.conversationSummary = this.truncateToTokens(nextSummary.trim(), maxSummaryTokens);
+      const summaryText = this.truncateToTokens(nextSummary.trim(), maxSummaryTokens);
+      const summaryTokens = estimateTextTokens(summaryText);
+      // P2-E 校验（fail-soft）：摘要必须**比原文短**，否则压了等于没压、甚至更糟。
+      // 不动任何状态，返回 null——调用方保持现状（宁可这次不压，也不写一份更贵的摘要）。
+      //
+      // 可达性说明（别误以为是死代码）：当前策略不变式下它**不可达**——
+      // 被压掉的原文 ≥ 带宽 ≥ trigger/2，而 maxSummaryTokens ≤ maxInputTokens×0.08
+      // （上限 4096），恒有 trigger/2 > maxSummaryTokens。留作不变量断言：一旦将来
+      // 有人调大摘要预算或引入"小步压缩"，它会立刻变成真正的防线。
+      if (summaryTokens >= sourceTokens) return null;
+      this.state.conversationSummary = summaryText;
       this.state.summarizedMessageCount += removedCount;
       return {
         summarizedMessages: removedCount,
         totalSummarizedMessages: this.state.summarizedMessageCount,
-        summaryTokens: estimateTextTokens(this.state.conversationSummary),
-        compactedTokens: this.contextManager.estimateTokens(removedMessages),
+        summaryTokens,
+        compactedTokens: sourceTokens,
+        sourceTokens,
+        cacheAligned,
       };
     } catch {
       // Summary is an optimization：摘要失败不改写状态，调用方保持现状。

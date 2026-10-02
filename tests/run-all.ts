@@ -74,6 +74,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'output-guard', file: 'tests/output-guard.test.ts' },
   { name: 'tool-output-projection', file: 'tests/tool-output-projection.test.ts' },
   { name: 'compaction-policy', file: 'tests/compaction-policy.test.ts' },
+  { name: 'summary-conversation', file: 'tests/summary-conversation.test.ts' },
   { name: 'tool-output-spill', file: 'tests/tool-output-spill.test.ts' },
   { name: 'runtime-tools', file: 'tests/runtime-tools.test.ts' },
   { name: 'frontend-format', file: 'tests/frontend-format.test.ts' },

@@ -149,6 +149,10 @@ export type TraceEvent =
       summarizedMessages: number;
       totalSummarizedMessages: number;
       summaryTokens: number;
+      /** 被压掉的原文 token 量（压缩比 = summaryTokens / sourceTokens，可审计）。 */
+      sourceTokens: number;
+      /** 摘要请求是否复用了上一请求的真前缀（走 KV 缓存快路径）。 */
+      cacheAligned: boolean;
     }
   | {
       type: 'recovery_decision';
@@ -375,6 +379,8 @@ export type TraceEventInput =
       summarizedMessages: number;
       totalSummarizedMessages: number;
       summaryTokens: number;
+      sourceTokens: number;
+      cacheAligned: boolean;
     }
   | {
       type: 'recovery_decision';
