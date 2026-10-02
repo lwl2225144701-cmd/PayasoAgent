@@ -59,6 +59,14 @@ export interface SessionStats {
   decodeMs: number;
   decodeCount: number;
   tokens: number;
+  /** 未命中缓存的输入 token 合计（旧记录可能缺省 → 按 0 处理）。 */
+  inputTokens?: number;
+  /** 模型输出 token 合计（吞吐率分子）。 */
+  outputTokens?: number;
+  /** 命中前缀缓存的输入 token 合计。 */
+  cacheReadTokens?: number;
+  /** 写入缓存的输入 token 合计。 */
+  cacheWriteTokens?: number;
   durationMs: number;
 }
 

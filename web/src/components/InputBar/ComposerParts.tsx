@@ -10,17 +10,11 @@ import {
 } from 'react';
 import { useI18n } from '../../i18n';
 import type { Translate } from '../../i18n/translate';
-import type {
-  ContextUsageEvent,
-  ModelProviderView,
-  ModelSelection,
-  PermissionMode,
-} from '../../types';
+import type { ModelProviderView, ModelSelection, PermissionMode } from '../../types';
 import { DropdownTrigger } from '../DropdownTrigger';
 import { IconButton } from '../IconButton';
 import { ArrowUpIcon, StopIcon } from '../icons';
 import { PermissionDropdown } from '../PermissionDropdown';
-import { ContextUsageRing } from '../Timeline/ContextUsageRing';
 import styles from './InputBar.module.css';
 
 interface ComposerTextareaProps {
@@ -85,8 +79,8 @@ interface ComposerFooterProps {
   currentModel?: ModelSelection;
   models?: ModelProviderView[];
   onSelectModel?: (providerId: string, model: string) => void;
-  // v1.6 上下文预算环形指示器：当前 Run 最新 context_usage（无则不显示）
-  contextUsage?: ContextUsageEvent;
+  // v1.6 上下文预算环形指示器已移到输入框下方的 StatsBar（对齐 DSH 状态条），
+  // 本处不再接收 contextUsage —— 避免同一区域出现两颗环。
   queuedCount?: number;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
@@ -319,7 +313,8 @@ export function ComposerFooter(props: ComposerFooterProps) {
     <div className={styles.conversationFooter}>
       <PermissionButton mode={props.permissionMode} onSelect={props.onSelectPermission} />
       <div className={styles.conversationActions}>
-        {props.contextUsage && <ContextUsageRing usage={props.contextUsage} />}
+        {/* 上下文占用环已移到输入框下方的 StatsBar（与 DSH 状态条一致，且避免
+            同一区域出现两颗环）。这里只留模型切换与发送。 */}
         <ModelButton
           currentModel={props.currentModel}
           models={props.models}

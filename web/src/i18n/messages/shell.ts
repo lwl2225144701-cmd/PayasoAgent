@@ -28,14 +28,19 @@ export const shellMessages = {
     'en-US': 'Plan mode: read-only, plan only (exit with /plan)',
   },
 
-  // 顶栏：会话统计 strip
+  // 底部统计条（StatsBar）：两枚 pill + 上下文环，读数口径见 session-stats-view.ts
   'shell.stats.title': {
-    'zh-CN': '会话统计（回合/步/调用/用量/耗时）',
-    'en-US': 'Session stats (turns / steps / calls / usage / time)',
+    'zh-CN': '会话统计（回合/步/吞吐/用量/缓存）',
+    'en-US': 'Session stats (turns / steps / throughput / usage / cache)',
   },
   'shell.stats.turns': { 'zh-CN': '{count} 回合', 'en-US': '{count} turns' },
   'shell.stats.steps': { 'zh-CN': '{count} 步', 'en-US': '{count} steps' },
   'shell.stats.toolCalls': { 'zh-CN': '{count} 工具', 'en-US': '{count} tools' },
+  'shell.stats.llmCalls': { 'zh-CN': '{count} LLM', 'en-US': '{count} LLM' },
+  // 吞吐率：模型输出 token ÷ 解码耗时（首增量 → 末增量）
+  'shell.stats.tokensPerSecond': { 'zh-CN': '{value} tok/s', 'en-US': '{value} tok/s' },
+  // 缓存命中率：命中缓存的输入 ÷ 全部输入（新增 + 命中 + 写入）
+  'shell.stats.cacheHit': { 'zh-CN': '缓存命中 {percent}%', 'en-US': '{percent}% cached' },
   'shell.stats.ttft': { 'zh-CN': '首token {duration}', 'en-US': 'First token {duration}' },
   'shell.stats.active': { 'zh-CN': '活跃 {duration}', 'en-US': 'Active {duration}' },
 

@@ -19,7 +19,17 @@ const STROKE = 2.5;
 const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
+export function ContextUsageRing({
+  usage,
+  showPercent = false,
+}: {
+  usage: ContextUsageEvent;
+  /**
+   * 在环右侧显示可见百分比（如 `40%`）。底部统计条用它对齐 DSH 状态条；
+   * 输入区那颗环保持纯图标（那里空间紧，且百分比已在悬停提示里）。
+   */
+  showPercent?: boolean;
+}) {
   const tooltipId = useId();
   const { t, language } = useI18n();
   // 单一展示口径：分母=真实上下文窗口，占用优先 provider 上报（见 contextGaugeView）。
@@ -98,6 +108,7 @@ export function ContextUsageRing({ usage }: { usage: ContextUsageEvent }) {
           transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
         />
       </svg>
+      {showPercent && <span className={styles.gaugePercent}>{percent}%</span>}
       <span id={tooltipId} role="tooltip" className={styles.gaugeTooltip}>
         <span className={styles.contextHeading}>
           <span>

@@ -108,6 +108,10 @@ const events: HostEvent[] = [
     ttftMs: 800,
     decodeMs: 400,
     tokens: 300,
+    inputTokens: 40,
+    outputTokens: 60,
+    cacheReadTokens: 180,
+    cacheWriteTokens: 20,
     durationMs: 2000,
   };
   const b: RunStats = {
@@ -116,6 +120,10 @@ const events: HostEvent[] = [
     toolCalls: 0,
     toolMs: 0,
     tokens: 100,
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheReadTokens: 70,
+    cacheWriteTokens: 0,
     durationMs: 1000,
   };
   const s = aggregateSessionStats([a, b], 2);
@@ -128,6 +136,10 @@ const events: HostEvent[] = [
   assert.equal(s.ttftMs, 800);
   assert.equal(s.ttftCount, 1, '只有 a 有首 token');
   assert.equal(s.decodeCount, 1);
+  assert.equal(s.inputTokens, 50, '新增输入求和');
+  assert.equal(s.outputTokens, 80, '输出求和（吞吐率分子）');
+  assert.equal(s.cacheReadTokens, 250, '缓存命中求和');
+  assert.equal(s.cacheWriteTokens, 20, '缓存写入求和');
 }
 
 // ---- HTTP 端点冒烟：GET /sessions/:id/stats 走通 store → 折叠 → JSON ----

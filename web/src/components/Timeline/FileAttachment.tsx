@@ -1,10 +1,10 @@
 // 附件卡片：预览提取正文或普通文本，下载始终使用原件路径。
 import { useEffect, useRef, useState } from 'react';
-import { readFile, downloadWorkspaceFile } from '../../api';
+import { attachmentSizeLabel } from '../../../../src/attachment-policy';
+import { downloadWorkspaceFile, readFile } from '../../api';
 import { useI18n } from '../../i18n';
 import type { RunAttachment } from '../../types';
 import { FileIcon } from '../icons';
-import { attachmentSizeLabel } from '../../../../src/attachment-policy';
 import styles from './FileAttachment.module.css';
 
 export function FileAttachment({ runId, file }: { runId: string; file: RunAttachment }) {

@@ -20,6 +20,14 @@ export interface RunStats {
   decodeMs?: number;
   /** 有效用量 totalTokens 合计（旧记录仅 totalTokens 也计入）。 */
   tokens: number;
+  /** 未命中缓存的输入 token 合计（新分桶记录才有；旧记录为 0）。 */
+  inputTokens: number;
+  /** 模型输出 token 合计（吞吐率分子）。 */
+  outputTokens: number;
+  /** 命中前缀缓存的输入 token 合计。 */
+  cacheReadTokens: number;
+  /** 写入缓存的输入 token 合计。 */
+  cacheWriteTokens: number;
   /** 运行时长（run_started → 终态事件；缺事件时由 createdAt/updatedAt 兜底）。 */
   durationMs: number;
 }
@@ -40,6 +48,14 @@ export interface SessionStats {
   /** 有解码耗时的 Run 数。 */
   decodeCount: number;
   tokens: number;
+  /** 未命中缓存的输入 token 合计。 */
+  inputTokens: number;
+  /** 模型输出 token 合计（吞吐率分子）。 */
+  outputTokens: number;
+  /** 命中前缀缓存的输入 token 合计。 */
+  cacheReadTokens: number;
+  /** 写入缓存的输入 token 合计。 */
+  cacheWriteTokens: number;
   /** 各 Run 运行时长之和（活跃时长口径）。 */
   durationMs: number;
 }
@@ -47,25 +63,40 @@ export interface SessionStats {
 const TERMINAL_TYPES = new Set(['run_completed', 'run_failed', 'run_stopped', 'run_interrupted']);
 
 /**
- * 提取一次 llm_call 的可用用量（与前端 deriveRunTokenUsage 的 contribution 同构）：
- * 新分桶记录过完整校验；旧记录（仅 totalTokens）只做非负整数校验。
+ * 提取一次 llm_call 的可用用量并按桶拆开（与前端 deriveRunTokenUsage 的
+ * contribution 同构）：新分桶记录过完整校验；旧记录（仅 totalTokens）只做
+ * 非负整数校验，且**拆不出新增/缓存**——此时只计总量，分桶留 0（宁缺勿错，
+ * 不能让历史数据把"缓存命中率"算成假的）。
  */
-function eventUsageTokens(usage: TokenUsage | undefined): number | undefined {
+interface UsageSplit {
+  total: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+const ZERO_SPLIT = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+
+function splitEventUsage(usage: TokenUsage | undefined): UsageSplit | undefined {
   if (usage === null || typeof usage !== 'object') return undefined;
   if (!('inputTokens' in usage)) {
     const total = (usage as { totalTokens?: number }).totalTokens;
     return typeof total === 'number' && Number.isSafeInteger(total) && total >= 0
-      ? total
+      ? { total, ...ZERO_SPLIT }
       : undefined;
   }
   if (!isValidTokenUsage(usage)) return undefined;
-  return (
-    usage.totalTokens ??
-    usage.inputTokens +
-      usage.outputTokens +
-      (usage.cacheReadTokens ?? 0) +
-      (usage.cacheWriteTokens ?? 0)
-  );
+  const { inputTokens, outputTokens } = usage;
+  const cacheReadTokens = usage.cacheReadTokens ?? 0;
+  const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
+  return {
+    total: usage.totalTokens ?? inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+  };
 }
 
 /**
@@ -82,6 +113,10 @@ export function deriveRunStats(
   let toolCalls = 0;
   let toolMs = 0;
   let tokens = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
   let startMs = Number.NaN;
   let endMs = Number.NaN;
   let firstDeltaMs: number | undefined;
@@ -95,8 +130,14 @@ export function deriveRunStats(
         llmCalls++;
         if (step !== undefined) steps.add(step);
         {
-          const callTokens = eventUsageTokens(event.usage);
-          if (callTokens !== undefined) tokens += callTokens;
+          const split = splitEventUsage(event.usage);
+          if (split !== undefined) {
+            tokens += split.total;
+            inputTokens += split.inputTokens;
+            outputTokens += split.outputTokens;
+            cacheReadTokens += split.cacheReadTokens;
+            cacheWriteTokens += split.cacheWriteTokens;
+          }
         }
         break;
       case 'tool_call':
@@ -136,7 +177,20 @@ export function deriveRunStats(
       ? lastDeltaMs - firstDeltaMs
       : undefined;
 
-  return { steps: steps.size, llmCalls, toolCalls, toolMs, ttftMs, decodeMs, tokens, durationMs };
+  return {
+    steps: steps.size,
+    llmCalls,
+    toolCalls,
+    toolMs,
+    ttftMs,
+    decodeMs,
+    tokens,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    durationMs,
+  };
 }
 
 /** 把一个会话的全部 Run 统计聚合为 SessionStats（turns = 活跃 Run 数）。 */
@@ -152,6 +206,10 @@ export function aggregateSessionStats(stats: readonly RunStats[], turns: number)
     decodeMs: 0,
     decodeCount: 0,
     tokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
     durationMs: 0,
   };
   for (const stat of stats) {
@@ -160,6 +218,10 @@ export function aggregateSessionStats(stats: readonly RunStats[], turns: number)
     total.toolCalls += stat.toolCalls;
     total.toolMs += stat.toolMs;
     total.tokens += stat.tokens;
+    total.inputTokens += stat.inputTokens;
+    total.outputTokens += stat.outputTokens;
+    total.cacheReadTokens += stat.cacheReadTokens;
+    total.cacheWriteTokens += stat.cacheWriteTokens;
     total.durationMs += stat.durationMs;
     if (stat.ttftMs !== undefined) {
       total.ttftMs += stat.ttftMs;

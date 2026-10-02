@@ -471,9 +471,7 @@ export default function App() {
         // 落盘后 Host 只在工作区保留归一化文件，base64 不进入任何持久化状态。
         // mimeType 取实际编码产物（浏览器可能回退编码格式，Host 会嗅探校验）。
         const attachmentPayload = attachments?.length
-          ? await Promise.all(
-              attachments.map((file) => prepareAttachmentForUpload(file, language)),
-            )
+          ? await Promise.all(attachments.map((file) => prepareAttachmentForUpload(file, language)))
           : undefined;
         const resp = await createRun(
           trimmed,
@@ -1076,7 +1074,6 @@ export default function App() {
               models={models}
               onSelectModel={handleSelectModel}
               visionSupported={currentModelVision}
-              contextUsage={contextUsage ?? undefined}
               queuedCount={sendQueue.length}
               queuedMessages={sendQueue}
               onSendQueuedNow={handleSendQueuedNow}
@@ -1090,7 +1087,8 @@ export default function App() {
                 ) : null
               }
               // 会话统计条贴着 composer 底部（原先在顶栏，读的时候和标题抢同一行）
-              footerSlot={<StatsBar stats={sessionStats} />}
+              // 上下文占用环也在这里（从 composer 移来，对齐 DSH 状态条）。
+              footerSlot={<StatsBar stats={sessionStats} contextUsage={contextUsage} />}
             />
           )}
         </div>

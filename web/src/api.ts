@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENT_BODY_BYTES } from '../../src/attachment-policy';
 import type {
   CreateModelProviderInput,
   DefaultModelView,
@@ -16,8 +17,6 @@ import type {
   UpdateModelProviderInput,
   WorkspaceView,
 } from './types';
-
-import { MAX_ATTACHMENT_BODY_BYTES } from '../../src/attachment-policy';
 
 const API_BASE = '';
 
@@ -56,9 +55,11 @@ export function createRun(
     ? { providerId: modelSelection.providerId, model: modelSelection.model }
     : {};
   const attachmentFields = attachments && attachments.length > 0 ? { attachments } : {};
-  const body = JSON.stringify(workspaceName
-    ? { task, workspaceName, permissionMode, ...modelFields, ...attachmentFields }
-    : { task, permissionMode, ...modelFields, ...attachmentFields });
+  const body = JSON.stringify(
+    workspaceName
+      ? { task, workspaceName, permissionMode, ...modelFields, ...attachmentFields }
+      : { task, permissionMode, ...modelFields, ...attachmentFields },
+  );
   if (new TextEncoder().encode(body).length > MAX_ATTACHMENT_BODY_BYTES) {
     throw new Error('Message exceeds 12 MiB. Please remove some attachments.');
   }
@@ -504,7 +505,11 @@ export function previewAvailableModels(input: {
   });
 }
 
-export async function downloadWorkspaceFile(runId: string, name: string, downloadName = name.split('/').pop() || name): Promise<void> {
+export async function downloadWorkspaceFile(
+  runId: string,
+  name: string,
+  downloadName = name.split('/').pop() || name,
+): Promise<void> {
   const response = await fetch(`${workspaceFileUrl(runId, name)}?download=1`, { mode: 'cors' });
   if (!response.ok) throw new Error('Download failed');
   const url = URL.createObjectURL(await response.blob());
@@ -517,6 +522,12 @@ export async function downloadWorkspaceFile(runId: string, name: string, downloa
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function previewPromptCommand(task: string, permissionMode: PermissionMode): Promise<{ text: string | null }> {
-  return jsonFetch('/prompts/preview', { method: 'POST', body: JSON.stringify({ task, permissionMode }) });
+export function previewPromptCommand(
+  task: string,
+  permissionMode: PermissionMode,
+): Promise<{ text: string | null }> {
+  return jsonFetch('/prompts/preview', {
+    method: 'POST',
+    body: JSON.stringify({ task, permissionMode }),
+  });
 }

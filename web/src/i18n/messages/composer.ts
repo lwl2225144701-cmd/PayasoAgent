@@ -32,8 +32,15 @@ export const composerMessages = {
     'zh-CN': '{name}：请转换成 UTF-8 文本',
     'en-US': '{name}: convert to UTF-8 text',
   },
-  'composer.attachment.previewLimited': { 'zh-CN': '仅预览前 64K 字符，请下载查看完整文件。', 'en-US': 'Preview limited to the first 64K characters. Download the complete file.' },
-  'composer.attachment.binaryNote': { 'zh-CN': '二进制附件，无法直接预览。可下载后处理，或让 Agent 用系统工具转换读取。', 'en-US': 'Binary attachment, no preview available. Download it, or let the agent convert it with system tools.' },
+  'composer.attachment.previewLimited': {
+    'zh-CN': '仅预览前 64K 字符，请下载查看完整文件。',
+    'en-US': 'Preview limited to the first 64K characters. Download the complete file.',
+  },
+  'composer.attachment.binaryNote': {
+    'zh-CN': '二进制附件，无法直接预览。可下载后处理，或让 Agent 用系统工具转换读取。',
+    'en-US':
+      'Binary attachment, no preview available. Download it, or let the agent convert it with system tools.',
+  },
   'composer.attachment.preview': { 'zh-CN': '预览', 'en-US': 'Preview' },
   'composer.attachment.download': { 'zh-CN': '下载', 'en-US': 'Download' },
   'composer.attachment.close': { 'zh-CN': '关闭预览', 'en-US': 'Close preview' },
@@ -47,8 +54,10 @@ export const composerMessages = {
     'en-US': 'At most {count} attachments can be attached',
   },
   'composer.attachment.unsupportedType': {
-    'zh-CN': '{name}：仅支持图片、UTF-8 文本、配置、代码文件，以及 .docx / .pptx / .xlsx / .pdf / .doc / .ppt 文档',
-    'en-US': '{name}: only images, UTF-8 text, configuration, code files and .docx / .pptx / .xlsx / .pdf / .doc / .ppt documents are supported',
+    'zh-CN':
+      '{name}：仅支持图片、UTF-8 文本、配置、代码文件，以及 .docx / .pptx / .xlsx / .pdf / .doc / .ppt 文档',
+    'en-US':
+      '{name}: only images, UTF-8 text, configuration, code files and .docx / .pptx / .xlsx / .pdf / .doc / .ppt documents are supported',
   },
   'composer.attachment.tooLarge': {
     'zh-CN': '{name}：超过 8MB 上限',

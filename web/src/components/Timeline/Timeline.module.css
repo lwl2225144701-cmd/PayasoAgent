@@ -215,6 +215,15 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 42%, transparent);
 }
 
+/* 底部统计条里的可见百分比：与 pill 同层级的小字，不抢视觉。 */
+.gaugePercent {
+  margin-left: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
 .gaugeTooltip {
   position: absolute;
   left: 50%;

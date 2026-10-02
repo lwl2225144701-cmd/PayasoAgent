@@ -1,4 +1,3 @@
-import { PromptPreview } from './PromptPreview';
 import {
   type ClipboardEvent,
   type CompositionEvent,
@@ -9,6 +8,15 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  attachmentKind,
+  attachmentSizeLabel,
+  MAX_ATTACHMENTS,
+  MAX_IMAGE_BYTES,
+  MAX_OFFICE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_TEXT_BYTES,
+} from '../../../../src/attachment-policy';
 import { listPromptCommands } from '../../api';
 import {
   type CommandCandidate,
@@ -16,19 +24,12 @@ import {
   mergeCommandCandidates,
 } from '../../commands/builtin-commands';
 import { useI18n } from '../../i18n';
-import type {
-  ContextUsageEvent,
-  ModelProviderView,
-  ModelSelection,
-  PermissionMode,
-  PromptCommand,
-} from '../../types';
+import type { ModelProviderView, ModelSelection, PermissionMode, PromptCommand } from '../../types';
 import { ChevronDownIcon, CloseIcon, FolderIcon } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
-
-import { attachmentKind, attachmentSizeLabel, MAX_ATTACHMENTS, MAX_IMAGE_BYTES, MAX_OFFICE_BYTES, MAX_PDF_BYTES, MAX_TEXT_BYTES } from '../../../../src/attachment-policy';
+import { PromptPreview } from './PromptPreview';
 
 interface PendingAttachment {
   id: string;
@@ -61,8 +62,6 @@ interface InputBarProps {
   onSelectModel?: (providerId: string, model: string) => void;
   // 当前模型是否支持图片输入（显式开关 > pi-ai 注册表）；粘贴了图片但不支持时给出警告
   visionSupported?: boolean;
-  // 上下文预算环形指示器（当前 Run 最新 context_usage；无则不显示）
-  contextUsage?: ContextUsageEvent;
   // 当前 Run 执行时，新提交的消息会进入会话发送队列
   queuedCount?: number;
   queuedMessages?: QueuedComposerMessage[];
@@ -93,7 +92,6 @@ export function InputBar({
   models = [],
   onSelectModel,
   visionSupported,
-  contextUsage,
   queuedCount = 0,
   queuedMessages = [],
   onSendQueuedNow,
@@ -129,8 +127,14 @@ export function InputBar({
   useEffect(() => {
     let active = true;
     setPromptCommands([]);
-    listPromptCommands().then(({ prompts }) => { if (active) setPromptCommands(prompts); }).catch(() => {});
-    return () => { active = false; };
+    listPromptCommands()
+      .then(({ prompts }) => {
+        if (active) setPromptCommands(prompts);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, [workspaceName]);
 
   // 当前输入匹配的命令：第一个词以 / 开头 → 进入补全模式（裸 / 即展示全量列表）
@@ -140,8 +144,18 @@ export function InputBar({
   const filteredPrompts: CommandCandidate[] = isPromptPrefix
     ? mergeCommandCandidates(firstWord.slice(1), promptCommands)
     : [];
-  const selectedTemplate = permissionMode === 'read-only' ? undefined : promptCommands.find(cmd => `/${cmd.name}` === firstWord);
-  const templatePreview = selectedTemplate && <PromptPreview task={text} command={selectedTemplate} permissionMode={permissionMode} onApply={setText} />;
+  const selectedTemplate =
+    permissionMode === 'read-only'
+      ? undefined
+      : promptCommands.find((cmd) => `/${cmd.name}` === firstWord);
+  const templatePreview = selectedTemplate && (
+    <PromptPreview
+      task={text}
+      command={selectedTemplate}
+      permissionMode={permissionMode}
+      onApply={setText}
+    />
+  );
   // 输入已与唯一候选完全一致 → 收起菜单（否则选中后菜单会一直挂在原命令上）
   const exactCommandTyped =
     filteredPrompts.length === 1 && filteredPrompts[0].name === firstWord.slice(1);
@@ -298,10 +312,13 @@ export function InputBar({
         continue;
       }
       const limit =
-        kind === 'image' ? MAX_IMAGE_BYTES
-        : kind === 'pdf' ? MAX_PDF_BYTES
-        : kind === 'text' ? MAX_TEXT_BYTES
-        : MAX_OFFICE_BYTES;
+        kind === 'image'
+          ? MAX_IMAGE_BYTES
+          : kind === 'pdf'
+            ? MAX_PDF_BYTES
+            : kind === 'text'
+              ? MAX_TEXT_BYTES
+              : MAX_OFFICE_BYTES;
       if (file.size > limit) {
         rejected.push(
           t(
@@ -428,18 +445,26 @@ export function InputBar({
     attachments.length > 0 ? (
       <div className={styles.attachmentStrip}>
         {attachments.map((item) => (
-          <div key={item.id} className={`${styles.attachmentChip} ${attachmentKind(item.file.name, item.file.type) !== 'image' ? styles.fileChip : ''}`}>
+          <div
+            key={item.id}
+            className={`${styles.attachmentChip} ${attachmentKind(item.file.name, item.file.type) !== 'image' ? styles.fileChip : ''}`}
+          >
             {attachmentKind(item.file.name, item.file.type) !== 'image' ? (
               <div className={styles.fileInfo} title={item.file.name}>
                 <span className={styles.fileName}>{item.file.name}</span>
-                <span className={styles.fileMeta}>{item.file.name.split('.').pop()?.toUpperCase()} · {attachmentSizeLabel(item.file.size)}</span>
+                <span className={styles.fileMeta}>
+                  {item.file.name.split('.').pop()?.toUpperCase()} ·{' '}
+                  {attachmentSizeLabel(item.file.size)}
+                </span>
               </div>
-            ) : <img
-              src={item.url}
-              alt={item.file.name}
-              className={styles.attachmentThumb}
-              title={item.file.name}
-            />}
+            ) : (
+              <img
+                src={item.url}
+                alt={item.file.name}
+                className={styles.attachmentThumb}
+                title={item.file.name}
+              />
+            )}
             <button
               type="button"
               className={styles.attachmentRemove}
@@ -455,7 +480,8 @@ export function InputBar({
 
   // 已粘贴图片但当前模型不支持视觉：图片发出去模型也看不到，发送前明确提示
   const visionWarning =
-    attachments.some((item) => attachmentKind(item.file.name, item.file.type) === 'image') && visionSupported === false ? (
+    attachments.some((item) => attachmentKind(item.file.name, item.file.type) === 'image') &&
+    visionSupported === false ? (
       <div className={styles.visionWarning}>{t('composer.visionWarning')}</div>
     ) : null;
 
@@ -632,7 +658,6 @@ export function InputBar({
           currentModel={currentModel}
           models={models}
           onSelectModel={onSelectModel}
-          contextUsage={contextUsage}
           queuedCount={queuedCount}
           permissionMode={permissionMode}
           onSelectPermission={onSelectPermission}
