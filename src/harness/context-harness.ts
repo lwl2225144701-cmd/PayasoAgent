@@ -45,6 +45,11 @@ import {
   type ToolTurnProgress,
 } from './progress-reminder.js';
 import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
+import {
+  type ProjectionPolicy,
+  projectStaleToolOutputs,
+  resolveProjectionPolicy,
+} from './tool-output-projection.js';
 
 export interface ContextCompactionResult {
   summarizedMessages: number;
@@ -173,6 +178,8 @@ export class DefaultContextHarness implements AgentContextHarness {
   private toolchain: RuntimeToolchainCapabilities | undefined;
   private readonly summarizer: ConversationSummarizer;
   private readonly progressReminderPolicy: ProgressReminderPolicy | undefined;
+  // P2-C 投影策略：旧工具结果的确定性降级（env 可调，PAYASO_PROJECT_OLD_TOOL_OUTPUTS=0 关闭）。
+  private readonly projectionPolicy: ProjectionPolicy;
   private state = createContextHarnessState();
 
   constructor(options: {
@@ -187,7 +194,9 @@ export class DefaultContextHarness implements AgentContextHarness {
     projectInstructions?: string;
     finalReview?: boolean;
     progressReminder?: ProgressReminderPolicy | false;
+    projection?: ProjectionPolicy;
   }) {
+    this.projectionPolicy = options.projection ?? resolveProjectionPolicy();
     this.progressReminderPolicy =
       options.progressReminder === false || process.env.PAYASO_PROGRESS_REMINDER === 'off'
         ? undefined
@@ -583,6 +592,13 @@ export class DefaultContextHarness implements AgentContextHarness {
     // 计划投影与本轮视图共用同一份文本：预算计量必须和实际注入的是同一个字符串。
     const planText = this.planViewText();
     let modelView = this.buildModelView(transcript);
+    // P2-C 投影：在算预算之前，先把"已经变老"的工具结果做确定性降级（免费、
+    // 零 LLM 调用）。放在这里有两个原因：
+    //   1) 下面 process() 的估值与触发判断看到的都是投影**之后**的体积——
+    //      投影省得够多时，昂贵的摘要根本不会发生（成本阶梯：免费的先上）；
+    //   2) 它只改模型视图，canonical transcript 不动。
+    const projection = projectStaleToolOutputs(modelView, this.projectionPolicy);
+    if (projection.projectedCount > 0) modelView = projection.messages;
     let processed = this.contextManager.process(modelView, tools);
     let compaction: ContextCompactionResult | undefined;
 
