@@ -207,6 +207,8 @@ export type TraceEvent =
       tool: string; // 工具名称
       originalBytes: number; // 原始 UTF-8 字节数
       returnedBytes: number; // 截断后 UTF-8 字节数
+      // 完整原文落盘后的工作区相对路径（B 项）；落盘失败时缺省。
+      spillPath?: string;
     }
   | {
       type: 'shell_sandbox_started';
@@ -413,6 +415,7 @@ export type TraceEventInput =
       tool: string;
       originalBytes: number;
       returnedBytes: number;
+      spillPath?: string;
     }
   | {
       type: 'shell_sandbox_started';

@@ -62,6 +62,7 @@ import {
 } from '../side-effect.js';
 import { type AgentState, updateState } from '../state.js';
 import { classifyToolError } from '../tool-error-classifier.js';
+import { spillNotice, spillToolOutput } from '../tool-output-spill.js';
 import type { TraceEventInput } from '../trace.js';
 import { ToolInvocationStateMachine } from './state-machine.js';
 
@@ -416,15 +417,26 @@ export async function invokeToolCall(
 
       // ---- v1.3.3 Tool Output Guard：validation 之后，任何进入 Runtime 状态 / LLM Context 的内容一律受限 ----
       const guarded = guardToolOutput(normalized.text);
+      // B 项（单条闸可恢复）：超限时把完整原文落盘进 input/spill/，并把可读回的
+      // 工作区相对路径交给模型——中间被砍掉的部分从此可恢复。
+      // fail-soft：落盘失败（spillPath=null）→ 保持原受限结果，绝不因落盘失败丢数据。
+      const spillPath = guarded.truncated
+        ? spillToolOutput(normalized.text, {
+            workspaceRoot: toolContext.workspaceRoot,
+            toolName,
+            runId: toolContext.runId,
+          })
+        : null;
       if (guarded.truncated) {
         emit({
           type: 'tool_output_truncated',
           tool: toolName,
           originalBytes: guarded.originalBytes,
           returnedBytes: guarded.returnedBytes,
+          ...(spillPath ? { spillPath } : {}),
         });
       }
-      const result = guarded.content; // 后续所有使用处（trace/scratchpad/messages/recovery）均为受限结果
+      const result = spillPath ? `${guarded.content}\n${spillNotice(spillPath)}` : guarded.content; // 后续所有使用处（trace/scratchpad/messages/recovery）均为受限结果
       observer.log(`[Tool 返回] ${result}`);
 
       // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）

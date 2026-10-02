@@ -378,6 +378,8 @@ export interface ToolOutputTruncatedEvent extends TraceEventBase {
   tool: string;
   originalBytes: number;
   returnedBytes: number;
+  /** 完整原文落盘后的工作区相对路径（B 项）；落盘失败时缺省。 */
+  spillPath?: string;
 }
 
 export interface ShellSandboxStartedEvent extends TraceEventBase {
