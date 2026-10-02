@@ -56,6 +56,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'text-attachments', file: 'tests/text-attachments.test.ts' },
   { name: 'attachment-store', file: 'tests/attachment-store.test.ts' },
   { name: 'attachment-normalize', file: 'tests/attachment-normalize.test.ts' },
+  { name: 'image-materialize-budget', file: 'tests/image-materialize-budget.test.ts' },
   // skill 自带算法单测（纯函数、零依赖）：进套件防腐烂
   { name: 'table-layout', file: '.payaso/skills/pdf-official/scripts/table-layout.test.mjs' },
   // SWE-bench 评测适配器单测（纯函数：抽样/policy/决策）

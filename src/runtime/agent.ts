@@ -19,7 +19,7 @@ import { createAgentContext } from './agent-context.js';
 import type { ApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
 import type { AgentExecutionContext } from './contracts.js';
-import { materializeMessagesForModel } from './image-materialize.js';
+import { materializeMessagesForModel, resolveInlineImageBudget } from './image-materialize.js';
 import type { RuntimeObserver } from './observer-port.js';
 import { updateState } from './state.js';
 import { invokeToolCall } from './tool-invocation/process-manager.js';
@@ -270,7 +270,12 @@ export async function runAgent(
       // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
       // 图片在调用边界物化：Harness 视图里的图片是路径引用，这里读取为 base64
       // 副本（不污染 transcript / checkpoint）；非视觉模型则剥离图片并文本注明。
-      const modelMessages = materializeMessagesForModel(ctx.messages, workspaceRoot, visionEnabled);
+      const modelMessages = materializeMessagesForModel(
+        ctx.messages,
+        workspaceRoot,
+        visionEnabled,
+        resolveInlineImageBudget(),
+      );
       // Trace: LLM 调用开始 —— llm_call 只在调用结束后落盘，大上下文 prefill 的
       // 首 token 等待期（可达数十秒）必须有自己的事件，否则前端在该窗口完全静默。
       emit({
