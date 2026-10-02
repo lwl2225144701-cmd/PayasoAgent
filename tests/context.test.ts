@@ -283,6 +283,11 @@ await test('Harness incrementally summarizes old complete turns and restores sum
     permissionMode: 'workspace-write',
     modelContext,
     summarizer,
+    // 本用例验证的是"跨轮**增量**摘要 + 状态恢复"这套机制：它要求第一次压缩后
+    // 仍留下未摘要的历史，第二次才继续压。默认策略（P2-D：保留 16% + 独立成本
+    // 上限 160K）比过去激进得多，第一次就会把这段小历史吃光，于是这里显式钉住
+    // 一个"宽保留"策略来复现该场景——顺带覆盖 compaction 选项的接线。
+    compaction: { triggerRatio: 0.8, retainRatio: 0.65, retainTokens: 2_925 },
   });
   const history: ChatMessage[] = [];
   for (let index = 0; index < 8; index++) {

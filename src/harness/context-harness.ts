@@ -3,6 +3,11 @@ import { getNetworkMode } from '../network-mode.js';
 import type { PermissionMode } from '../permission-mode.js';
 import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
 import type { TaskConstraints } from '../task-constraints.js';
+import {
+  type CompactionPolicy,
+  resolveCompactionPolicy,
+  resolveCompactionThresholds,
+} from './compaction-policy.js';
 import { ContextManager, type ContextUsage } from './context-manager.js';
 import {
   type ContextHarnessState,
@@ -180,6 +185,8 @@ export class DefaultContextHarness implements AgentContextHarness {
   private readonly progressReminderPolicy: ProgressReminderPolicy | undefined;
   // P2-C 投影策略：旧工具结果的确定性降级（env 可调，PAYASO_PROJECT_OLD_TOOL_OUTPUTS=0 关闭）。
   private readonly projectionPolicy: ProjectionPolicy;
+  // P2-D 压缩阈值策略：触发线 = min(窗口比例, 独立成本上限)，保留量留出带宽。
+  private readonly compactionPolicy: CompactionPolicy;
   private state = createContextHarnessState();
 
   constructor(options: {
@@ -195,8 +202,10 @@ export class DefaultContextHarness implements AgentContextHarness {
     finalReview?: boolean;
     progressReminder?: ProgressReminderPolicy | false;
     projection?: ProjectionPolicy;
+    compaction?: CompactionPolicy;
   }) {
     this.projectionPolicy = options.projection ?? resolveProjectionPolicy();
+    this.compactionPolicy = options.compaction ?? resolveCompactionPolicy();
     this.progressReminderPolicy =
       options.progressReminder === false || process.env.PAYASO_PROGRESS_REMINDER === 'off'
         ? undefined
@@ -602,8 +611,12 @@ export class DefaultContextHarness implements AgentContextHarness {
     let processed = this.contextManager.process(modelView, tools);
     let compaction: ContextCompactionResult | undefined;
 
-    const triggerTokens = Math.floor(this.modelContext.maxInputTokens * 0.8);
-    const targetTokens = Math.floor(this.modelContext.maxInputTokens * 0.65);
+    const thresholds = resolveCompactionThresholds(
+      this.compactionPolicy,
+      this.modelContext.maxInputTokens,
+    );
+    const triggerTokens = thresholds.trigger;
+    const targetTokens = thresholds.retain;
     // 触发判断必须用修剪前的原始估值：修剪本身会把估值压到阈值附近，
     // system 消息变大一点点就会让修剪后估值恰好落到触发线下，摘要永不发生。
     const preTrimEstimated = processed.usage.beforeMessageTokens + processed.usage.toolSchemaTokens;
@@ -680,7 +693,10 @@ export class DefaultContextHarness implements AgentContextHarness {
     summaryTokens: number;
     compactedTokens: number;
   } | null> {
-    const effectiveTarget = targetTokens ?? Math.floor(this.modelContext.maxInputTokens * 0.65);
+    // P2-D：未显式指定目标时用策略算出的保留量（不再写死 0.65，那等于没压）。
+    const effectiveTarget =
+      targetTokens ??
+      resolveCompactionThresholds(this.compactionPolicy, this.modelContext.maxInputTokens).retain;
     const modelView = this.buildModelView(transcript);
     const compacted = this.contextManager.process(modelView, tools, effectiveTarget);
     const removedCount = compacted.usage.trimmedMessages;
