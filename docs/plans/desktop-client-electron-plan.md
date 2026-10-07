@@ -1,6 +1,6 @@
 # 桌面客户端 · A 方案（Electron）细化调研
 
-> 状态：**调研完成，未实施**（2026-10-07）。
+> 状态：**已落地到「可打包、包内后端实跑通过」**（2026-10-07）。实施清单见文末「§9 实施状态」。
 > 前置文档：[`desktop-client-plan.md`](desktop-client-plan.md)（三条路线的横向对比）。本文只深挖**推荐的 A 方案**。
 > 可信度标注沿用前置文档的约定：**✅ 已核实** / **⚠️ 推断** / **❓ 未验证**。
 
@@ -13,8 +13,8 @@
 | 前端 | ✅ **零改动**（`API_BASE=''`，壳加载 `http://127.0.0.1:4500`） |
 | 后端 | ✅ **零改动**（本来就是独立进程，`node dist/host/index.js`） |
 | 原生模块 | ✅ **不用重编**——三个 `.node` 全是 Node-API（本地符号已验证），见 §2 |
-| 唯一要先定的事 | 后端跑在**哪个 Node** 里（A1 自带 / A2 用 Electron 自带），**一个 5 分钟的 spike 就能定** |
-| 建议 | 先做 A1（零风险），spike 通过后可换 A2 省掉约 100MB |
+| A1 / A2 的分叉 | **已定 A1**（自带官方 Node，零风险）。同时实测 A2 **也可行**（Electron 44 的 Node 24.21.0 带 `node:sqlite`，`sharp`/`@napi-rs/canvas` 不重编即可载入），所以壳里留了 **A2 兜底**：万一漏打包运行时，自动退回 Electron 自身的 Node —— 装完照样能开 |
+| 实测落地 | `electron-builder --mac --dir` 出包成功，**包内后端用包内 Node 实跑通过**（`/workspace`、`/runs`、`/`（UI）全部 200，`sharp` 可载入） |
 
 壳的价值只有三件：**免开终端、自动拉起后端、顺带拿到图标/菜单/更新**。别把壳做成第二个客户端逻辑。
 
@@ -64,14 +64,26 @@
 
 A1 现在就能落地且零风险；A2 能省 100MB，值得为它做一次验证（见下）。**不要一上来就赌 A2**——它可能失败在 `node:sqlite`，而这个失败要到跑真实会话时才暴露。
 
-### 2.1 决策 spike（5 分钟，两条路各跑一次）
+### 2.1 决策 spike（**已跑，结果如下**）
 
-> ❗ **这条 spike 要在你自己的终端跑**：Agent 沙箱写不了 `~/Library/Caches/electron/`（`EPERM`），
-> Electron 二进制下载完落缓存那一步必失败。跑完把结果回填本节即可。
+> **实测结果**（Electron 44.6.0，`ELECTRON_RUN_AS_NODE=1`）：
 >
-> 另：这台机器走深信服代理，**从 GitHub releases 拉 Electron 二进制容易断**（实测下到 40MB 就失败）。
-> 拉不动就走 npmmirror 镜像：`export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
-> （`registry.npmmirror.com/-/binary/electron/` 实测 200 可用；CI 里也建议固定这个变量）。
+> ```text
+> ① node:sqlite → function | node 24.21.0
+> ② sharp      → function          ← 不重编就能载入（Node-API）
+> ③ canvas     → object            ← 同上
+> ```
+>
+> 也就是说 **A2 完全可行**。仍然选 A1 的理由是：A1 与终端里的运行环境完全一致（零意外），
+> 而且后端升级不被 Electron 的 Node 版本绑定。代价只是包体大 112MB。
+> **实现在壳里做了兜底**：漏打包运行时就自动退回 A2，「装完能开」不依赖任何单点。
+>
+> **两个网络/环境坑**（踩过，记下来）：
+> - 这台机器走深信服代理，**从 GitHub releases 拉 Electron 二进制容易断**（下到 40MB 就失败）。
+>   走 npmmirror 镜像稳定可用：`export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
+>   （`registry.npmmirror.com/-/binary/electron/` 实测 200）；CI 里建议固定这个变量。
+> - electron-builder 的产物缓存默认在 `~/Library/Caches/{electron,electron-builder}`，
+>   受限环境下可用 `ELECTRON_BUILDER_CACHE=<绝对路径>` + `HOME=<可写目录>` 改道。
 
 ```bash
 cd /Users/luweiliang/Downloads/myProject/PayasoAgent
@@ -246,12 +258,21 @@ files:                       # 只放壳自己的产物
   - dist/**/*
   - "!**/node_modules/**"
 
-extraResources:              # 后端整体走真实文件系统
-  - from: ../dist/        to: app/dist/
-  - from: ../web/dist/    to: app/web/dist/
-  - from: ../node_modules/ to: app/node_modules/
-  - from: ../bin/         to: app/bin/
-  - from: runtime/bin/node to: runtime/bin/node   # A2 则删掉这一行
+extraResources:
+  # 后端整体走真实文件系统（scripts/stage-backend.mjs 生成在 .stage/app）
+  #
+  # ⚠️ 这里是全篇最容易踩的坑：electron-builder 的 createFilter **硬编码丢弃根级
+  # node_modules**（源码原话 "filter the root node_modules"），但允许嵌套的。
+  # 所以来源必须是 `.stage`（而不是 `.stage/app`），让产物里变成 app/node_modules
+  # 这条嵌套路径，才会被完整复制。踩过：不改的话包里只有 6.9MB，后端一启动就
+  # Cannot find module。
+  - from: .stage
+    to: .
+    filter:
+      - "**/*"
+      - "**/node_modules{,/**/*}"
+  - from: runtime/bin/node
+    to: runtime/bin/node   # A2 则删掉这一行
 
 npmRebuild: false            # A1/A2 关键：别按 Electron ABI 重编（事实 4：全是 Node-API）
 
@@ -398,3 +419,48 @@ DSH 的实装可直接参照：`app-update.yml` 用 `provider: generic` + `chann
 - DSH 实装证据：本机 `/Applications/DeepSeek Harness.app` 拆包（`app.asar` 头 → `package.json` / `lib/main.js`、`runtime/versions.json`）
 - 横向路线对比：[`desktop-client-plan.md`](desktop-client-plan.md)
 - 本项目 PWA 桌面入口（已实施）：[`../web/pwa-desktop-install.md`](../web/pwa-desktop-install.md)
+
+## 9. 实施状态
+
+已落地在 [`apps/desktop/`](../../apps/desktop/)（2026-10-07），**包内后端实跑通过**。
+
+| 项 | 状态 |
+|---|---|
+| `src/main.ts` 壳主进程（约 230 行：起后端 / 就绪探针 / 分级关停 / 单实例 / 端口占用复用 / 外链走系统浏览器） | ✅ |
+| **A1** 自带官方 Node（`scripts/fetch-node.mjs`，v22.22.3，只解 `bin/node`） | ✅ |
+| **A2 兜底**（漏打包运行时 → 自动用 Electron 自身的 Node） | ✅ |
+| 后端 staging（`scripts/stage-backend.mjs`：**重新构建** + 只装生产依赖） | ✅ 97.3 MB |
+| 应用图标（`scripts/make-icon.mjs`，从 `web/public/icon-512.png` 派生；二进制不进 git） | ✅ |
+| `electron-builder.yml`（`npmRebuild: false`、icon、entitlements、dmg/zip） | ✅ |
+| 根脚本 `desktop:setup` / `desktop` / `desktop:dist` / `desktop:dmg` | ✅ |
+| `electron-builder --mac --dir` 出包 | ✅ |
+
+**实测体积**
+
+| | 体积 |
+|---|---|
+| Electron 壳（`Contents/Frameworks`） | 288 MB |
+| 后端整体（`dist` 1.1M + `web/dist` 5.7M + 生产 `node_modules` **131M**） | 138 MB |
+| 自带 Node（`runtime/bin/node` v22.22.3） | 112 MB |
+| `app.asar`（壳自身，只是 main.js） | 12 KB |
+| **合计** | **539 MB**（DMG 压缩后会小很多，未实打） |
+
+**包内后端实跑验收**（用包里的 Node 跑包里的后端）：
+
+```text
+[context] 生效配置（env 可覆盖）
+  投影 on  · 保留最近 2 轮 / 20 条 · 成批 10 条
+GET /workspace → 200 {"workspace":null}
+GET /          → 200 text/html        ← UI 正常被托管
+GET /runs      → 200
+sharp: function                       ← 生产依赖可载入
+```
+
+**还没做**（如实）：
+
+- ❌ **GUI 端到端未验**：壳窗口需要图形会话，沙箱里只能验到"包内后端能跑"。
+  **需要你在真机双击一次**：`apps/desktop/release/mac-arm64/PayasoAgent.app`
+- ❌ `dist:dmg` 未实打（DMG 生成、压缩后体积均未验证）
+- ❌ 签名 / 公证 / 自动更新（期 2、期 3；`entitlements.mac.plist` 内容仍标注未验证）
+- ❌ Windows / Linux（`fetch-node.mjs` 目前只支持 darwin/linux）
+- ❌ 后端崩溃弹窗、端口占用复用这两个分支**代码在但未造境验证**

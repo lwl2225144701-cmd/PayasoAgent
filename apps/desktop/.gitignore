@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.stage/
+release/
+runtime/bin/node
+runtime/.tmp/
+*.tsbuildinfo
+build/icon.icns
+build/icon.iconset/

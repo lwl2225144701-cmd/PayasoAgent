@@ -48,6 +48,7 @@ docs/
 │   ├── thinking-level-plan.md
 │   ├── phase2-session-persistence.md
 │   ├── desktop-client-plan.md
+│   ├── desktop-client-electron-plan.md
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI

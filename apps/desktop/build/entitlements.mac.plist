@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ⚠️ 未验证：这些 entitlement 是按 Electron 常见做法写的，动手做公证（期 2）前
+  必须按 Apple 官方文档逐条核对，特别是 disable-library-validation 的适用条件。
+  本地自用（期 1）完全不需要这个文件。
+
+  已知约束：应用内嵌了一个 node 二进制（A1）——内嵌可执行文件必须随应用一并签名，
+  且不得带 quarantine 标记，否则公证会被拒。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>
