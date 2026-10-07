@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveProjectionPolicy } from '../harness/tool-output-projection.js';
+import { resolveInlineImageBudget } from '../runtime/image-materialize.js';
+import { resolveToolOutputBudget } from '../tool-output-budget.js';
 import { setHostApiToken } from './routes.js';
 // 模块: Host API 入口 — 启动 Payaso Host Server
 // 用法: npm run host   （PORT 环境变量可覆盖端口，默认 4500）
@@ -57,6 +60,24 @@ export async function startHost(
     );
   });
   console.log(`Payaso Host API listening on http://localhost:${port}`);
+  // 生效的上下文管理配置：这几组参数都能用环境变量覆盖，启动时打出来，
+  // 免得"以为改了、其实没传进去"——做 A/B 对照时这一点尤其致命。
+  const projection = resolveProjectionPolicy();
+  const imageBudget = resolveInlineImageBudget();
+  const toolBudget = resolveToolOutputBudget();
+  console.log('[context] 生效配置（env 可覆盖）');
+  console.log(
+    `  投影 ${projection.enabled ? 'on ' : 'off'} · 保留最近 ${projection.keepRecentTurns} 轮 / ${projection.keepRecentToolResults} 条` +
+      ` · 成批 ${projection.batchToolResults} 条（PAYASO_PROJECT_BATCH，<=1 = 逐条）`,
+  );
+  console.log(
+    `  图片 最多内联 ${imageBudget.maxInlineImages} 张 / 合计 ${Math.round(imageBudget.maxInlineImageBytes / 1024 / 1024)}MB` +
+      `（PAYASO_MAX_INLINE_IMAGES / PAYASO_MAX_INLINE_IMAGE_BYTES）`,
+  );
+  console.log(
+    `  工具输出 ${Math.round(toolBudget.maxBytes / 1024)}KB` +
+      `（头 ${Math.round(toolBudget.headBytes / 1024)}KB + 尾 ${Math.round(toolBudget.tailBytes / 1024)}KB；PAYASO_TOOL_OUTPUT_*）`,
+  );
   console.log(`  POST /runs                创建 Run`);
   console.log(`  GET  /runs                列出 Run`);
   console.log(`  GET  /runs/:id            单个 Run 状态`);
