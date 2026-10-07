@@ -155,6 +155,66 @@ check('不改动 canonical transcript（入参字节不变）', () => {
   assert.equal(JSON.stringify(input), snapshot, 'transcript 不得被改动');
 });
 
+// ---- 成批推进（前缀缓存） ----
+//
+// 背景：边界每前移一条就把该处之后的整个前缀改写一遍，provider 缓存从那里起失效。
+// 逐条前移 = 每轮打断一次缓存（实测过一次：命中率 89% → 20%）。以下锁住"成批"行为。
+
+check('不足一批：边界完全静止（同一数组引用，前缀一个字节都不改）', () => {
+  // K=20、batch=10：工具结果 20~29 条时还凑不满一批，应当一条都不动。
+  for (const n of [20, 21, 22, 25, 29]) {
+    const input = transcript(n);
+    const r = projectStaleToolOutputs(input);
+    assert.equal(r.projectedCount, 0, `${n} 条时不该投影（否则每轮都打断一次缓存）`);
+    assert.equal(r.messages, input, `${n} 条时应返回同一引用`);
+    assert.equal(r.savedBytes, 0);
+  }
+});
+
+check('满一批才前移，且一次前移一整批', () => {
+  assert.equal(projectStaleToolOutputs(transcript(30)).projectedCount, 10, '第 30 条时投影 10 条');
+  assert.equal(projectStaleToolOutputs(transcript(39)).projectedCount, 10, '第 39 条时仍是 10 条');
+  assert.equal(
+    projectStaleToolOutputs(transcript(40)).projectedCount,
+    20,
+    '第 40 条时前进到 20 条',
+  );
+});
+
+check('工具规则生效区间内单调不回退（n>=20）', () => {
+  let prev = -1;
+  for (let n = 20; n <= 60; n++) {
+    const c = projectStaleToolOutputs(transcript(n)).projectedCount;
+    assert.ok(c >= prev, `从 ${n - 1} 到 ${n} 条时投影数回退了：${prev} → ${c}`);
+    prev = c;
+  }
+});
+
+check('batch<=1：退回逐条推进（保留旧行为，env 可回退）', () => {
+  const perOne: ProjectionPolicy = { ...DEFAULT_PROJECTION_POLICY, batchToolResults: 1 };
+  // 22 条工具结果、K=20：逐条模式下"倒数第 21 条"立刻被投影
+  assert.equal(projectStaleToolOutputs(transcript(22), perOne).projectedCount, 2);
+  // 成批模式下同样输入一条都不动
+  assert.equal(projectStaleToolOutputs(transcript(22)).projectedCount, 0);
+  assert.equal(
+    projectStaleToolOutputs(transcript(22), { ...perOne, batchToolResults: 0 }).projectedCount,
+    2,
+    'batch=0 视同关闭成批',
+  );
+});
+
+check('env：PAYASO_PROJECT_BATCH 可调，非法值回退默认', () => {
+  assert.equal(resolveProjectionPolicy({ PAYASO_PROJECT_BATCH: '4' }).batchToolResults, 4);
+  assert.equal(
+    resolveProjectionPolicy({}).batchToolResults,
+    DEFAULT_PROJECTION_POLICY.batchToolResults,
+  );
+  assert.equal(
+    resolveProjectionPolicy({ PAYASO_PROJECT_BATCH: 'abc' }).batchToolResults,
+    DEFAULT_PROJECTION_POLICY.batchToolResults,
+  );
+});
+
 // ---- 边界 ----
 
 check('连续 user 提醒不会把边界推得过于靠后（最近 K 条兜底）', () => {

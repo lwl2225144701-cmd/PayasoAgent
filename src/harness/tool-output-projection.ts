@@ -16,6 +16,8 @@
 // - **只会变小**：原文不超过投影后长度时原样返回，绝不因为加标记而变大。
 // - 只动模型视图：canonical transcript / checkpoint 一个字节都不改。
 // - 未变更的消息保持**同一个对象引用**（前缀缓存与内存都受益）。
+// - 投影集合**成批推进、只扩不缩**（batchToolResults）：边界在两次前进之间完全静止，
+//   否则每轮改写一次前缀会让 provider 缓存持续 miss——省下的 token 又原样花回去。
 
 import type { ChatMessage } from '../llm/llm.js';
 import { TOOL_OUTPUT_MARKER, utf8ByteLength, utf8Head, utf8Tail } from '../tool-output-budget.js';
@@ -26,6 +28,16 @@ export interface ProjectionPolicy {
   keepRecentTurns: number;
   /** 无论如何都保持全文的最近工具结果条数（防止连续 user 提醒把轮边界推近末尾）。 */
   keepRecentToolResults: number;
+  /**
+   * 成批推进的批量（条数）：投影边界只在"新变老的工具结果"累计满一批时才前移。
+   *
+   * 为什么需要：边界每前移一条，就把该处之后的整个前缀改写一遍，provider 的前缀
+   * 缓存从那里起全部失效。逐条前移等于**每轮都打断一次缓存**——实测一次带图 run
+   * 因此从 89% 掉到 20%（见 context-management-plan.md「六」）。成批推进把"改写
+   * 频率"降到 1/batch，代价是投影最多滞后 batch−1 条（只会保留更多，不会更少）。
+   * `<= 1` 表示不批量化（退回逐条行为）。
+   */
+  batchToolResults: number;
   /** 投影后保留的头部字节。 */
   headBytes: number;
   /** 投影后保留的尾部字节。 */
@@ -36,6 +48,9 @@ export const DEFAULT_PROJECTION_POLICY: ProjectionPolicy = {
   enabled: true,
   keepRecentTurns: 2,
   keepRecentToolResults: 20,
+  // 取保留条数的一半：既把"每轮打断一次缓存"降到"每 10 条打断一次"，滞后的
+  // 上限也只有 9 条（按中位数 1KB/条约 9KB，相对成本上限可忽略）。
+  batchToolResults: 10,
   // 投影后约 160 + 标记 + 224 ≈ 400 字节/条：够模型认出"这里曾经有过什么结果"，
   // 又不至于几百条累积成几十万 token。
   headBytes: 160,
@@ -73,6 +88,10 @@ export function resolveProjectionPolicy(
       env.PAYASO_PROJECT_KEEP_TOOL_RESULTS,
       DEFAULT_PROJECTION_POLICY.keepRecentToolResults,
     ),
+    batchToolResults: positiveInt(
+      env.PAYASO_PROJECT_BATCH,
+      DEFAULT_PROJECTION_POLICY.batchToolResults,
+    ),
     headBytes: positiveInt(env.PAYASO_PROJECT_HEAD_BYTES, DEFAULT_PROJECTION_POLICY.headBytes),
     tailBytes: positiveInt(env.PAYASO_PROJECT_TAIL_BYTES, DEFAULT_PROJECTION_POLICY.tailBytes),
   };
@@ -81,14 +100,51 @@ export function resolveProjectionPolicy(
 /**
  * 找出"投影边界"：索引 < boundary 的消息属于老旧历史；0 表示不投影。
  *
- * 两个约束各自给出"最早仍需保留全文的下标"，取更早的那个（= 保留更多）：
+ * 先按两个约束算出"理想边界"（desiredBoundary），再按 batchToolResults 把它
+ * 量化成"整批工具结果"——这是为前缀缓存服务的，见 quantizeBoundary。
+ */
+function projectionBoundary(messages: ChatMessage[], policy: ProjectionPolicy): number {
+  return quantizeBoundary(messages, desiredBoundary(messages, policy), policy.batchToolResults);
+}
+
+/**
+ * 把理想边界量化到"整批工具结果"：只投影 batch 的整数倍条**最老**的工具结果。
+ *
+ * 单调性证明：理想边界只随消息追加而后移 → 它之前的工具结果条数 candidate 只增
+ * 不减 → `floor(candidate/batch)*batch` 只增不减 → 已投影的集合只扩不缩，不存在
+ * "投影了又恢复"（那会让请求前缀来回抖动，比不投影更伤缓存）。
+ *
+ * 为什么不是"够 batch 就前移 batch"而是取整：取整让边界在两次前进之间**完全静止**
+ * ——这是缓存能命中的前提。代价是投影滞后最多 batch−1 条（保留更多，不丢信息）。
+ */
+function quantizeBoundary(messages: ChatMessage[], desired: number, batch: number): number {
+  if (desired <= 0) return 0;
+  if (batch <= 1) return desired; // 未启用成批：退回逐条推进
+  let candidate = 0;
+  for (let i = 0; i < desired; i++) {
+    if (messages[i].role === 'tool') candidate++;
+  }
+  const quantized = Math.floor(candidate / batch) * batch;
+  if (quantized === 0) return 0;
+  // 定位第 quantized 条工具结果，边界落在它之后（它属于被投影的一侧）。
+  let seen = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== 'tool') continue;
+    seen++;
+    if (seen === quantized) return i + 1;
+  }
+  return desired;
+}
+
+/**
+ * 理想边界：两个约束各自给出"最早仍需保留全文的下标"，取更早的那个（= 保留更多）：
  *   - 约束一：最近 keepRecentTurns 轮的起点（以 user 消息为轮边界）；
  *   - 约束二：最近 keepRecentToolResults 条工具结果中最早那条。
  * 某侧不构成约束（数量不足）时由另一侧决定；两侧都不构成 → 不投影。
  * 约束二是必要的兜底：连续的 user 提醒（空回合/进度提醒）会把轮边界推到很靠近
  * 末尾，只靠约束一会把仍然新鲜的工具结果也投影掉。
  */
-function projectionBoundary(messages: ChatMessage[], policy: ProjectionPolicy): number {
+function desiredBoundary(messages: ChatMessage[], policy: ProjectionPolicy): number {
   // 约束一：往回数到第 keepRecentTurns 条 user 消息，它就是最早需保留那轮的起点。
   let turnBoundary = 0;
   let turns = 0;
