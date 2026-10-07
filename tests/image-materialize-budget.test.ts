@@ -129,6 +129,30 @@ check('找不到文件的图：降级为「未能载入」，不致命', () => {
   assert.match(view[0].content ?? '', /未能载入上下文/);
 });
 
+// ---- 无图片（回归：零图片会话曾直接崩） ----
+//
+// 曾经：total=0 时 omitCount 算成 -1，循环读 slots[-1].rawBytes → TypeError。
+// 影响面是所有「视觉模型 + 零图片会话」的第一次调用（实测 run afd5f28a 崩在这里）。
+
+check('零图片 + vision=true：安全返回同一数组引用（不崩）', () => {
+  const input: ChatMessage[] = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: '纯文本，没有任何图片' },
+    { role: 'assistant', content: 'ok' },
+  ];
+  const view = materializeMessagesForModel(input, WS, true);
+  assert.equal(view, input, '应原样返回同一引用');
+});
+
+check('零图片 + vision=false：同样安全', () => {
+  const input: ChatMessage[] = [{ role: 'user', content: '纯文本' }];
+  assert.equal(materializeMessagesForModel(input, WS, false), input);
+});
+
+check('零图片 + 空消息列表：安全', () => {
+  assert.deepEqual(materializeMessagesForModel([], WS, true), []);
+});
+
 // ---- env 解析 ----
 
 check('resolveInlineImageBudget：env 覆盖 + 非法回退默认', () => {

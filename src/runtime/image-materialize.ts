@@ -142,6 +142,17 @@ export function materializeMessagesForModel(
   vision: boolean,
   budget: InlineImageBudget = DEFAULT_INLINE_IMAGE_BUDGET,
 ): ChatMessage[] {
+  // 一条图片都没有：原样返回（同一引用，零分配）。
+  //
+  // 这个早退是**必需的**，不是优化：没有它时，下面的
+  // `omitCount = Math.min(total - 1, rawOmit)` 在 total=0 时算成 -1，而循环条件是
+  // `s >= omitCount`，于是 s=-1 也成立，读 `slots[-1].rawBytes` 直接 TypeError——
+  // 即「视觉模型 + 零图片会话」会在第一次调用就崩（实测 run `afd5f28a`：
+  // `Cannot read properties of undefined (reading 'rawBytes')`）。
+  if (!messages.some((message) => message.images && message.images.length > 0)) {
+    return messages;
+  }
+
   if (!vision) {
     return messages.map((message) => {
       if (!message.images || message.images.length === 0) return message;
