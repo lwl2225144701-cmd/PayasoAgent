@@ -47,6 +47,7 @@ docs/
 │   ├── task-delivery-and-reuse-plan.md
 │   ├── thinking-level-plan.md
 │   ├── phase2-session-persistence.md
+│   ├── desktop-client-plan.md
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI
