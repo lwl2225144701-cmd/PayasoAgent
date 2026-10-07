@@ -28,6 +28,14 @@ export interface RunStats {
   cacheReadTokens: number;
   /** 写入缓存的输入 token 合计。 */
   cacheWriteTokens: number;
+  /**
+   * **上报了缓存分桶**的 LLM 调用数。
+   *
+   * 缓存命中率的分母只能由这些调用构成：提供方没上报该桶时，"未命中"与"没数据"
+   * 无从区分，把它当 0 会把命中率算成一个凭空的低值。0 表示压根没有可用数据，
+   * 界面应当**不出数**（口径同 DSH：数据不自洽就整轮不出数）。
+   */
+  cacheUsageCalls: number;
   /** 运行时长（run_started → 终态事件；缺事件时由 createdAt/updatedAt 兜底）。 */
   durationMs: number;
 }
@@ -56,6 +64,8 @@ export interface SessionStats {
   cacheReadTokens: number;
   /** 写入缓存的输入 token 合计。 */
   cacheWriteTokens: number;
+  /** 上报了缓存分桶的 LLM 调用数（命中率分母的构成范围，同 RunStats）。 */
+  cacheUsageCalls: number;
   /** 各 Run 运行时长之和（活跃时长口径）。 */
   durationMs: number;
 }
@@ -74,9 +84,17 @@ interface UsageSplit {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** 提供方是否**真的上报了**缓存分桶（缺失 ≠ 未命中）。 */
+  cacheReported: boolean;
 }
 
-const ZERO_SPLIT = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+const ZERO_SPLIT = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  cacheReported: false,
+};
 
 function splitEventUsage(usage: TokenUsage | undefined): UsageSplit | undefined {
   if (usage === null || typeof usage !== 'object') return undefined;
@@ -96,6 +114,7 @@ function splitEventUsage(usage: TokenUsage | undefined): UsageSplit | undefined 
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    cacheReported: usage.cacheReadTokens !== undefined || usage.cacheWriteTokens !== undefined,
   };
 }
 
@@ -117,6 +136,7 @@ export function deriveRunStats(
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
+  let cacheUsageCalls = 0;
   let startMs = Number.NaN;
   let endMs = Number.NaN;
   let firstDeltaMs: number | undefined;
@@ -133,10 +153,15 @@ export function deriveRunStats(
           const split = splitEventUsage(event.usage);
           if (split !== undefined) {
             tokens += split.total;
-            inputTokens += split.inputTokens;
             outputTokens += split.outputTokens;
-            cacheReadTokens += split.cacheReadTokens;
-            cacheWriteTokens += split.cacheWriteTokens;
+            // 只有提供方上报了缓存分桶的调用才进入命中率口径：把"没上报"当成 0
+            // 计进分母，会把命中率算成一个凭空的低值（实测见过 27% vs 实际 45%）。
+            if (split.cacheReported) {
+              cacheUsageCalls++;
+              inputTokens += split.inputTokens;
+              cacheReadTokens += split.cacheReadTokens;
+              cacheWriteTokens += split.cacheWriteTokens;
+            }
           }
         }
         break;
@@ -189,6 +214,7 @@ export function deriveRunStats(
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    cacheUsageCalls,
     durationMs,
   };
 }
@@ -210,6 +236,7 @@ export function aggregateSessionStats(stats: readonly RunStats[], turns: number)
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheUsageCalls: 0,
     durationMs: 0,
   };
   for (const stat of stats) {
@@ -222,6 +249,7 @@ export function aggregateSessionStats(stats: readonly RunStats[], turns: number)
     total.outputTokens += stat.outputTokens;
     total.cacheReadTokens += stat.cacheReadTokens;
     total.cacheWriteTokens += stat.cacheWriteTokens;
+    total.cacheUsageCalls += stat.cacheUsageCalls;
     total.durationMs += stat.durationMs;
     if (stat.ttftMs !== undefined) {
       total.ttftMs += stat.ttftMs;

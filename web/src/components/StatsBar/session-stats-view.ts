@@ -26,14 +26,33 @@ function tokensPerSecond(stats: SessionStats): number | undefined {
 }
 
 /**
- * 缓存命中率：命中缓存的输入 ÷ 全部输入（新增 + 命中 + 写入）。
- * 分母为 0（旧记录拆不出分桶）时返回 undefined，不显示 0%（那会被误读成"完全没命中"）。
+ * 缓存命中率：命中缓存的输入 ÷ 全部**计费输入**（未缓存 + 命中 + 写入）。
+ * 与 DSH 的会话 pill 同口径（分母含 cacheWrite）。
+ *
+ * 三条规矩：
+ * 1. 没有任何调用上报过缓存分桶 → **不出数**（缺数据与"完全没命中"不是一回事，
+ *    显示 0% 会被误读）；分母为 0 同样不出数。
+ * 2. 上报了分桶的调用已经由 Host 侧唯一口径累计（`cacheUsageCalls`），
+ *    这里只做除法。
+ * 3. **部分命中绝不显示成 100%**：取整够到 100 就往小数位要精度
+ *    （99.9 → 99.95 → 99.99），只有真的零未命中才给 100。
+ *    返回的是**字符串**，因为小数位是动态的。
  */
-function cacheHitPercent(stats: SessionStats): number | undefined {
+function cacheHitPercent(stats: SessionStats): string | undefined {
+  if ((stats.cacheUsageCalls ?? 0) <= 0) return undefined;
   const read = stats.cacheReadTokens ?? 0;
   const denom = (stats.inputTokens ?? 0) + read + (stats.cacheWriteTokens ?? 0);
   if (denom <= 0) return undefined;
-  return Math.round((read / denom) * 100);
+  if (read >= denom) return '100';
+  const percent = (read / denom) * 100;
+  const rounded = Math.round(percent);
+  if (rounded < 100) return String(rounded);
+  // 还有未命中，只是太小被取整成 100 了 → 逐级加小数位，直到不再显示 100。
+  for (const digits of [1, 2, 3]) {
+    const text = percent.toFixed(digits);
+    if (Number(text) < 100) return text;
+  }
+  return '<100';
 }
 
 /** 状态条上的两枚 pill：[活动, 用量]。零值片段自动省略。 */

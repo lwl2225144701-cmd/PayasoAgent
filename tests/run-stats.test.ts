@@ -99,6 +99,39 @@ const events: HostEvent[] = [
 }
 
 {
+  // 缺失的缓存分桶 ≠ 未命中：没上报的调用不许进命中率口径。
+  // 实测踩过：14 次调用里有 6 次不返回 cacheReadTokens，按 0 计会得到 27%，
+  // 而只算"真上报过的那 8 次"是 45%。
+  const events: HostEvent[] = [
+    {
+      ...base,
+      type: 'llm_call',
+      step: 1,
+      messageCount: 1,
+      iteration: 1,
+      response: '',
+      hasToolCalls: false,
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 115, cacheReadTokens: 100 },
+    },
+    {
+      ...base,
+      type: 'llm_call',
+      step: 2,
+      messageCount: 2,
+      iteration: 2,
+      response: '',
+      hasToolCalls: false,
+      usage: { inputTokens: 1000, outputTokens: 5, totalTokens: 1005 },
+    },
+  ];
+  const stats = deriveRunStats(events);
+  assert.equal(stats.cacheUsageCalls, 1, '只有一条上报了分桶');
+  assert.equal(stats.cacheReadTokens, 100, '只累计上报过的调用');
+  assert.equal(stats.inputTokens, 10, '未上报那条的输入不得进命中率分母');
+  assert.equal(stats.tokens, 1120, '总量仍覆盖全部调用（115 + 1005）');
+}
+
+{
   // 聚合：turns = Run 数；可选字段按计数汇总供平均。
   const a: RunStats = {
     steps: 2,
@@ -112,6 +145,7 @@ const events: HostEvent[] = [
     outputTokens: 60,
     cacheReadTokens: 180,
     cacheWriteTokens: 20,
+    cacheUsageCalls: 1,
     durationMs: 2000,
   };
   const b: RunStats = {
@@ -124,6 +158,7 @@ const events: HostEvent[] = [
     outputTokens: 20,
     cacheReadTokens: 70,
     cacheWriteTokens: 0,
+    cacheUsageCalls: 1,
     durationMs: 1000,
   };
   const s = aggregateSessionStats([a, b], 2);
@@ -140,6 +175,7 @@ const events: HostEvent[] = [
   assert.equal(s.outputTokens, 80, '输出求和（吞吐率分子）');
   assert.equal(s.cacheReadTokens, 250, '缓存命中求和');
   assert.equal(s.cacheWriteTokens, 20, '缓存写入求和');
+  assert.equal(s.cacheUsageCalls, 2, '上报了分桶的调用数求和');
 }
 
 // ---- HTTP 端点冒烟：GET /sessions/:id/stats 走通 store → 折叠 → JSON ----

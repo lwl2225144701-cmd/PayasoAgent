@@ -59,14 +59,22 @@ export interface SessionStats {
   decodeMs: number;
   decodeCount: number;
   tokens: number;
-  /** 未命中缓存的输入 token 合计（旧记录可能缺省 → 按 0 处理）。 */
+  /**
+   * 未命中缓存的输入 token 合计。**只统计上报了缓存分桶的调用**——
+   * 没有该分桶的调用既不知道命中也不知道未命中，不能混进来当 0。
+   */
   inputTokens?: number;
   /** 模型输出 token 合计（吞吐率分子）。 */
   outputTokens?: number;
-  /** 命中前缀缓存的输入 token 合计。 */
+  /** 命中前缀缓存的输入 token 合计（同样只来自上报了分桶的调用）。 */
   cacheReadTokens?: number;
-  /** 写入缓存的输入 token 合计。 */
+  /** 写入缓存的输入 token 合计（同样只来自上报了分桶的调用）。 */
   cacheWriteTokens?: number;
+  /**
+   * 上报了缓存分桶的 LLM 调用数。为 0 表示没有可用数据，**界面不应显示命中率**
+   * （显示 0% 会被误读成"完全没命中"）。
+   */
+  cacheUsageCalls?: number;
   durationMs: number;
 }
 

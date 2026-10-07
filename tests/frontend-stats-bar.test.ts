@@ -43,6 +43,7 @@ function stats(overrides: Partial<SessionStats> = {}): SessionStats {
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheUsageCalls: 0,
     durationMs: 0,
     ...overrides,
   };
@@ -68,7 +69,13 @@ check('活动组：回合 · 步 · 吞吐（调用数不再占条）', () => {
 
 check('用量组：总量 · 缓存命中率', () => {
   const [, usage] = sessionStatsGroups(
-    stats({ tokens: 12_300, inputTokens: 100, cacheReadTokens: 900, cacheWriteTokens: 0 }),
+    stats({
+      tokens: 12_300,
+      inputTokens: 100,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 0,
+      cacheUsageCalls: 1,
+    }),
   );
   assert.equal(usage[0], '12.3K tok');
   assert.equal(usage[1], '缓存命中 90%');
@@ -76,7 +83,13 @@ check('用量组：总量 · 缓存命中率', () => {
 
 check('缓存命中率含缓存写入：读 ÷ (新增 + 读 + 写)', () => {
   const [, usage] = sessionStatsGroups(
-    stats({ tokens: 1, inputTokens: 250, cacheReadTokens: 750, cacheWriteTokens: 1_000 }),
+    stats({
+      tokens: 1,
+      inputTokens: 250,
+      cacheReadTokens: 750,
+      cacheWriteTokens: 1_000,
+      cacheUsageCalls: 2,
+    }),
   );
   // 750 / 2000 = 37.5% → 38%
   assert.equal(usage[1], '缓存命中 38%');
@@ -90,6 +103,30 @@ check('吞吐缺省条件：没有解码耗时 / 没有输出 token 时不显示
 check('旧记录（拆不出分桶）不显示缓存命中，而不是显示 0%', () => {
   const [, usage] = sessionStatsGroups(stats({ tokens: 999 }));
   assert.deepEqual(usage, ['999 tok'], '宁缺勿错：分母为 0 时不渲染 0%');
+});
+
+check('有分桶数但没有任何调用上报 → 不出数（缺数据 ≠ 未命中）', () => {
+  // 实测踩过：14 次调用里 6 次不返回 cacheReadTokens，当成 0 会报出一个凭空的
+  // 低命中率。判定依据是 cacheUsageCalls（上报过该桶的调用数），不是分母大小。
+  const [, usage] = sessionStatsGroups(
+    stats({ tokens: 5_000, inputTokens: 4_000, cacheReadTokens: 1_000, cacheUsageCalls: 0 }),
+  );
+  assert.deepEqual(usage, ['5K tok'], '没有可信数据时只显示总量');
+});
+
+check('部分命中不显示成 100%：取整会到 100 时自动加小数位', () => {
+  // 9995 / 10000 = 99.95% —— Math.round 会给出 100，必须退到小数位
+  const [, usage] = sessionStatsGroups(
+    stats({ tokens: 1, inputTokens: 5, cacheReadTokens: 9_995, cacheUsageCalls: 1 }),
+  );
+  assert.equal(usage[1], '缓存命中 99.95%', '有未命中就不许显示 100%');
+});
+
+check('真的零未命中才给 100%', () => {
+  const [, usage] = sessionStatsGroups(
+    stats({ tokens: 1, inputTokens: 0, cacheReadTokens: 1_000, cacheUsageCalls: 1 }),
+  );
+  assert.equal(usage[1], '缓存命中 100%');
 });
 
 check('明细：调用数 / 首 token 取平均 / 活跃时长', () => {
@@ -115,6 +152,7 @@ check('en-US 走英文读数', () => {
       decodeMs: 2_000,
       inputTokens: 10,
       cacheReadTokens: 90,
+      cacheUsageCalls: 1,
     }),
     'en-US',
   );
