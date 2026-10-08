@@ -54,7 +54,10 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # notarize 的配置形式待按 electron-builder v26 文档核对（本项目文档标注未验证）
+  # 公证（notarize）已按 v26 源码核实（MacTargetHelper.notarizeIfProvided）：
+  # **纯环境变量驱动、无需在此配置** —— APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD +
+  # APPLE_TEAM_ID（或 APPLE_API_KEY 三件套）齐了就自动公证，`notarize: false` 是
+  # 唯一的显式开关（语义是"禁用"，别写 true）。凭据清单见实施手账 §9。
 
 dmg:
   title: PayasoAgent

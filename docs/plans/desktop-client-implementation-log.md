@@ -44,7 +44,8 @@
 
 ### ③ 没做
 
-签名 / 公证（`CSC_*` / `APPLE_*` 未配，CI 已留入口）、自动更新（期 3，缺 `latest-mac.yml`
+签名 / 公证（**配方已备好，见 §9** —— 只差 Apple Developer 账号（$99/年）+ 5 个
+secrets，管道全自动）、自动更新（期 3，缺 `latest-mac.yml`
 与发布源）、Windows / Linux（`fetch-node.mjs` 只支持 darwin / linux）、下载门面页
 （DSH 四层做法已扒清，方案与证据见 §7，本次只记录不实施）。
 
@@ -450,3 +451,44 @@ git tag v0.2.0 && git push origin v0.2.0   # 发版
    when omitted, appPath is used"）；x/y 是图标**中心**、从窗口顶部往下量。
 
 > 视觉效果要开 DMG 才能验（本地 `hdiutil` 被沙箱禁，坑 5）——由下一次 CI 构建产出。
+
+## 9. 零弹窗（拖拽即用）的完整配方：Developer ID 签名 + 公证
+
+用户要的是"拖进 Applications、双击直接开"的体验（现在首次还要右键授权一次）。
+**macOS 对浏览器下载的 app 只认两样东西：Developer ID 签名 + 公证（notarization），
+二者缺一就有弹窗，无任何免票通道**（ad-hoc 只能把「已损坏」降级成「无法验证」，坑 9；
+"无法验证开发者"也一样要授权）。别人家 DMG 拖完就好 = 这两样都做了。
+
+**门票**：Apple Developer Program，**$99/年**（个人或公司均可）。
+
+**管道已全部就绪**（无需再写代码）：
+
+- release.yml 已传 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` /
+  `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`，空值会 unset（坑 8）
+- electron-builder v26 公证**纯环境变量驱动**（源码 `notarizeIfProvided` 已核实）：
+  凭据齐了自动公证，`notarize: false` 是唯一显式开关（语义是"禁用"）
+- `afterPack` ad-hoc 钩子检测到 `CSC_LINK` 即自动让位（after-pack.cjs）
+- 真证书一到，签名 → 公证 → 出 DMG/zip 全自动，产物即"拖拽即用"
+
+**要你做的 5 步**（拿到账号后约半小时）：
+
+1. 注册 [Apple Developer Program](https://developer.apple.com/programs/)（$99/年）
+2. 建证书：Xcode → Settings → Accounts → Manage Certificates → **Developer ID
+   Application**（注意不是 "Apple Development"）；或开发者网站创建
+3. 导出 `.p12`，转 base64：`base64 -i cert.p12 | pbcopy`
+4. [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → 用户与访问 →
+   App 专用密码，生成一个
+5. GitHub 仓库 Settings → Secrets and variables → Actions，填 5 个：
+
+| Secret | 值 |
+|---|---|
+| `CSC_LINK` | 第 3 步的 base64 |
+| `CSC_KEY_PASSWORD` | p12 导出时设的密码 |
+| `APPLE_ID` | 开发者账号邮箱 |
+| `APPLE_APP_SPECIFIC_PASSWORD` | 第 4 步的专用密码 |
+| `APPLE_TEAM_ID` | Membership 页的 Team ID |
+
+然后 `git tag v0.x.y && git push origin v0.x.y`，出来的 DMG 拖拽即用、零弹窗。
+
+**备选（不花钱的"装完即用"）**：Homebrew cask —— `brew install --cask payasoagent`
+一行装完直接能开（brew 会自动清 quarantine），但那不是拖 DMG 的体验；适合命令行用户。
