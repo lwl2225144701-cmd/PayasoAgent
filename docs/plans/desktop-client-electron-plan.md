@@ -460,7 +460,8 @@ sharp: function                       ← 生产依赖可载入
 
 - ❌ **GUI 端到端未验**：壳窗口需要图形会话，沙箱里只能验到"包内后端能跑"。
   **需要你在真机双击一次**：`apps/desktop/release/mac-arm64/PayasoAgent.app`
-- ❌ `dist:dmg` 未实打（DMG 生成、压缩后体积均未验证）
+- ❌ **DMG 无法在本环境生成**：`hdiutil create` 被沙箱禁（`hdiutil: create failed - 操作不被允许`），
+  **需用户在终端跑 `npm run desktop:dmg`**；已验证 zip 产物正常（193MB，`electron-updater` 用的就是这个格式）
 - ❌ 签名 / 公证 / 自动更新（期 2、期 3；`entitlements.mac.plist` 内容仍标注未验证）
 - ❌ Windows / Linux（`fetch-node.mjs` 目前只支持 darwin/linux）
 - ❌ 后端崩溃弹窗、端口占用复用这两个分支**代码在但未造境验证**

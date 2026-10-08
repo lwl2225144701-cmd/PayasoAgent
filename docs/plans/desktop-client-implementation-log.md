@@ -1,6 +1,6 @@
 # 桌面客户端落地记录（实施过程、验证步骤、踩坑）
 
-> 状态：`e815b7b` 已推送，**装完了、包内后端实跑通过**；只有 GUI 端到端待真机双击印证。
+> 状态：`e815b7b` 已推送，**装完了、包内后端实跑通过**；GUI 端到端与 DMG 都只能真机/终端验（沙箱限制）。
 >
 > **这份文档与另两份的分工**（别混）：
 >
@@ -167,6 +167,28 @@ export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 
 > 顺带：`npm run host`（生产）天生就会用到 `dist/`，这也是为什么这条会反复咬人。
 
+### 坑 5 · DMG 只能在真机打（`hdiutil` 被沙箱禁）
+
+**现象**：`--mac dmg zip` 时 zip 成功、dmg 失败，报：
+
+```text
+hdiutil: create failed - 操作不被允许
+plistlib.InvalidFileException: Invalid file     ← dmgbuild 解析 hdiutil 输出的包装错
+```
+
+**根因**：`hdiutil create` 要挂载/卸载磁盘镜像，**沙箱不允许**；`dmgbuild` 把错误文本当
+plist 解析，于是抛出那个没有信息量的 `InvalidFileException`（连重试 3 次）。
+
+**结论**：DMG 这一步**必须由用户在终端跑**，Agent 侧只能验到 zip。
+
+```bash
+npm run desktop:dmg     # → release/PayasoAgent-0.1.0-arm64-mac.dmg + .zip
+```
+
+**已验证可用的替代**：`PayasoAgent-0.1.0-arm64-mac.zip`（193MB，含完整 `PayasoAgent.app`，
+`unzip -l` 可见 `Contents/MacOS/PayasoAgent`）—— 这个正是 `electron-updater` 更新用的格式，
+直接解压也能用。
+
 ## 4. 本次会话都改了哪些（别丢）
 
 除了桌面客户端，同一轮还修了四个东西，都有各自独立的理由：
@@ -189,7 +211,7 @@ export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 | # | 事项 | 谁做 | 备注 |
 |---|---|---|---|
 | 1 | **双击 .app 验 GUI** | 你 | §2.6 三条判定标准 |
-| 2 | `dist:dmg` 实打 | 我 | 体积/压缩率还没验证 |
+| 2 | `npm run desktop:dmg` 出 DMG | **你** | 沙箱禁 `hdiutil`，我只做到 zip（见坑 5）；DMG 体积/压缩率待验证 |
 | 3 | 崩溃弹窗 + 端口占用复用分支 | 我 | 代码在，没造境 |
 | 4 | `entitlements` 与公证细则 | 我期 2 | 文档标着未验证，动手前按 Apple 官方文档核 |
 | 5 | 自动更新（`electron-updater` + `app-update.yml`） | 期 3 | 需要一个 https 下载源 |
