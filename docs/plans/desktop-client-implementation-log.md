@@ -19,7 +19,7 @@
 
 | 文件 | 行数 | 作用 |
 |---|---:|---|
-| `src/main.ts` | 240 | 壳主进程：起后端 → 等就绪 → 开窗 → 干净退场 |
+| `src/main.ts` | 261 | 壳主进程：起后端 → 等就绪 → 开窗 → 干净退场 |
 | `scripts/fetch-node.mjs` | 97 | 取官方 Node 运行时到 `runtime/bin/node`（A1 的载荷） |
 | `scripts/stage-backend.mjs` | 78 | 组装后端整体到 `.stage/app`（**重新构建**+只装生产依赖） |
 | `scripts/make-icon.mjs` | 61 | 从 `web/public/icon-512.png` 派生 `build/icon.icns` |
@@ -100,7 +100,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4598/runs  # 期望 20
 2. 退出后 `lsof -ti tcp:4500` 为空（没有残留后端进程）；
 3. 已开着一个 `npm run host` 时启动 → **复用**且退出不杀它的进程。
 
-## 3. 四个坑（都留了证据，别再踩）
+## 3. 六个坑（都留了证据，别再踩）
 
 ### 坑 1 · electron-builder 会丢**根级** `node_modules`（最阴的一个）
 
@@ -189,6 +189,34 @@ npm run desktop:dmg     # → release/PayasoAgent-0.1.0-arm64-mac.dmg + .zip
 **已验证可用的替代**：`PayasoAgent-0.1.0-arm64-mac.zip`（193MB，含完整 `PayasoAgent.app`，
 `unzip -l` 可见 `Contents/MacOS/PayasoAgent`）—— 这个正是 `electron-updater` 更新用的格式，
 直接解压也能用。
+
+### 坑 6 · 窗口看起来「不像原生应用」：标题栏要按 DSH 的配方来
+
+**现象**：`.app` 装好后窗口顶上是一条普通 macOS 标题栏（写着应用名），而 DeepSeek Harness
+是**无标题栏**设计——内容顶到上沿、红绿灯浮在侧栏左上角。用户原话「我看 deepseek harness
+就很完美」。
+
+**根因**：壳里 `new BrowserWindow` 只写了最朴素的选项，没做窗口外壳。
+
+**解法**（配方是从 DSH 自己的 `lib/main.js` 拆出来的，不是照文档拍的）：
+
+```ts
+titleBarStyle: 'hiddenInset',        // 隐藏标题栏，但保留系统拖拽热区
+trafficLightPosition: { x: 16, y: 18 }, // 红绿灯位置，和 DSH 一模一样
+```
+
+**配套的两件小事**（缺一就会丑）：
+
+1. **侧栏顶部让位**：红绿灯浮在左上，会压住侧栏 logo。壳在 `did-finish-load` 注入
+   `#root > :first-child > aside { padding-top: 40px }` —— 选择器**避开 CSS Modules
+   的哈希类名**，只认语义标签 `aside`；侧栏本身是 `height:100vh` + 全局 `border-box`，
+   加 padding 只压缩内容高度，不会把布局撑出窗口。
+2. **标题兜底**：`win.setTitle('PayasoAgent')`。用户截图里出现过 "PayasoAgent - localhost"
+   ——查遍 `web/src` 与打包产物，**没有任何地方写过标题**（`document.title` 全仓零命中），
+   所以那是浏览器/宿主视图的标题，不是我们 app 的；但兜一层防外部改写。
+
+> **未验证**：`hiddenInset` 的拖拽热区、以及侧栏折叠到 64px 时红绿灯（宽约 52px）会不会
+> 略微压到主区 —— 都需要真机看一眼。
 
 ## 4. 本次会话都改了哪些（别丢）
 

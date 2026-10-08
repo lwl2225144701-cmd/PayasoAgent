@@ -137,8 +137,19 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
+    minWidth: 900,
+    minHeight: 600,
     title: 'PayasoAgent',
     backgroundColor: '#0f1115', // 与前端深色主题一致，避免首帧白闪
+    // macOS：无标题栏 + 红绿灯内嵌（与 DeepSeek Harness 同款，位置也是抄它的）。
+    // hiddenInset 让内容顶到窗口上沿，但保留系统标题栏的拖拽热区——不需要自己画
+    // 拖拽条，也不会挡住页面顶部的按钮。
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 16, y: 18 },
+        }
+      : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false, // 页面只是普通 Web 页面（同源 localhost），不需要 Node 能力
@@ -151,6 +162,16 @@ function createWindow(): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // 标题栏藏掉之后，前端侧栏顶部必须给红绿灯让位（它们浮在左上角）。
+  // 选择器避开 CSS Modules 的哈希类名，直接认语义标签 aside；侧栏自身是
+  // height:100vh + 全局 border-box，加 padding 只压缩内容高度、不会撑出窗口。
+  win.webContents.on('did-finish-load', () => {
+    win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
+    void win.webContents.insertCSS(
+      '#root > :first-child > aside { box-sizing: border-box; padding-top: 40px; }',
+    );
   });
 
   win.on('closed', () => {
