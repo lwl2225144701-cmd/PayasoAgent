@@ -38,7 +38,7 @@
 |---|---|---|
 | **GUI 端到端** | 双击 `.app` 看三件事：窗口出不出、退出后 `lsof -ti tcp:4500` 空不空、端口被占时是否复用 | **你** |
 | **窗口外壳视觉** | `hiddenInset` 的拖拽热区、侧栏折叠到 64px 时红绿灯（约 52px 宽）会不会略压主区 | **你**（同一眼） |
-| **DMG** | `v0.2.0` 前两次各死一步（坑 7 lint、坑 8 空 `CSC_LINK`），均已修并重发 tag | CI（我盯） |
+| **DMG** | ✅ **已出**：Release 页 [PayasoAgent-0.2.0-arm64.dmg](https://github.com/lwl2225144701-cmd/PayasoAgent/releases)（210MB）；前两次各踩一坑（坑 7 /坑 8）已修，第三次跑绿 | **你**下载安装（与 GUI 验证并成一步） |
 | 崩溃弹窗 / 端口占用复用分支 | 代码在，没造境 | 我（等 GUI 反馈） |
 
 ### ③ 没做
@@ -372,5 +372,6 @@ git tag v0.2.0 && git push origin v0.2.0   # 发版
 # 或者：Actions 页面 → Release (macOS DMG) → Run workflow（只构建，不发版）
 ```
 
-> ⚠️ **实跑记录**（2026-10-08）：workflow 已跑两次，各踩一个坑并都已修 ——
-> 第一次死在 lint 门禁（坑 7），第二次死在空 `CSC_LINK`（坑 8）；第三次为修复版。
+> ✅ **实跑记录**（2026-10-08）：workflow 跑了三次 —— 前两次各踩一个坑（第一次 lint
+> 门禁坑 7，第二次空 `CSC_LINK` 坑 8），都已修；**第三次跑绿**，Release 页挂上
+> `PayasoAgent-0.2.0-arm64.dmg`（210MB）+ `.zip`（216MB）+ blockmap。
