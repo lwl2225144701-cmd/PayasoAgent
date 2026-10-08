@@ -1,0 +1,6 @@
+# 统一 LF：Windows 上 checkout 若转成 CRLF，biome 格式检查与打包都会翻车。
+# 二进制资源显式标记，避免被 eol 规则碰。
+* text=auto eol=lf
+*.ico binary
+*.icns binary
+*.png binary

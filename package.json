@@ -36,6 +36,7 @@
     "desktop": "npm --prefix apps/desktop run dev",
     "desktop:dist": "npm --prefix apps/desktop run dist:mac",
     "desktop:dmg": "npm --prefix apps/desktop run dist:dmg",
+    "desktop:win": "npm --prefix apps/desktop run dist:win",
     "build:server": "tsc -p tsconfig.build.json && node scripts/copy-runtime.mjs",
     "build": "npm run build:server && npm run build:web && node scripts/generate-notices.mjs",
     "prepack": "npm run build"

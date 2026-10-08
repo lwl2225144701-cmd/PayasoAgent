@@ -15,7 +15,7 @@
 // 关键约束：后端从 process.cwd() 下找 web/dist（见 src/host/routes.ts 的 STATIC_ROOT），
 // 所以 cwd 必须是「app 根」（含 web/dist 的那层），不能随便选。
 
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +39,12 @@ const backendEntry = path.join(appRoot, 'dist', 'host', 'index.js');
  */
 const backendCommand = (() => {
   if (!app.isPackaged) return { command: process.env.PAYASO_NODE_BIN ?? 'node', env: {} };
-  const bundled = path.join(process.resourcesPath, 'runtime', 'bin', 'node');
+  const bundled = path.join(
+    process.resourcesPath,
+    'runtime',
+    'bin',
+    process.platform === 'win32' ? 'node.exe' : 'node',
+  );
   if (existsSync(bundled)) return { command: bundled, env: {} };
   return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
 })();
@@ -125,6 +130,22 @@ async function stopBackend(): Promise<void> {
       done.then(() => true),
       new Promise<boolean>((r) => setTimeout(() => r(false), ms)),
     ]);
+
+  if (process.platform === 'win32') {
+    // Windows 没有信号语义：child.kill() 即 TerminateProcess，只掐直接进程、
+    // 留孙进程（后端会 spawn 用户项目的 shell 工具）。用 taskkill /T 树杀，
+    // 连子孙一起收 —— 等价于 POSIX 的 SIGTERM→SIGKILL 兜底（代价是没有优雅
+    // 排水窗口，靠后端 SQLite WAL 抗崩溃截断，见实施手账 §10）。
+    try {
+      execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    } catch {
+      // 进程可能已自行退出（taskkill 对不存在的 PID 返回非 0）
+    }
+    if (!(await settlesWithin(SIGKILL_GRACE_MS))) {
+      throw new Error('后端进程树在 taskkill /T 之后仍未退出，可能留下僵尸进程');
+    }
+    return;
+  }
 
   child.kill('SIGTERM');
   if (!(await settlesWithin(SIGTERM_GRACE_MS))) child.kill('SIGKILL');

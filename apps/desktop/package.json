@@ -13,6 +13,7 @@
     "dev": "npm run build && electron .",
     "dist:mac": "npm run build && electron-builder --mac --dir --publish never",
     "dist:dmg": "npm run build && electron-builder --mac dmg zip --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis zip --publish never",
     "typecheck": "tsc -p . --noEmit"
   },
   "devDependencies": {

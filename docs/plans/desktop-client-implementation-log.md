@@ -45,8 +45,9 @@
 ### ③ 没做
 
 签名 / 公证（**配方已备好，见 §9** —— 只差 Apple Developer 账号（$99/年）+ 5 个
-secrets，管道全自动）、自动更新（期 3，缺 `latest-mac.yml`
-与发布源）、Windows / Linux（`fetch-node.mjs` 只支持 darwin / linux）、下载门面页
+secrets，管道全自动；不花钱的 Homebrew cask 通道已落地）、自动更新（期 3，
+缺 `latest-mac.yml` 与发布源）、Windows 签名（SignPath 开源免费待申请；未签名
+NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 （DSH 四层做法已扒清，方案与证据见 §7，本次只记录不实施）。
 
 ### ④ 立即可做的两件小事（✅ 均已完成，2026-10-08）
@@ -362,7 +363,7 @@ xattr -cr /Applications/PayasoAgent.app    # 清掉下载隔离标记，再双�
 | 3 | 崩溃弹窗 + 端口占用复用分支 | 我 | 代码在，没造境 |
 | 4 | `entitlements` 与公证细则，并配 `CSC_*` / `APPLE_*` secrets | 我期 2 | CI 已留好凭据入口，配了就自动签+公证 |
 | 5 | 自动更新（`electron-updater` + `latest-mac.yml`） | 期 3 | zip 已在产，缺发布源与更新元数据 |
-| 6 | Windows / Linux | — | `fetch-node.mjs` 只支持 darwin/linux |
+| 6 | Windows / Linux | — | Windows **已落地**（NSIS + zip，§10）；Linux 待做 |
 
 ## 6. 发布链路：CI 出 DMG
 
@@ -490,5 +491,47 @@ git tag v0.2.0 && git push origin v0.2.0   # 发版
 
 然后 `git tag v0.x.y && git push origin v0.x.y`，出来的 DMG 拖拽即用、零弹窗。
 
-**备选（不花钱的"装完即用"）**：Homebrew cask —— `brew install --cask payasoagent`
-一行装完直接能开（brew 会自动清 quarantine），但那不是拖 DMG 的体验；适合命令行用户。
+**备选（不花钱的"装完即用"）—— 已落地**：Homebrew cask。机制：brew 用 curl 下载，
+**不带浏览器的 `com.apple.quarantine` 隔离标记**，Gatekeeper 无从弹窗，装完直接能开。
+配方在 [`Casks/payasoagent.rb`](../../Casks/payasoagent.rb)，`release.yml` 每次发版
+自动 bump 版本与 DMG 的 sha256。用法（一次 tap 永久生效）：
+
+```bash
+brew tap lwl2225144701-cmd/payasoagent https://github.com/lwl2225144701-cmd/PayasoAgent.git
+brew install --cask payasoagent
+```
+
+## 10. Windows 线（2026-10-08 开工）：NSIS + zip，未签名先发
+
+用户问"windows 有这么麻烦不"——**不麻烦**。Windows 没有 mac 那种「已损坏打不开」的
+绝症，未签名也能跑（SmartScreen 蓝屏点"更多信息 → 仍要运行"即可）：
+
+| | macOS | Windows |
+|---|---|---|
+| 不签名 | 「已损坏」**打不开**（坑 9） | 能跑，SmartScreen 提示可一键跳过 |
+| 零弹窗 | Developer ID + 公证（$99/年） | SignPath **开源免费**（[官方实锤](https://signpath.io/solutions/open-source-community)）；或 Azure Trusted Signing ~$10/月 |
+
+**本次落地**（发版即用，v0.3.0 起出 Windows 产物）：
+
+1. `fetch-node.mjs`：win32 支持官方 zip + `node.exe`（tar 解 zip，Windows 10+
+   自带 bsdtar）；`mv` 命令 Windows 没有 → 换 `renameSync`
+2. `main.ts`：`node.exe` 路径 + **`taskkill /T /F` 树杀** —— Windows 无信号语义
+   （`child.kill()` 即 TerminateProcess、只掐直接进程留孙进程），树杀连子孙一起收，
+   等价 POSIX 的 SIGTERM→SIGKILL 兜底；代价是没有优雅排水窗口，靠 SQLite WAL 抗截断
+3. `build/icon.ico` 静态提交（Pillow 从 `icon-512.png` 生成 16~256 七档）；
+   `make-icon.mjs` 非 darwin **静默跳过**（exit 0 —— 原来 exit 1 会让 Windows CI
+   的 `desktop:setup` 整个挂掉）
+4. `electron-builder.yml`：`win:` nsis + zip；Node 运行时改**平台段**下发
+   （平台段与全局是合并关系，`fileMatcher.js` 两段都收）；产物命名
+   `PayasoAgent-x.y.z-setup.exe` / `PayasoAgent-x.y.z-x64.zip`
+5. `release.yml` 新增 `build-windows`（windows-latest + Git Bash）：质量门禁留
+   mac job（shell 沙箱套件是 darwin 能力），win 只出包；`WIN_CSC_*` 空值同样
+   unset（坑 8 的空串陷阱 Windows 同款）
+6. `.gitattributes` 统一 LF —— Windows checkout 转 CRLF 会连环炸 biome 与打包
+
+**后续**：向 SignPath 的 Open Source 计划申请免费签名（需仓库公开、项目活跃），
+批下来接 GitHub Actions，SmartScreen 提示即消。
+
+**已知边界**：后端 shell 载体在 Windows 上走 WSL bash / PowerShell / cmd
+（`shell-host.ts` 本就有 win32 分支与 ACL 沙箱），但用户项目里的 POSIX 脚本仍需
+WSL / Git Bash；退出无优雅排水（taskkill 树杀），在途 run 靠 WAL 抗截断。

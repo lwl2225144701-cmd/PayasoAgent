@@ -33,9 +33,9 @@ extraResources:
     filter:
       - "**/*"
       - "**/node_modules{,/**/*}"
-  # A1：自带的官方 Node 运行时（scripts/fetch-node.mjs 生成）
-  - from: runtime/bin/node
-    to: runtime/bin/node
+  # A1：自带的官方 Node 运行时放**平台段**（见下 mac.extraResources /
+  # win.extraResources）—— 每个平台只带自己的二进制（node vs node.exe）。
+  # 平台段与全局是**合并**关系（fileMatcher.js getFileMatchers 两段都收）。
 
 asar: true
 npmRebuild: false
@@ -44,10 +44,30 @@ npmRebuild: false
 # 必须在 dmg/zip 制作前签，见 scripts/after-pack.cjs 头注。
 afterPack: scripts/after-pack.cjs
 
+win:
+  # 先未签名发布（SmartScreen 蓝屏可"更多信息 → 仍要运行"跳过，能用）；
+  # SignPath 对开源项目免费的签名后续接（手账 §10）。
+  target:
+    - nsis
+    - zip
+  icon: build/icon.ico # 静态提交的多尺寸 ico（make-icon.mjs 只管 macOS 的 .icns）
+  artifactName: PayasoAgent-${version}-${arch}.${ext} # zip: PayasoAgent-x.y.z-x64.zip
+  extraResources:
+    - from: runtime/bin/node.exe
+      to: runtime/bin/node.exe
+
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: PayasoAgent-${version}-setup.${ext} # 安装器: PayasoAgent-x.y.z-setup.exe
+
 mac:
   target:
     - dmg
     - zip
+  extraResources:
+    - from: runtime/bin/node
+      to: runtime/bin/node
   category: public.app-category.developer-tools
   icon: build/icon.icns
   hardenedRuntime: true

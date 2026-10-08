@@ -1,4 +1,4 @@
-name: Release (macOS DMG)
+name: Release (macOS DMG + Windows NSIS)
 
 # 桌面客户端发布：在 GitHub 的 macOS runner 上打包 DMG，并挂到 Release 上。
 #
@@ -121,6 +121,107 @@ jobs:
           generate_release_notes: true
           files: |
             apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+          fail_on_unmatched_files: true
+
+      # Homebrew cask 自动 bump：改 version + DMG 的 sha256 后推回 main。
+      # brew 通道 = 不花钱的「装完即用」（curl 下载不带 quarantine），见手账 §9。
+      - name: Sync Homebrew cask
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          DMG_SHA=$(shasum -a 256 apps/desktop/release/*.dmg | awk '{print $1}')
+          git fetch origin main
+          git checkout -B main origin/main
+          sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/" Casks/payasoagent.rb
+          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"${DMG_SHA}\"/" Casks/payasoagent.rb
+          git add Casks/payasoagent.rb
+          if git diff --cached --quiet; then
+            echo "cask 无变化"
+          else
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(cask): bump payasoagent to ${VERSION}"
+            git push origin main
+          fi
+
+  # Windows 线：NSIS 安装器 + zip 便携包。质量门禁在 mac job（shell 沙箱套件是
+  # darwin 能力），本 job 只出包。先未签名发布（SmartScreen 可"更多信息 → 仍要
+  # 运行"跳过，能用）；SignPath（开源免费）签名后续接，见手账 §10。
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash # 步骤脚本是 bash 语法（runner 自带 Git Bash）
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies (root / web / desktop)
+        run: |
+          npm ci
+          npm ci --prefix web
+          npm ci --prefix apps/desktop
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Resolve release version
+        id: version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            V="$INPUT_VERSION"
+          elif [ -n "$TAG_NAME" ] && [ "${TAG_NAME#v}" != "$TAG_NAME" ]; then
+            V="${TAG_NAME#v}"          # v0.3.0 → 0.3.0
+          else
+            V="$(node -p "require('./apps/desktop/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "→ 发布版本：$V"
+
+      - name: Sync version into desktop package
+        run: cd apps/desktop && PAYASO_RELEASE_VERSION=${{ steps.version.outputs.version }} node scripts/sync-version.mjs
+
+      - name: Prepare desktop payload
+        run: npm run desktop:setup
+
+      - name: Package NSIS installer & ZIP
+        # WIN_CSC_* 为空也必须 unset —— 坑 8 的空串陷阱 Windows 同款
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          for v in WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          npm run desktop:win
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayasoAgent-${{ steps.version.outputs.version }}-Windows
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PayasoAgent ${{ steps.version.outputs.version }}
+          files: |
+            apps/desktop/release/*.exe
             apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
           fail_on_unmatched_files: true

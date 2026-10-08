@@ -17,8 +17,10 @@ const iconset = path.join(root, 'build', 'icon.iconset');
 const out = path.join(root, 'build', 'icon.icns');
 
 if (process.platform !== 'darwin') {
-  console.error('make-icon 只支持 macOS（用 iconutil）');
-  process.exit(1);
+  // 非 macOS 不需要 .icns：Windows 用仓库里静态提交的 build/icon.ico，
+  // Linux 走默认图标。必须静默跳过（exit 0），否则 Windows CI 的 setup 会挂。
+  console.log('make-icon: 非 macOS，跳过（Windows 用 build/icon.ico）');
+  process.exit(0);
 }
 if (!existsSync(source)) {
   console.error(`缺少源图: ${source}`);
