@@ -49,6 +49,7 @@ docs/
 │   ├── phase2-session-persistence.md
 │   ├── desktop-client-plan.md
 │   ├── desktop-client-electron-plan.md
+│   ├── desktop-client-implementation-log.md
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI
