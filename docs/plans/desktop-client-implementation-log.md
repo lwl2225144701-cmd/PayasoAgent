@@ -23,6 +23,7 @@
 | `scripts/fetch-node.mjs` | 97 | 取官方 Node 运行时到 `runtime/bin/node`（A1 的载荷） |
 | `scripts/stage-backend.mjs` | 78 | 组装后端整体到 `.stage/app`（**重新构建**+只装生产依赖） |
 | `scripts/make-icon.mjs` | 61 | 从 `web/public/icon-512.png` 派生 `build/icon.icns` |
+| `scripts/sync-version.mjs` | ~60 | 把发布版本号写进 `package.json` **和** `package-lock.json`（否则 `npm ci` 报不同步） |
 | `electron-builder.yml` | 59 | 打包配置（`npmRebuild:false`、extraResources、entitlements） |
 | `package.json` / `package-lock.json` | 27 | 壳自己的依赖与版本锁 |
 | `tsconfig.json` / `.gitignore` / `build/entitlements.mac.plist` | — | 编译/忽略/签名占位 |
@@ -211,8 +212,46 @@ npm run desktop:dmg     # → release/PayasoAgent-0.1.0-arm64-mac.dmg + .zip
 | # | 事项 | 谁做 | 备注 |
 |---|---|---|---|
 | 1 | **双击 .app 验 GUI** | 你 | §2.6 三条判定标准 |
-| 2 | `npm run desktop:dmg` 出 DMG | **你** | 沙箱禁 `hdiutil`，我只做到 zip（见坑 5）；DMG 体积/压缩率待验证 |
+| 2 | **推个 tag 试一次 CI**（`git tag v0.2.0 && git push origin v0.2.0`） | 你 | CI workflow 已写好（`.github/workflows/release.yml`），GitHub runner 有 hdiutil，能真出 DMG |
 | 3 | 崩溃弹窗 + 端口占用复用分支 | 我 | 代码在，没造境 |
-| 4 | `entitlements` 与公证细则 | 我期 2 | 文档标着未验证，动手前按 Apple 官方文档核 |
-| 5 | 自动更新（`electron-updater` + `app-update.yml`） | 期 3 | 需要一个 https 下载源 |
+| 4 | `entitlements` 与公证细则，并配 `CSC_*` / `APPLE_*` secrets | 我期 2 | CI 已留好凭据入口，配了就自动签+公证 |
+| 5 | 自动更新（`electron-updater` + `latest-mac.yml`） | 期 3 | zip 已在产，缺发布源与更新元数据 |
 | 6 | Windows / Linux | — | `fetch-node.mjs` 只支持 darwin/linux |
+
+## 6. 发布链路：CI 出 DMG
+
+**为什么要有 CI 这一段**：用户问「别人都是下载一个 dmg，凭什么要我跑命令」——
+问得对。发布产物本就不该在开发机上随手构建，加上 `hdiutil` 在沙箱里直接被拒
+（坑 5），所以在 GitHub 的 macOS runner 上打，产出挂到 Release，才是「下载一个 dmg」
+的完整体验。
+
+**`.github/workflows/release.yml` 全貌**（12 步，`runs-on: macos-latest`，与 `ci.yml` 一致）：
+
+| 步 | 做什么 | 为什么 |
+|---|---|---|
+| checkout / setup-node（`.nvmrc`） | 固定工具链 | 与 ci.yml 同源 |
+| `npm ci`（root / web / apps/desktop） | 三处依赖都装 | 壳自己是独立 package，root 的 ci 不带它 |
+| tsc / biome / `test:all` | **发布门禁** | 别让带病代码进安装包 |
+| Resolve release version | 三选一：手动填 → tag 去 `v` → 包内版本 | 见下 |
+| `sync-version.mjs` | 版本写进 **package.json + package-lock.json** | 只改前者会让 `npm ci` 报不同步 |
+| `desktop:setup` | 取 Node 运行时 + 图标 + 组装后端 | 复用本地同一套脚本，不另外造 |
+| `desktop:dmg` | 出 DMG + zip + blockmap | hdiutil 在 runner 上可用 |
+| `upload-artifact` | 产物留档 | 手动触发时也能拿到 |
+| `softprops/action-gh-release` | **仅 tag 触发**时创建 Release 并挂文件 | 手动触发只出 artifact，不误发版本 |
+
+**版本号三选一**（优先级从高到低）：`workflow_dispatch` 填的 → tag 去掉 `v` 前缀 →
+`package.json` 里的。推 `v0.2.0` 就得到 `PayasoAgent-0.2.0-arm64-mac.dmg`。
+
+**签名/公证**：workflow 已把 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_*` 放进 env，
+**配了 secrets 就自动签+公证，没配就跳过**（electron-builder 自动探测），
+不会因为没证书而让 CI 失败。CI 打的 DMG 默认**未签名**，分发时 Gatekeeper 会警告。
+
+**怎么触发**：
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0   # 发版
+# 或者：Actions 页面 → Release (macOS DMG) → Run workflow（只构建，不发版）
+```
+
+> ⚠️ **这条 workflow 尚未实跑过一次**：GitHub runner 上的表现（耗时、hdiutil 是否正常、
+> `npm ci --prefix apps/desktop` 在干净环境是否顺利）都需要第一次 tag 才知道。

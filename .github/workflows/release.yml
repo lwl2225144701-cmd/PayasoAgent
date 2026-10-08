@@ -1,0 +1,114 @@
+name: Release (macOS DMG)
+
+# 桌面客户端发布：在 GitHub 的 macOS runner 上打包 DMG，并挂到 Release 上。
+#
+# 为什么需要 CI：`hdiutil create` 在某些环境（如 Agent 沙箱）被禁用，DMG 打不出来；
+# 而且发布产物本就不该在开发机上随手构建。这条 workflow 让「下载一个 dmg」成立。
+#
+# 触发方式：
+#   推 tag   ：git tag v0.2.0 && git push origin v0.2.0   → 构建 + 直接建 Release
+#   手动触发 ：Actions 页面 Run workflow，可只构建不上 Release（产物进 artifacts）
+#
+# 版本来源（三选一，优先级从高到低）：
+#   1. workflow_dispatch 填的 version
+#   2. tag 名去掉 v 前缀
+#   3. apps/desktop/package.json 里现有的版本
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（不带 v，例如 0.2.0）。留空则用 tag 或包内版本。'
+        required: false
+        type: string
+
+permissions:
+  contents: write # 创建 Release、上传产物
+
+jobs:
+  build-macos-dmg:
+    runs-on: macos-latest # 与 ci.yml 保持一致；runner 上有 hdiutil，能打 DMG
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies (root / web / desktop)
+        run: |
+          npm ci
+          npm ci --prefix web
+          npm ci --prefix apps/desktop
+
+      # 别让带病的代码进发布包：先跑与 ci.yml 同级的检查
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint & format check (Biome)
+        run: npx biome check .
+
+      - name: Deterministic test suites (no LLM)
+        run: npm run test:all
+
+      - name: Resolve release version
+        id: version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            V="$INPUT_VERSION"
+          elif [ -n "$TAG_NAME" ] && [ "${TAG_NAME#v}" != "$TAG_NAME" ]; then
+            V="${TAG_NAME#v}"          # v0.2.0 → 0.2.0
+          else
+            V="$(node -p "require('./apps/desktop/package.json').version")"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "→ 发布版本：$V"
+
+      - name: Sync version into desktop package
+        run: cd apps/desktop && PAYASO_RELEASE_VERSION=${{ steps.version.outputs.version }} node scripts/sync-version.mjs
+
+      # 取官方 Node 运行时 + 生成图标 + 组装后端整体（需要网络）
+      - name: Prepare desktop payload
+        run: npm run desktop:setup
+
+      - name: Package DMG & ZIP
+        # 签名/公证的凭据用 secrets 传入；为空时 electron-builder 会自动跳过签名（本地构建同理）
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_INSTALLER_LINK: ${{ secrets.CSC_INSTALLER_LINK }}
+          CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.CSC_INSTALLER_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run desktop:dmg
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayasoAgent-${{ steps.version.outputs.version }}-macOS
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+          if-no-files-found: error
+
+      # 只有 push tag 才建 Release；手动触发只出 artifact，避免误发版本
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PayasoAgent ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+          fail_on_unmatched_files: true
