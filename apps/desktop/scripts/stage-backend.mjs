@@ -23,7 +23,9 @@ const stage = path.resolve(here, '..', '.stage', 'app');
 
 function run(cmd, args, cwd) {
   console.log(`> ${cmd} ${args.join(' ')}   (cwd=${cwd})`);
-  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit' });
+  // Windows 上 npm 是 npm.cmd 垫片：Node 拒绝直接 spawn .cmd/.bat（EINVAL，安全
+  // 修复后的硬约束），必须经 shell 调起。POSIX 保持直接 spawn（不留 shell 注入口）。
+  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' });
   if (r.status !== 0) {
     console.error(`失败: ${cmd} ${args.join(' ')}`);
     process.exit(1);

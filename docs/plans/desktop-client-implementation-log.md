@@ -148,7 +148,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4598/runs  # 期望 20
 2. 退出后 `lsof -ti tcp:4500` 为空（没有残留后端进程）；
 3. 已开着一个 `npm run host` 时启动 → **复用**且退出不杀它的进程。
 
-## 3. 九个坑（都留了证据，别再踩）
+## 3. 十个坑（都留了证据，别再踩）
 
 ### 坑 1 · electron-builder 会丢**根级** `node_modules`（最阴的一个）
 
@@ -335,6 +335,23 @@ xattr -cr /Applications/PayasoAgent.app    # 清掉下载隔离标记，再双�
 
 **教训**：macOS 的"已损坏"≠文件坏了，先 `codesign -dv` 看签名；**分发 mac 软件，
 签名不是可选项** —— ad-hoc 是底线，公证是及格线。
+
+### 坑 10 · Windows 上 `spawnSync('npm', …)` 必炸：npm 是 .cmd 垫片
+
+**现象**：v0.3.0 首个 Windows job 死在 `Prepare desktop payload`（step 8）——
+`desktop:setup` 链里 `stage-backend.mjs` 调 npm 的地方失败退出。
+
+**真相**：Windows 的 `npm` 是 `npm.cmd` 批处理垫片；Node（CVE-2024-27980 安全修复后）
+**拒绝直接 spawn `.cmd` / `.bat`**（EINVAL / ENOENT），必须 `shell: true` 经 cmd.exe
+调起。macOS / Linux 上 `npm` 是真可执行文件，**本地永远复现不了**。
+
+**修复**：`stage-backend.mjs` 的 `run()` 加 `shell: process.platform === 'win32'`
+（POSIX 保持直接 spawn，不留 shell 注入口）。同链的 `curl` / `tar` 是真 .exe 不受
+影响（`node.exe` 的 zip 解压已用同源 bsdtar 实测通过）。
+
+**教训**：**跨平台脚本里"调 npm"必须走 shell 或用 `npm_execpath`**。识别特征：
+"CI 的 Windows 步骤挂、本地 mac 怎么跑都对"——这种"本地不可复现"优先怀疑
+`.cmd` 垫片与路径分隔符，别反复怀疑业务逻辑。
 
 ## 4. 本次会话都改了哪些（别丢）
 
