@@ -16,8 +16,8 @@
 
 ## 0. 当前进展（截至 2026-10-08）
 
-**一句话**：桌面客户端已落地，代码全在 `main` 上（最新 `4b2fa82`）；**只差最后一步——
-真机双击验 GUI**（含刚改的窗口外壳）；DMG 已推 tag 交 CI（见 ②、坑 7）。
+**一句话**：**全链路收官** —— GUI 真机验证通过、退出零残留、DMG 发版链路自 v0.2.2 起稳定
+出包（定制安装窗 + ad-hoc 签名）；剩下的是锦上添花（见 ②、③）。
 
 ### ① 做完且已验证（有实测证据）
 
@@ -31,15 +31,16 @@
 | 窗口外壳 DSH 配方已进包 | 包内 `main.js` 已核验：`hiddenInset` + `trafficLightPosition:{x:16,y:18}` + 侧栏让位 CSS + `setTitle` 四处齐全 |
 | 代码质量 | 113 套件全绿、biome 干净、`docs-index` 4/4 |
 | 顺带修的四个（各有独立理由） | 投影成批推进（前缀改写 14 → **1**）、零图片会话崩溃、缓存分桶缺失 ≠ 未命中、启动打印生效配置 |
+| **真机 GUI 端到端 + 退出清理** | 用户实测：窗口正常、用完退出后 `lsof -ti tcp:4500` **空**、无残留进程（壳进程在分级关停 10~15s 窗口期后自清，非泄漏） |
+| Gatekeeper「已损坏」根治：afterPack ad-hoc 签名 | 本地 `Signature=adhoc` + `codesign --verify --deep --strict` 通过；真机弹窗从「已损坏」降级为「无法验证」（用户实测），右键→打开一次永久通行 |
+| DMG 发版链路 | v0.2.0 → v0.2.2 三个坑全修（坑 7 lint 门禁 / 坑 8 空 `CSC_LINK` / 坑 9 未签名）+ 安装窗定制，Release 页稳定出 210MB DMG + zip + blockmap |
 
 ### ② 做完但**没验证**（下一步要动的）
 
 | 项 | 缺什么 | 谁做 |
 |---|---|---|
-| **GUI 端到端** | 首开被 Gatekeeper「已损坏」拦下（坑 9；现装的旧包 `xattr -cr /Applications/PayasoAgent.app` 解锁，v0.2.2 起已 ad-hoc 签名免此坑）；之后看三件事：窗口出不出、退出后 `lsof -ti tcp:4500` 空不空、端口被占时是否复用 | **你** |
-| **窗口外壳视觉** | `hiddenInset` 的拖拽热区、侧栏折叠到 64px 时红绿灯（约 52px 宽）会不会略压主区 | **你**（同一眼） |
-| **DMG** | ✅ **已出**：Release 页 [PayasoAgent-0.2.0-arm64.dmg](https://github.com/lwl2225144701-cmd/PayasoAgent/releases)（210MB）；前两次各踩一坑（坑 7 /坑 8）已修，第三次跑绿 | **你**下载安装（与 GUI 验证并成一步） |
-| 崩溃弹窗 / 端口占用复用分支 | 代码在，没造境 | 我（等 GUI 反馈） |
+| 窗口外壳视觉细节 | `hiddenInset` 的拖拽热区、侧栏折叠到 64px 时红绿灯（约 52px 宽）会不会略压主区 —— 顺手看一眼即可 | **你**（可选） |
+| 崩溃弹窗 / 端口占用复用分支 | 代码在，没造境 | 我（等反馈） |
 
 ### ③ 没做
 
@@ -47,19 +48,16 @@
 与发布源）、Windows / Linux（`fetch-node.mjs` 只支持 darwin / linux）、下载门面页
 （DSH 四层做法已扒清，方案与证据见 §7，本次只记录不实施）。
 
-### ④ 立即可做的两件小事
+### ④ 立即可做的两件小事（✅ 均已完成，2026-10-08）
 
 ```bash
-# 1) 验 GUI（看窗口 + 退出清理）
-open apps/desktop/release/mac-arm64/PayasoAgent.app
-
-# 2) 看 DMG（tag 已推：v0.2.0 → 4b2fa82，第一次死在 lint 步已修，见坑 7）
-#    跑绿后在 Release 页下载 PayasoAgent-0.2.0-arm64.dmg
+# 1) 验 GUI —— 已验：窗口正常、退出后 4500 空、无残留
+# 2) 出 DMG —— 已出：Release 页 v0.2.2（定制安装窗 + ad-hoc 签名）
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
-> 产物现状：`.app`（527MB）+ `.zip`（193MB）已就绪；`.dmg` 待 CI，或本机
-> `npm run desktop:dmg`（需要 `hdiutil` 可用）。
+> 产物现状：Release 页挂 v0.2.2 起的 `.dmg`（210MB）+ `.zip`（216MB）+ blockmap；
+> 本地 `apps/desktop/release/mac-arm64/` 仍有编译产物可直接 `open`。
 
 ## 1. 落地的清单（一次做对的三件事）
 
