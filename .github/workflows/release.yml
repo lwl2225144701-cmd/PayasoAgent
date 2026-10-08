@@ -79,7 +79,10 @@ jobs:
         run: npm run desktop:setup
 
       - name: Package DMG & ZIP
-        # 签名/公证的凭据用 secrets 传入；为空时 electron-builder 会自动跳过签名（本地构建同理）
+        # 签名/公证凭据从 secrets 传入。注意：secret 未配时 GitHub Actions 展开成**空串**，
+        # 而 electron-builder 的 getCscLink 对空串照单全收（chooseNotNull 不判空），随后
+        # resolveCscLinkPath('') 解析成当前目录，报 "<目录> not a file"（坑 8，本地已复现）。
+        # 所以必须把空变量彻底 unset —— "没配凭据"才真正等于"跳过签名"。
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -88,7 +91,16 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run desktop:dmg
+        run: |
+          for v in CSC_LINK CSC_KEY_PASSWORD CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD \
+                   APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          if [ -z "$CSC_LINK" ]; then
+            # 没配证书就明确不签名，不赌 runner 钥匙串里有什么
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npm run desktop:dmg
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

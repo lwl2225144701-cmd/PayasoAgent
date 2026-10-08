@@ -11,8 +11,8 @@
     "setup": "node scripts/fetch-node.mjs && node scripts/make-icon.mjs && node scripts/stage-backend.mjs",
     "build": "tsc -p .",
     "dev": "npm run build && electron .",
-    "dist:mac": "npm run build && electron-builder --mac --dir",
-    "dist:dmg": "npm run build && electron-builder --mac dmg zip",
+    "dist:mac": "npm run build && electron-builder --mac --dir --publish never",
+    "dist:dmg": "npm run build && electron-builder --mac dmg zip --publish never",
     "typecheck": "tsc -p . --noEmit"
   },
   "devDependencies": {
