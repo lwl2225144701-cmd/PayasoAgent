@@ -9,22 +9,27 @@ export const MAX_OFFICE_BYTES = 8 * 1024 * 1024; // docx / pptx / xlsx / doc / p
 export const MAX_PDF_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_BODY_BYTES = 24 * 1024 * 1024;
 export const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const TEXT_EXTENSIONS = new Set('txt md markdown json jsonc yaml yml toml csv tsv ts tsx js jsx mjs cjs py pyi html htm css scss less sql sh bash zsh xml ini conf cfg log c h cpp hpp rs go java kt swift rb php vue svelte graphql proto'.split(' '));
-const TEXT_NAMES = new Set(['dockerfile', 'makefile', 'license', 'readme', '.gitignore', '.editorconfig', '.npmrc']);
+const TEXT_EXTENSIONS = new Set(
+  'txt md markdown json jsonc yaml yml toml csv tsv ts tsx js jsx mjs cjs py pyi html htm css scss less sql sh bash zsh xml ini conf cfg log c h cpp hpp rs go java kt swift rb php vue svelte graphql proto'.split(
+    ' ',
+  ),
+);
+const TEXT_NAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'license',
+  'readme',
+  '.gitignore',
+  '.editorconfig',
+  '.npmrc',
+]);
 const DOCX_EXTENSIONS = new Set(['docx']);
 const PPTX_EXTENSIONS = new Set(['pptx']);
 const XLSX_EXTENSIONS = new Set(['xlsx']);
 const PDF_EXTENSIONS = new Set(['pdf']);
 // 旧版 OLE2 二进制：无法零依赖可靠解包，原样接收，由 Agent 用系统工具转换。
 const BINARY_EXTENSIONS = new Set(['doc', 'ppt']);
-export type AttachmentKind =
-  | 'image'
-  | 'text'
-  | 'docx'
-  | 'pptx'
-  | 'xlsx'
-  | 'pdf'
-  | 'binary';
+export type AttachmentKind = 'image' | 'text' | 'docx' | 'pptx' | 'xlsx' | 'pdf' | 'binary';
 export function attachmentKind(name: string, mimeType: string): AttachmentKind | null {
   if (IMAGE_MIMES.has(mimeType.toLowerCase())) return 'image';
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? '';
@@ -38,10 +43,15 @@ export function attachmentKind(name: string, mimeType: string): AttachmentKind |
   return null;
 }
 export function attachmentSizeLabel(bytes: number): string {
-  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  return bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 * 1024
+      ? `${(bytes / 1024).toFixed(1)} KiB`
+      : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 export function decodeAttachmentText(bytes: Uint8Array): string {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 有意匹配控制字符（\t\n\r 除外）识别二进制附件，非误写
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw new Error('binary');
   return text;
 }

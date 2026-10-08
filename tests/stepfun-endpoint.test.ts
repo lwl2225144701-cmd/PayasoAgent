@@ -9,10 +9,13 @@ let requested = '';
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input) => {
   requested = String(input);
-  return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return new Response(
+    JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
 }) as typeof fetch;
 try {
   const { chat } = await import('../src/llm/llm.js');

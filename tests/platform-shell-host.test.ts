@@ -184,7 +184,12 @@ const main = async (): Promise<void> => {
     // 不得把用户引向"安装 Git for Windows"这种无效修复
     assert.doesNotMatch(message, /Git for Windows/);
 
-    const wsl = { ...msys2, shellPath: 'C:\\Windows\\System32\\bash.exe', source: 'wsl-bash' as const, runtime: 'wsl' as const };
+    const wsl = {
+      ...msys2,
+      shellPath: 'C:\\Windows\\System32\\bash.exe',
+      source: 'wsl-bash' as const,
+      runtime: 'wsl' as const,
+    };
     assert.equal(isAclCompatibleCarrier(wsl), false);
     assert.match(describeAclIncompatibleCarrier(wsl), /E_ACCESSDENIED/);
   });
@@ -192,19 +197,31 @@ const main = async (): Promise<void> => {
   await test('调用形状：posix/-c、wsl/-s、powershell/-Command、cmd=/c', () => {
     const base = { platform: 'win32' as const, shellPath: 'sh' };
     assert.deepEqual(
-      buildShellInvocation({ ...base, source: 'git-bash', carrier: 'posix', runtime: 'msys2' }, 'echo hi'),
+      buildShellInvocation(
+        { ...base, source: 'git-bash', carrier: 'posix', runtime: 'msys2' },
+        'echo hi',
+      ),
       ['sh', '-c', 'echo hi'],
     );
     assert.deepEqual(
-      buildShellInvocation({ ...base, source: 'wsl-bash', carrier: 'posix', runtime: 'wsl' }, 'echo hi'),
+      buildShellInvocation(
+        { ...base, source: 'wsl-bash', carrier: 'posix', runtime: 'wsl' },
+        'echo hi',
+      ),
       ['sh', '-s'],
     );
     assert.deepEqual(
-      buildShellInvocation({ ...base, source: 'powershell', carrier: 'powershell', runtime: 'native' }, 'echo hi'),
+      buildShellInvocation(
+        { ...base, source: 'powershell', carrier: 'powershell', runtime: 'native' },
+        'echo hi',
+      ),
       ['sh', '-NoProfile', '-NonInteractive', '-Command', 'echo hi'],
     );
     assert.deepEqual(
-      buildShellInvocation({ ...base, source: 'cmd', carrier: 'cmd', runtime: 'native' }, 'echo hi'),
+      buildShellInvocation(
+        { ...base, source: 'cmd', carrier: 'cmd', runtime: 'native' },
+        'echo hi',
+      ),
       ['sh', '/d', '/s', '/c', 'echo hi'],
     );
   });

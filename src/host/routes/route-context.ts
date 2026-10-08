@@ -24,7 +24,15 @@ import type { CreateRunAttachmentInput } from '../run-manager.js';
 // 客户端已把每张图压到 ≤2MiB（P2），4 张 + base64 膨胀 ≈ ≤12MB。
 export const MAX_BODY_BYTES = 2 * 1024 * 1024;
 export { MAX_ATTACHMENT_BODY_BYTES } from '../../attachment-policy.js';
-import { attachmentKind, MAX_ATTACHMENTS, MAX_IMAGE_BYTES, MAX_OFFICE_BYTES, MAX_PDF_BYTES, MAX_TEXT_BYTES } from '../../attachment-policy.js';
+
+import {
+  attachmentKind,
+  MAX_ATTACHMENTS,
+  MAX_IMAGE_BYTES,
+  MAX_OFFICE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_TEXT_BYTES,
+} from '../../attachment-policy.js';
 
 export const SAFE_RUN_ID = /^[A-Za-z0-9_-]{1,128}$/; // 与 Sandbox 的 runId 规则一致
 export const SAFE_SESSION_ID = SAFE_RUN_ID;
@@ -218,10 +226,13 @@ export function requestAttachments(body: Record<string, unknown>): CreateRunAtta
       throw new Error(`${label} 数据非法`);
     }
     const limit =
-      kind === 'image' ? MAX_IMAGE_BYTES
-      : kind === 'pdf' ? MAX_PDF_BYTES
-      : kind === 'text' ? MAX_TEXT_BYTES
-      : MAX_OFFICE_BYTES;
+      kind === 'image'
+        ? MAX_IMAGE_BYTES
+        : kind === 'pdf'
+          ? MAX_PDF_BYTES
+          : kind === 'text'
+            ? MAX_TEXT_BYTES
+            : MAX_OFFICE_BYTES;
     if (dataBase64.length > Math.ceil(limit / 3) * 4) throw new Error(`${label} 超过大小上限`);
     const bytes = Buffer.from(dataBase64, 'base64');
     if (bytes.toString('base64') !== dataBase64) throw new Error(`${label} 数据非法`);

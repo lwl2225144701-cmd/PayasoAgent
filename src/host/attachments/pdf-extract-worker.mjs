@@ -16,7 +16,8 @@ const main = async () => {
   } catch {
     return {
       ok: false,
-      error: '未安装 pdfjs-dist（可选依赖），无法提取中文/复杂 PDF；请运行 npm install pdfjs-dist 后重试',
+      error:
+        '未安装 pdfjs-dist（可选依赖），无法提取中文/复杂 PDF；请运行 npm install pdfjs-dist 后重试',
     };
   }
   const doc = await pdfjs.getDocument({

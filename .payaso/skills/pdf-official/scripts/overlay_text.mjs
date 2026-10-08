@@ -5,7 +5,7 @@
 // 含中文需 --font 指定 TTF 字体文件路径。
 import fs from 'node:fs';
 import path from 'node:path';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { CliError, readPdfBytes, run } from './lib.mjs';
 
 run(async (argv) => {
@@ -24,7 +24,8 @@ run(async (argv) => {
       positional.push(a);
     }
   }
-  if (positional.length < 2) throw new CliError('用法: overlay_text.mjs IN.pdf entries.json --out OUT.pdf', 2);
+  if (positional.length < 2)
+    throw new CliError('用法: overlay_text.mjs IN.pdf entries.json --out OUT.pdf', 2);
   if (!out) throw new CliError('缺少 --out', 2);
 
   let entries;
@@ -46,7 +47,8 @@ run(async (argv) => {
   const pageCount = doc.getPageCount();
   for (const e of entries) {
     const pageNo = Number(e.page);
-    if (!(1 <= pageNo && pageNo <= pageCount)) throw new CliError(`page ${e.page} 超出 1..${pageCount}`, 2);
+    if (!(1 <= pageNo && pageNo <= pageCount))
+      throw new CliError(`page ${e.page} 超出 1..${pageCount}`, 2);
     const page = doc.getPage(pageNo - 1);
     page.drawText(String(e.text), {
       x: Number(e.x),

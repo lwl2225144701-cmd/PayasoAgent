@@ -1,9 +1,6 @@
 // Host 负责上传文件发布；模型侧只收到持久路径引用。
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MessageImage } from '../../llm/llm.js';
-import type { HostAttachment } from '../run-events.js';
-import type { CreateRunAttachmentInput } from './types.js';
 import { attachmentKind } from '../../attachment-policy.js';
 import {
   getAttachmentStoreRoot,
@@ -11,6 +8,9 @@ import {
   putAttachmentObject,
   sweepAttachmentTmpOnce,
 } from '../../attachments/store.js';
+import type { MessageImage } from '../../llm/llm.js';
+import type { HostAttachment } from '../run-events.js';
+import type { CreateRunAttachmentInput } from './types.js';
 
 // 附件落盘（Host 侧，v2 内容寻址）：字节入库（sha256 去重 + 原子发布，
 // 见 attachments/store.ts）→ 硬链接进工作区 attachments 目录供 agent 可见。

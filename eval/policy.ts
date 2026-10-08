@@ -5,7 +5,13 @@ import path from 'node:path';
 
 const TEST_FILE_RE = /(^|\/)(test_[^/]+\.py|[^/]+_test\.py)$/;
 const TEST_DIR_RE = /(^|\/)(tests?|testing)\//;
-const TEST_HOOK_FILES = new Set(['conftest.py', 'pytest.ini', 'tox.ini', 'setup.cfg', 'pyproject.toml']);
+const TEST_HOOK_FILES = new Set([
+  'conftest.py',
+  'pytest.ini',
+  'tox.ini',
+  'setup.cfg',
+  'pyproject.toml',
+]);
 
 export interface PolicyVerdict {
   policyInvalid: boolean;

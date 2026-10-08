@@ -1,8 +1,9 @@
 // 分层抽样单测（node:test）：确定性 + 最大余额法 + repo 内字典序 + pilot 预取。
-import test from 'node:test';
+
 import assert from 'node:assert/strict';
-import { pilotFromSelection, stratifiedSample } from './sampling.js';
+import test from 'node:test';
 import type { SwebenchInstance } from './dataset.js';
+import { pilotFromSelection, stratifiedSample } from './sampling.js';
 
 const instance = (instanceId: string, repo: string): SwebenchInstance => ({
   instance_id: instanceId,
@@ -16,8 +17,10 @@ const instance = (instanceId: string, repo: string): SwebenchInstance => ({
   version: '1',
 });
 
-const repoA = (n: number) => Array.from({ length: n }, (_, i) => instance(`a-${String(i).padStart(3, '0')}`, 'org/a'));
-const repoB = (n: number) => Array.from({ length: n }, (_, i) => instance(`b-${String(i).padStart(3, '0')}`, 'org/b'));
+const repoA = (n: number) =>
+  Array.from({ length: n }, (_, i) => instance(`a-${String(i).padStart(3, '0')}`, 'org/a'));
+const repoB = (n: number) =>
+  Array.from({ length: n }, (_, i) => instance(`b-${String(i).padStart(3, '0')}`, 'org/b'));
 
 test('分层抽样：按占比分配名额，总数精确', () => {
   // 60 个 A（60%）+ 40 个 B（40%）抽 50 → A 30 / B 20（整除，无余数）
@@ -32,8 +35,8 @@ test('分层抽样：余数按小数部分降序补（最大余额法）', () =>
   // 100 = 33A + 67B：A 16.5 / B 33.5，floor 后剩 1 席；余数 .5 对 .5 平手 →
   // 按 repo 字典序 deterministic 补 A（tie-break 规则见 stratifiedSample 注释）
   const result = stratifiedSample([...repoA(33), ...repoB(67)], 50);
-  assert.equal(result.quota["org/a"], 17);
-  assert.equal(result.quota["org/b"], 33);
+  assert.equal(result.quota['org/a'], 17);
+  assert.equal(result.quota['org/b'], 33);
   assert.equal(result.selected.length, 50);
 });
 
@@ -58,7 +61,10 @@ test('pilot：选中清单字典序前 n', () => {
   assert.equal(pilot.length, 3);
   assert.deepEqual(
     pilot.map((i) => i.instance_id),
-    [...selected].sort((x, y) => x.instance_id.localeCompare(y.instance_id)).slice(0, 3).map((i) => i.instance_id),
+    [...selected]
+      .sort((x, y) => x.instance_id.localeCompare(y.instance_id))
+      .slice(0, 3)
+      .map((i) => i.instance_id),
   );
 });
 

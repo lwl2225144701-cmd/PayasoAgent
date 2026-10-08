@@ -14,20 +14,10 @@
       {
         "kind": "text",
         "target": "@answer",
-        "patterns": [
-          "林舟",
-          "02:15",
-          "UTC\\+8",
-          "7",
-          "2",
-          "未.*确定|待定|未定"
-        ]
+        "patterns": ["林舟", "02:15", "UTC\\+8", "7", "2", "未.*确定|待定|未定"]
       }
     ],
-    "review": [
-      "时间、保留和重试数值无误",
-      "上线日期明确未知，没有猜测日期"
-    ]
+    "review": ["时间、保留和重试数值无误", "上线日期明确未知，没有猜测日期"]
   },
   {
     "id": "S2",
@@ -44,17 +34,7 @@
       {
         "kind": "text",
         "target": "@answer",
-        "patterns": [
-          "测试",
-          "备份",
-          "恢复",
-          "3",
-          "2%",
-          "周宁",
-          "01:00",
-          "03:00",
-          "UTC"
-        ]
+        "patterns": ["测试", "备份", "恢复", "3", "2%", "周宁", "01:00", "03:00", "UTC"]
       }
     ],
     "review": [
@@ -77,19 +57,10 @@
       {
         "kind": "text",
         "target": "@answer",
-        "patterns": [
-          "陈雨",
-          "压测",
-          "评审",
-          "未.*确定|待定|未定|不确定",
-          "容量"
-        ]
+        "patterns": ["陈雨", "压测", "评审", "未.*确定|待定|未定|不确定", "容量"]
       }
     ],
-    "review": [
-      "9 月 20 日和 27 日不能当作确认日期",
-      "容量目标未知，不杜撰吞吐量"
-    ]
+    "review": ["9 月 20 日和 27 日不能当作确认日期", "容量目标未知，不杜撰吞吐量"]
   },
   {
     "id": "D1",
@@ -102,30 +73,15 @@
     "turns": [
       "对比 variant-old.md 与 variant-new.md，将所有实际变化写入 variant-diff.md，注明前后值与来源行号。未变化的字段不要列为变化。仅允许新增 variant-diff.md。"
     ],
-    "allowedChanges": [
-      "variant-diff.md"
-    ],
+    "allowedChanges": ["variant-diff.md"],
     "checks": [
       {
         "kind": "text",
         "target": "variant-diff.md",
-        "patterns": [
-          "10",
-          "30",
-          "CSV",
-          "2",
-          "3",
-          "7",
-          "14",
-          "林舟",
-          "周宁"
-        ]
+        "patterns": ["10", "30", "CSV", "2", "3", "7", "14", "林舟", "周宁"]
       }
     ],
-    "review": [
-      "找齐五处变化；认证不列为变化",
-      "来源位置正确，不把格式扩展说成删除 JSON"
-    ]
+    "review": ["找齐五处变化；认证不列为变化", "来源位置正确，不把格式扩展说成删除 JSON"]
   },
   {
     "id": "D2",
@@ -138,23 +94,15 @@
     "turns": [
       "对比 variant-old.md 与 variant-new.md，仅将含义变化写入 variant-diff.md，附前后值与来源行号。区分章节顺序变化，不把它算作内容新增或删除。仅允许新增 variant-diff.md。"
     ],
-    "allowedChanges": [
-      "variant-diff.md"
-    ],
+    "allowedChanges": ["variant-diff.md"],
     "checks": [
       {
         "kind": "text",
         "target": "variant-diff.md",
-        "patterns": [
-          "2",
-          "4"
-        ]
+        "patterns": ["2", "4"]
       }
     ],
-    "review": [
-      "只有重试次数属于含义变化",
-      "不虚构 TLS 或日志保留变化，来源正确"
-    ]
+    "review": ["只有重试次数属于含义变化", "不虚构 TLS 或日志保留变化，来源正确"]
   },
   {
     "id": "D3",
@@ -167,21 +115,12 @@
     "turns": [
       "对比 variant-old.md 与 variant-new.md，生成 variant-diff.md，说明规则变化、适用条件和新增限制，标注来源行号。仅允许新增 variant-diff.md。"
     ],
-    "allowedChanges": [
-      "variant-diff.md"
-    ],
+    "allowedChanges": ["variant-diff.md"],
     "checks": [
       {
         "kind": "text",
         "target": "variant-diff.md",
-        "patterns": [
-          "30",
-          "120",
-          "幂等",
-          "非幂等",
-          "20",
-          "MB"
-        ]
+        "patterns": ["30", "120", "幂等", "非幂等", "20", "MB"]
       }
     ],
     "review": [
@@ -200,9 +139,7 @@
     "turns": [
       "请修正 variant-config.cjs：retries 和 timeout 显式传 0 时必须保留；仅 null 或 undefined 使用默认值 3 和 1000。函数输入是对象。只修改 variant-config.cjs，执行必要检查后说明结果。"
     ],
-    "allowedChanges": [
-      "variant-config.cjs"
-    ],
+    "allowedChanges": ["variant-config.cjs"],
     "checks": [
       {
         "kind": "javascript",
@@ -223,9 +160,7 @@
     "turns": [
       "请修正 variant-unique.cjs 的 uniqueById：按对象 id 去重、保留首次出现的原对象和原顺序，不修改输入；数字 1 和字符串 \"1\" 视为不同 id。所有对象都有 id。只修改 variant-unique.cjs，执行检查后说明结果。"
     ],
-    "allowedChanges": [
-      "variant-unique.cjs"
-    ],
+    "allowedChanges": ["variant-unique.cjs"],
     "checks": [
       {
         "kind": "javascript",

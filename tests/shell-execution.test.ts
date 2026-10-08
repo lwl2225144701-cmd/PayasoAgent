@@ -383,7 +383,7 @@ if (process.platform !== 'darwin') {
     const out = await tool(
       'shell',
       {
-        command: 'npx tsx -e "console.log(\"TMPDIR_OK\")"',
+        command: 'npx tsx -e "console.log("TMPDIR_OK")"',
         timeoutMs: 120_000,
       },
       'read-only',

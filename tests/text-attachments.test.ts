@@ -3,30 +3,34 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MemorySecretStore } from '../src/host/secrets/secret-store.js';
-import { RunManager } from '../src/host/run-manager.js';
-import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
-import { requestAttachments } from '../src/host/routes/route-context.js';
-import { prepareAttachments } from '../src/host/attachments/normalize.js';
-import { extractPdfText } from '../src/host/attachments/pdf.js';
-import { writeAttachmentFile, publishAttachments } from '../src/host/attachments/publish.js';
-import { getAttachmentStoreRoot, restoreAttachment, putAttachmentObject } from '../src/attachments/store.js';
-import { DefaultContextHarness } from '../src/harness/context-harness.js';
-import { needsExtractionRefresh } from '../src/host/attachments/refresh-extraction.js';
-import { EXTRACTOR_VERSION } from '../src/host/attachments/extraction-version.js';
+import { deflateRawSync } from 'node:zlib';
+import { attachmentKind, MAX_OFFICE_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
+import {
+  getAttachmentStoreRoot,
+  putAttachmentObject,
+  restoreAttachment,
+} from '../src/attachments/store.js';
 import {
   createAgentExecutionContext,
   createDefaultRuntimeServices,
 } from '../src/bootstrap/runtime-bootstrap.js';
-import { createScratchpad } from '../src/runtime/scratchpad.js';
-import { runAgent } from '../src/runtime/agent.js';
-import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
-import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
-import { readDownloadChecked } from '../src/host/routes/static-handler.js';
-import { attachmentKind, MAX_OFFICE_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
 import { attachmentManifest } from '../src/harness/attachment-manifest.js';
-import { deflateRawSync } from 'node:zlib';
+import { DefaultContextHarness } from '../src/harness/context-harness.js';
+import { EXTRACTOR_VERSION } from '../src/host/attachments/extraction-version.js';
+import { prepareAttachments } from '../src/host/attachments/normalize.js';
+import { extractPdfText } from '../src/host/attachments/pdf.js';
+import { publishAttachments, writeAttachmentFile } from '../src/host/attachments/publish.js';
+import { needsExtractionRefresh } from '../src/host/attachments/refresh-extraction.js';
+import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
+import { requestAttachments } from '../src/host/routes/route-context.js';
+import { readDownloadChecked } from '../src/host/routes/static-handler.js';
+import { RunManager } from '../src/host/run-manager.js';
+import { MemorySecretStore } from '../src/host/secrets/secret-store.js';
 import type { ChatMessage } from '../src/llm/llm.js';
+import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
+import { runAgent } from '../src/runtime/agent.js';
+import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
+import { createScratchpad } from '../src/runtime/scratchpad.js';
 
 // 手工拼一个最小 zip（docx/pptx/xlsx 共用）：局部头 + deflate 条目 + 中央
 // 目录 + EOCD，不依赖任何 zip 库，字段布局与 attachment-zip.ts 的解析一一对应。
@@ -437,7 +441,9 @@ try {
   check(cjkPdf.extraction?.text?.includes('你好'));
   // 无 ToUnicode 字体子集：builtin 逐字节解出 C1 乱码（曾以 partial 落盘二进制 .txt），
   // 乱码闸门判定能力不足 → pdfjs 按 WinAnsiEncoding 解出真实文本。
-  const garbageFontPdf = (await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())]))[0];
+  const garbageFontPdf = (
+    await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())])
+  )[0];
   check(garbageFontPdf.extraction?.status === 'partial');
   check(garbageFontPdf.extraction?.text === 'ŠŒŽAB');
   // 超时保护：Run 创建路径上的附件提取不得被畸形/超复杂 PDF 挂死（1ms 预算必超时）。
@@ -664,11 +670,29 @@ try {
   // ---- 恢复刷新：旧版本提取产物在新一轮 Run 启动时被现行逻辑重提 ----
   // 复刻真实故障：冯子微 PDF（无 ToUnicode）在乱码闸门上线前落盘了二进制 .txt，
   // 事件不可变、同会话重试只按 sha 还原旧字节 —— 修复后必须让旧会话也读到新产物。
-  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt', extractorVersion: EXTRACTOR_VERSION } }, ws) === false);
+  check(
+    needsExtractionRefresh(
+      {
+        path: 'a.pdf',
+        extraction: { status: 'partial', path: 'a.txt', extractorVersion: EXTRACTOR_VERSION },
+      },
+      ws,
+    ) === false,
+  );
   check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'failed' } }, ws) === false);
   check(needsExtractionRefresh({ path: 'a.pdf' }, ws) === false);
-  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt' } }, ws) === true);
-  check(needsExtractionRefresh({ path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt', extractorVersion: '1' } }, ws) === true);
+  check(
+    needsExtractionRefresh(
+      { path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt' } },
+      ws,
+    ) === true,
+  );
+  check(
+    needsExtractionRefresh(
+      { path: 'a.pdf', extraction: { status: 'partial', path: 'a.txt', extractorVersion: '1' } },
+      ws,
+    ) === true,
+  );
   {
     const store = new SqliteRunStore(':memory:', new MemorySecretStore());
     const manager = new RunManager(store);
@@ -693,7 +717,9 @@ try {
       return null;
     };
     try {
-      const preparedGarbage = (await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())]))[0];
+      const preparedGarbage = (
+        await prepareAttachments([input('garbage.pdf', buildGarbageFontPdf())])
+      )[0];
       const first = manager.createInSession('上传附件', undefined, {
         permissionMode: 'read-only',
         attachments: [preparedGarbage],
@@ -737,10 +763,15 @@ try {
       check((await waitTerminal(second.runId)) === 'completed');
       const sessionWorkspace = store.getSession(first.sessionId)?.workspaceRoot ?? '';
       check(Boolean(sessionWorkspace));
-      const refreshed = fs.readFileSync(path.join(sessionWorkspace, legacyRef.extraction.path), 'utf8');
+      const refreshed = fs.readFileSync(
+        path.join(sessionWorkspace, legacyRef.extraction.path),
+        'utf8',
+      );
       check(refreshed === 'ŠŒŽAB');
       // 刷新后保持只读语义（与其余附件文件一致，agent 不可改）。
-      check((fs.statSync(path.join(sessionWorkspace, legacyRef.extraction.path)).mode & 0o222) === 0);
+      check(
+        (fs.statSync(path.join(sessionWorkspace, legacyRef.extraction.path)).mode & 0o222) === 0,
+      );
       // 刷新记账在宿主侧台账：同一 workspace 再判不再过期。
       check(!needsExtractionRefresh(legacyRef, sessionWorkspace));
     } finally {

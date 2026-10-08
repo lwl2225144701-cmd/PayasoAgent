@@ -1,6 +1,7 @@
 // 测试污染检测单测（node:test）：已知模式 + test_patch 路径 + 解析。
-import test from 'node:test';
+
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import { detectTestPollution, matchTestPath, parseChangedPaths } from './policy.js';
 
 test('模式命中：测试文件', () => {
@@ -24,7 +25,10 @@ test('模式未命中：正常源码', () => {
 });
 
 test('detectTestPollution：模式 + test_patch 双通道', () => {
-  const verdict = detectTestPollution(['src/a.py', 'pkg/tests/b.py', 'extra/fixture.json'], ['extra/fixture.json']);
+  const verdict = detectTestPollution(
+    ['src/a.py', 'pkg/tests/b.py', 'extra/fixture.json'],
+    ['extra/fixture.json'],
+  );
   assert.equal(verdict.policyInvalid, true);
   assert.deepEqual(
     verdict.hits.map((h) => `${h.file}:${h.rule}`),

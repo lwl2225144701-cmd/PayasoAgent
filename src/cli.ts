@@ -12,10 +12,7 @@ import {
 } from './bootstrap/runtime-bootstrap.js';
 import { createCliApprovalPort } from './cli-approval.js';
 import { type NetworkMode, setNetworkMode } from './network-mode.js';
-import {
-  type PermissionMode,
-  isPermissionMode,
-} from './permission-mode.js';
+import { isPermissionMode, type PermissionMode } from './permission-mode.js';
 import { loadCheckpoint } from './persistence/file-checkpoint-store.js';
 import { runAgent } from './runtime/agent.js';
 

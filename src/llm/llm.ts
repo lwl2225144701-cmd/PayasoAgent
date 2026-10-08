@@ -596,7 +596,8 @@ async function piFetch(
         ? seconds * 1000
         : Date.parse(retryAfter) - Date.now();
       // 允许 0：服务端显式要求立即重试（现有测试依赖此快路径）。
-      if (Number.isFinite(parsed) && parsed >= 0) diagnostics.retryAfterMs = Math.min(parsed, 120_000);
+      if (Number.isFinite(parsed) && parsed >= 0)
+        diagnostics.retryAfterMs = Math.min(parsed, 120_000);
     }
     return response;
   }

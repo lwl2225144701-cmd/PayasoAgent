@@ -12,11 +12,11 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MemorySecretStore } from '../../src/host/secrets/secret-store.js';
-import { RunManager } from '../../src/host/run-manager.js';
 import { SqliteRunStore } from '../../src/host/persistence/sqlite-store.js';
-import { setNetworkMode } from '../../src/network-mode.js';
+import { RunManager } from '../../src/host/run-manager.js';
+import { MemorySecretStore } from '../../src/host/secrets/secret-store.js';
 import { clearWorkspace, setWorkspace } from '../../src/host/workspace.js';
+import { setNetworkMode } from '../../src/network-mode.js';
 import { loadCheckpoint } from '../../src/persistence/file-checkpoint-store.js';
 import {
   CACHE_DIR,
@@ -25,9 +25,9 @@ import {
   lockDataset,
   type SwebenchInstance,
 } from './dataset.js';
-import { pilotFromSelection, stratifiedSample } from './sampling.js';
-import { detectTestPollution, matchTestPath, parseChangedPaths } from './policy.js';
 import { decideSubmission, type SubmissionStatus } from './decision.js';
+import { detectTestPollution, matchTestPath, parseChangedPaths } from './policy.js';
+import { pilotFromSelection, stratifiedSample } from './sampling.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LIST_FILE = path.join(HERE, 'instances.sprint1.json');
@@ -131,13 +131,20 @@ async function waitQuiet(root: string, quietMs = QUIET_WINDOW_MS): Promise<boole
 }
 
 /** 干净 checkout 上 git apply --check 预检。 */
-function applyCheck(cacheRepo: string, baseCommit: string, patch: string): { ok: boolean; error?: string } {
+function applyCheck(
+  cacheRepo: string,
+  baseCommit: string,
+  patch: string,
+): { ok: boolean; error?: string } {
   const clean = fs.mkdtempSync(path.join(path.dirname(REPO_CACHE), 'applycheck-'));
   try {
     git(cacheRepo, ['worktree', 'add', '--detach', clean, baseCommit]);
     fs.writeFileSync(path.join(clean, '.candidate.patch'), patch);
     try {
-      execFileSync('git', ['apply', '--check', '.candidate.patch'], { cwd: clean, encoding: 'utf8' });
+      execFileSync('git', ['apply', '--check', '.candidate.patch'], {
+        cwd: clean,
+        encoding: 'utf8',
+      });
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -149,10 +156,23 @@ function applyCheck(cacheRepo: string, baseCommit: string, patch: string): { ok:
 }
 
 /** 捕获 patch 与改动路径。 */
-function capturePatch(workDir: string, baseCommit: string): { patch: string; changedPaths: string[] } {
+function capturePatch(
+  workDir: string,
+  baseCommit: string,
+): { patch: string; changedPaths: string[] } {
   git(workDir, ['add', '-A']);
-  const patch = git(workDir, ['diff', '--cached', '--binary', '--full-index', baseCommit, '--', '.']);
-  const changedPaths = parseChangedPaths(git(workDir, ['diff', '--cached', '--name-only', baseCommit]));
+  const patch = git(workDir, [
+    'diff',
+    '--cached',
+    '--binary',
+    '--full-index',
+    baseCommit,
+    '--',
+    '.',
+  ]);
+  const changedPaths = parseChangedPaths(
+    git(workDir, ['diff', '--cached', '--name-only', baseCommit]),
+  );
   return { patch, changedPaths };
 }
 
@@ -165,7 +185,10 @@ function resetWorkdir(workDir: string): void {
  * dry-run 自检：用合成编辑把 §5.4 判定链完整烧一遍（不调模型）。
  * A) 改源码 → 期望 ok；B) 改测试文件 → 期望 policy_invalid。
  */
-function selfTestDecisionChain(workDir: string, baseCommit: string): Record<string, 'pass' | 'fail'> {
+function selfTestDecisionChain(
+  workDir: string,
+  baseCommit: string,
+): Record<string, 'pass' | 'fail'> {
   const out: Record<string, 'pass' | 'fail'> = {};
   const tracked = git(workDir, ['ls-files'])
     .split('\n')
@@ -184,7 +207,9 @@ function selfTestDecisionChain(workDir: string, baseCommit: string): Record<stri
     fs.appendFileSync(path.join(workDir, target), '\n# swebench self-test synthetic edit\n');
     const { patch, changedPaths } = capturePatch(workDir, baseCommit);
     const policy = detectTestPollution(changedPaths, []);
-    const apply = patch.trim() ? applyCheck(cacheRepoDirOf(workDir), baseCommit, patch) : { ok: false };
+    const apply = patch.trim()
+      ? applyCheck(cacheRepoDirOf(workDir), baseCommit, patch)
+      : { ok: false };
     const decision = decideSubmission({ runnerFaults: [], patch, policy, applyOk: apply.ok });
     out[`${expected}(${target})`] = decision.status === expected ? 'pass' : 'fail';
     resetWorkdir(workDir);
@@ -216,7 +241,8 @@ function writeArtifacts(
   fs.writeFileSync(path.join(instanceDir, 'task.md'), taskText);
   // 档案求真：原始 patch 一律落档（哪怕被判无效/违规）
   if (patch) fs.writeFileSync(path.join(instanceDir, 'patch.diff'), patch);
-  if (faults.length) fs.writeFileSync(path.join(instanceDir, 'faults.json'), JSON.stringify(faults, null, 2));
+  if (faults.length)
+    fs.writeFileSync(path.join(instanceDir, 'faults.json'), JSON.stringify(faults, null, 2));
 }
 
 function tally(results: InstanceResult[]): Record<string, number> {
@@ -268,7 +294,9 @@ async function main(): Promise<void> {
     const committed = JSON.parse(fs.readFileSync(LIST_FILE, 'utf8')) as { ids: string[] };
     const expected = sampled.selected.map((i) => i.instance_id);
     const same = JSON.stringify(committed.ids) === JSON.stringify(expected);
-    console.log(same ? `清单一致（${expected.length} 题）` : '清单不一致！用 --regen-list 重新生成');
+    console.log(
+      same ? `清单一致（${expected.length} 题）` : '清单不一致！用 --regen-list 重新生成',
+    );
     process.exit(same ? 0 : 1);
   }
   if (arg('--regen-list')) {
@@ -295,7 +323,9 @@ async function main(): Promise<void> {
   const listIds = (JSON.parse(fs.readFileSync(LIST_FILE, 'utf8')) as { ids: string[] }).ids;
   const byId = new Map(dataset.instances.map((i) => [i.instance_id, i]));
   const ordered = listIds.map((id) => byId.get(id)!);
-  let targets: SwebenchInstance[] = arg('--pilot') ? pilotFromSelection(ordered, PILOT_SIZE) : ordered;
+  let targets: SwebenchInstance[] = arg('--pilot')
+    ? pilotFromSelection(ordered, PILOT_SIZE)
+    : ordered;
   const instanceCap = Number(argValue('--limit'));
   if (Number.isFinite(instanceCap) && instanceCap > 0) targets = targets.slice(0, instanceCap);
 
@@ -341,7 +371,9 @@ async function main(): Promise<void> {
       ensureRepoCache(instance.repo);
       git(cacheRepo, ['worktree', 'add', '--detach', '--quiet', workDir, instance.base_commit]);
     } catch (err) {
-      instanceFaults.push(`clone/checkout 失败: ${err instanceof Error ? err.message : String(err)}`);
+      instanceFaults.push(
+        `clone/checkout 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // 2) task 包装：problem_statement + 一行约束
@@ -382,7 +414,8 @@ async function main(): Promise<void> {
           const terminalDeadline = Date.now() + 60 * 60_000;
           for (;;) {
             const events = store.listEvents(agentRunId).map(({ event }) => event);
-            if (events.some((e) => ['run_completed', 'run_failed', 'run_stopped'].includes(e.type))) break;
+            if (events.some((e) => ['run_completed', 'run_failed', 'run_stopped'].includes(e.type)))
+              break;
             if (Date.now() > terminalDeadline) {
               instanceFaults.push('runner_fault: 等待终态事件超时');
               break;
@@ -396,8 +429,14 @@ async function main(): Promise<void> {
         if (agentPromise) {
           await Promise.race([
             agentPromise.catch(() => undefined),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('agentPromise settle 等待超时')), 5 * 60_000)),
-          ]).catch((err) => instanceFaults.push(`runner_fault: ${err instanceof Error ? err.message : String(err)}`));
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('agentPromise settle 等待超时')), 5 * 60_000),
+            ),
+          ]).catch((err) =>
+            instanceFaults.push(
+              `runner_fault: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
         }
       } catch (err) {
         instanceFaults.push(`agent 执行失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -429,8 +468,12 @@ async function main(): Promise<void> {
       const policy = detectTestPollution(changedPaths, []);
       policyHits.push(...policy.hits);
       // 6) 提交决策（§5.4 唯一优先级）
-      const runnerFaults = instanceFaults.filter((f) => f.startsWith('runner_fault') || f.startsWith('diff 捕获'));
-      const apply = patch.trim() ? applyCheck(cacheRepo, instance.base_commit, patch) : { ok: false };
+      const runnerFaults = instanceFaults.filter(
+        (f) => f.startsWith('runner_fault') || f.startsWith('diff 捕获'),
+      );
+      const apply = patch.trim()
+        ? applyCheck(cacheRepo, instance.base_commit, patch)
+        : { ok: false };
       const decision = decideSubmission({
         runnerFaults: fatalClone ? ['clone 失败'] : runnerFaults,
         patch,
@@ -439,7 +482,8 @@ async function main(): Promise<void> {
       });
       status = decision.status;
       approvedPatch = decision.approvedPatch;
-      if (status === 'patch_invalid') instanceFaults.push(`apply --check 失败: ${apply.error ?? ''}`);
+      if (status === 'patch_invalid')
+        instanceFaults.push(`apply --check 失败: ${apply.error ?? ''}`);
     }
 
     // 7) dry-run 自检：合成编辑烧一遍判定链
@@ -475,7 +519,11 @@ async function main(): Promise<void> {
       if (checkpoint) {
         fs.writeFileSync(
           path.join(runDir, instance.instance_id, 'transcript.json'),
-          JSON.stringify({ messages: checkpoint.messages, iteration: checkpoint.iteration }, null, 2),
+          JSON.stringify(
+            { messages: checkpoint.messages, iteration: checkpoint.iteration },
+            null,
+            2,
+          ),
         );
       }
     }
@@ -485,10 +533,17 @@ async function main(): Promise<void> {
   await manager.close();
 
   // ---- 汇总 ----
-  fs.writeFileSync(path.join(runDir, 'preds.jsonl'), `${predsLines.join('\n')}${predsLines.length ? '\n' : ''}`);
+  fs.writeFileSync(
+    path.join(runDir, 'preds.jsonl'),
+    `${predsLines.join('\n')}${predsLines.length ? '\n' : ''}`,
+  );
   fs.writeFileSync(
     path.join(runDir, 'results.json'),
-    JSON.stringify({ runId, dryRun, selectionSize: SELECTION_SIZE, datasetRevision: dataset.revision, results }, null, 2),
+    JSON.stringify(
+      { runId, dryRun, selectionSize: SELECTION_SIZE, datasetRevision: dataset.revision, results },
+      null,
+      2,
+    ),
   );
   fs.writeFileSync(
     path.join(runDir, 'manifest.json'),
@@ -497,7 +552,11 @@ async function main(): Promise<void> {
         runId,
         dryRun,
         dataset: { revision: dataset.revision, sha256: dataset.sha256, cacheDir: CACHE_DIR },
-        selection: { algorithm: 'stratified-largest-remainder', size: SELECTION_SIZE, listSha256: listHash },
+        selection: {
+          algorithm: 'stratified-largest-remainder',
+          size: SELECTION_SIZE,
+          listSha256: listHash,
+        },
         modelName: argValue('--model-name') ?? 'step-5-preview',
         source: { git: safeGit('rev-parse', 'HEAD'), sourceSha: sourceHash() },
       },
@@ -516,7 +575,8 @@ async function main(): Promise<void> {
     console.log(failures.length ? `自检失败: ${failures.join('；')}` : '自检全部通过');
     process.exit(failures.length ? 1 : 0);
   }
-  if (!dryRun) console.log('判分命令见方案 §6 P2（注意：每次改 predictions 必须换新 grading run_id）');
+  if (!dryRun)
+    console.log('判分命令见方案 §6 P2（注意：每次改 predictions 必须换新 grading run_id）');
 }
 
 function sha256Text(text: string): string {

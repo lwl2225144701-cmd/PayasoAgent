@@ -35,9 +35,9 @@ try {
   // Shell 隔离能力（诚实分级）：字段齐全且枚举合法；与本进程平台一致。
   assert.ok(body.shellIsolation);
   assert.ok(
-    body.shellIsolation.executor === 'macos-seatbelt'
-      || body.shellIsolation.executor === 'windows-acl'
-      || body.shellIsolation.executor === 'uncontained-gated',
+    body.shellIsolation.executor === 'macos-seatbelt' ||
+      body.shellIsolation.executor === 'windows-acl' ||
+      body.shellIsolation.executor === 'uncontained-gated',
   );
   assert.ok(['full', 'partial', 'none'].includes(String(body.shellIsolation.enforcement)));
   assert.ok(['full', 'partial', 'none'].includes(String(body.shellIsolation.writeIsolation)));

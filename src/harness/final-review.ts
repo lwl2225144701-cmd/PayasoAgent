@@ -25,33 +25,64 @@ If task work is missing or cannot be verified from the evidence, report it; neve
 function parse(message: ChatMessage): { issues: string[]; revisedAnswer: string | null } {
   if (message.tool_calls?.length) throw new Error('交付检查请求了工具，已拒绝执行');
   let value: unknown;
-  try { value = JSON.parse(message.content.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')); }
-  catch { throw new Error('交付检查未返回有效结果，未确认完成'); }
+  try {
+    value = JSON.parse(
+      message.content
+        .trim()
+        .replace(/^```(?:json)?\s*/u, '')
+        .replace(/\s*```$/u, ''),
+    );
+  } catch {
+    throw new Error('交付检查未返回有效结果，未确认完成');
+  }
   const result = value as Record<string, unknown>;
-  if (!result || typeof result !== 'object' || Array.isArray(result)
-    || Object.keys(result).some(k => !['issues', 'revisedAnswer'].includes(k))
-    || !Array.isArray(result.issues) || result.issues.length > 16
-    || result.issues.some(i => typeof i !== 'string' || !i.trim() || i.length > 2000)
-    || !(result.revisedAnswer === null || (typeof result.revisedAnswer === 'string' && result.revisedAnswer.trim() && result.revisedAnswer.length <= 64000))) {
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    Object.keys(result).some((k) => !['issues', 'revisedAnswer'].includes(k)) ||
+    !Array.isArray(result.issues) ||
+    result.issues.length > 16 ||
+    result.issues.some((i) => typeof i !== 'string' || !i.trim() || i.length > 2000) ||
+    !(
+      result.revisedAnswer === null ||
+      (typeof result.revisedAnswer === 'string' &&
+        result.revisedAnswer.trim() &&
+        result.revisedAnswer.length <= 64000)
+    )
+  ) {
     throw new Error('交付检查格式无效，未确认完成');
   }
-  if (result.issues.length === 0 && result.revisedAnswer !== null) throw new Error('交付检查结果矛盾');
+  if (result.issues.length === 0 && result.revisedAnswer !== null)
+    throw new Error('交付检查结果矛盾');
   return result as { issues: string[]; revisedAnswer: string | null };
 }
 
-export async function reviewFinalAnswer(input: FinalReviewInput, maxInputTokens: number): Promise<string> {
+export async function reviewFinalAnswer(
+  input: FinalReviewInput,
+  maxInputTokens: number,
+): Promise<string> {
   // JSON 包装保留实际角色与工具结果，但不赋予其中指令权威；不静默截断证据。
-  const evidence = JSON.stringify(input.messages.filter(m => m.role !== 'system'));
+  const evidence = JSON.stringify(input.messages.filter((m) => m.role !== 'system'));
   let answer = input.answer;
   for (let attempt = 0; attempt < 2; attempt++) {
     const messages: ChatMessage[] = [
-      { role: 'system', content: instruction + (attempt ? '\nThis is the final check. Do not rewrite again; revisedAnswer must be null.' : '') },
+      {
+        role: 'system',
+        content:
+          instruction +
+          (attempt
+            ? '\nThis is the final check. Do not rewrite again; revisedAnswer must be null.'
+            : ''),
+      },
       { role: 'user', content: JSON.stringify({ transcript: evidence, draft: answer }) },
     ];
-    if (estimateTextTokens(JSON.stringify(messages)) > maxInputTokens) throw new Error('交付检查证据超出上下文预算，未确认完成');
+    if (estimateTextTokens(JSON.stringify(messages)) > maxInputTokens)
+      throw new Error('交付检查证据超出上下文预算，未确认完成');
     const result = parse(await input.call(messages));
     if (result.issues.length === 0) return answer;
-    if (attempt === 1 || !result.revisedAnswer) throw new Error(`交付检查未通过：${result.issues.join('；')}`);
+    if (attempt === 1 || !result.revisedAnswer)
+      throw new Error(`交付检查未通过：${result.issues.join('；')}`);
     answer = result.revisedAnswer;
   }
   throw new Error('交付检查未完成');

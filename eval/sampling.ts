@@ -48,7 +48,9 @@ export function stratifiedSample(instances: SwebenchInstance[], total: number): 
   for (const repo of repos) {
     const k = quota[repo] ?? 0;
     if (k <= 0) continue;
-    const sorted = [...byRepo.get(repo)!].sort((a, b) => a.instance_id.localeCompare(b.instance_id));
+    const sorted = [...byRepo.get(repo)!].sort((a, b) =>
+      a.instance_id.localeCompare(b.instance_id),
+    );
     picked.push(...sorted.slice(0, k));
   }
   picked.sort((a, b) => a.instance_id.localeCompare(b.instance_id));

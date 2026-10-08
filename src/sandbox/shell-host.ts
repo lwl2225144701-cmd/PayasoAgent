@@ -189,10 +189,7 @@ export async function discoverShellHost(options: ShellHostOptions = {}): Promise
   const env = options.env ?? process.env;
 
   if (platform === 'win32') {
-    const gitCandidates = [
-      ...GIT_BASH_CANDIDATES(env),
-      ...registryGitBashCandidates(env),
-    ];
+    const gitCandidates = [...GIT_BASH_CANDIDATES(env), ...registryGitBashCandidates(env)];
     for (const candidate of gitCandidates) {
       if (fs.existsSync(candidate))
         return {
@@ -234,12 +231,30 @@ export async function discoverShellHost(options: ShellHostOptions = {}): Promise
 
   // unix（darwin / linux）：/bin/bash → PATH bash → /bin/sh
   if (fs.existsSync('/bin/bash'))
-    return { platform, shellPath: '/bin/bash', source: 'system-bash', carrier: 'posix', runtime: 'native' };
+    return {
+      platform,
+      shellPath: '/bin/bash',
+      source: 'system-bash',
+      carrier: 'posix',
+      runtime: 'native',
+    };
   const inPath = await lookupInPath('bash', env, 'which');
   if (inPath)
-    return { platform, shellPath: inPath, source: 'path-bash', carrier: 'posix', runtime: 'native' };
+    return {
+      platform,
+      shellPath: inPath,
+      source: 'path-bash',
+      carrier: 'posix',
+      runtime: 'native',
+    };
   if (fs.existsSync('/bin/sh'))
-    return { platform, shellPath: '/bin/sh', source: 'sh-fallback', carrier: 'posix', runtime: 'native' };
+    return {
+      platform,
+      shellPath: '/bin/sh',
+      source: 'sh-fallback',
+      carrier: 'posix',
+      runtime: 'native',
+    };
   return null;
 }
 
@@ -314,7 +329,9 @@ export function isAclCompatibleCarrier(host: ShellHost): boolean {
 export const WINDOWS_ACL_GATE_ENV = 'PAYASO_SHELL_WINDOWS_ACL';
 
 /** Windows ACL 实验开关是否打开。 */
-export function isWindowsAclEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function isWindowsAclEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
   return env[WINDOWS_ACL_GATE_ENV] === '1';
 }
 

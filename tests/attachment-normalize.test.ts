@@ -8,13 +8,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { CreateRunAttachmentInput } from '../src/host/run-manager.js';
 import {
   NORMALIZE_PIXEL_TARGET,
   type PreparedAttachment,
   prepareAttachments,
   sniffImageMime,
 } from '../src/host/attachments/normalize.js';
+import type { CreateRunAttachmentInput } from '../src/host/run-manager.js';
 
 let passed = 0;
 let failed = 0;

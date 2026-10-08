@@ -205,7 +205,8 @@ export class SqliteRunStore implements RunStore {
         this.migrateStoppingStatus();
         this.migratePermissionMode();
         const columns = this.db.prepare('PRAGMA table_info(runs)').all() as Array<{ name: string }>;
-        if (!columns.some(c => c.name === 'constraints_json')) this.db.exec('ALTER TABLE runs ADD COLUMN constraints_json TEXT');
+        if (!columns.some((c) => c.name === 'constraints_json'))
+          this.db.exec('ALTER TABLE runs ADD COLUMN constraints_json TEXT');
         this.db.exec(`
           CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_runs_session_turn ON runs(session_id, turn_index ASC);

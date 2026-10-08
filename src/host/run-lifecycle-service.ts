@@ -12,7 +12,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { TextAttachmentRef } from '../attachment-types.js';
 import { restoreAttachment } from '../attachments/store.js';
-import { refreshExtraction } from './attachments/refresh-extraction.js';
 import {
   createAgentExecutionContext,
   createDefaultRuntimeServices,
@@ -32,6 +31,7 @@ import { createWorkspace, getRunWorkspaceRoot } from '../sandbox/sandbox-manager
 import { isAbortError } from '../util/abort.js';
 import type { ApprovalCoordinator } from './approval-coordinator.js';
 import { publishAttachments } from './attachments/publish.js';
+import { refreshExtraction } from './attachments/refresh-extraction.js';
 import type { EventStreamService } from './event-stream-service.js';
 import type { ModelService } from './model-service.js';
 import {
@@ -664,11 +664,17 @@ export class RunLifecycleService {
     for (let index = 0; index < runs.length; index++) {
       const run = runs[index];
       if (run.status === 'running' || run.status === 'interrupted') continue;
-      const rejectedDraft = run.status !== 'completed' && this.store.listEvents(run.runId)
-        .some(({ event }) => event.type === 'llm_call' && event.purpose === 'final_draft');
+      const rejectedDraft =
+        run.status !== 'completed' &&
+        this.store
+          .listEvents(run.runId)
+          .some(({ event }) => event.type === 'llm_call' && event.purpose === 'final_draft');
       if (run.constraints?.evidence || rejectedDraft) {
         messages.push({ role: 'user', content: run.task });
-        messages.push({ role: 'assistant', content: run.status === 'completed' && run.result ? run.result : '上一轮交付未通过验证' });
+        messages.push({
+          role: 'assistant',
+          content: run.status === 'completed' && run.result ? run.result : '上一轮交付未通过验证',
+        });
         harnessState = undefined;
         lastCheckpointIndex = index;
         continue;

@@ -55,7 +55,8 @@ run(async (argv) => {
       positional.push(a);
     }
   }
-  if (positional.length < 2) throw new CliError('用法: apply_values.mjs FORM.pdf values.json --out out.pdf', 2);
+  if (positional.length < 2)
+    throw new CliError('用法: apply_values.mjs FORM.pdf values.json --out out.pdf', 2);
   if (!out) throw new CliError('缺少 --out', 2);
 
   const [formPath, valuesPath] = positional;

@@ -124,6 +124,7 @@ export function InputBar({
   const suggestRef = useRef<HTMLDivElement>(null);
 
   // 切换工作区后刷新，避免沿用上一工作区的模板。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceName 是触发器（效应体内不读它）：切工作区必须重拉模板
   useEffect(() => {
     let active = true;
     setPromptCommands([]);
@@ -506,6 +507,7 @@ export function InputBar({
           </button>
         </div>
 
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: 拖放落点容器，非交互控件，无键盘语义可给 */}
         <div className={styles.heroInputWrapper} onDragOver={handleDragOver} onDrop={handleDrop}>
           {attachmentStrip}
           {visionWarning}
@@ -568,6 +570,7 @@ export function InputBar({
   return (
     <div className={`${styles.inputBar} ${styles.conversationBar}`}>
       {headerSlot && <div className={styles.inputBarHeader}>{headerSlot}</div>}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: 拖放落点容器，非交互控件，无键盘语义可给 */}
       <div className={styles.conversationComposer} onDragOver={handleDragOver} onDrop={handleDrop}>
         {attachmentStrip}
         {visionWarning}

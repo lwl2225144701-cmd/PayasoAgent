@@ -32,7 +32,8 @@ run(async (argv) => {
     const a = argv[i];
     if (a === '--format') {
       format = argv[++i];
-      if (!['markdown', 'json'].includes(format)) throw new CliError('--format 仅支持 markdown|json', 2);
+      if (!['markdown', 'json'].includes(format))
+        throw new CliError('--format 仅支持 markdown|json', 2);
     } else if (a === '--pages') {
       select = argv[++i] ?? '';
     } else if (a === '--out') {

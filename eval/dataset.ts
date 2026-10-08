@@ -62,7 +62,11 @@ export async function fetchVerifiedDataset(maxInstances = 500): Promise<Swebench
 }
 
 /** 锁定数据集到本地缓存，返回锁定文件路径与哈希（revision = 实例数 + 首尾 ID）。 */
-export function lockDataset(instances: SwebenchInstance[]): { file: string; sha256: string; revision: string } {
+export function lockDataset(instances: SwebenchInstance[]): {
+  file: string;
+  sha256: string;
+  revision: string;
+} {
   const sorted = [...instances].sort((a, b) => a.instance_id.localeCompare(b.instance_id));
   const revision = `verified-${sorted.length}-${sorted[0].instance_id}-${sorted.at(-1)!.instance_id}`;
   const file = path.join(CACHE_DIR, `dataset.${revision}.json`);
@@ -79,7 +83,10 @@ export function loadLockedDataset(expectedSha256?: string): {
   sha256: string;
 } {
   const candidates = fs.existsSync(CACHE_DIR)
-    ? fs.readdirSync(CACHE_DIR).filter((f) => f.startsWith('dataset.') && f.endsWith('.json')).sort()
+    ? fs
+        .readdirSync(CACHE_DIR)
+        .filter((f) => f.startsWith('dataset.') && f.endsWith('.json'))
+        .sort()
     : [];
   const latest = candidates.at(-1);
   if (!latest) throw new Error(`未找到锁定数据集（目录: ${CACHE_DIR}）——先运行 --lock`);

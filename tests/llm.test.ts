@@ -176,10 +176,13 @@ try {
     globalThis.fetch = async () => {
       calls++;
       if (calls === 1) {
-        return new Response(JSON.stringify({ error: { message: 'RPM limit', type: 'rate_limited' } }), {
-          status: 429,
-          headers: { 'Retry-After': '0' },
-        });
+        return new Response(
+          JSON.stringify({ error: { message: 'RPM limit', type: 'rate_limited' } }),
+          {
+            status: 429,
+            headers: { 'Retry-After': '0' },
+          },
+        );
       }
       return new Response(JSON.stringify({ choices: [{ message: { content: 'recovered' } }] }), {
         status: 200,

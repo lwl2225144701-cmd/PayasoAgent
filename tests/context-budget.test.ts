@@ -11,10 +11,10 @@ import {
   createAgentExecutionContext,
   createDefaultRuntimeServices,
 } from '../src/bootstrap/runtime-bootstrap.js';
-import { checkpointPath, loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
-import { runAgent } from '../src/runtime/agent.js';
 import { InstructionComposer } from '../src/harness/instruction-composer.js';
 import { BASE_SYSTEM_PROMPT, buildBaseSegments } from '../src/harness/instructions.js';
+import { checkpointPath, loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
+import { runAgent } from '../src/runtime/agent.js';
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-overbudget-'));
 process.env.SANDBOX_ROOT = path.join(base, 'runtime-sandbox');
@@ -43,11 +43,14 @@ async function test(name: string, fn: () => Promise<void>): Promise<void> {
 async function main(): Promise<void> {
   await test('核心指引在真实分段预算内完整进入模型上下文', async () => {
     const composer = new InstructionComposer();
-    for (const segment of buildBaseSegments({ permissionMode: 'workspace-write', networkMode: 'off' })) {
+    for (const segment of buildBaseSegments({
+      permissionMode: 'workspace-write',
+      networkMode: 'off',
+    })) {
       composer.addSegment(segment);
     }
     const composed = composer.compose(10_000);
-    const kernel = composed.diagnostics.find(segment => segment.id === 'kernel.base');
+    const kernel = composed.diagnostics.find((segment) => segment.id === 'kernel.base');
     assert.ok(kernel);
     assert.equal(kernel.truncated, false, '核心指引超预算会丢失末尾规则，应精简指引');
     assert.equal(kernel.dropped, false);

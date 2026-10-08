@@ -187,8 +187,11 @@ const DEFAULT_PDF_EXTRACT_TIMEOUT_MS = 60_000;
 async function extractPdfjsText(bytes: Buffer): Promise<string> {
   const timeoutMs =
     positiveIntMs(process.env.PAYASO_PDF_EXTRACT_TIMEOUT_MS) ?? DEFAULT_PDF_EXTRACT_TIMEOUT_MS;
-  const deadline = createDeadline(undefined, timeoutMs, () =>
-    new TimeoutAbortError('tool', `PDF 提取超时（预算 ${timeoutMs}ms），文件可能异常复杂或损坏`),
+  const deadline = createDeadline(
+    undefined,
+    timeoutMs,
+    () =>
+      new TimeoutAbortError('tool', `PDF 提取超时（预算 ${timeoutMs}ms），文件可能异常复杂或损坏`),
   );
   const abortRejection = new Promise<never>((_, reject) => {
     deadline.signal.addEventListener('abort', () => reject(deadline.signal.reason), { once: true });
@@ -210,7 +213,9 @@ async function extractPdfjsText(bytes: Buffer): Promise<string> {
     const cleaned = cleanupText(extracted);
     // 连 pdfjs 都只解出乱码 → 文本层确实没有 Unicode 映射，如实失败（通常需 OCR）。
     if (looksLikeGarbage(cleaned)) {
-      throw new Error('PDF 文本层不可读（字体无 Unicode 映射的字符码），简易提取无法处理；可能需要 OCR');
+      throw new Error(
+        'PDF 文本层不可读（字体无 Unicode 映射的字符码），简易提取无法处理；可能需要 OCR',
+      );
     }
     return cleaned;
   } finally {

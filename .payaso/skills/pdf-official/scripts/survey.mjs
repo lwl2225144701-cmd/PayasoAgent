@@ -9,7 +9,10 @@ async function looksScanned(doc) {
   if (doc.numPages < 1) return false;
   const page = await doc.getPage(1);
   const tc = await page.getTextContent();
-  const text = tc.items.map((it) => ('str' in it ? it.str : '')).join('').trim();
+  const text = tc.items
+    .map((it) => ('str' in it ? it.str : ''))
+    .join('')
+    .trim();
   if (text.length >= 40) return false;
   const ops = await page.getOperatorList();
   return ops.fnArray.includes(OPS.paintImageXObject);

@@ -83,7 +83,9 @@ for (const [runtime, source, path] of [
     (err: unknown) => {
       const message = (err as Error).message;
       // 必须点明真实机制，而不是误导用户去"安装 Git for Windows"
-      return /cannot use the discovered shell carrier/.test(message) && !/Git for Windows/.test(message);
+      return (
+        /cannot use the discovered shell carrier/.test(message) && !/Git for Windows/.test(message)
+      );
     },
   );
 }

@@ -3,7 +3,12 @@
 // （与 tests/swebench/decision.ts 一致，零 src 依赖。）
 import type { PolicyVerdict } from './policy.js';
 
-export type SubmissionStatus = 'ok' | 'empty_patch' | 'patch_invalid' | 'policy_invalid' | 'runner_fault';
+export type SubmissionStatus =
+  | 'ok'
+  | 'empty_patch'
+  | 'patch_invalid'
+  | 'policy_invalid'
+  | 'runner_fault';
 
 export interface DecisionInput {
   /** runner 层已经判定的管线故障（clone/spawn 失败等）——直接 runner_fault */

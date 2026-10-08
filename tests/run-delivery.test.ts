@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { addEvent, createTrace } from '../src/runtime/trace.js';
-import type { HostEvent } from '../src/host/run-events.js';
 import { deriveRunDelivery, inspectRunDelivery } from '../src/host/run-delivery.js';
+import type { HostEvent } from '../src/host/run-events.js';
+import { addEvent, createTrace } from '../src/runtime/trace.js';
+
 const trace = createTrace('delivery-test');
 function call(tool: string, args: Record<string, unknown>, result: string, durationMs = 10) {
   addEvent(trace, { type: 'tool_call', tool, args });
@@ -107,5 +108,8 @@ const stopped = createTrace('stopped');
 addEvent(stopped, { type: 'tool_call', tool: 'shell', args: { command: 'npm test' } });
 assert.equal(deriveRunDelivery(stopped.events).checks[0].status, 'unknown');
 
-assert.equal(deriveRunDelivery([], '[report](<reports/my report.md>)').files[0].name, 'reports/my report.md');
+assert.equal(
+  deriveRunDelivery([], '[report](<reports/my report.md>)').files[0].name,
+  'reports/my report.md',
+);
 console.log('Run delivery: PASS');

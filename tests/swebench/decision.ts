@@ -2,7 +2,12 @@
 // 纯函数：IO（git apply 预检）由调用方算好传入，结果可单测（decision.test.ts）。
 import type { PolicyVerdict } from './policy.js';
 
-export type SubmissionStatus = 'ok' | 'empty_patch' | 'patch_invalid' | 'policy_invalid' | 'runner_fault';
+export type SubmissionStatus =
+  | 'ok'
+  | 'empty_patch'
+  | 'patch_invalid'
+  | 'policy_invalid'
+  | 'runner_fault';
 
 export interface DecisionInput {
   /** runner 层已经判定的管线故障（clone/agent 执行失败等）——直接 runner_fault */

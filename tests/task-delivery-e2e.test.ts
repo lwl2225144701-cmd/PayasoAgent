@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-delivery-e2e-'));
 process.env.PAYASO_HOME = path.join(root, 'home');
 process.env.PAYASO_DB_PATH = path.join(root, 'payaso.db');

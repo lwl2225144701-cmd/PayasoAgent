@@ -14,10 +14,10 @@ import path from 'node:path';
 import { appDataPath } from '../../app-paths.js';
 import type { AttachmentExtraction } from '../../attachment-types.js';
 import { extractDocxText } from './docx.js';
+import { EXTRACTOR_VERSION } from './extraction-version.js';
 import { extractPdfText } from './pdf.js';
 import { extractPptxText } from './pptx.js';
 import { extractXlsxText } from './xlsx.js';
-import { EXTRACTOR_VERSION } from './extraction-version.js';
 
 /** 按扩展名路由的重提函数表：与 normalize.ts 的 dispatch 保持一致。 */
 const EXTRACTORS: Record<string, (bytes: Buffer) => Promise<string> | string> = {
@@ -65,7 +65,10 @@ function resolveInside(root: string, relative: string): string | null {
 }
 
 /** 产物是否过期：事件自带版本已是最新 → 否；否则看宿主台账里记住的刷新版本。 */
-export function needsExtractionRefresh(file: RefreshableAttachment, workspaceRoot: string): boolean {
+export function needsExtractionRefresh(
+  file: RefreshableAttachment,
+  workspaceRoot: string,
+): boolean {
   const extraction = file.extraction;
   if (!extraction?.path || extraction.status === 'failed') return false;
   if (extraction.extractorVersion === EXTRACTOR_VERSION) return false;

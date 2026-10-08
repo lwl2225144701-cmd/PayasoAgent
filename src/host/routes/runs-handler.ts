@@ -6,10 +6,10 @@ import { parseTaskConstraints } from '../task-constraints.js';
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
-import { inspectRunDelivery } from '../run-delivery.js';
 import type { PermissionMode } from '../../permission-mode.js';
 import { prepareAttachments } from '../attachments/normalize.js';
 import { openFileInDefaultBrowser } from '../default-browser.js';
+import { inspectRunDelivery } from '../run-delivery.js';
 import type { CreateRunAttachmentInput, RunManager, SseSink } from '../run-manager.js';
 import {
   bad,
@@ -26,7 +26,13 @@ import {
   SAFE_SESSION_ID,
   sendJson,
 } from './route-context.js';
-import { IMAGE_EXT_MIME, listFiles, readFileChecked, readImageChecked, readDownloadChecked } from './static-handler.js';
+import {
+  IMAGE_EXT_MIME,
+  listFiles,
+  readDownloadChecked,
+  readFileChecked,
+  readImageChecked,
+} from './static-handler.js';
 
 // SSE：实时推送 Run 事件（回放历史 + 实时）
 function handleSse(
@@ -142,7 +148,11 @@ export async function handleRuns(
           constraints: parseTaskConstraints(body.constraints),
           ...modelSelection,
         });
-        return sendJson(res, 202, { ...created, status: 'running', permissionMode: manager.get(created.runId)?.permissionMode ?? permissionMode });
+        return sendJson(res, 202, {
+          ...created,
+          status: 'running',
+          permissionMode: manager.get(created.runId)?.permissionMode ?? permissionMode,
+        });
       } catch (err) {
         return bad(res, (err as Error).message);
       }
@@ -172,7 +182,11 @@ export async function handleRuns(
       const run = manager.get(runId);
       const events = manager.listRunEvents(runId);
       if (!run || !events) return notFound(res);
-      return sendJson(res, 200, inspectRunDelivery(events, manager.getWorkspaceRoot(runId), run.updatedAt, run.result));
+      return sendJson(
+        res,
+        200,
+        inspectRunDelivery(events, manager.getWorkspaceRoot(runId), run.updatedAt, run.result),
+      );
     }
     case 'events': {
       if (method !== 'GET') return notFound(res);

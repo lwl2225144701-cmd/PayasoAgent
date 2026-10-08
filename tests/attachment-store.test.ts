@@ -8,16 +8,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ChatMessage, MessageImage } from '../src/llm/llm.js';
 import {
   attachmentSha256,
   publishAttachmentIntoWorkspace,
   putAttachmentObject,
   sweepAttachmentTmp,
 } from '../src/attachments/store.js';
-import {
-  materializeMessagesForModel,
-} from '../src/runtime/image-materialize.js';
+import type { ChatMessage, MessageImage } from '../src/llm/llm.js';
+import { materializeMessagesForModel } from '../src/runtime/image-materialize.js';
 
 let passed = 0;
 let failed = 0;
@@ -199,8 +197,13 @@ test('publishStem：Unicode 文件名保留可读，危险字符仍被消毒', (
   fs.mkdirSync(wsRoot, { recursive: true });
   const dataBase64 = pngBytes(10).toString('base64');
   const publish = (fileName: string) =>
-    writeAttachmentFile({ workspaceRoot: wsRoot, directory: 'input/attachments', fileName, dataBase64 }).relPath
-      .split('/')
+    writeAttachmentFile({
+      workspaceRoot: wsRoot,
+      directory: 'input/attachments',
+      fileName,
+      dataBase64,
+    })
+      .relPath.split('/')
       .pop();
   // 中文/日文与内部空格保留，不再挤成一串下划线
   assert.equal(publish('需求说明 v2.png'), '需求说明 v2.png');

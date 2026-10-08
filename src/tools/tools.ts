@@ -85,7 +85,11 @@ export function normalizeToolResult(result: ToolResult): {
 
 export type ToolSandboxEvent =
   // enforcement 仅 windows-acl 执行器携带（partial=部分写入隔离）；macOS 事件形状不变。
-  | { type: 'shell_sandbox_started'; platform: 'macos' | 'windows'; enforcement?: 'full' | 'partial' }
+  | {
+      type: 'shell_sandbox_started';
+      platform: 'macos' | 'windows';
+      enforcement?: 'full' | 'partial';
+    }
   | { type: 'shell_sandbox_denied'; platform: 'macos' | 'windows'; reason: 'workspace_policy' };
 
 // v1.3 契约收紧：Tool 副作用类别声明

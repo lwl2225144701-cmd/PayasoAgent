@@ -11,7 +11,10 @@ const first = benchmarkModelConfig(env);
 const publicFirst = publicModelConfig(first);
 
 assert.equal(first.baseUrl, 'https://api.stepfun.com/step_plan/v1');
-assert.equal(publicFirst.chatCompletionsUrl, 'https://api.stepfun.com/step_plan/v1/chat/completions');
+assert.equal(
+  publicFirst.chatCompletionsUrl,
+  'https://api.stepfun.com/step_plan/v1/chat/completions',
+);
 assert.equal(JSON.stringify(publicFirst).includes(env.OPENAI_API_KEY), false);
 assert.equal(publicFirst.credentialFingerprint.length, 64);
 assert.equal(publicFirst.configFingerprint.length, 64);
@@ -24,7 +27,8 @@ assert.notEqual(changedModel.configFingerprint, first.configFingerprint);
 assert.notEqual(changedUrl.configFingerprint, first.configFingerprint);
 
 assert.throws(
-  () => benchmarkModelConfig({ OPENAI_BASE_URL: env.OPENAI_BASE_URL, OPENAI_MODEL: env.OPENAI_MODEL }),
+  () =>
+    benchmarkModelConfig({ OPENAI_BASE_URL: env.OPENAI_BASE_URL, OPENAI_MODEL: env.OPENAI_MODEL }),
   /必须显式配置/,
 );
 

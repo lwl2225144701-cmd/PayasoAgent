@@ -213,13 +213,19 @@ export function readImageChecked(
 }
 
 // 下载与文本/图片预览共用工作区边界，但返回原始字节。
-export function readDownloadChecked(root: string, rel: string): { ok: true; buffer: Buffer } | { ok: false; error: string } {
+export function readDownloadChecked(
+  root: string,
+  rel: string,
+): { ok: true; buffer: Buffer } | { ok: false; error: string } {
   try {
     if (!rel || rel === '.' || rel.includes('..')) return { ok: false, error: '非法相对路径' };
     const real = resolveWorkspacePath(root, rel);
     assertInsideRoot(root, real);
     const stat = fs.statSync(real);
-    if (!stat.isFile() || stat.size > MAX_PDF_BYTES) return { ok: false, error: '文件类型或大小不支持下载' };
+    if (!stat.isFile() || stat.size > MAX_PDF_BYTES)
+      return { ok: false, error: '文件类型或大小不支持下载' };
     return { ok: true, buffer: fs.readFileSync(real) };
-  } catch { return { ok: false, error: '路径被拒绝或不存在' }; }
+  } catch {
+    return { ok: false, error: '路径被拒绝或不存在' };
+  }
 }

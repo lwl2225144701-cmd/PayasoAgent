@@ -130,14 +130,22 @@ test('read 超长单行明确截断，不再返回字节 offset 续读', async (
   assert.ok(res.includes('offset 始终表示行号'));
   assert.ok(!/offset=\d+/.test(res));
   assert.equal(validateToolResult('read', res).valid, true);
-  await assert.rejects(() => execute('read', { path: 'output/big.txt', offset: 2 }, ctx), /超出文件末尾/);
+  await assert.rejects(
+    () => execute('read', { path: 'output/big.txt', offset: 2 }, ctx),
+    /超出文件末尾/,
+  );
 });
 
 test('read 大小文件 offset/limit 一致，大文件按行连续分页', async () => {
-  const text = Array.from({ length: 40000 }, (_, i) => `line-${i + 1}:` + '字'.repeat(24)).join('\n');
+  const text = Array.from({ length: 40000 }, (_, i) => `line-${i + 1}:` + '字'.repeat(24)).join(
+    '\n',
+  );
   assert.ok(Buffer.byteLength(text) > 2 * 1024 * 1024);
   fs.writeFileSync(path.join(root, 'work', 'large-lines.txt'), text);
-  fs.writeFileSync(path.join(root, 'work', 'small-lines.txt'), text.split('\n').slice(0, 200).join('\n'));
+  fs.writeFileSync(
+    path.join(root, 'work', 'small-lines.txt'),
+    text.split('\n').slice(0, 200).join('\n'),
+  );
   for (const file of ['large-lines.txt', 'small-lines.txt']) {
     const res = await execute('read', { path: `work/${file}`, offset: 100, limit: 2 }, ctx);
     assert.match(res, /100→line-100:/);
@@ -148,10 +156,17 @@ test('read 大小文件 offset/limit 一致，大文件按行连续分页', asyn
   const page = await execute('read', { path: 'work/large-lines.txt', offset: 102, limit: 1 }, ctx);
   assert.match(page, /102→line-102:/);
   assert.ok(!page.includes('→line-103:'));
-  const last = await execute('read', { path: 'work/large-lines.txt', offset: 40000, limit: 10 }, ctx);
+  const last = await execute(
+    'read',
+    { path: 'work/large-lines.txt', offset: 40000, limit: 10 },
+    ctx,
+  );
   assert.match(last, /40000→line-40000:/);
   assert.ok(!last.includes('offset='));
-  await assert.rejects(() => execute('read', { path: 'work/large-lines.txt', offset: 40001 }, ctx), /超出文件末尾/);
+  await assert.rejects(
+    () => execute('read', { path: 'work/large-lines.txt', offset: 40001 }, ctx),
+    /超出文件末尾/,
+  );
 });
 
 test('read 分块边界保留 UTF-8、BOM、CRLF 与尾部空行', async () => {
@@ -164,13 +179,22 @@ test('read 分块边界保留 UTF-8、BOM、CRLF 与尾部空行', async () => {
   const second = await execute('read', { path: 'work/boundary.txt', offset: 2, limit: 1 }, ctx);
   assert.match(second, /2→第二行😀\r/);
   assert.ok(second.includes('offset=3'));
-  assert.equal((await execute('read', { path: 'work/boundary.txt', offset: 3, limit: 1 }, ctx)).split('\n')[0], '3→');
+  assert.equal(
+    (await execute('read', { path: 'work/boundary.txt', offset: 3, limit: 1 }, ctx)).split('\n')[0],
+    '3→',
+  );
   fs.writeFileSync(path.join(root, 'work', 'utf8-chunks.txt'), 'a'.repeat(65531) + '\naaa中文');
-  assert.equal(await execute('read', { path: 'work/utf8-chunks.txt', offset: 2, limit: 1 }, ctx), '2→aaa中文');
+  assert.equal(
+    await execute('read', { path: 'work/utf8-chunks.txt', offset: 2, limit: 1 }, ctx),
+    '2→aaa中文',
+  );
 });
 
 test('read 显式 limit 超上限时最多读取 500 行', async () => {
-  fs.writeFileSync(path.join(root, 'work', 'capped.txt'), Array.from({ length: 600 }, (_, i) => String(i + 1)).join('\n'));
+  fs.writeFileSync(
+    path.join(root, 'work', 'capped.txt'),
+    Array.from({ length: 600 }, (_, i) => String(i + 1)).join('\n'),
+  );
   const res = await execute('read', { path: 'work/capped.txt', limit: 1000000 }, ctx);
   assert.ok(res.includes('500→500'));
   assert.ok(!res.includes('501→501'));
@@ -268,9 +292,12 @@ test('read 连续分页：唯一游标推进，完整遍历无跳行且不超预
   while (offset <= lines.length) {
     const res = await execute('read', { path: 'work/wide.txt', offset }, ctx);
     assert.ok(Buffer.byteLength(res, 'utf8') <= 16 * 1024);
-    const returned = [...res.matchAll(/^\s*(\d+)→/gm)].map(m => Number(m[1]));
+    const returned = [...res.matchAll(/^\s*(\d+)→/gm)].map((m) => Number(m[1]));
     assert.ok(returned.length);
-    assert.deepEqual(returned, Array.from({ length: returned.length }, (_, i) => offset + i));
+    assert.deepEqual(
+      returned,
+      Array.from({ length: returned.length }, (_, i) => offset + i),
+    );
     seen.push(...returned);
     const cursors = [...res.matchAll(/offset=(\d+)/g)];
     offset += returned.length;
@@ -279,7 +306,10 @@ test('read 连续分页：唯一游标推进，完整遍历无跳行且不超预
       assert.equal(Number(cursors[0][1]), offset);
     } else assert.equal(cursors.length, 0);
   }
-  assert.deepEqual(seen, Array.from({ length: 600 }, (_, i) => i + 1));
+  assert.deepEqual(
+    seen,
+    Array.from({ length: 600 }, (_, i) => i + 1),
+  );
 });
 
 // ---- 7. Schema 无泄露 ----

@@ -81,7 +81,12 @@ export function splitRowIntoCells(row, options = {}) {
       groups.push({ x: cell.x, end: cell.end, parts: [cell] });
     }
   }
-  return groups.map((g) => ({ x: g.x, end: g.end, str: g.parts.map((p) => p.str).join(''), column: null }));
+  return groups.map((g) => ({
+    x: g.x,
+    end: g.end,
+    str: g.parts.map((p) => p.str).join(''),
+    column: null,
+  }));
 }
 
 /**
@@ -169,7 +174,8 @@ function escapeCell(text) {
  */
 export function renderMarkdown(analysis) {
   const { rows, columns } = analysis;
-  if (!columns.length) return rows.map((row) => row.cells.map((c) => normalizeSpace(c.str)).join(' | ')).join('\n');
+  if (!columns.length)
+    return rows.map((row) => row.cells.map((c) => normalizeSpace(c.str)).join(' | ')).join('\n');
   const lines = [];
   let index = 0;
   while (index < rows.length) {
@@ -182,7 +188,10 @@ export function renderMarkdown(analysis) {
     let end = index;
     while (end < rows.length && rows[end].tabular) end += 1;
     const block = rows.slice(index, end);
-    const width = Math.max(columns.length, ...block.map((row) => row.cells.filter((c) => c.column !== null).length));
+    const width = Math.max(
+      columns.length,
+      ...block.map((row) => row.cells.filter((c) => c.column !== null).length),
+    );
     lines.push(`| ${Array.from({ length: width }, (_, c) => `列${c + 1}`).join(' | ')} |`);
     lines.push(`|${Array.from({ length: width }, () => '---').join('|')}|`);
     for (const row of block) {

@@ -34,7 +34,8 @@ export function stratifiedSample(instances: SwebenchInstance[], total: number): 
   for (const entry of exact) quota[entry.repo] = Math.floor(entry.exactShare);
   let remaining = total - Object.values(quota).reduce((sum, n) => sum + n, 0);
   const byRemainder = [...exact].sort(
-    (a, b) => b.exactShare - Math.floor(b.exactShare) - (a.exactShare - Math.floor(a.exactShare)) ||
+    (a, b) =>
+      b.exactShare - Math.floor(b.exactShare) - (a.exactShare - Math.floor(a.exactShare)) ||
       a.repo.localeCompare(b.repo),
   );
   for (const entry of byRemainder) {
@@ -47,7 +48,9 @@ export function stratifiedSample(instances: SwebenchInstance[], total: number): 
   for (const repo of repos) {
     const k = quota[repo] ?? 0;
     if (k <= 0) continue;
-    const sorted = [...byRepo.get(repo)!].sort((a, b) => a.instance_id.localeCompare(b.instance_id));
+    const sorted = [...byRepo.get(repo)!].sort((a, b) =>
+      a.instance_id.localeCompare(b.instance_id),
+    );
     picked.push(...sorted.slice(0, k));
   }
   picked.sort((a, b) => a.instance_id.localeCompare(b.instance_id));

@@ -206,7 +206,11 @@ export async function handleSessions(
           constraints: parseTaskConstraints(body.constraints),
           ...modelSelection,
         });
-        return sendJson(res, 202, { ...created, status: 'running', permissionMode: manager.get(created.runId)?.permissionMode ?? permissionMode });
+        return sendJson(res, 202, {
+          ...created,
+          status: 'running',
+          permissionMode: manager.get(created.runId)?.permissionMode ?? permissionMode,
+        });
       } catch (err) {
         return bad(res, (err as Error).message);
       }

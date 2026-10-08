@@ -104,7 +104,9 @@ const main = async (): Promise<void> => {
 
   await test('win32 gate 开：非 win32 无原生载体（PowerShell/cmd）→ fail-closed 拒绝执行，命令未执行', async () => {
     if (process.platform === 'win32') {
-      console.log('  [SKIP] 此用例验证非 Windows 的无载体拒绝路径（Windows 上载体可用，走 runner）');
+      console.log(
+        '  [SKIP] 此用例验证非 Windows 的无载体拒绝路径（Windows 上载体可用，走 runner）',
+      );
       return;
     }
     const previous = process.env.PAYASO_SHELL_WINDOWS_ACL;

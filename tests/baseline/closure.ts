@@ -20,7 +20,8 @@ const ALL_BATCHES = ['original-1', 'original-2', 'original-3', 'variants'];
   if (fs.existsSync(envFile)) {
     for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
       const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/u.exec(line);
-      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/gu, '');
+      if (m && process.env[m[1]] === undefined)
+        process.env[m[1]] = m[2].replace(/^["']|["']$/gu, '');
     }
   }
 }
@@ -91,16 +92,20 @@ for (const entry of batches) {
   // 剥掉继承的 BASELINE_CASES：批次用例由 closure 决定，父环境的选择不得影响四批范围。
   const { BASELINE_CASES: _inheritedCases, ...baseEnv } = process.env;
   // 子进程必须自己加载 .env（closure 父进程可能不带模型配置），否则回落默认端点必然 401。
-  const child = spawn(process.execPath, ['--env-file=.env', '--import', 'tsx', 'tests/baseline/run.ts'], {
-    cwd: project,
-    env: {
-      ...baseEnv,
-      PAYASO_FINAL_REVIEW: '1',
-      BASELINE_STOP_ON_PROVIDER_ERROR: '1',
-      BASELINE_VARIANTS: entry.name === 'variants' ? '1' : '0',
+  const child = spawn(
+    process.execPath,
+    ['--env-file=.env', '--import', 'tsx', 'tests/baseline/run.ts'],
+    {
+      cwd: project,
+      env: {
+        ...baseEnv,
+        PAYASO_FINAL_REVIEW: '1',
+        BASELINE_STOP_ON_PROVIDER_ERROR: '1',
+        BASELINE_VARIANTS: entry.name === 'variants' ? '1' : '0',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  );
   child.stdout.on('data', (chunk) => {
     log.write(chunk);
     recent += String(chunk);

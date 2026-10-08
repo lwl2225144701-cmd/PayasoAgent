@@ -19,18 +19,18 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_CLI, type EvalConfig, loadConfig, REPO_ROOT } from './config.js';
 import {
   CACHE_DIR,
-  type SwebenchInstance,
   fetchVerifiedDataset,
   loadLockedDataset,
   lockDataset,
+  type SwebenchInstance,
   sha256Of,
 } from './dataset.js';
-import { pilotFromSelection, stratifiedSample } from './sampling.js';
-import { detectTestPollution, matchTestPath, parseChangedPaths } from './policy.js';
 import { decideSubmission, type SubmissionStatus } from './decision.js';
-import { AGENT_CLI, REPO_ROOT, type EvalConfig, loadConfig } from './config.js';
+import { detectTestPollution, matchTestPath, parseChangedPaths } from './policy.js';
+import { pilotFromSelection, stratifiedSample } from './sampling.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LIST_FILE = path.join(HERE, 'instances.sprint1.json');
@@ -77,7 +77,10 @@ function gitRetry<T>(attempts: number, fn: () => T): T {
       return fn();
     } catch (err) {
       lastErr = err;
-      const msg = err instanceof Error ? `${err.message} ${(err as { code?: string }).code ?? ''}` : String(err);
+      const msg =
+        err instanceof Error
+          ? `${err.message} ${(err as { code?: string }).code ?? ''}`
+          : String(err);
       if (!/ENOBUFS|EMFILE|ENFILE|spawnSync/i.test(msg)) throw err;
       if (i < attempts - 1) sleepSync(1500);
     }
@@ -85,7 +88,9 @@ function gitRetry<T>(attempts: number, fn: () => T): T {
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 function git(cwd: string, args: string[]): string {
-  return gitRetry(3, () => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+  return gitRetry(3, () =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }),
+  );
 }
 function sha256Text(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -164,13 +169,20 @@ async function waitQuiet(root: string, quietMs = QUIET_WINDOW_MS): Promise<boole
   return false;
 }
 /** 干净 checkout 上 git apply --check 预检。 */
-function applyCheck(cacheRepo: string, baseCommit: string, patch: string): { ok: boolean; error?: string } {
+function applyCheck(
+  cacheRepo: string,
+  baseCommit: string,
+  patch: string,
+): { ok: boolean; error?: string } {
   const clean = fs.mkdtempSync(path.join(path.dirname(REPO_CACHE), 'applycheck-'));
   try {
     git(cacheRepo, ['worktree', 'add', '--detach', clean, baseCommit]);
     fs.writeFileSync(path.join(clean, '.candidate.patch'), patch);
     try {
-      execFileSync('git', ['apply', '--check', '.candidate.patch'], { cwd: clean, encoding: 'utf8' });
+      execFileSync('git', ['apply', '--check', '.candidate.patch'], {
+        cwd: clean,
+        encoding: 'utf8',
+      });
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -180,10 +192,23 @@ function applyCheck(cacheRepo: string, baseCommit: string, patch: string): { ok:
     fs.rmSync(clean, { recursive: true, force: true });
   }
 }
-function capturePatch(workDir: string, baseCommit: string): { patch: string; changedPaths: string[] } {
+function capturePatch(
+  workDir: string,
+  baseCommit: string,
+): { patch: string; changedPaths: string[] } {
   git(workDir, ['add', '-A']);
-  const patch = git(workDir, ['diff', '--cached', '--binary', '--full-index', baseCommit, '--', '.']);
-  const changedPaths = parseChangedPaths(git(workDir, ['diff', '--cached', '--name-only', baseCommit]));
+  const patch = git(workDir, [
+    'diff',
+    '--cached',
+    '--binary',
+    '--full-index',
+    baseCommit,
+    '--',
+    '.',
+  ]);
+  const changedPaths = parseChangedPaths(
+    git(workDir, ['diff', '--cached', '--name-only', baseCommit]),
+  );
   return { patch, changedPaths };
 }
 function resetWorkdir(workDir: string): void {
@@ -207,16 +232,28 @@ function withRepoLock<T>(repoKey: string, fn: () => T | Promise<T>): Promise<T> 
     await prev.catch(() => undefined);
     return await fn();
   })();
-  repoLocks.set(repoKey, next.catch(() => undefined));
+  repoLocks.set(
+    repoKey,
+    next.catch(() => undefined),
+  );
   return next;
 }
-async function ensureAndAddWorktree(repo: string, cacheRepo: string, workDir: string, baseCommit: string): Promise<void> {
+async function ensureAndAddWorktree(
+  repo: string,
+  cacheRepo: string,
+  workDir: string,
+  baseCommit: string,
+): Promise<void> {
   await withRepoLock(cacheRepo, () => {
     ensureRepoCache(repo);
     git(cacheRepo, ['worktree', 'add', '--detach', '--quiet', workDir, baseCommit]);
   });
 }
-async function applyCheckLocked(cacheRepo: string, baseCommit: string, patch: string): Promise<{ ok: boolean; error?: string }> {
+async function applyCheckLocked(
+  cacheRepo: string,
+  baseCommit: string,
+  patch: string,
+): Promise<{ ok: boolean; error?: string }> {
   return withRepoLock(cacheRepo, () => applyCheck(cacheRepo, baseCommit, patch));
 }
 async function removeWorktreeLocked(cacheRepo: string, workDir: string): Promise<void> {
@@ -289,10 +326,12 @@ async function runAgentCli(
     killTree(child.pid, 'SIGTERM'); // 连子进程组一起杀，worktree 才会真的安静
     setTimeout(() => killTree(child.pid, 'SIGKILL'), 5_000).unref();
   }, cfg.instanceTimeoutMs);
-  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-    child.on('error', reject);
-    child.on('exit', (code, signal) => resolve({ code, signal }));
-  });
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve, reject) => {
+      child.on('error', reject);
+      child.on('exit', (code, signal) => resolve({ code, signal }));
+    },
+  );
   clearTimeout(killTimer);
   await new Promise<void>((r) => logStream.end(() => r()));
   return { exitCode: exit.code, signal: exit.signal, timedOut, logFile: opts.logFile };
@@ -304,10 +343,15 @@ async function probeModel(cfg: EvalConfig): Promise<{ ok: boolean; detail: strin
     const res = await fetch(`${cfg.modelBaseUrl.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.modelApiKey}` },
-      body: JSON.stringify({ model: cfg.modelName, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
+      body: JSON.stringify({
+        model: cfg.modelName,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (res.status === 401 || res.status === 403) return { ok: false, detail: `鉴权失败 HTTP ${res.status}` };
+    if (res.status === 401 || res.status === 403)
+      return { ok: false, detail: `鉴权失败 HTTP ${res.status}` };
     return { ok: true, detail: `HTTP ${res.status}` };
   } catch (err) {
     return { ok: false, detail: `网络错误: ${(err as Error).message}` };
@@ -315,14 +359,20 @@ async function probeModel(cfg: EvalConfig): Promise<{ ok: boolean; detail: strin
 }
 
 /** dry-run 自检：用合成编辑把 §5.4 判定链完整烧一遍（不调模型）。 */
-async function selfTestDecisionChain(workDir: string, baseCommit: string): Promise<Record<string, 'pass' | 'fail'>> {
+async function selfTestDecisionChain(
+  workDir: string,
+  baseCommit: string,
+): Promise<Record<string, 'pass' | 'fail'>> {
   const out: Record<string, 'pass' | 'fail'> = {};
   const tracked = git(workDir, ['ls-files'])
     .split('\n')
     .filter((line) => line.trim().length > 0);
   const sourceTarget = tracked.find((f) => f.endsWith('.py') && !matchTestPath(f));
   const testTarget = tracked.find((f) => matchTestPath(f));
-  const scenario = async (target: string | undefined, expected: 'ok' | 'policy_invalid'): Promise<void> => {
+  const scenario = async (
+    target: string | undefined,
+    expected: 'ok' | 'policy_invalid',
+  ): Promise<void> => {
     if (!target) {
       out[`${expected}(无目标文件)`] = 'fail';
       return;
@@ -330,7 +380,9 @@ async function selfTestDecisionChain(workDir: string, baseCommit: string): Promi
     fs.appendFileSync(path.join(workDir, target), '\n# swebench self-test synthetic edit\n');
     const { patch, changedPaths } = capturePatch(workDir, baseCommit);
     const policy = detectTestPollution(changedPaths, []);
-    const apply = patch.trim() ? await applyCheckLocked(cacheRepoDirOf(workDir), baseCommit, patch) : { ok: false };
+    const apply = patch.trim()
+      ? await applyCheckLocked(cacheRepoDirOf(workDir), baseCommit, patch)
+      : { ok: false };
     const decision = decideSubmission({ runnerFaults: [], patch, policy, applyOk: apply.ok });
     out[`${expected}(${target})`] = decision.status === expected ? 'pass' : 'fail';
     resetWorkdir(workDir);
@@ -349,7 +401,14 @@ function tally(results: InstanceResult[]): Record<string, number> {
 /** eval/ 源码指纹（记录用来自评的版本）。 */
 function evalSourceHash(): string {
   const hash = createHash('sha256');
-  for (const file of ['run.ts', 'config.ts', 'dataset.ts', 'sampling.ts', 'policy.ts', 'decision.ts']) {
+  for (const file of [
+    'run.ts',
+    'config.ts',
+    'dataset.ts',
+    'sampling.ts',
+    'policy.ts',
+    'decision.ts',
+  ]) {
     try {
       hash.update(file);
       hash.update(fs.readFileSync(path.join(HERE, file)));
@@ -378,7 +437,9 @@ async function main(): Promise<void> {
     const expected = sampled.selected.map((i) => i.instance_id);
     const committed = JSON.parse(fs.readFileSync(LIST_FILE, 'utf8')) as { ids: string[] };
     const same = JSON.stringify(committed.ids) === JSON.stringify(expected);
-    console.log(same ? `清单一致（${expected.length} 题）` : '清单不一致！用 --regen-list 重新生成');
+    console.log(
+      same ? `清单一致（${expected.length} 题）` : '清单不一致！用 --regen-list 重新生成',
+    );
     process.exit(same ? 0 : 1);
   }
   if (arg('--regen-list')) {
@@ -406,16 +467,23 @@ async function main(): Promise<void> {
   const listIds = (JSON.parse(fs.readFileSync(LIST_FILE, 'utf8')) as { ids: string[] }).ids;
   const byId = new Map(dataset.instances.map((i) => [i.instance_id, i]));
   const ordered = listIds.map((id) => byId.get(id)!);
-  let targets: SwebenchInstance[] = arg('--pilot') ? pilotFromSelection(ordered, PILOT_SIZE) : ordered;
+  let targets: SwebenchInstance[] = arg('--pilot')
+    ? pilotFromSelection(ordered, PILOT_SIZE)
+    : ordered;
   const offset = Number(argValue('--offset'));
   if (Number.isFinite(offset) && offset > 0) targets = targets.slice(offset);
   const instanceCap = Number(argValue('--limit'));
   if (Number.isFinite(instanceCap) && instanceCap > 0) targets = targets.slice(0, instanceCap);
   // 单独重跑指定题(逗号分隔 instance_id):用于救回克隆失败/ENOBUFS 等基建挂掉的题
-  const onlyIds = argValue('--only')?.split(',').map((s) => s.trim()).filter(Boolean);
+  const onlyIds = argValue('--only')
+    ?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (onlyIds && onlyIds.length) {
     targets = onlyIds.map((id) => byId.get(id)).filter((x): x is SwebenchInstance => Boolean(x));
-    console.log(`--only 指定 ${targets.length} 题：${targets.map((t) => t.instance_id).join(', ')}`);
+    console.log(
+      `--only 指定 ${targets.length} 题：${targets.map((t) => t.instance_id).join(', ')}`,
+    );
   }
 
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
@@ -472,7 +540,9 @@ async function main(): Promise<void> {
     try {
       await ensureAndAddWorktree(instance.repo, cacheRepo, workDir, instance.base_commit);
     } catch (err) {
-      instanceFaults.push(`clone/checkout 失败: ${err instanceof Error ? err.message : String(err)}`);
+      instanceFaults.push(
+        `clone/checkout 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // 2) task 包装：problem_statement + 一行约束
@@ -485,7 +555,12 @@ async function main(): Promise<void> {
     if (!instanceFaults.length && !dryRun) {
       fs.mkdirSync(path.dirname(logFile), { recursive: true });
       try {
-        const outcome = await runAgentCli(cfg, { workDir, instanceId: instance.instance_id, taskText, logFile });
+        const outcome = await runAgentCli(cfg, {
+          workDir,
+          instanceId: instance.instance_id,
+          taskText,
+          logFile,
+        });
         agentExitCode = outcome.exitCode;
         if (outcome.timedOut) {
           instanceFaults.push('label:timeout');
@@ -495,10 +570,14 @@ async function main(): Promise<void> {
         }
         if (outcome.exitCode !== 0 && !outcome.timedOut) {
           instanceFaults.push(`label:agent_exit_nonzero(${outcome.exitCode ?? outcome.signal})`);
-          console.log(`  ⚠ [${instance.instance_id}] agent 非零退出 (exit=${outcome.exitCode ?? outcome.signal})`);
+          console.log(
+            `  ⚠ [${instance.instance_id}] agent 非零退出 (exit=${outcome.exitCode ?? outcome.signal})`,
+          );
         }
       } catch (err) {
-        instanceFaults.push(`runner_fault: agent CLI spawn 失败: ${err instanceof Error ? err.message : String(err)}`);
+        instanceFaults.push(
+          `runner_fault: agent CLI spawn 失败: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -522,7 +601,9 @@ async function main(): Promise<void> {
         try {
           ({ patch, changedPaths } = capturePatch(workDir, instance.base_commit));
         } catch (err) {
-          instanceFaults.push(`runner_fault: diff 捕获失败: ${err instanceof Error ? err.message : String(err)}`);
+          instanceFaults.push(
+            `runner_fault: diff 捕获失败: ${err instanceof Error ? err.message : String(err)}`,
+          );
           runnerFault = true;
         }
       }
@@ -531,7 +612,9 @@ async function main(): Promise<void> {
       } else {
         const policy = detectTestPollution(changedPaths, []);
         policyHits.push(...policy.hits);
-        const apply = patch.trim() ? await applyCheckLocked(cacheRepo, instance.base_commit, patch) : { ok: false };
+        const apply = patch.trim()
+          ? await applyCheckLocked(cacheRepo, instance.base_commit, patch)
+          : { ok: false };
         const decision = decideSubmission({
           runnerFaults: instanceFaults.filter((f) => f.startsWith('runner_fault')),
           patch,
@@ -540,7 +623,8 @@ async function main(): Promise<void> {
         });
         status = decision.status;
         approvedPatch = decision.approvedPatch;
-        if (status === 'patch_invalid') instanceFaults.push(`apply --check 失败: ${apply.error ?? ''}`);
+        if (status === 'patch_invalid')
+          instanceFaults.push(`apply --check 失败: ${apply.error ?? ''}`);
       }
     }
 
@@ -556,7 +640,11 @@ async function main(): Promise<void> {
     fs.mkdirSync(instanceDir, { recursive: true });
     fs.writeFileSync(path.join(instanceDir, 'task.md'), taskText);
     if (patch) fs.writeFileSync(path.join(instanceDir, 'patch.diff'), patch);
-    if (instanceFaults.length) fs.writeFileSync(path.join(instanceDir, 'faults.json'), JSON.stringify(instanceFaults, null, 2));
+    if (instanceFaults.length)
+      fs.writeFileSync(
+        path.join(instanceDir, 'faults.json'),
+        JSON.stringify(instanceFaults, null, 2),
+      );
 
     const predLine = JSON.stringify({
       instance_id: instance.instance_id,
@@ -586,7 +674,9 @@ async function main(): Promise<void> {
   };
 
   // ---- 并发池：N 条同时跑，结果按题号(target 顺序)归集 → 确定性输出 ----
-  const outcomes: Array<{ result: InstanceResult; predLine: string } | undefined> = new Array(targets.length);
+  const outcomes: Array<{ result: InstanceResult; predLine: string } | undefined> = new Array(
+    targets.length,
+  );
   let cursor = 0;
   const pump = async (): Promise<void> => {
     for (;;) {
@@ -610,7 +700,11 @@ async function main(): Promise<void> {
             approvedPatch: false,
             faults: [`runner_fault: ${(err as Error).message}`],
           },
-          predLine: JSON.stringify({ instance_id: targets[i].instance_id, model_name_or_path: cfg.modelName, model_patch: '' }),
+          predLine: JSON.stringify({
+            instance_id: targets[i].instance_id,
+            model_name_or_path: cfg.modelName,
+            model_patch: '',
+          }),
         };
       }
     }
@@ -622,10 +716,17 @@ async function main(): Promise<void> {
   const predsLines = outcomes.map((o) => o!.predLine);
 
   // ---- 汇总 ----
-  fs.writeFileSync(path.join(runDir, 'preds.jsonl'), `${predsLines.join('\n')}${predsLines.length ? '\n' : ''}`);
+  fs.writeFileSync(
+    path.join(runDir, 'preds.jsonl'),
+    `${predsLines.join('\n')}${predsLines.length ? '\n' : ''}`,
+  );
   fs.writeFileSync(
     path.join(runDir, 'results.json'),
-    JSON.stringify({ runId, dryRun, selectionSize: SELECTION_SIZE, datasetRevision: dataset.revision, results }, null, 2),
+    JSON.stringify(
+      { runId, dryRun, selectionSize: SELECTION_SIZE, datasetRevision: dataset.revision, results },
+      null,
+      2,
+    ),
   );
   fs.writeFileSync(
     path.join(runDir, 'manifest.json'),
@@ -637,7 +738,10 @@ async function main(): Promise<void> {
           repoRoot: REPO_ROOT,
           cliPath: AGENT_CLI,
           gitCommit: safeGit(REPO_ROOT, 'rev-parse', 'HEAD'),
-          gitDirty: safeGit(REPO_ROOT, 'status', '--porcelain') !== 'unknown' ? safeGit(REPO_ROOT, 'status', '--porcelain') !== '' : undefined,
+          gitDirty:
+            safeGit(REPO_ROOT, 'status', '--porcelain') !== 'unknown'
+              ? safeGit(REPO_ROOT, 'status', '--porcelain') !== ''
+              : undefined,
         },
         model: {
           name: cfg.modelName,
@@ -645,8 +749,17 @@ async function main(): Promise<void> {
           apiKeySha256: cfg.modelApiKey ? sha256Of(cfg.modelApiKey).slice(0, 16) : '',
         },
         dataset: { revision: dataset.revision, sha256: dataset.sha256, cacheDir: CACHE_DIR },
-        selection: { algorithm: 'stratified-largest-remainder', size: SELECTION_SIZE, listSha256: listHash },
-        config: { concurrency: effectiveConcurrency, instanceTimeoutMs: cfg.instanceTimeoutMs, permissionMode: cfg.permissionMode, networkMode: cfg.networkMode },
+        selection: {
+          algorithm: 'stratified-largest-remainder',
+          size: SELECTION_SIZE,
+          listSha256: listHash,
+        },
+        config: {
+          concurrency: effectiveConcurrency,
+          instanceTimeoutMs: cfg.instanceTimeoutMs,
+          permissionMode: cfg.permissionMode,
+          networkMode: cfg.networkMode,
+        },
         evalSourceSha: evalSourceHash(),
       },
       null,
@@ -664,7 +777,9 @@ async function main(): Promise<void> {
     console.log(failures.length ? `自检失败: ${failures.join('；')}` : '自检全部通过');
     process.exit(failures.length ? 1 : 0);
   }
-  console.log('判分命令见 docs/plans/swebench-progress.md（注意：每次改 predictions 必须换新 grading run_id）');
+  console.log(
+    '判分命令见 docs/plans/swebench-progress.md（注意：每次改 predictions 必须换新 grading run_id）',
+  );
 }
 
 main().then(

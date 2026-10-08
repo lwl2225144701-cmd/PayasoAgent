@@ -419,10 +419,11 @@ scenarios['large-read-oversize'] = {
     // 不变式是「任何单条 completed 结果都不超过预算的合理余量」+ 有分页/
     // 截断证据（多行大文件走 [READ 提示] 分页；单行超长走 [READ TRUNCATED]）。
     const maxResultLen = Math.max(0, ...steps.map((s: { result: string }) => s.result.length));
-    const truncated = steps.some((s: { result: string }) =>
-      s.result.includes('[READ 提示]') ||
-      s.result.includes('[READ TRUNCATED]') ||
-      s.result.includes('[OUTPUT TRUNCATED]'),
+    const truncated = steps.some(
+      (s: { result: string }) =>
+        s.result.includes('[READ 提示]') ||
+        s.result.includes('[READ TRUNCATED]') ||
+        s.result.includes('[OUTPUT TRUNCATED]'),
     );
     const pass = !leaked && maxResultLen <= 32 * 1024 && truncated;
     return {
@@ -537,7 +538,9 @@ scenarios['recover-invalid-chain'] = {
     // 大文件按切片契约返回（不再判 invalid），只要求单条结果有界。
     // inv 依赖真实天气服务失败与否（天然不稳定），只作指标记录 —— 确定性
     // invalid 路径由 E2E #15–#17 的夹具覆盖。
-    const bad = completed.filter((s: { result: string }) => s.result.includes('temperature')).length;
+    const bad = completed.filter((s: { result: string }) =>
+      s.result.includes('temperature'),
+    ).length;
     const maxResultLen = Math.max(0, ...completed.map((s: { result: string }) => s.result.length));
     const pass = bad === 0 && maxResultLen <= 32 * 1024;
     return {

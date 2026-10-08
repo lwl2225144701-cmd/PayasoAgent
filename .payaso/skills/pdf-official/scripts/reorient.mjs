@@ -2,7 +2,7 @@
 // 用法: node reorient.mjs in.pdf --angle 90 --targets 1,3-5 --out rot.pdf
 import fs from 'node:fs';
 import path from 'node:path';
-import { PDFDocument, degrees } from 'pdf-lib';
+import { degrees, PDFDocument } from 'pdf-lib';
 import { CliError, readPdfBytes, run } from './lib.mjs';
 
 /** "all" 或 "1,3-5" → 升序页码集合。 */
