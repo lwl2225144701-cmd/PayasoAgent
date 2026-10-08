@@ -44,7 +44,8 @@
 ### ③ 没做
 
 签名 / 公证（`CSC_*` / `APPLE_*` 未配，CI 已留入口）、自动更新（期 3，缺 `latest-mac.yml`
-与发布源）、Windows / Linux（`fetch-node.mjs` 只支持 darwin / linux）。
+与发布源）、Windows / Linux（`fetch-node.mjs` 只支持 darwin / linux）、下载门面页
+（DSH 四层做法已扒清，方案与证据见 §7，本次只记录不实施）。
 
 ### ④ 立即可做的两件小事
 
@@ -375,3 +376,27 @@ git tag v0.2.0 && git push origin v0.2.0   # 发版
 > ✅ **实跑记录**（2026-10-08）：workflow 跑了三次 —— 前两次各踩一个坑（第一次 lint
 > 门禁坑 7，第二次空 `CSC_LINK` 坑 8），都已修；**第三次跑绿**，Release 页挂上
 > `PayasoAgent-0.2.0-arm64.dmg`（210MB）+ `.zip`（216MB）+ blockmap。
+
+## 7. 分发门面（调研结论，暂不实施）：DSH 落地页是怎么做的
+
+用户拿 DSH 的下载页（`deepseek.com/harness`，"现在，开箱即用" + 下载 macOS 版）来问
+"这种方式怎么做的"。逐层扒了页面源码与下载响应头，做法是**四层解耦**：
+
+| 层 | 做法 | 证据（实扒） |
+|---|---|---|
+| ① 门面页 | `deepseek.com/harness` 只是官网一个**静态路由**（Next.js）：文案 + 截图 + 按钮，纯展示零后端 | 页面源码 34 处 `/_next/` |
+| ② 稳定下载 URL | 按钮写死 `download.deepseek.com/desktop/dsh-latest-macos-arm64.dmg` —— **"latest" 烧进文件名**，发新版 = 覆盖同名对象，页面/URL 零维护 | 按钮 href 原文 |
+| ③ 对象存储扛流量 | 腾讯云 COS（`server: tencent-cos`）：`application/x-apple-diskimage`、369MB、支持 Range 断点续传 | `curl -I` 响应头 |
+| ④ 应用内自动更新 | electron-updater + blockmap 增量；落地页只管"获客"，留存靠应用内更新 | app.asar 内 provider 逻辑 |
+
+下拉箭头就是跳 `/download/` 静态页，列 mac/win 的稳定链接，同款套路。
+
+**将来要做时的等价物**（本次不做）：
+
+1. `release.yml` 加 2 行：给 Release 补传**稳定名副本** `PayasoAgent-latest-arm64.dmg`
+2. 一个纯静态落地页（hero + 窗口截图 + 按钮 + sha256 表），GitHub Pages 免费托管
+3. 按钮永远指 `https://github.com/lwl2225144701-cmd/PayasoAgent/releases/latest/download/PayasoAgent-latest-arm64.dmg`
+   —— `releases/latest/download/` 语义自动指向最新 Release，发版页面零改动
+
+> 我们没有独立下载域名/CDN，GitHub Releases 就是现成的"③ 层"；差的只是 ① 门面和
+> 稳定名副本。等 GUI 验证后有了一张窗口截图，这页半小时能落地。
