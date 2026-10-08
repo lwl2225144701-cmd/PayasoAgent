@@ -40,6 +40,10 @@ extraResources:
 asar: true
 npmRebuild: false
 
+# 打完包立刻补 ad-hoc 签名（Apple Silicon 无签名 = Gatekeeper 判"已损坏"，坑 9）；
+# 必须在 dmg/zip 制作前签，见 scripts/after-pack.cjs 头注。
+afterPack: scripts/after-pack.cjs
+
 mac:
   target:
     - dmg

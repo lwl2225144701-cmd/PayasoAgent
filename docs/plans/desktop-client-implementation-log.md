@@ -1,6 +1,6 @@
 # 桌面客户端落地记录（实施过程、验证步骤、踩坑）
 
-> 状态：`381e430` 已推送，**装完了、包内后端实跑通过**；GUI 端到端与 DMG 只能真机/终端验。
+> 状态：DMG 发版链路已通（v0.2.1 起带定制安装窗，v0.2.2 起带 ad-hoc 签名）；
 > **当前进展见 §0**（做成什么、缺什么、谁动手，一眼看完）。
 >
 > **这份文档与另两份的分工**（别混）：
@@ -36,7 +36,7 @@
 
 | 项 | 缺什么 | 谁做 |
 |---|---|---|
-| **GUI 端到端** | 双击 `.app` 看三件事：窗口出不出、退出后 `lsof -ti tcp:4500` 空不空、端口被占时是否复用 | **你** |
+| **GUI 端到端** | 首开被 Gatekeeper「已损坏」拦下（坑 9；现装的旧包 `xattr -cr /Applications/PayasoAgent.app` 解锁，v0.2.2 起已 ad-hoc 签名免此坑）；之后看三件事：窗口出不出、退出后 `lsof -ti tcp:4500` 空不空、端口被占时是否复用 | **你** |
 | **窗口外壳视觉** | `hiddenInset` 的拖拽热区、侧栏折叠到 64px 时红绿灯（约 52px 宽）会不会略压主区 | **你**（同一眼） |
 | **DMG** | ✅ **已出**：Release 页 [PayasoAgent-0.2.0-arm64.dmg](https://github.com/lwl2225144701-cmd/PayasoAgent/releases)（210MB）；前两次各踩一坑（坑 7 /坑 8）已修，第三次跑绿 | **你**下载安装（与 GUI 验证并成一步） |
 | 崩溃弹窗 / 端口占用复用分支 | 代码在，没造境 | 我（等 GUI 反馈） |
@@ -148,7 +148,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4598/runs  # 期望 20
 2. 退出后 `lsof -ti tcp:4500` 为空（没有残留后端进程）；
 3. 已开着一个 `npm run host` 时启动 → **复用**且退出不杀它的进程。
 
-## 3. 八个坑（都留了证据，别再踩）
+## 3. 九个坑（都留了证据，别再踩）
 
 ### 坑 1 · electron-builder 会丢**根级** `node_modules`（最阴的一个）
 
@@ -308,6 +308,34 @@ CI 报错（连日志顺序都一致）；`env -u CSC_LINK` 后干净走到
 **教训**：**"secret 为空"和"env 未设"是两回事**；转发 secrets 给"空即禁用"的工具时
 必须兜底 unset。识别这类 bug 的线索：报错路径是个**目录**，还说它 "not a file"。
 
+### 坑 9 · 未签名的 app 在 Apple Silicon 上是「已损坏」，不是「未验证开发者」
+
+**现象**：用户双击装好的 app，macOS 弹 **“PayasoAgent”已损坏，无法打开。你应该将它移到废纸篓。**
+用户懵了："以前装 DMG 拖完就能用，这个怎么装不上？"
+
+**真相**：Apple Silicon 要求每个可执行映像至少有 **ad-hoc 签名**。CI 没配苹果证书，
+electron-builder 直接 `skipped macOS application code signing` —— 而打包过程改掉了
+Electron 的 Resources，原有签名封条失效 → Gatekeeper 对"下载过（quarantine）+ 签名无效"
+判的就是「已损坏」，**连右键→打开都不给走**（那是「未验证开发者」弹窗才有的通道）。
+别人家 DMG 拖完就好，是签了 Developer ID 且做了公证。
+
+**用户侧立刻解锁**（对任何"已损坏"的 app 都有效）：
+
+```bash
+xattr -cr /Applications/PayasoAgent.app    # 清掉下载隔离标记，再双击就能开
+```
+
+**根治**（已做，v0.2.2 起）：`scripts/after-pack.cjs`（`afterPack` 钩子）在 dmg/zip 制作前
+给 .app 补 `codesign --force --deep --sign -`，签完自检 `codesign --verify --deep --strict`
+（本地实测 `Signature=adhoc`、verify 通过）。弹窗降级为「无法验证开发者」，右键→打开
+可通行；配了真证书（`CSC_*`）钩子自动让位。
+
+**彻底零弹窗**：Apple Developer Program（$99/年）→ Developer ID 签名 + 公证，secrets
+配进 CI 即自动生效（入口已留）。没这一步，首开永远多一步"右键→打开"。
+
+**教训**：macOS 的"已损坏"≠文件坏了，先 `codesign -dv` 看签名；**分发 mac 软件，
+签名不是可选项** —— ad-hoc 是底线，公证是及格线。
+
 ## 4. 本次会话都改了哪些（别丢）
 
 除了桌面客户端，同一轮还修了四个东西，都有各自独立的理由：
@@ -363,8 +391,8 @@ CI 报错（连日志顺序都一致）；`env -u CSC_LINK` 后干净走到
 
 **签名/公证**：workflow 把 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_*` 从 secrets 传入，
 **没配 secrets 时先把空变量 `unset` 再打包**（否则空串会被 electron-builder 当证书，
-把当前目录当证书文件而炸 —— 坑 8），并 `CSC_IDENTITY_AUTO_DISCOVERY=false` 明确跳过
-签名；配了 secrets 就自动签 + 公证。CI 打的 DMG 默认**未签名**，Gatekeeper 会警告。
+把当前目录当证书文件而炸 —— 坑 8）。没证书时打的包由 `afterPack` 钩子补 **ad-hoc 签名**
+（坑 9 的根治）；配了 secrets 就自动签 + 公证，钩子自觉让位。
 
 **怎么触发**：
 
