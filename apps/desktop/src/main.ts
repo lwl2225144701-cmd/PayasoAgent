@@ -163,8 +163,9 @@ function createWindow(): void {
     title: 'PayasoAgent',
     backgroundColor: '#0f1115', // 与前端深色主题一致，避免首帧白闪
     // macOS：无标题栏 + 红绿灯内嵌（与 DeepSeek Harness 同款，位置也是抄它的）。
-    // hiddenInset 让内容顶到窗口上沿，但保留系统标题栏的拖拽热区——不需要自己画
-    // 拖拽条，也不会挡住页面顶部的按钮。
+    // hiddenInset 让内容顶到窗口上沿。**拖拽面由前端 data-window-drag 显式声明**
+    // （DSH 同款配方，见 web/src/index.css）——实测系统拖拽带拖不动窗口（坑 11），
+    // 这里原来的"不需要自己画拖拽条"是错的。
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,

@@ -43,7 +43,7 @@ export function Sidebar({
   const { t } = useI18n();
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
-      <div className={styles.logoRow}>
+      <div className={styles.logoRow} data-window-drag>
         {collapsed ? (
           <button
             className={styles.collapsedLogoBtn}

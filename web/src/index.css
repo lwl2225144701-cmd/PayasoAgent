@@ -174,3 +174,45 @@ body
   /* biome-ignore lint/complexity/noImportantStyles: 同上，第三方节点内联 display 需要 !important */
   display: none !important;
 }
+
+/* ===== 桌面壳窗口拖拽（Electron 专属属性，浏览器自动忽略） =====
+   配方抄自 DeepSeek Harness 前端（app.asar 逐字节扒出）：顶部铬条挂
+   data-window-drag 即成拖拽面；交互元素用伞形 no-drag 集体让位；body 直属的
+   弹层节点（portal）整块 no-drag。实测教训（坑 11）：hiddenInset 的系统拖拽带
+   拖不动窗口，拖拽面必须自己声明。 */
+[data-window-drag] {
+  -webkit-app-region: drag;
+}
+body > :not(#root) {
+  -webkit-app-region: no-drag;
+}
+:is(
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  summary,
+  [contenteditable="true"],
+  [tabindex],
+  [role="dialog"],
+  [role="alertdialog"],
+  [role="menu"],
+  [role="listbox"],
+  [role="tooltip"],
+  [role="button"],
+  [role="link"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="option"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="switch"],
+  [role="slider"],
+  [role="combobox"],
+  [role="textbox"]
+) {
+  -webkit-app-region: no-drag;
+}

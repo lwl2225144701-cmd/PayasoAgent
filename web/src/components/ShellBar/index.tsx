@@ -48,7 +48,7 @@ export function ShellBar({ run, title, onResume, resuming, planMode }: ShellBarP
   }, [run?.status]);
 
   return (
-    <div className={`${styles.bar} ${run ? '' : styles.landingBar}`}>
+    <div data-window-drag className={`${styles.bar} ${run ? '' : styles.landingBar}`}>
       <div className={styles.left}>
         {displayTitle && (
           <span className={styles.taskTitle} title={displayTitle}>
