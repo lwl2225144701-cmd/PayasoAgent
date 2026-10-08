@@ -400,3 +400,27 @@ git tag v0.2.0 && git push origin v0.2.0   # 发版
 
 > 我们没有独立下载域名/CDN，GitHub Releases 就是现成的"③ 层"；差的只是 ① 门面和
 > 稳定名副本。等 GUI 验证后有了一张窗口截图，这页半小时能落地。
+
+## 8. DMG 安装窗样式（定制背景 + 布局）
+
+用户看腻了 macOS 默认的灰底虚线箭头，问"能不能做成单独窗口，加个背景动画啥的"。
+结论分两半：
+
+- **能**：DMG 打开时的 Finder 窗口可以整体定制 —— 背景图、图标布局、窗口大小、
+  图标尺寸（`dmg:` 配置的 `background` / `contents` / `iconSize`），大厂 DMG 都这么做。
+- **不能**：**背景动画做不了**。那是个 Finder 窗口，背景只吃静态图（GIF 也不播）。
+  真要动画得自写安装器 app，违背 mac 拖拽安装习惯，不值。
+
+**做出来的**：`build/dmg-background.png`（660x400，深蓝渐变 + 两侧图标位光晕 +
+白色箭头 + "拖入「应用程序」即可完成安装"），布局 app(180,190) → 箭头 →
+`/Applications` 链接(480,190)，图标 120px。
+
+**源码里挖出来的两个约束**（schema 文档会误导，以 `dmg-builder/out/dmgUtil.js` 为准）：
+
+1. 有背景图时**窗口尺寸 = 图片像素尺寸**（`sips -g pixelWidth`），配置里的
+   `window.width/height` 在这条分支被忽略 → 背景图只能按 1x 画；retina 下 Finder
+   放大显示，所以生成时 2x 超采样缩图保边缘。
+2. `contents` 第一条**省略 `path` = 打包出的 .app**（`dmg.js`："path is required,
+   when omitted, appPath is used"）；x/y 是图标**中心**、从窗口顶部往下量。
+
+> 视觉效果要开 DMG 才能验（本地 `hdiutil` 被沙箱禁，坑 5）——由下一次 CI 构建产出。

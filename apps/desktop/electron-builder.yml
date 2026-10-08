@@ -55,5 +55,25 @@ mac:
 dmg:
   title: PayasoAgent
   icon: build/icon.icns
+  # 安装窗样式：背景图（660x400，深蓝渐变 + 箭头 + 提示语）
+  #
+  # 两个实测过的约束（读 dmg-builder 源码确认，别被 schema 文档误导）：
+  # 1. 有背景图时窗口尺寸 = 图片**像素**尺寸（sips -g pixelWidth），配置里的
+  #    window.width/height 在这条分支会被忽略 → 背景图必须按 1x 画（660x400），
+  #    retina 下 Finder 放大显示，所以生成时 2x 超采样缩图保边缘。
+  # 2. contents 里第一条省略 path = 打包出的 .app（dmg.js: "path is required,
+  #    when omitted, appPath is used"）；x/y 是图标的**中心**、从窗口顶部往下量。
+  background: build/dmg-background.png
+  iconSize: 120
+  iconTextSize: 14
+  contents:
+    - x: 180
+      y: 190
+      type: file
+      name: PayasoAgent.app
+    - x: 480
+      y: 190
+      type: link
+      path: /Applications
 
 publish: null
