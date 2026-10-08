@@ -530,8 +530,9 @@ brew install --cask payasoagent
 
 **本次落地**（发版即用，v0.3.0 起出 Windows 产物）：
 
-1. `fetch-node.mjs`：win32 支持官方 zip + `node.exe`（tar 解 zip，Windows 10+
-   自带 bsdtar）；`mv` 命令 Windows 没有 → 换 `renameSync`
+1. `fetch-node.mjs`：win32 支持官方 zip + `node.exe`（解压用 tar，但**必须显式取
+   `System32\tar.exe`（bsdtar，认 zip）** —— PATH 里排前面的可能是 Git Bash 的
+   **GNU tar，不认 zip**，不赌 PATH 顺序）；`mv` 命令 Windows 没有 → 换 `renameSync`
 2. `main.ts`：`node.exe` 路径 + **`taskkill /T /F` 树杀** —— Windows 无信号语义
    （`child.kill()` 即 TerminateProcess、只掐直接进程留孙进程），树杀连子孙一起收，
    等价 POSIX 的 SIGTERM→SIGKILL 兜底；代价是没有优雅排水窗口，靠 SQLite WAL 抗截断

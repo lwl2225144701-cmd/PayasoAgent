@@ -72,10 +72,15 @@ if (!downloaded) {
   process.exit(1);
 }
 
-// 只解 node 本体，其余（npm、头文件、文档）一概不要。tar 三平台都内置
-// （Windows 10+ 自带 bsdtar，能直接解 zip），压缩格式靠 -xf 自动识别。
+// 只解 node 本体，其余（npm、头文件、文档）一概不要。压缩格式靠 -xf 自动识别。
+//
+// tar 二进制必须显式取**系统自带**的：Windows 上 PATH 里排前面的可能是 Git Bash 的
+// GNU tar（不认 zip！），只有 System32\tar.exe 是 bsdtar（认 zip）。不赌 PATH 顺序。
+const tarBin = isWin
+  ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+  : 'tar';
 if (
-  !run('tar', ['-xf', archive, '-C', workDir, '--strip-components=1', `${innerDir}/${innerFile}`])
+  !run(tarBin, ['-xf', archive, '-C', workDir, '--strip-components=1', `${innerDir}/${innerFile}`])
 ) {
   process.exit(1);
 }

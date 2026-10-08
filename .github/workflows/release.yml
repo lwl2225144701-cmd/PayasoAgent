@@ -191,8 +191,18 @@ jobs:
       - name: Sync version into desktop package
         run: cd apps/desktop && PAYASO_RELEASE_VERSION=${{ steps.version.outputs.version }} node scripts/sync-version.mjs
 
-      - name: Prepare desktop payload
-        run: npm run desktop:setup
+      # 拆成三段跑：哪段挂，注解的步号直接定位（别再合成一步瞎猜）
+      - name: 'Prep 1/3: fetch Node runtime'
+        working-directory: apps/desktop
+        run: node scripts/fetch-node.mjs
+
+      - name: 'Prep 2/3: app icon (mac-only, skips on win)'
+        working-directory: apps/desktop
+        run: node scripts/make-icon.mjs
+
+      - name: 'Prep 3/3: stage backend payload'
+        working-directory: apps/desktop
+        run: node scripts/stage-backend.mjs
 
       - name: Package NSIS installer & ZIP
         # WIN_CSC_* 为空也必须 unset —— 坑 8 的空串陷阱 Windows 同款
