@@ -98,11 +98,21 @@ try {
   {
     const sessionId = 'notify-session-1';
     let calls = 0;
+    let releaseJob!: () => void;
+    const callInFlight = new Promise<void>((resolve) => {
+      releaseJob = resolve;
+    });
     globalThis.fetch = (async () => {
       calls++;
       if (calls === 1) {
-        // call 1 是"准备收尾"的 LLM 调用：让它慢 80ms，期间后台作业（60ms）完成。
-        await sleep(80);
+        // call 1 是"准备收尾"的 LLM 调用。**双向事件驱动**：放行作业并等它 settle，
+        // 保证"作业完成发生在 LLM 调用期间"这一竞态窗口被确定性地构造出来 ——
+        // 不赌挂钟（80ms vs 60ms 的定时器漂移在并发负载下会翻车，咬过 CI 的
+        // Release 一次）。
+        releaseJob();
+        await waitFor(() =>
+          listBackgroundJobs(sessionId).some((job) => job.status !== 'running'),
+        );
         return response({ role: 'assistant', content: 'looks done' });
       }
       if (calls === 2) {
@@ -123,7 +133,7 @@ try {
       runId: 'notify-run',
       command: 'echo notify-output',
       executor: async () => {
-        await sleep(60);
+        await callInFlight; // 作业只在 call 1 在飞时完成 —— 竞态窗口必然存在
         return { exitCode: 0, stdout: 'notify-output', stderr: '', timedOut: false };
       },
     });
