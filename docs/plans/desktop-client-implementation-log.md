@@ -284,6 +284,7 @@ build 过、`npm pack` 201 文件。
 
 **教训**：**动仓库前先跑一次 `npx biome check .`（与 CI 同参）**；只对改动文件 `--write`
 过的"干净"不算数 —— lint error 会跨提交累积，直到某天全仓检查一把清算。
+（后来又在 v0.3.4 上犯了一次同款：单点 format 回归，见**坑 12**。）
 
 ### 坑 8 · secrets 没配 ≠ 环境变量没设：空串 `CSC_LINK` 让打包必炸
 
@@ -372,6 +373,49 @@ xattr -cr /Applications/PayasoAgent.app    # 清掉下载隔离标记，再双�
 
 **教训**：macOS 的"无标题栏"≠"免拖拽条"，**拖拽面是显式声明出来的**；
 "我以为系统会兜底"的地方，去扒别人家的产物（asar 里的 CSS）比猜靠谱。
+
+### 坑 12 · 改完没跑全仓 `biome check .`：v0.3.4 死在 lint 步，而注解说的是"上一步"
+
+**现象**：`v0.3.4` 的 mac job **46s 就早退**，注解只有一句
+`Process completed with exit code 1`，锚点 `#step:6:320`。同一份注解里
+`v0.3.3` 挂的是 `#step:7:282`（1m33s）。两步号只差 1，很容易读串。
+
+**真相**：步号映射是 **隐藏的 "Set up job" = 1，可见步整体 +1**。用两次**已知**
+失败反推校准过（这是本节最值钱的一张表）：
+
+| 注解锚点 | 可见步 | 步骤名 | 实证 |
+|---|---|---|---|
+| `#step:6:*` | 5 | `Lint & format check (Biome)` | **v0.3.4（本次）** |
+| `#step:7:*` | 6 | `Deterministic test suites (no LLM)` | v0.3.3（job-notification 竞态） |
+| `#step:8:*` | 7 | win `Prepare desktop payload` | 37753082 / 37754441（`.cmd` 与 GNU tar） |
+| `#step:11:*` | 10 | mac `Package DMG & ZIP` | 37738384（空 `CSC_LINK`，坑 8） |
+
+所以 v0.3.4 挂的是 **biome**，不是测试。而 biome 确实红：`507cd54` 把
+`await waitFor(...)` 改成双向事件驱动后，表达式从三行收成一行、行宽掉到 100 列以内，
+biome format 要求**合成一行**；提交时没跑全仓 `npx biome check .` —— 坑 7 的教训
+原样又犯一次（这次不是累积，是**单点回归**）。
+
+**复现**（全本地，一行不差）：
+
+```bash
+npx biome check .                  # exit 1 | Found 1 error.（160 个 warning 不挡路）
+npx biome check . --reporter=json  # summary.errors = 1
+npx biome format .                 # 直接点名 tests/job-notification.test.ts:113
+npx biome format --write tests/job-notification.test.ts   # 修
+```
+
+**教训两条**：
+
+1. **格式化 error 是"改完立刻能发现"的**，`npx biome check .` 必须跟着每次编辑一起跑
+   （与 CI 同参，别只 `--write` 改动文件）。format 类回归的特征是 **job 早早退** ——
+   lint 步在 npm ci + tsc 之后，46s 就死；而测试步要跑约 40s，挂它至少 1m30s。
+   **总时长是免费的旁证**，先看时长再猜步号，能直接否掉"测试挂了"这种误判。
+2. **判定失败步要用 `#step:N:C` 锚点，并且复取一次确认**。盯 Release 的 watcher
+   脚本曾把同一个 run 读成 `#step:7:282`（实际 `#step:6:320`）—— 注解读取有缓存/时序，
+   单次采样不能当结论。`annotations_partial` 匿名可取这条没变，仍是第一诊断通道。
+
+> 修复提交 `b3acb54`：只动格式（1 插入 3 删除），`tsc` 0 错、biome exit 0、
+> 113 套件全绿后重打 tag。
 
 ## 4. 本次会话都改了哪些（别丢）
 
