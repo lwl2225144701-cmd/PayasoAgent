@@ -373,6 +373,46 @@ console.log(
   '提示: 需 LLM 的压测与 E2E 未纳入本集合 — stress 用 npm run test:stress；Agent E2E 用 npm test',
 );
 
+// ---- CI 注解：把"哪个套件挂了"直接送进 GitHub 注解 ----
+// 为什么值得单开一段：CI 的 Actions 日志要登录才看得到，而本集合是 Release 的质量门禁，
+// 挂在上面时唯一的匿名诊断通道就是 /actions/runs/<id>/annotations_partial（坑 7/坑 12）。
+// 但 GitHub 自带的步级注解只有一句 "Process completed with exit code 1" + #step:N:C 步号，
+// 113 个套件里是哪一个全凭猜 —— v0.3.3 就这么盲猜过一轮。
+// 这里在 GITHUB_ACTIONS 下补发 ::error:: 注解：套件名 + 退出码 + 关键输出，匿名可读。
+// 本地不设该变量，输出零污染。
+function annotateFailuresToGitHub(failed: SuiteResult[]): void {
+  if (process.env.GITHUB_ACTIONS !== 'true' || failed.length === 0) return;
+  /** 单步注解有条数上限，超出的只报数量，别把整批判成噪声被 GitHub 吞掉。 */
+  const MAX_ANNOTATIONS = 10;
+  const shown = failed.slice(0, MAX_ANNOTATIONS);
+  for (const failure of shown) {
+    const excerpt = sliceTextToBudget(failure.output, {
+      maxBytes: 3000,
+      headBytes: 1500,
+      tailBytes: 1500 - 256,
+    }).content.trimEnd();
+    const body = [
+      `套件 ${failure.name} 失败：exit=${failure.exitCode}，${seconds(failure.durationMs)}`,
+      `重跑: node --import tsx ${failure.file}`,
+      '',
+      excerpt,
+    ].join('\n');
+    // 工作流命令里换行必须编码成 %0A，否则注解在第一行就被截断
+    console.log(`::error title=确定性测试集合失败::${body.replace(/\r?\n/g, '%0A')}`);
+  }
+  if (failed.length > shown.length) {
+    console.log(
+      `::error title=确定性测试集合失败::另有 ${failed.length - shown.length} 个失败套件未单独注解` +
+        `（单步注解上限 ${MAX_ANNOTATIONS}）：${failed
+          .slice(MAX_ANNOTATIONS)
+          .map((r) => r.name)
+          .join(', ')}`,
+    );
+  }
+}
+
+annotateFailuresToGitHub(failures);
+
 appendLog(
   `\n${'='.repeat(70)}\n汇总: 套件 ${results.length} | PASS ${passed} | FAIL ${failures.length} | ` +
     `总耗时 ${seconds(totalMs)}（并发 ${concurrency}）\n`,

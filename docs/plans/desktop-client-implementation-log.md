@@ -417,6 +417,15 @@ npx biome format --write tests/job-notification.test.ts   # 修
 > 修复提交 `b3acb54`：只动格式（1 插入 3 删除），`tsc` 0 错、biome exit 0、
 > 113 套件全绿后重打 tag。
 
+**顺手补掉的诊断盲区**（`tests/run-all.ts`）：上面两条教训都是"事后从步号反推"，
+可一旦挂在 `Deterministic test suites` 上，注解仍然只知道"exit code 1"——
+113 个套件里是哪一个全凭猜（v0.3.3 就这么盲猜过一轮）。现在 runner 在
+`GITHUB_ACTIONS=true` 下会补发 `::error title=确定性测试集合失败::…` 注解，
+带**套件名 + 退出码 + 重跑命令 + 输出摘录**（换行编码成 `%0A`，单步上限 10 条）。
+本地不设该变量，输出零污染；退出码仍由 `process.exit` 决定，注解不改判定。
+实测：临时插一个必败套件 → `test:all` exit 1、注解正确下发；撤掉后 113 套件全绿、
+`::error` 行数 0。
+
 ## 4. 本次会话都改了哪些（别丢）
 
 除了桌面客户端，同一轮还修了四个东西，都有各自独立的理由：
