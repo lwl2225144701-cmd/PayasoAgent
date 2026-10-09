@@ -110,9 +110,7 @@ try {
         // 不赌挂钟（80ms vs 60ms 的定时器漂移在并发负载下会翻车，咬过 CI 的
         // Release 一次）。
         releaseJob();
-        await waitFor(() =>
-          listBackgroundJobs(sessionId).some((job) => job.status !== 'running'),
-        );
+        await waitFor(() => listBackgroundJobs(sessionId).some((job) => job.status !== 'running'));
         return response({ role: 'assistant', content: 'looks done' });
       }
       if (calls === 2) {
