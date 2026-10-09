@@ -58,8 +58,17 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
-> 产物现状：Release 页挂 v0.2.2 起的 `.dmg`（210MB）+ `.zip`（216MB）+ blockmap；
+> 产物现状（2026-10-09 清理后）：Release 页**只保留 v0.3.5** 一个桌面版，
+> mac（`arm64.dmg` 210MB + `arm64-mac.zip` 216MB）与 Windows（`setup.exe` 172MB
+> NSIS 安装器 + `x64.zip` 234MB 便携包）**双平台齐备**，各带 blockmap；
+> Homebrew cask 已自动 bump 到 0.3.5（sha256 与 DMG 一致）。
 > 本地 `apps/desktop/release/mac-arm64/` 仍有编译产物可直接 `open`。
+>
+> 清理动作：删掉桌面线 v0.2.0–v0.3.4 的 8 个 tag + release（其中 v0.3.3/v0.3.4 是
+> mac job 死掉、只剩 Windows 资产的残次品）。**`git push --delete origin <tag>` 就够
+> 了 —— 不需要 token，release 页面会随之 404、资产不可达**（release 对象本身还会在
+> 服务端残留，但用户侧已拿不到）。另外两个 tag `v1.0.0-local-mvp`、`v2.2.0` 是桌面
+> 客户端之前的项目里程碑，**按用户要求保留**。
 
 ## 1. 落地的清单（一次做对的三件事）
 
