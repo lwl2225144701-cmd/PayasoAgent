@@ -8,12 +8,14 @@
 
 import type { ModelConfig } from '../llm/llm.js';
 import type {
+  BuiltinRemoteCatalogEntry,
   CreateModelProviderInput,
   ModelProviderView,
   RunStore,
   UpdateModelProviderInput,
 } from './persistence/store.js';
 import { getPiAiProviderModel } from './pi-ai-providers.js';
+import type { ProviderModelInfo } from './provider-url.js';
 
 export interface ModelServiceDeps {
   store: RunStore;
@@ -65,6 +67,21 @@ export class ModelService {
 
   recordModelProbe(id: string, result: { status: 'available' | 'error'; error?: string }) {
     return this.store.recordModelProbe(id, result);
+  }
+
+  // 内置 Provider 的远端探测结果 → 准入名单 + 目录缓存（见 SettingsStore 同名方法）
+  recordBuiltinRemoteCatalog(
+    piProviderId: string,
+    remoteModelIds: string[],
+    cachedCatalog: ProviderModelInfo[],
+    ok: boolean,
+    now?: string,
+  ): void {
+    this.store.recordBuiltinRemoteCatalog(piProviderId, remoteModelIds, cachedCatalog, ok, now);
+  }
+
+  getBuiltinRemoteCatalogs(): Record<string, BuiltinRemoteCatalogEntry> {
+    return this.store.getBuiltinRemoteCatalogs();
   }
 
   // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）

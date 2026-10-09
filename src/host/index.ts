@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveProjectionPolicy } from '../harness/tool-output-projection.js';
 import { resolveInlineImageBudget } from '../runtime/image-materialize.js';
 import { resolveToolOutputBudget } from '../tool-output-budget.js';
+import { refreshBuiltinModelCatalogs } from './builtin-catalog-probe.js';
 import { setHostApiToken } from './routes.js';
 // 模块: Host API 入口 — 启动 Payaso Host Server
 // 用法: npm run host   （PORT 环境变量可覆盖端口，默认 4500）
@@ -60,6 +61,18 @@ export async function startHost(
     );
   });
   console.log(`Payaso Host API listening on http://localhost:${port}`);
+
+  // 启动后台探测内置 Provider 的远端 /models（第一层根治：目录自动更新，无需用户点刷新）。
+  // 刻意放在 listen 成功之后 fire-and-forget —— 就绪探针不等它，探测失败也只记 stale，
+  // 不会把启动失败变成进程退出。详见 docs/plans/builtin-model-catalog-refresh.md §3。
+  void refreshBuiltinModelCatalogs(manager).catch((error: unknown) => {
+    console.warn(
+      `[catalog] 启动期远端目录探测异常（已忽略，不影响服务）: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
+
   // 生效的上下文管理配置：这几组参数都能用环境变量覆盖，启动时打出来，
   // 免得"以为改了、其实没传进去"——做 A/B 对照时这一点尤其致命。
   const projection = resolveProjectionPolicy();

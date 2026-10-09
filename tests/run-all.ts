@@ -129,6 +129,9 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-thinking-level', file: 'tests/frontend-thinking-level.test.ts' },
   { name: 'frontend-i18n-coverage', file: 'tests/frontend-i18n-coverage.test.ts' },
   { name: 'pi-ai-provider', file: 'tests/pi-ai-provider.test.ts' },
+  // 内置 Provider 目录刷新：本地模型补丁（MiMo v2.6）/ 远端 /models 合并 /
+  // 模型准入名单 / 目录外模型的运行时合成
+  { name: 'builtin-catalog-refresh', file: 'tests/builtin-catalog-refresh.test.ts' },
   // v1.8 内核不变量（空回合 / 参数契约 / 错误分类 / 输出预算 / shell 执行环境）
   { name: 'tool-output-budget', file: 'tests/tool-output-budget.test.ts' },
   { name: 'shell-execution', file: 'tests/shell-execution.test.ts' },

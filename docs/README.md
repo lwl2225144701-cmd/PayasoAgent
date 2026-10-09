@@ -50,6 +50,7 @@ docs/
 │   ├── desktop-client-plan.md
 │   ├── desktop-client-electron-plan.md
 │   ├── desktop-client-implementation-log.md
+│   ├── builtin-model-catalog-refresh.md
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI

@@ -6,9 +6,13 @@
 // 绝不回显给浏览器（读 API 只回 hasApiKey/mask）。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { fetchAvailableModelCatalog } from '../available-models.js';
+import {
+  fetchAvailableModelCatalog,
+  fetchBuiltinProviderCatalog,
+  mergeCachedRemoteCatalog,
+} from '../available-models.js';
 import type { CreateModelProviderInput, UpdateModelProviderInput } from '../persistence/store.js';
-import { listPiAiProviderCatalog } from '../pi-ai-providers.js';
+import { isRemoteRefreshableProvider, listPiAiProviderCatalog } from '../pi-ai-providers.js';
 import { canonicalizeProviderBaseUrl } from '../provider-url.js';
 import type { RunManager } from '../run-manager.js';
 import {
@@ -35,7 +39,16 @@ export async function handleSettings(
     if (s.length === 3 && s[1] === 'pi-ai' && s[2] === 'providers' && method === 'GET') {
       // pi-ai 内置 Provider 的公开目录：只返回可选 Provider、模型能力和默认地址，
       // 不执行认证解析，也不把任何 API key 返回给浏览器。
-      return sendJson(res, 200, { providers: listPiAiProviderCatalog() });
+      //
+      // 叠加启动后台探测写入的远端目录缓存：供应商上新（如 MiMo v2.6 / 下一代）不必
+      // 等用户点"刷新"或 pi-ai 升级，本进程启动时已自动拉过一次。冷启动首探未完成时
+      // 就是纯静态目录；探测失败则标 catalogStale（沿用上次成功的模型列表）。
+      return sendJson(res, 200, {
+        providers: mergeCachedRemoteCatalog(
+          listPiAiProviderCatalog(),
+          manager.getBuiltinRemoteCatalogs(),
+        ),
+      });
     }
     if (s.length === 2 && s[1] === 'models') {
       if (method === 'GET') {
@@ -196,7 +209,24 @@ export async function handleSettings(
         return bad(res, (err as Error).message || 'baseUrl protocol not allowed');
       }
       try {
-        const catalog = await fetchAvailableModelCatalog(targetUrl, secret.apiKey);
+        const piProviderId = provider.piProviderId;
+        // 内置 Provider（pi-ai 静态目录 + 本地补丁）：远端 /models 与内置目录取并集，
+        // 这样供应商上新（如 MiMo v2.6）不必等依赖升级就能被识别；同时把远端结果记为
+        // 该 Provider 的模型准入名单，后续保存这些模型才不会被校验拒绝。
+        const catalog =
+          piProviderId && isRemoteRefreshableProvider(piProviderId)
+            ? await fetchBuiltinProviderCatalog(piProviderId, targetUrl, secret.apiKey).then(
+                (result) => {
+                  manager.recordBuiltinRemoteCatalog(
+                    piProviderId,
+                    result.remoteModelIds,
+                    result.catalog,
+                    true,
+                  );
+                  return result.catalog;
+                },
+              )
+            : await fetchAvailableModelCatalog(targetUrl, secret.apiKey);
         manager.recordModelProbe(providerId, { status: 'available' });
         return sendJson(res, 200, {
           models: catalog.map((model) => model.id),
@@ -226,6 +256,9 @@ export async function handleSettings(
       }
       const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
       const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+      // 可选：声明这次预检属于哪个内置 Provider。只用于「与静态目录合并」和「记录
+      // 模型准入名单」，不参与地址解析（baseUrl 仍由客户端提供并独立校验）。
+      const piProviderId = typeof body.piProviderId === 'string' ? body.piProviderId.trim() : '';
       if (!baseUrl || !apiKey) return bad(res, 'baseUrl and apiKey are required');
       // 协议白名单 + 规范化：仅 https: 或本地 loopback http:（开发模式）
       let targetUrl: string;
@@ -235,6 +268,20 @@ export async function handleSettings(
         return bad(res, (err as Error).message || 'baseUrl protocol not allowed');
       }
       try {
+        if (piProviderId && isRemoteRefreshableProvider(piProviderId)) {
+          const { catalog, remoteModelIds } = await fetchBuiltinProviderCatalog(
+            piProviderId,
+            targetUrl,
+            apiKey,
+          );
+          // 新增 Provider 时尚无 provider 记录，只能按 piProviderId 记准入名单 + 缓存；
+          // 这样紧接着的保存请求（携带远端发现的模型）才能通过内置目录校验。
+          manager.recordBuiltinRemoteCatalog(piProviderId, remoteModelIds, catalog, true);
+          return sendJson(res, 200, {
+            models: catalog.map((model) => model.id),
+            catalog,
+          });
+        }
         const catalog = await fetchAvailableModelCatalog(targetUrl, apiKey);
         return sendJson(res, 200, {
           models: catalog.map((model) => model.id),

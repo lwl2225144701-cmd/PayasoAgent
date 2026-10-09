@@ -3,11 +3,13 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { appDataPath } from '../../app-paths.js';
 import { storedPermissionMode } from '../../permission-mode.js';
+import type { ProviderModelInfo } from '../provider-url.js';
 import type { HostEvent } from '../run-events.js';
 import { createSecretStore, type SecretStore } from '../secrets/secret-store.js';
 import type { ModelThinkingLevel } from './settings-store.js';
 import { SettingsStore } from './settings-store.js';
 import type {
+  BuiltinRemoteCatalogEntry,
   CreateModelProviderInput,
   DefaultModelSelection,
   DeletedWorkspaceView,
@@ -798,6 +800,20 @@ export class SqliteRunStore implements RunStore {
     result: { status: 'available' | 'error'; error?: string },
   ): ModelProviderView | null {
     return this.settings.recordModelProbe(id, result);
+  }
+
+  recordBuiltinRemoteCatalog(
+    piProviderId: string,
+    remoteModelIds: string[],
+    cachedCatalog: ProviderModelInfo[],
+    ok: boolean,
+    now?: string,
+  ): void {
+    this.settings.recordBuiltinRemoteCatalog(piProviderId, remoteModelIds, cachedCatalog, ok, now);
+  }
+
+  getBuiltinRemoteCatalogs(): Record<string, BuiltinRemoteCatalogEntry> {
+    return this.settings.getBuiltinRemoteCatalogs();
   }
 
   importEnvFallback(input: {

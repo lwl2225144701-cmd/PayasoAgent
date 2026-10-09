@@ -1,6 +1,8 @@
 import type { PermissionMode } from '../../permission-mode.js';
+import type { ProviderModelInfo } from '../provider-url.js';
 import type { HostEvent } from '../run-events.js';
 import type {
+  BuiltinRemoteCatalogEntry,
   CreateModelProviderInput,
   DefaultModelSelection,
   ModelProviderView,
@@ -126,6 +128,18 @@ export interface RunStore {
     id: string,
     result: { status: 'available' | 'error'; error?: string },
   ): ModelProviderView | null;
+  // 记录一次内置 Provider 远端 /models 探测结果：remoteModelIds 更新准入名单（仅成功），
+  // cachedCatalog 写目录缓存（失败保留上次成功结果并标 stale）。
+  // 启动后台探测与用户手动刷新共用此入口。
+  recordBuiltinRemoteCatalog(
+    piProviderId: string,
+    remoteModelIds: string[],
+    cachedCatalog: ProviderModelInfo[],
+    ok: boolean,
+    now?: string,
+  ): void;
+  // 远端目录缓存只读快照（按 piProviderId），不触发网络。
+  getBuiltinRemoteCatalogs(): Record<string, BuiltinRemoteCatalogEntry>;
   importEnvFallback(input: {
     baseUrl: string;
     apiKey: string;
@@ -138,6 +152,7 @@ export interface RunStore {
 }
 
 export type {
+  BuiltinRemoteCatalogEntry,
   CreateModelProviderInput,
   DefaultModelSelection,
   ModelProviderView,

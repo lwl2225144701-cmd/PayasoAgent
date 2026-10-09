@@ -346,7 +346,8 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | GET      | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器                                                            |
 | GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id`      | 模型提供方 CRUD；**读 API 只回 hasApiKey/mask，key 绝不出 Host**（写入路径：key → SecretStore）         |
 | GET/POST | `/settings`，`/settings/default`                             | 默认模型查询 / 设置（providerId + modelId 成对校验）                                              |
-| POST     | `/settings/available-models`                                | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端）                                       |
+| GET      | `/settings/pi-ai/providers`                                 | 内置 Provider 公开目录（名称/地址/模型能力，**无任何凭证**）。叠加启动后台探测写入的远端目录缓存（`builtinRemoteCatalog`），供应商上新无需等 pi-ai 升级或用户点刷新；探测失败标 `catalogStale` 并沿用上次成功结果 |
+| POST     | `/settings/available-models`                                | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端）。**内置 Provider 走「远端 ∪ pi-ai 静态目录」合并**，远端结果同时记入该 Provider 的模型准入名单（`settings` blob 的 `builtinDiscoveredModels`）+ 目录缓存（`builtinRemoteCatalog`），使供应商上新模型在依赖升级前即可被识别与保存；`preview` 路径可传 `piProviderId` 复用同一合并逻辑 |
 | GET      | `/runtime/capabilities`                                     | 返回不含宿主路径的启动工具链能力快照                                                               |
 | POST     | `/runtime/capabilities/refresh`                             | 鉴权后显式重新发现宿主工具；不安装、不改变网络或既有 Sandbox 策略                                  |
 | POST     | `/runs/:id/toolchain-preparation`                           | 鉴权后批准/拒绝/取消当前 Run 的固定 macOS 工具链准备请求                                                |

@@ -495,9 +495,12 @@ export function fetchAvailableModels(input: {
 
 // 新增 Provider 时的临时预检：用表单中的 baseUrl + apiKey 拉取模型目录。
 // 凭证不落盘、不进日志、不回显；由 Host 走 /settings/available-models/preview（需鉴权、协议白名单）。
+// piProviderId 可选：声明这次预检属于哪个内置提供方，Host 会把远端结果与内置目录合并，
+// 并把这些模型记为可保存（否则供应商上新的模型会在保存时被内置目录校验拒绝）。
 export function previewAvailableModels(input: {
   baseUrl: string;
   apiKey: string;
+  piProviderId?: string;
 }): Promise<{ models: string[]; catalog?: ProviderModelInfo[] }> {
   return jsonFetch('/settings/available-models/preview', {
     method: 'POST',

@@ -164,6 +164,12 @@ export interface PiAiProviderInfo {
   id: string;
   name: string;
   baseUrl: string;
+  /** 能否用已配置的 API 密钥 GET {baseUrl}/models 刷新目录（Host 判定） */
+  refreshable?: boolean;
+  /** 最近一次远端探测失败：models 是上次成功结果，需提示"目录可能过期" */
+  catalogStale?: boolean;
+  /** 最近一次成功远端探测时间（ISO） */
+  catalogFetchedAt?: string;
   models: PiAiModelInfo[];
 }
 

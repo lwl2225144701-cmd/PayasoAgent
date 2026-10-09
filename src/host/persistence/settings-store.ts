@@ -1,6 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { getPiAiProviderBaseUrl, listPiAiProviderCatalog } from '../pi-ai-providers.js';
-import { canonicalizeProviderBaseUrl } from '../provider-url.js';
+import {
+  getPiAiProviderBaseUrl,
+  listPiAiProviderCatalog,
+  type PiAiProviderInfo,
+} from '../pi-ai-providers.js';
+import { canonicalizeProviderBaseUrl, type ProviderModelInfo } from '../provider-url.js';
 import { createSecretStore, providerSecretKey, type SecretStore } from '../secrets/secret-store.js';
 
 export type ModelProviderKind = 'builtin' | 'custom';
@@ -107,7 +111,33 @@ interface AppSettingsBlob {
   defaultModelId: string;
   // .env 环境模型配置是否已导入过设置（一次性导入标记，删除导入的 Provider 也不会再导）
   envImported: boolean;
+  // 远端 /models 成功探测到的内置 Provider 模型 ID，按 piProviderId 归档。
+  // pi-ai 静态目录是构建期数据，供应商上新到依赖升级之间，远端探测结果是唯一权威
+  // 来源：这里只做「该内置 Provider 允许保存哪些模型」的准入名单，不代表当前可用性
+  // （可用性以最近一次探测结果为准）。仅内置 Provider 使用。
+  builtinDiscoveredModels?: Record<string, string[]>;
+  // 远端目录缓存：把「供应商上新 → 用户看到」从「有人记得点刷新」变成自动。
+  // 启动后台探测写这里；目录读取优先用它，端点不可达时回退到静态目录并标 stale。
+  // 存的是**远端返回的原始条目**（不含合并），合并时再叠静态目录 —— 这样 pi-ai 升级
+  // 后本地补丁变化不需要让缓存失效。
+  builtinRemoteCatalog?: Record<string, BuiltinRemoteCatalogEntry>;
 }
+
+export interface BuiltinRemoteCatalogEntry {
+  /** 远端 /models 返回的条目（id + 类别 + 能力），按 id 去重排序 */
+  models: ProviderModelInfo[];
+  /** 最近一次成功探测的时间（失败沿用上次成功时间） */
+  fetchedAt: string;
+  /** 最近一次探测失败：models 是上次成功的结果，UI 需提示目录可能过期 */
+  stale: boolean;
+}
+
+// 单个内置 Provider 的准入名单上限。淘汰策略是最旧优先（FIFO），因此长期运行也不会
+// 无界增长；名单只用于放宽保存校验，多留几个旧 id 不构成安全或行为风险。
+const MAX_DISCOVERED_MODELS_PER_PROVIDER = 200;
+
+// 单个 Provider 缓存的远端目录上限：与 available-models 的远端抓取上限一致。
+const MAX_CACHED_MODELS_PER_PROVIDER = 200;
 
 // legacy（< v1.6）blob 中的 provider 形状：含明文 apiKey，构造器迁移后剥离
 interface LegacyStoredModelProvider extends StoredModelProvider {
@@ -157,6 +187,50 @@ function defaultSettings(): AppSettingsBlob {
   };
 }
 
+// 外部 blob 容错：只保留非空字符串 id，去重并按上限截断（保留最新一段）。
+function normalizeDiscoveredModels(input: unknown): Record<string, string[]> | undefined {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return undefined;
+  const result: Record<string, string[]> = {};
+  for (const [providerId, ids] of Object.entries(input as Record<string, unknown>)) {
+    if (!providerId || !Array.isArray(ids)) continue;
+    const normalized = [
+      ...new Set(
+        ids
+          .filter((id): id is string => typeof id === 'string' && id.trim() !== '')
+          .map((id) => id.trim()),
+      ),
+    ].slice(-MAX_DISCOVERED_MODELS_PER_PROVIDER);
+    if (normalized.length > 0) result[providerId] = normalized;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+// 远端目录缓存容错：外部 blob 可能被改坏，这里只保留形状正确的条目。
+function normalizeRemoteCatalog(
+  input: unknown,
+): Record<string, BuiltinRemoteCatalogEntry> | undefined {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return undefined;
+  const result: Record<string, BuiltinRemoteCatalogEntry> = {};
+  for (const [providerId, raw] of Object.entries(input as Record<string, unknown>)) {
+    if (!providerId || typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    const entry = raw as Partial<BuiltinRemoteCatalogEntry>;
+    if (!Array.isArray(entry.models)) continue;
+    const models = entry.models.filter(
+      (model): model is ProviderModelInfo =>
+        typeof model === 'object' &&
+        model !== null &&
+        typeof (model as ProviderModelInfo).id === 'string',
+    );
+    if (models.length === 0) continue;
+    result[providerId] = {
+      models: models.slice(0, MAX_CACHED_MODELS_PER_PROVIDER),
+      fetchedAt: typeof entry.fetchedAt === 'string' ? entry.fetchedAt : '',
+      stale: entry.stale === true,
+    };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export class SettingsStore {
   private db: DatabaseSync;
   private readonly secrets: SecretStore;
@@ -192,6 +266,8 @@ export class SettingsStore {
     let settings: AppSettingsBlob;
     try {
       const parsed = JSON.parse(row.value) as Partial<AppSettingsBlob>;
+      const discovered = normalizeDiscoveredModels(parsed.builtinDiscoveredModels);
+      const remoteCatalog = normalizeRemoteCatalog(parsed.builtinRemoteCatalog);
       settings = {
         models:
           Array.isArray(parsed.models) && parsed.models.length > 0
@@ -201,6 +277,8 @@ export class SettingsStore {
           typeof parsed.defaultProviderId === 'string' ? parsed.defaultProviderId : '',
         defaultModelId: typeof parsed.defaultModelId === 'string' ? parsed.defaultModelId : '',
         envImported: parsed.envImported === true,
+        ...(discovered ? { builtinDiscoveredModels: discovered } : {}),
+        ...(remoteCatalog ? { builtinRemoteCatalog: remoteCatalog } : {}),
       };
     } catch (err) {
       console.error(
@@ -334,6 +412,21 @@ export class SettingsStore {
       if (Object.keys(entry).length > 0) result[modelId] = entry;
     }
     return Object.keys(result).length > 0 ? result : undefined;
+  }
+
+  // 内置 Provider 允许保存的模型集合 = pi-ai 静态目录（含本地模型补丁）+ 远端探测
+  // 准入名单。两者都是"已知合法"的 id 来源：静态目录来自依赖，准入名单来自用户对
+  // 该 Provider 端点的一次成功探测（见 recordBuiltinDiscoveredModels）。
+  private builtinSupportedModels(
+    piProviderId: string,
+    piProvider: PiAiProviderInfo,
+    settings: AppSettingsBlob,
+  ): Set<string> {
+    const supported = new Set(piProvider.models.map((model) => model.id));
+    for (const model of settings.builtinDiscoveredModels?.[piProviderId] ?? []) {
+      supported.add(model);
+    }
+    return supported;
   }
 
   private validateUrl(url: string): void {
@@ -512,8 +605,12 @@ export class SettingsStore {
       ? listPiAiProviderCatalog().find((provider) => provider.id === piProviderId)
       : undefined;
     if (piProviderId && !piProvider) throw new Error('内置提供方不存在');
-    if (piProvider) {
-      const supportedModels = new Set(piProvider.models.map((model) => model.id));
+
+    // 1. 读取 settings（校验前快照；内置 Provider 的模型准入名单也在这里）
+    const settings = this.readSettings();
+
+    if (piProvider && piProviderId) {
+      const supportedModels = this.builtinSupportedModels(piProviderId, piProvider, settings);
       const unsupportedModel = models.find((model) => !supportedModels.has(model));
       if (unsupportedModel) {
         throw new Error(`内置提供方不支持模型: ${unsupportedModel}`);
@@ -524,7 +621,7 @@ export class SettingsStore {
       ? (getPiAiProviderBaseUrl(piProviderId, piModelId) ?? '')
       : (input.baseUrl ?? '').trim();
 
-    // 1. 标准化输入 + 基础校验
+    // 2. 标准化输入 + 基础校验
     if (!name) throw new Error('name is required');
     if (!piProviderId && !baseUrl) throw new Error('baseUrl is required');
     if (input.piProviderId !== undefined && !piProviderId) {
@@ -532,9 +629,6 @@ export class SettingsStore {
     }
     if (!piProviderId) this.validateUrl(baseUrl);
     if (models.length === 0) throw new Error('models is required');
-
-    // 2. 读取 settings（校验前快照，用于后续判断）
-    const settings = this.readSettings();
 
     // 3. 通用创建：业务校验必须在 Secret 写入之前完成
     const existing = settings.models.find(
@@ -589,10 +683,11 @@ export class SettingsStore {
     const current = settings.models;
     const idx = current.findIndex((m) => m.id === id);
     if (idx === -1) return null;
-    const piProvider = current[idx].piProviderId
-      ? listPiAiProviderCatalog().find((provider) => provider.id === current[idx].piProviderId)
+    const piProviderId = current[idx].piProviderId;
+    const piProvider = piProviderId
+      ? listPiAiProviderCatalog().find((provider) => provider.id === piProviderId)
       : undefined;
-    if (current[idx].piProviderId && !piProvider) throw new Error('内置提供方不存在');
+    if (piProviderId && !piProvider) throw new Error('内置提供方不存在');
 
     // 保存旧 Secret 状态，以便 writeSettings 失败时恢复（补偿事务）。
     // 旧版本可能留下 hasApiKey=true 但 SecretStore 中已没有密钥的元数据；
@@ -630,8 +725,8 @@ export class SettingsStore {
     if (input.models !== undefined) {
       const models = this.normalizeModels(input.models);
       if (models.length === 0) throw new Error('models is required');
-      if (piProvider) {
-        const supportedModels = new Set(piProvider.models.map((model) => model.id));
+      if (piProvider && piProviderId) {
+        const supportedModels = this.builtinSupportedModels(piProviderId, piProvider, settings);
         const unsupportedModel = models.find((model) => !supportedModels.has(model));
         if (unsupportedModel) {
           throw new Error(`内置提供方不支持模型: ${unsupportedModel}`);
@@ -799,6 +894,71 @@ export class SettingsStore {
 
   getModel(id: string): StoredModelProvider | null {
     return this.getAllModels().find((m) => m.id === id) ?? null;
+  }
+
+  // 记录一次内置 Provider 的远端探测结果（启动后台探测与用户手动刷新共用一条路径）：
+  //   ① 准入名单（仅成功时）——证据 = remoteModelIds（远端真正返回的 id），新旧并集，
+  //      端点抖动返回子集不会让已配置模型失效；超上限淘汰最旧（FIFO），名单只放宽
+  //      校验，多留旧 id 没有行为风险。
+  //   ② 目录缓存 —— 存**合并后的目录**（静态 ∪ 远端），成功时替换并清 stale；失败时
+  //      **保留上次成功的模型列表**只把 stale 置位。这样端点挂掉不会让目录瞬间变空，
+  //      UI 可提示"目录可能过期"。
+  // 两处一次 writeSettings 原子落盘（blob 必须整块写，见 AppSettingsBlob）。
+  recordBuiltinRemoteCatalog(
+    piProviderId: string,
+    remoteModelIds: string[],
+    cachedCatalog: ProviderModelInfo[],
+    ok: boolean,
+    now = new Date().toISOString(),
+  ): void {
+    const providerId = piProviderId.trim();
+    if (!providerId) return;
+
+    const settings = this.readSettings();
+    const previous = settings.builtinRemoteCatalog?.[providerId];
+    let mutated = false;
+
+    if (ok) {
+      const existing = settings.builtinDiscoveredModels?.[providerId] ?? [];
+      const merged = [...new Set([...existing, ...remoteModelIds.filter(Boolean)])];
+      if (
+        merged.length !== existing.length ||
+        !existing.every((id, index) => id === merged[index])
+      ) {
+        settings.builtinDiscoveredModels = {
+          ...(settings.builtinDiscoveredModels ?? {}),
+          [providerId]: merged.slice(-MAX_DISCOVERED_MODELS_PER_PROVIDER),
+        };
+        mutated = true;
+      }
+      const next: BuiltinRemoteCatalogEntry = {
+        models: cachedCatalog.slice(0, MAX_CACHED_MODELS_PER_PROVIDER),
+        fetchedAt: now,
+        stale: false,
+      };
+      if (JSON.stringify(previous) !== JSON.stringify(next)) {
+        settings.builtinRemoteCatalog = {
+          ...(settings.builtinRemoteCatalog ?? {}),
+          [providerId]: next,
+        };
+        mutated = true;
+      }
+    } else if (previous && !previous.stale) {
+      // 失败：模型列表不变，只翻 stale 位（无缓存 = 从未成功过，什么都不做，
+      // 这样失败不会凭空造出一个空目录）
+      settings.builtinRemoteCatalog = {
+        ...(settings.builtinRemoteCatalog ?? {}),
+        [providerId]: { ...previous, stale: true },
+      };
+      mutated = true;
+    }
+
+    if (mutated) this.writeSettings(settings);
+  }
+
+  // 目录读取用：返回全部缓存条目（按 piProviderId）。只读，不触发网络。
+  getBuiltinRemoteCatalogs(): Record<string, BuiltinRemoteCatalogEntry> {
+    return this.readSettings().builtinRemoteCatalog ?? {};
   }
 
   recordModelProbe(

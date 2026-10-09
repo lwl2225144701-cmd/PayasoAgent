@@ -19,8 +19,9 @@ import { ApprovalCoordinator } from './approval-coordinator.js';
 import { EventStreamService } from './event-stream-service.js';
 import { ModelService } from './model-service.js';
 import { createDefaultRunStore } from './persistence/sqlite-store.js';
-import type { RunStore } from './persistence/store.js';
+import type { BuiltinRemoteCatalogEntry, RunStore } from './persistence/store.js';
 import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
+import type { ProviderModelInfo } from './provider-url.js';
 import { type InternalRun, RunLifecycleService } from './run-lifecycle-service.js';
 import { SessionService } from './session-service.js';
 import { ToolchainPreparationCoordinator } from './toolchain-preparation-coordinator.js';
@@ -408,6 +409,28 @@ export class RunManager {
 
   recordModelProbe(id: string, result: { status: 'available' | 'error'; error?: string }) {
     return this.modelService.recordModelProbe(id, result);
+  }
+
+  // 内置 Provider 的远端 /models 探测结果 → 准入名单 + 目录缓存
+  recordBuiltinRemoteCatalog(
+    piProviderId: string,
+    remoteModelIds: string[],
+    cachedCatalog: ProviderModelInfo[],
+    ok: boolean,
+    now?: string,
+  ): void {
+    this.modelService.recordBuiltinRemoteCatalog(
+      piProviderId,
+      remoteModelIds,
+      cachedCatalog,
+      ok,
+      now,
+    );
+  }
+
+  // 远端目录缓存只读快照（启动后台探测会写，路由读）
+  getBuiltinRemoteCatalogs(): Record<string, BuiltinRemoteCatalogEntry> {
+    return this.modelService.getBuiltinRemoteCatalogs();
   }
 
   // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）

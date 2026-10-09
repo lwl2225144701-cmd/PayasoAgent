@@ -17,7 +17,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { resolveModelContextConfig } from '../harness/model-context.js';
-import { asProviderStreams, getPiAiProviderModel } from '../host/pi-ai-providers.js';
+import { asProviderStreams, resolvePiAiRuntimeModel } from '../host/pi-ai-providers.js';
 import { createIdleWatchdog, positiveIntMs, TimeoutAbortError } from '../util/timeout.js';
 import { normalizeTokenUsage, type TokenUsage } from './token-usage.js';
 import {
@@ -743,7 +743,9 @@ function createConfiguredModel(config: ReturnType<typeof resolveEndpointConfig>)
   };
 
   if (config.piProviderId) {
-    const resolved = getPiAiProviderModel(config.piProviderId, config.model);
+    // 目录内模型（pi-ai 静态目录 + 本地补丁）直接命中；远端 /models 发现的模型
+    // （供应商上新早于依赖升级）由 parse 侧合成等价 Model，见 pi-ai-providers。
+    const resolved = resolvePiAiRuntimeModel(config.piProviderId, config.model);
     if (!resolved) {
       throw new Error(
         `pi-ai provider/model is not available: ${config.piProviderId}/${config.model}`,

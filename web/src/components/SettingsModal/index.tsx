@@ -583,7 +583,7 @@ export function SettingsModal({
 
   const modelsFromTags = () => form.tags.map((t) => t.value);
 
-  const openSyncDialog = (catalog: ProviderModelInfo[]) => {
+  const openSyncDialog = (catalog: ProviderModelInfo[], notice?: string | null) => {
     const chatCatalog = Array.from(
       new Map(
         catalog.filter((model) => model.category === 'chat').map((model) => [model.id, model]),
@@ -593,7 +593,9 @@ export function SettingsModal({
       setError(t('settings.models.noChatModels'));
       return;
     }
-    setSyncError(null);
+    // notice 用于"远端刷新失败已回退到内置目录"这类非阻断提示：随对话框一起呈现，
+    // 不占用表单级错误位（表单级错误在对话框后面，用户看不到）。
+    setSyncError(notice ?? null);
     setSyncCatalog(chatCatalog);
     setSyncSelectedIds(chatCatalog.map((model) => model.id));
     setSyncDialogOpen(true);
@@ -624,9 +626,11 @@ export function SettingsModal({
     setError(null);
   };
 
-  // 检测 OpenAI 兼容端点的模型目录，自动合并对话模型与上下文能力（点保存才落库）。
-  // 编辑已有 Provider 时通过 providerId 读取服务端配置；
-  // 新增 Provider 时通过 baseUrl + apiKey 临时预检（不落盘）。
+  // 检测模型目录。三条来源，优先级从高到低：
+  //   ① 内置 Provider 且可远端刷新 → Host 合并「远端 /models + 内置目录」
+  //   ② 内置 Provider 不可刷新     → 纯内置目录（pi-ai 注册表 + 本地补丁）
+  //   ③ 自定义 Provider            → 端点 /models（编辑用已存密钥，新增用表单密钥预检）
+  // 内置 Provider 的远端刷新失败不阻断流程：回退到内置目录，并在对话框里说明原因。
   const handleDetectModels = async () => {
     setError(null);
     if (form.piProviderId) {
@@ -635,8 +639,34 @@ export function SettingsModal({
         const providers = piAiProviders.length > 0 ? piAiProviders : await loadPiAiProviders();
         const provider = providers.find((item) => item.id === form.piProviderId);
         if (!provider) throw new Error(t('settings.models.builtinProviderNotFound'));
-        const catalog = catalogFromPiAiProvider(provider);
-        openSyncDialog(catalog);
+        const builtinCatalog = catalogFromPiAiProvider(provider);
+        if (!provider.refreshable) {
+          openSyncDialog(builtinCatalog);
+          return;
+        }
+        const typedApiKey = form.apiKey.trim();
+        let notice: string | null = null;
+        let catalog = builtinCatalog;
+        try {
+          if (typedApiKey) {
+            // 表单里刚输入的密钥优先：编辑态下它可能还没保存，服务端读到的是旧值
+            const resp = await previewAvailableModels({
+              baseUrl: provider.baseUrl,
+              apiKey: typedApiKey,
+              piProviderId: provider.id,
+            });
+            catalog = resp.catalog ?? catalogFromModelIds(resp.models);
+          } else if (formMode === 'edit' && form.id) {
+            const resp = await fetchAvailableModels({ providerId: form.id });
+            catalog = resp.catalog ?? catalogFromModelIds(resp.models);
+          } else {
+            notice = t('settings.models.builtinCatalogNeedsApiKey');
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          notice = t('settings.models.builtinCatalogRefreshFailed', { message: msg });
+        }
+        openSyncDialog(catalog, notice);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(t('settings.models.builtinCatalogRefreshFailed', { message: msg }));
@@ -682,6 +712,15 @@ export function SettingsModal({
     if (formMode !== 'list') {
       const hasApiKey = formMode === 'edit' && (form.hadApiKey || form.apiKey.length > 0);
       const isPiAiForm = formMode === 'add-pi-ai';
+      // 当前内置 Provider 是否支持远端 /models 刷新（Host 判定，见 pi-ai-providers.ts）。
+      // 决定按钮文案与提示：可刷新时说清"目录含远端"，不可刷新时仍按纯内置目录描述。
+      const refreshableBuiltinProvider =
+        Boolean(form.piProviderId) &&
+        (piAiProviders.find((item) => item.id === form.piProviderId)?.refreshable ?? false);
+      // 最近一次远端探测失败（目录沿用上次成功结果）→ 提示可能过期
+      const staleBuiltinProvider =
+        Boolean(form.piProviderId) &&
+        (piAiProviders.find((item) => item.id === form.piProviderId)?.catalogStale ?? false);
       const title = isPiAiForm
         ? t('settings.models.addBuiltinProvider')
         : formMode === 'add'
@@ -795,15 +834,23 @@ export function SettingsModal({
                       {detectingModels
                         ? t('common.refreshing')
                         : isPiAiForm || form.piProviderId
-                          ? t('settings.models.refreshBuiltinModels')
+                          ? refreshableBuiltinProvider
+                            ? t('settings.models.refreshBuiltinModelsOnline')
+                            : t('settings.models.refreshBuiltinModels')
                           : t('settings.models.detectAndSync')}
                     </button>
                   </div>
                   <div className={styles.tagHint}>
                     {isPiAiForm || form.piProviderId
-                      ? t('settings.models.builtinCatalogSourceHint')
+                      ? refreshableBuiltinProvider
+                        ? t('settings.models.builtinRemoteCatalogHint')
+                        : t('settings.models.builtinCatalogSourceHint')
                       : t('settings.models.detectHint')}
                   </div>
+                  {/* 远端探测失败时的过期提示：目录来自上次成功结果，仍可用但可能缺新模型 */}
+                  {staleBuiltinProvider && (
+                    <div className={styles.error}>{t('settings.models.builtinCatalogStale')}</div>
+                  )}
                   <div className={styles.tagList}>
                     {form.tags.map((tag) => {
                       // 选项随模型与界面语言变化：pi 内置模型只列注册表声明的档次，

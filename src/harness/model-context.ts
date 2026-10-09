@@ -62,6 +62,20 @@ const MODEL_CAPABILITIES: ModelCapability[] = [
       'Reasoning is for thinking only. ' +
       'Empty content = task failure.',
   },
+  // MiMo v2.6 系列：官方模型列表声明 1M 上下文 / 128K 最大输出（见
+  // https://mimo.mi.com/docs/zh-CN/quick-start/summary/model）。
+  // 登记在这里的价值：内置 Provider 的远端 /models 只回模型 id 时，目录与预算解析
+  // 仍能拿到正确窗口，而不是退到 FALLBACK 的 256K。
+  {
+    pattern: /^mimo-v2\.6-pro-ultraspeed$/i,
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+  },
+  {
+    pattern: /^mimo-v2\.6-(?:pro|flash)$/i,
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+  },
 ];
 
 export function getKnownModelCapability(

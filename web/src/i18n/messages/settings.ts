@@ -179,6 +179,11 @@ export const settingsMessages = {
     'zh-CN': '内置模型目录刷新失败：{message}',
     'en-US': 'Failed to refresh the built-in model catalog: {message}',
   },
+  'settings.models.builtinCatalogNeedsApiKey': {
+    'zh-CN': '填写 API 密钥后可同时检测供应商的远端模型；当前只列出内置目录。',
+    'en-US':
+      "Enter the API key to also detect the vendor's remote models; only the built-in catalog is listed for now.",
+  },
   'settings.models.detectFailed': {
     'zh-CN': '模型检测失败：{message}',
     'en-US': 'Model detection failed: {message}',
@@ -230,16 +235,31 @@ export const settingsMessages = {
     'zh-CN': '刷新内置模型',
     'en-US': 'Refresh built-in models',
   },
+  'settings.models.refreshBuiltinModelsOnline': {
+    'zh-CN': '检测并同步模型（含远端）',
+    'en-US': 'Detect and sync models (remote included)',
+  },
   'settings.models.detectAndSync': { 'zh-CN': '检测并同步模型', 'en-US': 'Detect and sync models' },
   'settings.models.builtinCatalogSourceHint': {
     'zh-CN': '使用内置模型目录；模型上下文和协议由模型库提供。',
     'en-US':
       'Uses the built-in model catalog; context windows and protocols come from the model library.',
   },
+  'settings.models.builtinRemoteCatalogHint': {
+    'zh-CN':
+      '合并内置模型库与供应商远端模型列表：供应商上新（尚未进入内置库）的模型也能被识别并保存。远端不可达时回退到内置目录。',
+    'en-US':
+      'Merges the built-in model library with the vendor model list, so newly released models not yet in the library can still be detected and saved. Falls back to the built-in catalog when the endpoint is unreachable.',
+  },
   'settings.models.detectHint': {
     'zh-CN': '检测后自动同步对话模型和上下文窗口；已手动填写的上下文不会覆盖。',
     'en-US':
       'Detection syncs chat models and context windows automatically; manually entered context windows are kept.',
+  },
+  'settings.models.builtinCatalogStale': {
+    'zh-CN': '最近一次远端模型探测失败，以下目录来自上次成功结果，可能缺少最新模型。',
+    'en-US':
+      'The latest remote model probe failed; the catalog below is from the last successful probe and may be missing the newest models.',
   },
   'settings.models.contextWindow': { 'zh-CN': '上下文窗口', 'en-US': 'Context window' },
   'settings.models.contextWindowTitle': {
