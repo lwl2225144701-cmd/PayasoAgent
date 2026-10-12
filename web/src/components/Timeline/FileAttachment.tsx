@@ -7,7 +7,16 @@ import type { RunAttachment } from '../../types';
 import { FileIcon } from '../icons';
 import styles from './FileAttachment.module.css';
 
-export function FileAttachment({ runId, file }: { runId: string; file: RunAttachment }) {
+export function FileAttachment({
+  runId,
+  file,
+  onOpenPreview,
+}: {
+  runId: string;
+  file: RunAttachment;
+  /** M4：在右侧预览面板里打开原件（pdf/docx/xlsx 等 binary 附件也适用）。 */
+  onOpenPreview?: (path: string, name: string, runId: string) => void;
+}) {
   const { t } = useI18n();
   const previewPath = file.extraction?.path ?? (file.kind === 'binary' ? undefined : file.path);
   const binary = !previewPath;
@@ -84,6 +93,15 @@ export function FileAttachment({ runId, file }: { runId: string; file: RunAttach
         <button type="button" onClick={() => void download()} disabled={downloading}>
           {t('composer.attachment.download')}
         </button>
+        {onOpenPreview && (
+          <button
+            type="button"
+            onClick={() => onOpenPreview(file.path, file.name, runId)}
+            title={file.path}
+          >
+            {t('composer.attachment.preview')}
+          </button>
+        )}
       </div>
       {file.extraction?.message && <p className={styles.binaryNote}>{file.extraction.message}</p>}
       {binary && !file.extraction && (

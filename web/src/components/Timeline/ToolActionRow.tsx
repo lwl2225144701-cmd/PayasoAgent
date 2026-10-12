@@ -15,10 +15,13 @@ import {
 } from '../icons';
 import type { ToolCallData } from './index';
 import styles from './Timeline.module.css';
+import { baseName, extractToolFilePath } from './tool-file-path';
 
 interface ToolActionRowProps {
   data: ToolCallData;
   runId: string;
+  /** M4：把工具参数里的工作区文件交给右侧预览面板（缺省则不显示入口）。 */
+  onOpenPreview?: (path: string, name: string, runId: string) => void;
 }
 
 /**
@@ -32,11 +35,13 @@ interface ToolActionRowProps {
  * Click expands an inline "技术详情" section with tool name / args / result /
  * error / duration / operationKey / reasoning.
  */
-export function ToolActionRow({ data, runId }: ToolActionRowProps) {
+export function ToolActionRow({ data, runId, onOpenPreview }: ToolActionRowProps) {
   const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
   const toolName = displayToolName(data.tool);
   const argsPreview = previewArgs(data.args);
+  // 只有展开技术详情后才显示入口（行本身是 button，内部不能再嵌 button）
+  const filePath = onOpenPreview === undefined ? null : extractToolFilePath(data.tool, data.args);
   const statusLabel = toolStatusLabel(data.status, language);
   const statusClass =
     data.status === 'running'
@@ -135,6 +140,18 @@ export function ToolActionRow({ data, runId }: ToolActionRowProps) {
             <span>{statusLabel}</span>
             {typeof data.durationMs === 'number' && (
               <span>{formatDurationMs(data.durationMs, language)}</span>
+            )}
+            {/* M4：参数里的工作区文件路径 → 右侧预览面板（md/图片/pdf/word/excel/txt） */}
+            {filePath !== null && (
+              <button
+                type="button"
+                className={styles.previewOpen}
+                onClick={() => onOpenPreview?.(filePath, baseName(filePath), runId)}
+                title={filePath}
+              >
+                <FileIcon size={13} />
+                {t('timeline.tool.openPreview')}
+              </button>
             )}
           </div>
         </div>

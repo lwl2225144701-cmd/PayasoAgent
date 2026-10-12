@@ -797,6 +797,25 @@
   font-size: 11.5px;
 }
 
+/* M4 预览模块集成：工具详情里的"在预览面板中打开"入口（对齐 detailMeta 的弱化语气） */
+.previewOpen {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.previewOpen:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--border-color) 100%, transparent);
+}
+
 /* ===== Assistant reasoning text block ===== */
 
 .assistantTextBlock {

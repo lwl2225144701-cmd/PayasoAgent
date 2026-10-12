@@ -155,6 +155,13 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/host/run-views.ts`                          | 持久层对象 → 对外 API 投影纯函数（唯一 owner） | |
 | `src/host/run-events.ts`                          | HostEvent 类型 + SSE 编码                                                                                                                                                          |
 | `src/host/workspace.ts`                           | Host 持有的当前 Workspace（原生 macOS picker，绝不把绝对路径暴露给 LLM）                                                                                                                           |
+| `src/host/preview/types.ts`                       | Preview 域契约：封闭错误码枚举 `PREVIEW_ERROR_CODES` + `PreviewError`（message===code，唯一 code→HTTP 映射）+ 树/stat/内容响应类型；前端 `web/src/preview/types.ts` 手工镜像，一致性由 `tests/preview-api.test.ts` 断言 |
+| `src/host/preview/preview-service.ts`             | Preview 域业务逻辑（不认识 HTTP）：工作区目录树（懒加载/忽略规则/截断）、文件按类别读取（text/image/pdf/office）、stat；作用域 `PreviewScope`（缺省 = 当前工作区，显式 rootPath = 会话 Run 的工作区）；安全委托 sandbox-manager，大小上限取自 attachment-policy，忽略规则复用 tools/workspace-scan |
+| `src/host/preview/preview-handler.ts`             | Preview 域 HTTP 边界：`/preview/tree|file|stat|changes`（只读；changes 为 SSE 变更流）；`?runId=` 经 RunManager 解析该 Run 的工作区根；PreviewError → `{error:code}` 结构化响应，未预期错误冒泡 server.ts 顶层 catch |
+| `src/host/preview/changes.ts`                     | 工作区文件变更流：每根一个 `fs.watch`（recursive），400ms 去抖聚合成批次推给订阅者；SSE 与外部写入发现共用（Linux 无递归 → 降级为手动刷新） |
+| `src/host/open-in-app/catalog.ts`                 | 「在工具中打开」固定应用清单：35 项 × 各平台定位方式（app-bundle 候选名 / PATH 名 / win-path / 注册表 / desktop entry）；本文件不做 IO |
+| `src/host/open-in-app/resolver.ts`                | 装机探测：逐条证明清单应用已装（扫 /Applications、PATH X_OK、win-path、reg.exe、XDG），每进程缓存一次即权威；open 撞 ENOENT → 单条目重解析 |
+| `src/host/open-in-app/routes.ts`                  | 三路由：`GET /open-in-app/apps`（已装列表）、`GET /open-in-app/icon/<id>`（macOS plutil+sips 从 .app 提 PNG）、`POST /open-in-app/open`（detached + scrubbed 环境 + 早期失败观察窗）；工作区路径 Host 自解析，前端只传 id |
 | `src/host/persistence/store.ts`                   | 薄 RunStore 接口（Session/Run CRUD + Event append/list）                                                                                                                            |
 | `src/host/persistence/sqlite-store.ts`            | 原生 `node:sqlite` 实现；默认 `REPO_ROOT/.data/payaso.db`（`PAYASO_DB_PATH` 可覆盖，失败回退 `:memory:`）                                                                                       |
 | `src/host/persistence/settings-store.ts`          | Provider metadata（settings 表 key='app' JSON blob，**无 raw apiKey**）+ 默认项 + .env 一次性导入 + legacy 凭证迁移（先写 SecretStore 后剥 SQLite）                                                   |
@@ -184,8 +191,22 @@ web/src/
 ├── hooks/useEventStream.ts SSE 连接/重连/按 seq 去重
 ├── types.ts                HostSession / HostRun / HostEvent / ModelProviderView / FileEntry
 ├── format.ts               时间/大小格式化
+├── preview/                文件预览模块（自包含；设计见 docs/plans/preview-module-plan.md）
+│   ├── registry.tsx        viewer 注册表：扩展名 → 懒加载 viewer + 图标（新增类型只加一行）
+│   ├── api.ts              /preview/* 客户端 + PreviewApiError（按错误码分叉）
+│   ├── Launcher.tsx        ShellBar 预览入口胶囊（图标开关 + ⌄ 下拉：open-in-app 列表）
+│   ├── open-in-app.ts      open-in-app 客户端 controller（页载读一次 + localStorage 选择 + POST）
+│   ├── dock-home.ts        面板首页登记表（"开始"视图的入口卡片；当前只有"工作区文件"一张）
+│   ├── dock-tabs.ts         停靠标签状态机（"开始"/"文件"两类；三步交互序列：空态→卡片转文件→＋新建开始）
+│   ├── PreviewDock/        右侧停靠面板：标签条（停靠标签 + 文件标签 + ＋）+ 首页卡片 + viewer
+│   │                       容器 + 宽度拖拽（localStorage 持久化；⌘P 开关）
+│   ├── FileTree/           面包屑 + 单层懒加载目录树（忽略规则开关/过滤）
+│   ├── viewers/            Markdown / Text / Image / PDF / Word / Sheet / Fallback
+│   │                       （PDF=pdfjs-dist、Word=mammoth+DOMPurify、Sheet=xlsx，均懒加载独立 chunk）
+│   └── hooks/              usePreviewTabs / useFileTree
 └── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片/压缩提示)
-                            / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal / FileModal
+                            / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal
+                            （Timeline 工具行的"在预览面板中打开"与附件预览入口见 preview/）
 ```
 
 ### 3.3 文档契约：工具清单与 Trace 事件清单
@@ -344,6 +365,13 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | GET      | `/runs/:id/files`                                           | 工作区文件树（深度≤6，数量≤500）                                                                 |
 | GET      | `/runs/:id/files/*`                                         | 读取工作区内文件（≤1MB）                                                                      |
 | GET      | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器                                                            |
+| GET      | `/preview/tree?path=&includeIgnored=&runId=`                | Preview 域：工作区单层目录树（懒加载；默认跳过 node_modules/.git/dist 等；500 条截断置 truncated）；`runId` 存在时按该 Run 的工作区取（会话级浏览），解析不到 → 409 no_workspace 且不回落到当前工作区 |
+| GET      | `/preview/file?path=&runId=`                                | Preview 域：读工作区文件，按扩展名分发（text utf8 / image / pdf / office 二进制；已知二进制 415；超分类型上限 413 带 limit） |
+| GET      | `/preview/stat?path=&runId=`                                | Preview 域：单文件元数据（kind/size/mtimeMs）                                                  |
+| GET      | `/preview/changes?runId=`                                   | Preview 域：SSE 文件变更流（fs.watch recursive，400ms 去抖批次）；无工作区 409 no_workspace      |
+| GET      | `/open-in-app/apps`                                         | Open-in-app：Host 探测到的已装应用列表（id + label）                                            |
+| GET      | `/open-in-app/icon/<id>`                                    | Open-in-app：应用图标 PNG（macOS plutil+sips 从 .app 提取；失败 404，客户端回退字形）             |
+| POST     | `/open-in-app/open`                                         | Open-in-app：detached 启动外部工具打开工作区（body: id + runId?；scrubbed 环境 + 早期失败观察窗） |
 | GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id`      | 模型提供方 CRUD；**读 API 只回 hasApiKey/mask，key 绝不出 Host**（写入路径：key → SecretStore）         |
 | GET/POST | `/settings`，`/settings/default`                             | 默认模型查询 / 设置（providerId + modelId 成对校验）                                              |
 | GET      | `/settings/pi-ai/providers`                                 | 内置 Provider 公开目录（名称/地址/模型能力，**无任何凭证**）。叠加启动后台探测写入的远端目录缓存（`builtinRemoteCatalog`），供应商上新无需等 pi-ai 升级或用户点刷新；探测失败标 `catalogStale` 并沿用上次成功结果 |

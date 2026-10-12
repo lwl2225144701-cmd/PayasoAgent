@@ -1,0 +1,42 @@
+.loading {
+  composes: loading from "./viewer-common.module.css";
+  height: 100%;
+}
+
+.wrap {
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-3) 0;
+}
+
+.pre {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.line {
+  display: flex;
+  min-width: max-content;
+}
+
+.line:hover {
+  background: var(--bg-secondary);
+}
+
+.lineNo {
+  flex-shrink: 0;
+  width: 3.5em;
+  padding-right: var(--space-3);
+  text-align: right;
+  color: var(--text-tertiary);
+  user-select: none;
+  position: sticky;
+  left: 0;
+  background: var(--bg-primary);
+}
+
+.lineText {
+  white-space: pre;
+}

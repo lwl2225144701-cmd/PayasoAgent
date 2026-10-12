@@ -1,0 +1,67 @@
+.doc {
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-6) var(--space-8);
+}
+
+.docBody {
+  max-width: 760px;
+  margin: 0 auto;
+  font-size: var(--font-size-md);
+  line-height: 1.75;
+}
+
+/* mammoth 产物是语义 HTML（h1-h6/p/table/ul/ol/img）；排版与 MarkdownViewer
+   同一套文档流规格，两个 viewer 观感一致。 */
+
+.docBody h1,
+.docBody h2,
+.docBody h3,
+.docBody h4 {
+  margin: var(--space-6) 0 var(--space-3);
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.docBody h1 {
+  font-size: calc(var(--font-size-xl) + 2px);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.docBody p {
+  margin: var(--space-3) 0;
+}
+
+.docBody table {
+  border-collapse: collapse;
+  margin: var(--space-4) 0;
+  width: 100%;
+}
+
+.docBody th,
+.docBody td {
+  border: 1px solid var(--border-color);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.docBody th {
+  background: var(--bg-secondary);
+}
+
+.docBody img {
+  max-width: 100%;
+}
+
+.docBody blockquote {
+  margin: var(--space-3) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 3px solid var(--accent-blue);
+  color: var(--text-secondary);
+}
+
+.loading {
+  composes: loading from "./viewer-common.module.css";
+  height: 100%;
+}

@@ -1,6 +1,6 @@
 // shell 领域消息表：顶栏（ShellBar）、侧栏（Sidebar）、会话项（SessionItem）、
 // 工作区分组（WorkspaceSection）、目录选择（WorkspacePickerModal）、
-// 回合导航（TurnNavigator）、文件预览（FileModal）。key 前缀 `shell.`。
+// 回合导航（TurnNavigator）。key 前缀 `shell.`。
 // 通用短词（确定/取消/复制/加载中…）复用 common.*，这里不重复定义。
 
 export const shellMessages = {
@@ -98,13 +98,6 @@ export const shellMessages = {
   // 回合导航条
   'shell.turnNav.label': { 'zh-CN': '回合导航', 'en-US': 'Turn navigation' },
   'shell.turnNav.mark': { 'zh-CN': '回合 {index}：{task}', 'en-US': 'Turn {index}: {task}' },
-
-  // 文件预览弹窗
-  'shell.file.preview': { 'zh-CN': '文件预览', 'en-US': 'File preview' },
-  'shell.file.loadFailed': {
-    'zh-CN': '加载文件内容失败。',
-    'en-US': 'Failed to load the file content.',
-  },
 
   // 图片预处理（image-prepare 的异常文案：入参 language 决定语言）
   'shell.image.canvasUnavailable': {

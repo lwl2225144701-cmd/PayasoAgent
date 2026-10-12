@@ -27,7 +27,8 @@ export interface DirectoryListing {
   truncated: boolean;
 }
 
-const MAX_ENTRIES = 500; // 单层目录返回上限，超出置 truncated 由前端提示
+/** 单层目录返回上限，超出置 truncated 由前端提示。preview 域目录树复用同一上限。 */
+export const MAX_ENTRIES = 500;
 
 // Windows 上的虚拟"此电脑"层：path 为空串表示盘符列表（非真实目录）。
 // 让浏览器内的选择器具备跨盘导航，而不是只能从 home（C 盘）往下钻。

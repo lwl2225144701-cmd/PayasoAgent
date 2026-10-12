@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
 import type { MessageKey } from '../../i18n/messages';
 import type { HostRun } from '../../types';
@@ -12,6 +12,8 @@ interface ShellBarProps {
   resuming?: boolean;
   /** /plan 计划模式开启时显示标记（下一轮强制只读 + 仅产出方案）。 */
   planMode?: boolean;
+  /** 顶栏右侧扩展插槽（预览面板开关等；不挤占标题行）。 */
+  actions?: ReactNode;
 }
 
 // 状态 → 消息 key；null = 不常驻 pill。
@@ -29,7 +31,7 @@ const RUN_STATUS_KEY: Record<HostRun['status'], MessageKey | null> = {
  * 顶栏只保留会话身份与运行态（标题 / Plan 标记 / 状态 pill / 恢复按钮）。
  * 会话统计已挪到底部 StatsBar（composer 正下方），避免与标题争夺同一行。
  */
-export function ShellBar({ run, title, onResume, resuming, planMode }: ShellBarProps) {
+export function ShellBar({ run, title, onResume, resuming, planMode, actions }: ShellBarProps) {
   const { t } = useI18n();
   const statusKey = run ? RUN_STATUS_KEY[run.status] : null;
   const label = statusKey ? t(statusKey) : null;
@@ -79,6 +81,7 @@ export function ShellBar({ run, title, onResume, resuming, planMode }: ShellBarP
             {resuming ? t('shell.resume.resuming') : t('shell.resume.action')}
           </button>
         )}
+        {actions}
       </div>
     </div>
   );

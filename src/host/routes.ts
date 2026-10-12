@@ -4,6 +4,8 @@
 // Host 只通过 RunManager/Runtime 公开边界工作；路径一律经 Sandbox resolvePath 校验。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { handleOpenInApp } from './open-in-app/routes.js';
+import { handlePreview } from './preview/preview-handler.js';
 import { segs } from './routes/route-context.js';
 import { handleRuns } from './routes/runs-handler.js';
 import { handleRuntime } from './routes/runtime-handler.js';
@@ -38,8 +40,14 @@ export async function handleRequest(
   }
 
   // Workspace 域（查询/清空/选择器/页内浏览/重命名）
+  if (s[0] === 'open-in-app') return handleOpenInApp(s, method, req, res, manager, port);
   if (s[0] === 'workspace') {
     return handleWorkspace(s, method, req, res, manager, port);
+  }
+
+  // Preview 域（工作区文件树/文件读取/stat —— 独立预览模块的只读 API）
+  if (s[0] === 'preview') {
+    return handlePreview(s, method, req, res, manager, port);
   }
 
   // Sessions 域（CRUD / 内置会话命令 / 会话内 Run）

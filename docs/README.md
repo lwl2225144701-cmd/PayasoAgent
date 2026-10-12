@@ -51,6 +51,7 @@ docs/
 │   ├── desktop-client-electron-plan.md
 │   ├── desktop-client-implementation-log.md
 │   ├── builtin-model-catalog-refresh.md
+│   ├── preview-gui-调研报告.md / preview-module-plan.md
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI

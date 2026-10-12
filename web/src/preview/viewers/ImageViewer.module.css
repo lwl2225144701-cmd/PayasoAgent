@@ -1,0 +1,61 @@
+.stage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.toolBtn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.toolBtn:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.scaleLabel {
+  min-width: 3.5em;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  background:
+    repeating-conic-gradient(var(--bg-secondary) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.canvas:active {
+  cursor: grabbing;
+}
+
+.img {
+  max-width: 92%;
+  max-height: 92%;
+  transition: transform 0.08s ease-out;
+  user-select: none;
+}

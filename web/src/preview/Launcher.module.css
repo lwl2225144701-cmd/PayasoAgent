@@ -1,0 +1,140 @@
+/* Launcher：ShellBar 预览入口 —— 分段胶囊（图标 | ⌄），对齐 DSH 右上角形态 */
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panelBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.panelBtn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--border-color) 28%, transparent);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.seg:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--border-color) 28%, transparent);
+}
+
+.segActive {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--border-color) 36%, transparent);
+}
+
+.pillIcon {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.divider {
+  width: 1px;
+  background: var(--border-color);
+}
+
+.chevOpen {
+  transform: rotate(180deg);
+}
+
+.menu {
+  position: fixed;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  min-width: 236px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* app 图标（Host 从 .app 提取的 PNG）与回退字形芯片 */
+.appIcon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--border-color) 55%, transparent);
+  color: var(--text-secondary);
+}
+
+.menuHint {
+  padding: 8px 10px;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+}
+
+.menuItem:hover {
+  background: var(--bg-secondary);
+}
+
+.menuLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

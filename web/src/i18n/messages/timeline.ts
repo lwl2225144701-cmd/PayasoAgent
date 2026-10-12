@@ -166,6 +166,8 @@ export const timelineMessages = {
     'zh-CN': '…（已截断，完整内容请查看日志）',
     'en-US': '… (truncated; see the logs for the full content)',
   },
+  // 预览模块集成：工具参数里的工作区相对路径 → 右侧预览面板（M4）
+  'timeline.tool.openPreview': { 'zh-CN': '在预览面板中打开', 'en-US': 'Open in preview panel' },
 
   // 计划面板（折叠摘要）
   'timeline.plan.title': { 'zh-CN': '计划', 'en-US': 'Plan' },

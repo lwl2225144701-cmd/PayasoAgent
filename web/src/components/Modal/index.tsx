@@ -20,7 +20,7 @@ export function Modal({ children, onClose, ariaLabel, width, height }: ModalProp
   useEscapeKey(true, onClose);
   useClickOutside(ref, true, onClose);
 
-  // 必须 portal：模态会被渲染在任意容器里（例如 FileModal 在 Timeline 内部），
+  // 必须 portal：模态会被渲染在任意容器里（例如设置弹窗挂在 App 深处），
   // 而 App 的 `.main > *` 规则给每个直接子元素都加了 `position: relative; z-index: 1`
   // —— 每个都成了层叠上下文。模态的 z-index 被关在那个上下文里，永远赢不过文档序
   // 更靠后的兄弟节点（输入栏），于是被压在下面。portal 让它跳出所有祖先层叠上下文。

@@ -1,0 +1,297 @@
+.dock {
+  --dock-width: 420px;
+  width: var(--dock-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-color);
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+}
+
+.resizeHandle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+.resizeHandle:hover {
+  background: var(--accent-blue-bg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* 与顶栏同高、同玻璃底、同边线 —— dock 悬停在右侧时顶栏横向连续，不再有接缝 */
+  min-height: var(--topbar-height);
+  padding: 0 14px 0 var(--space-2);
+  background: var(--color-header-glass);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  flex-shrink: 0;
+}
+
+/* 标签条：文件浏览标签 + 文件标签 + ＋（对齐 DSH 的面板顶部形态） */
+.tabStrip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* 非激活的文件浏览面板：保持挂载（各自记住浏览位置），仅隐藏 */
+.browserPane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.paneHidden {
+  display: none;
+}
+
+.iconBtn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 12em;
+  border-radius: var(--radius-sm, 6px) var(--radius-sm, 6px) 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+}
+
+.tabActive {
+  background: var(--bg-secondary);
+  border-color: var(--border-light);
+}
+
+.tabMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
+  padding: var(--space-2) var(--space-1) var(--space-2) var(--space-2);
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.tabActive .tabMain {
+  color: var(--text-primary);
+}
+
+.tabName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabClose {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.tabClose:hover {
+  background: var(--bg-primary);
+  color: var(--accent-red);
+}
+
+/* 空态"开始"入口：不是标签 —— 无激活胶囊、无 ×（对齐 DSH 面板刚打开的形态）。
+   有真标签后它让位给标签条；只剩文件标签时它又是回首页的路。 */
+.homeEntry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  flex-shrink: 0;
+  padding: var(--space-2);
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.homeEntry:hover {
+  color: var(--text-primary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.emptyHint {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.treeWrap {
+  flex: 1;
+  min-height: 0;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+/* 手动全屏：面板铺满整个窗口（⛶ 按钮；窄屏媒体查询本来就强制全屏） */
+.dockFullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100% !important;
+  z-index: 50;
+  border-left: none;
+}
+
+.dockFullscreen .resizeHandle {
+  display: none;
+}
+
+/* 窄屏：停靠退化为全屏覆盖层（宽度让位给内容） */
+@media (max-width: 900px) {
+  .dock {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    z-index: 40;
+  }
+
+  .resizeHandle {
+    display: none;
+  }
+}
+
+/* ===== 面板首页（"开始"视图）=====
+   参照 DSH 右侧面板首页：一张卡片 = 一个入口。当前只有"工作区文件"一张
+   （终端/浏览器明确不做，见 docs/plans/preview-gui-调研报告.md 的范围收窄）。 */
+.home {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--space-4) var(--space-3);
+  justify-content: center;
+}
+
+.homeCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  background: color-mix(in srgb, var(--color-card-glass) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  border-radius: 12px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.homeCard:hover,
+.homeCard:focus-visible {
+  background: color-mix(in srgb, var(--color-card-glass) 92%, transparent);
+  border-color: color-mix(in srgb, var(--border-color) 100%, transparent);
+}
+
+.homeCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+  border-radius: 9px;
+}
+
+.homeCardText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.homeCardTitle {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.homeCardDesc {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.homeCardShortcut {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+  border-radius: 6px;
+}

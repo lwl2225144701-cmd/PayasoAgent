@@ -1,0 +1,70 @@
+/* Preview viewers 共享样式：加载态 / 错误兜底 / 文档外壳。 */
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 120px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 160px;
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.fallbackIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fallbackName {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.fallbackReason {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.fallbackActions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.downloadLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+}
+
+.downloadLink:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}

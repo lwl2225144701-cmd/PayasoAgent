@@ -1,0 +1,84 @@
+/* MarkdownViewer：文档级排版（对照截图 3 的文档预览形态）。 */
+
+.doc {
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-6) var(--space-8);
+}
+
+.docBody {
+  max-width: 760px;
+  margin: 0 auto;
+  font-size: var(--font-size-md);
+  line-height: 1.75;
+}
+
+/* 文档流排版：与聊天气泡的紧凑风格拉开距离 */
+.docBody h1,
+.docBody h2,
+.docBody h3,
+.docBody h4 {
+  margin: var(--space-6) 0 var(--space-3);
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.docBody h1 {
+  font-size: calc(var(--font-size-xl) + 2px);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.docBody h2 {
+  font-size: var(--font-size-xl);
+}
+
+.docBody h3 {
+  font-size: var(--font-size-lg);
+}
+
+.docBody p {
+  margin: var(--space-3) 0;
+}
+
+.docBody table {
+  border-collapse: collapse;
+  margin: var(--space-4) 0;
+  width: 100%;
+}
+
+.docBody th,
+.docBody td {
+  border: 1px solid var(--border-color);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.docBody th {
+  background: var(--bg-secondary);
+}
+
+.docBody pre {
+  margin: var(--space-4) 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-secondary);
+  overflow-x: auto;
+}
+
+.docBody img {
+  max-width: 100%;
+  border-radius: var(--radius-sm, 6px);
+}
+
+.docBody blockquote {
+  margin: var(--space-3) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 3px solid var(--accent-blue);
+  color: var(--text-secondary);
+}
+
+.loading {
+  composes: loading from "./viewer-common.module.css";
+  height: 100%;
+}

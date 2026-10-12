@@ -1,0 +1,102 @@
+.viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sheetTabs {
+  display: flex;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2) 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.sheetTab {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm, 4px) var(--radius-sm, 4px) 0 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sheetTab:hover {
+  color: var(--text-primary);
+}
+
+.sheetTabActive {
+  background: var(--bg-secondary);
+  border-color: var(--border-light);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.table {
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  min-width: 100%;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--border-light);
+  padding: 0 var(--space-2);
+  height: 28px; /* 与 SheetViewer.tsx 的 ROW_HEIGHT 对齐（虚拟滚动基准） */
+  text-align: left;
+  white-space: nowrap;
+  max-width: 24em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.table tbody tr:hover td {
+  background: var(--bg-secondary);
+}
+
+.rowNoCol {
+  width: 3em;
+  text-align: right;
+  color: var(--text-tertiary);
+  background: var(--bg-secondary);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.headerCell {
+  font-weight: 600;
+}
+
+.loading {
+  composes: loading from "./viewer-common.module.css";
+  height: 100%;
+}
+
+.statusBar {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--border-light);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}

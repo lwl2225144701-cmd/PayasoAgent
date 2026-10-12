@@ -60,6 +60,9 @@ interface TimelineProps {
   // 计划清单上抛给宿主（输入栏上方"当前计划"数据源）。宿主只把它接到最新一轮
   // Run 上：计划是会话级临时状态，下一轮开始即不再展示。
   onPlan?: (plan: PlanView | null) => void;
+  // M4 预览模块集成：工具参数/附件里的工作区文件 → 右侧预览面板。缺省不显示入口。
+  // runId 是"这条入口所属的 Run"：面板要按它的工作区取文件（历史回合也能看）。
+  onOpenPreview?: (path: string, name: string, runId: string) => void;
 }
 
 function preparationPhaseLabel(phase: ToolchainPreparationPhase, language: LanguageMode): string {
@@ -117,6 +120,7 @@ function ExecutionPanel({
   status,
   finishedAt,
   runId,
+  onOpenPreview,
 }: {
   groups: ToolStepGroup[];
   thinking: string;
@@ -127,6 +131,8 @@ function ExecutionPanel({
   status: HostRunStatus;
   finishedAt: string;
   runId: string;
+  /** M4：工具行的"在预览面板中打开"入口（缺省不显示）。 */
+  onOpenPreview?: (path: string, name: string, runId: string) => void;
 }) {
   // 执行详情默认收起，避免每次发送消息都把页面撑开；用户仍可手动展开。
   const { t, language } = useI18n();
@@ -319,6 +325,7 @@ function ExecutionPanel({
                       key={tool.operationKey ?? `${tool.tool}-${tool.startedAt}`}
                       data={tool}
                       runId={runId}
+                      onOpenPreview={onOpenPreview}
                     />
                   ))}
                 </ul>
@@ -349,6 +356,7 @@ export const Timeline = memo(function Timeline({
   onRetryCommand,
   onContextUsage,
   onPlan,
+  onOpenPreview,
 }: TimelineProps) {
   const { t, language } = useI18n();
   // 传输方式按 Run 状态分流：
@@ -598,7 +606,12 @@ export const Timeline = memo(function Timeline({
               <div className={styles.userAttachments}>
                 {runStarted.attachments.map((att) =>
                   att.kind === 'text' || !att.mimeType.startsWith('image/') ? (
-                    <FileAttachment key={att.path} runId={run.runId} file={att} />
+                    <FileAttachment
+                      key={att.path}
+                      runId={run.runId}
+                      file={att}
+                      onOpenPreview={onOpenPreview}
+                    />
                   ) : (
                     <a
                       key={att.path}
@@ -773,6 +786,7 @@ export const Timeline = memo(function Timeline({
               status={run.status}
               finishedAt={finalTimestamp}
               runId={run.runId}
+              onOpenPreview={onOpenPreview}
             />
 
             {/* Final result — exactly once, no card, no success badge. */}

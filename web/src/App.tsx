@@ -29,7 +29,6 @@ import {
   stopRun,
 } from './api';
 import { matchModelByQuery, matchPermissionMode } from './commands/builtin-commands';
-import { FileModal } from './components/FileModal';
 import { InputBar } from './components/InputBar';
 import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
@@ -52,6 +51,9 @@ import { I18nProvider } from './i18n';
 import { translate, translator } from './i18n/translate';
 import type { LanguageMode } from './preferences';
 import { readLastSessionId, saveLastSessionId } from './preferences';
+import { usePreviewTabs } from './preview/hooks/usePreviewTabs';
+import PreviewLauncher from './preview/Launcher';
+import PreviewDock from './preview/PreviewDock';
 import { reconcileRuns } from './run-reconcile';
 import type {
   ContextUsageEvent,
@@ -111,7 +113,34 @@ export default function App() {
   const [activePlan, setActivePlan] = useState<PlanView | null>(null);
   const [online, setOnline] = useState(false);
   const [, setFiles] = useState<FileEntry[]>([]);
-  const [viewingFile, setViewingFile] = useState<FileEntry | null>(null);
+  // 预览停靠面板开关（workspace 级：无会话时也可用）
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // 标签状态提升到 App：面板内 FileTree 与 Timeline（工具参数/附件）写同一组标签。
+  // openPreview 的依赖只取 hook 里那个稳定的 useCallback（`open`）——若依赖整个
+  // previewTabs 对象，它每次渲染都是新引用，会让 Timeline 的 memo 完全失效。
+  const previewTabs = usePreviewTabs();
+  const openPreviewTab = previewTabs.open;
+  // 预览作用域 Run：显式来源（Timeline 里的历史回合）优先，否则跟随当前会话。
+  // 切换会话/回合时清掉显式作用域，避免面板停留在上一个会话的工作区。
+  const [previewScopeRunId, setPreviewScopeRunId] = useState<string | null>(null);
+  const previewRunId = previewScopeRunId ?? currentRunId;
+  const openPreview = useCallback(
+    (path: string, name: string, runId?: string) => {
+      if (runId !== undefined) setPreviewScopeRunId(runId);
+      openPreviewTab(path, name);
+      setPreviewOpen(true);
+    },
+    [openPreviewTab],
+  );
+  // 回合/会话切换后回到"跟随当前会话"，否则面板会停在上一个会话的工作区。
+  // 用"渲染期检测上一次值"而不是 useEffect：依赖数组里的 currentRunId 在
+  // effect 体内并不读取（biome 的 useExhaustiveDependencies 会判为多余依赖），
+  // 且这样做能在同一次提交前就把作用域修正过来，不会先渲染一帧旧工作区。
+  const scopePrevRunRef = useRef(currentRunId);
+  if (scopePrevRunRef.current !== currentRunId) {
+    scopePrevRunRef.current = currentRunId;
+    setPreviewScopeRunId(null);
+  }
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarUserOverrideRef = useRef(false);
@@ -139,6 +168,20 @@ export default function App() {
     setToast(msg);
     setTimeout(() => setToast(null), 2000);
   }, []);
+
+  // M4 快捷键：⌘P / Ctrl+P 切换预览面板（接管浏览器打印快捷键；模态打开时不抢）
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'p' && event.key !== 'P') return;
+      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.altKey || event.shiftKey) return;
+      if (settingsOpen || pickerOpen) return;
+      event.preventDefault();
+      setPreviewOpen((open) => !open);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [settingsOpen, pickerOpen]);
 
   const handleSelectModel = useCallback(
     (providerId: string, model: string) => {
@@ -782,7 +825,6 @@ export default function App() {
       setCurrentRunId(sessionRuns[0]?.runId ?? null);
       setContextUsage(null); // 切换会话时清空，待新 Timeline 回放后更新
       setActivePlan(null); // 同上：待新会话最新一轮 Run 回放后重新上抛
-      setViewingFile(null);
     },
     [runs],
   );
@@ -808,7 +850,6 @@ export default function App() {
     setActivePlan(null);
     setCurrentRunId(null);
     setCurrentSessionId(null);
-    setViewingFile(null);
     // 顶层「新建任务」沿用徽标所示工作区（若有），保证创建结果与显示一致
     setPreferredWorkspaceName(workspace?.name ?? null);
     setTimeout(() => {
@@ -828,7 +869,6 @@ export default function App() {
     setWorkspace({ name: workspaceName });
     setCurrentRunId(null);
     setCurrentSessionId(null);
-    setViewingFile(null);
     setTimeout(() => {
       const input = document.querySelector('textarea');
       input?.focus();
@@ -861,7 +901,6 @@ export default function App() {
           setSendQueue([]);
           setCurrentSessionId(null);
           setCurrentRunId(null);
-          setViewingFile(null);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -899,7 +938,6 @@ export default function App() {
           setSendQueue([]);
           setCurrentSessionId(null);
           setCurrentRunId(null);
-          setViewingFile(null);
         }
         showToast(t('app.archived'));
       } catch (err) {
@@ -987,6 +1025,14 @@ export default function App() {
             onResume={handleResumeRun}
             resuming={resumingRun}
             planMode={planMode}
+            actions={
+              <PreviewLauncher
+                open={previewOpen}
+                onToggle={() => setPreviewOpen((value) => !value)}
+                runId={previewRunId}
+                onToast={showToast}
+              />
+            }
           />
 
           {currentSessionId ? (
@@ -1019,6 +1065,7 @@ export default function App() {
                             ? setActivePlan
                             : undefined
                         }
+                        onOpenPreview={openPreview}
                       />
                     ))
                   ) : (
@@ -1039,7 +1086,13 @@ export default function App() {
           ) : (
             <div className={styles.emptyState}>
               {pendingRun ? (
-                <Timeline run={pendingRun} modelFallback={null} embedded optimistic />
+                <Timeline
+                  run={pendingRun}
+                  modelFallback={null}
+                  embedded
+                  optimistic
+                  onOpenPreview={openPreview}
+                />
               ) : (
                 <div className={styles.heroTitleRow}>
                   <span className={styles.emptyLogo} role="img" aria-label="Payaso" />
@@ -1093,8 +1146,15 @@ export default function App() {
           )}
         </div>
 
-        {viewingFile && currentRunId && (
-          <FileModal runId={currentRunId} file={viewingFile} onClose={() => setViewingFile(null)} />
+        {previewOpen && (
+          <PreviewDock
+            tabsApi={previewTabs}
+            onClose={() => setPreviewOpen(false)}
+            // 面板与侧栏共用同一条"打开/选择工作区"流程（native picker 或网页选择器）
+            onRequestWorkspace={() => void handleOpenWorkspace()}
+            // 会话级作用域：直接点开历史会话也能浏览它自己的工作区（不必先切工作区）
+            runId={previewRunId}
+          />
         )}
 
         {pickerOpen && (

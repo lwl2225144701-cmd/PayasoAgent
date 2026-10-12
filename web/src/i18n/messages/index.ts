@@ -6,6 +6,7 @@
 import { appMessages } from './app';
 import { commonMessages } from './common';
 import { composerMessages } from './composer';
+import { previewMessages } from './preview';
 import { settingsMessages } from './settings';
 import { shellMessages } from './shell';
 import { timelineMessages } from './timeline';
@@ -15,6 +16,7 @@ export const MESSAGES = {
   ...commonMessages,
   ...appMessages,
   ...composerMessages,
+  ...previewMessages,
   ...settingsMessages,
   ...shellMessages,
   ...timelineMessages,

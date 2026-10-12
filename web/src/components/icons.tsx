@@ -333,3 +333,146 @@ export function CloseIcon({ size, ...p }: IconProps) {
     p,
   );
 }
+
+export function CompassIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36z" />
+    </>,
+    p,
+  );
+}
+
+export function ExpandIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+    </>,
+    p,
+  );
+}
+
+export function ShrinkIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M4 14h6v6" />
+      <path d="M20 10h-6V4" />
+      <path d="m14 10 7-7" />
+      <path d="m3 21 7-7" />
+    </>,
+    p,
+  );
+}
+
+export function PanelRightIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <path d="M15 4v16" />
+    </>,
+    p,
+  );
+}
+
+export function HomeIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M3 10.8 12 3.5l9 7.3" />
+      <path d="M5.5 9.5V20a.8.8 0 0 0 .8.8h11.4a.8.8 0 0 0 .8-.8V9.5" />
+      <path d="M9.8 20.8v-5.6h4.4v5.6" />
+    </>,
+    p,
+  );
+}
+
+export function MarkdownIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="2.5" y="5.5" width="19" height="13" rx="2.5" />
+      <path d="M6 15V9l3.5 3.5L13 9v6" />
+      <path d="M16.5 9v5.5" />
+      <path d="m14.5 12.5 2 2 2-2" />
+    </>,
+    p,
+  );
+}
+
+function docGlyph(children: ReactNode, props: SVGProps<SVGSVGElement>, size: number | undefined) {
+  return base(
+    size,
+    <>
+      <path d="M6 3.5h7L18.5 9v11a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z" />
+      <path d="M13 3.5V9h5.5" />
+      {children}
+    </>,
+    props,
+  );
+}
+
+export function PdfIcon({ size, ...p }: IconProps) {
+  return docGlyph(
+    <text
+      x="12"
+      y="17.5"
+      textAnchor="middle"
+      fontSize="6.5"
+      fontWeight={700}
+      fill="currentColor"
+      stroke="none"
+    >
+      PDF
+    </text>,
+    p,
+    size,
+  );
+}
+
+export function WordIcon({ size, ...p }: IconProps) {
+  return docGlyph(
+    <text
+      x="12"
+      y="17.5"
+      textAnchor="middle"
+      fontSize="7"
+      fontWeight={700}
+      fill="currentColor"
+      stroke="none"
+    >
+      W
+    </text>,
+    p,
+    size,
+  );
+}
+
+export function ImageFileIcon({ size, ...p }: IconProps) {
+  return docGlyph(
+    <>
+      <circle cx="9.2" cy="11" r="1.4" />
+      <path d="m8 17.5 3.2-3.2 2.3 2.3 2-2 2.5 2.5" />
+    </>,
+    p,
+    size,
+  );
+}
+
+export function SheetIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="4" y="4.5" width="16" height="15" rx="2" />
+      <path d="M4 9.5h16M4 14.5h16M9.8 4.5v15" />
+    </>,
+    p,
+  );
+}
