@@ -434,6 +434,15 @@ export const VIEWERS: ViewerSpec[] = [
 
 测试：`tests/frontend-preview-registry.test.ts` 停靠标签用例从 3 条扩到 7 条（空态/转签/追加/＋/关闭迁移/关光/命名）；`tests/run-all.ts` 117 套件全绿；`web` `tsc -b && vite build` 通过。
 
+### M4 补丁 6：PDF 预览页面挤压修复（真机反馈）
+
+真机验收发现 PDF 预览"效果很不好"：中文字符糊成一团、部分行呈碎裂乱码状。
+
+- **根因**：canvas 同时被设置了行内 `style.width/height`（= 页面原始尺寸 × zoom）与 CSS `max-width: 100%; height: auto`。容器窄于页面时宽度被 CSS 压窄、行内高度（优先级更高）不跟着缩 —— A4 页（615×870）被显示成 385×870，**横向挤压 37%**，字形互相重叠即成"乱码"。实测复现：`cssRatio 0.443` vs 正确的 `0.707`。
+- **修法**：显示尺寸一律由 JS 算准后写成行内样式，**不再给 canvas 任何 CSS 缩放**（`max-width/height:auto` 删除）。布局规则抽成纯模块 `web/src/preview/viewers/pdf-layout.ts`（`computePageLayout`）：以「适配容器宽度」为基准 × zoom，宽高从同一个 scale 推出，**比例恒等于页面原始比例**。
+- **顺带修正的两处**：① 占位高度不再硬编码 A4 宽高比，改为文档加载时逐页读真实 viewport（混合方向/非 A4 文档也不会错位）；② zoom 语义从"绝对缩放"改为"相对适配宽度"（100% = 铺满容器，窄面板里默认就能看全，放大出横向滚动条）——与常见 PDF 查看器一致。
+- **验证**：playwright（系统 Chrome，deviceScaleFactor=2）驱动真机 app 量化——修复前 `attr 1230×1740 / css 385×870`，修复后 `attr 774×1093 / css 387×547`，比例 0.708 全程一致，200% 下等比翻倍；5 页文档虚拟渲染、页码同步正常。回归测试 4 条（`computePageLayout`）守住"宽高同源、比例不变"。
+
 ### 待做
 
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。

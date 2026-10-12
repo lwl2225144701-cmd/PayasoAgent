@@ -1,6 +1,10 @@
 // PdfViewer：pdfjs-dist canvas 渲染 —— 分页虚拟化（IntersectionObserver 只渲染
 // 可视页 ±1）、缩放、页码跳转。worker 走 vite ?url 资产（与库同版本 6.3.289，
 // 与 root optionalDeps 对齐）。渲染失败（含后端 413/404）转 FallbackViewer。
+//
+// 显示尺寸一律由 JS 算准后写成行内样式（容器宽度 → 适配缩放 → zoom），
+// **不给 canvas 加 CSS max-width/height:auto**：行内高与 CSS 限宽冲突会把页面
+// 横向挤压变形（历史 bug：385×870 显示 615×870 的 A4 页，中文字符糊成一团）。
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
@@ -9,6 +13,7 @@ import type { ViewerProps } from '../registry';
 import type { PreviewErrorCode } from '../types';
 import FallbackViewer from './FallbackViewer';
 import styles from './PdfViewer.module.css';
+import { computePageLayout, type PageSize } from './pdf-layout';
 
 /** 懒加载 + worker 装配只做一次（模块级 Promise，多标签共享）。 */
 let pdfjsPromise: Promise<typeof import('pdfjs-dist')> | null = null;
@@ -41,7 +46,6 @@ interface PdfPageLike {
     canvas: HTMLCanvasElement;
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
-    transform?: number[];
   }): { promise: Promise<void> };
 }
 
@@ -53,7 +57,8 @@ interface PdfDocLike {
 export default function PdfViewer({ path, name, runId }: ViewerProps) {
   const mountId = useMemo(() => Date.now().toString(36), []);
   const { t } = useI18n();
-  const [numPages, setNumPages] = useState(0);
+  // 每页的原始尺寸（pt）：布局与占位高度都按真实页面算，不假设 A4
+  const [pageSizes, setPageSizes] = useState<PageSize[]>([]);
   const [zoom, setZoom] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [failure, setFailure] = useState<{
@@ -61,6 +66,8 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
     detail?: { limit?: number };
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  // 滚动容器的可用宽度（扣除 padding）：zoom 的基准 = 适配这个宽度
+  const [availWidth, setAvailWidth] = useState(0);
 
   // 文档实例与加载任务按 path 缓存（切标签再切回不重载）；
   // pdfjs v6 的 destroy() 在 loading task 上（PDFDocumentProxy 无此方法）
@@ -73,6 +80,7 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
     let cancelled = false;
     setLoading(true);
     setFailure(null);
+    setPageSizes([]);
     void (async () => {
       try {
         const pdfjs = await loadPdfjs();
@@ -84,7 +92,15 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
           return;
         }
         docRef.current = doc;
-        setNumPages(doc.numPages);
+        // 取每页原始尺寸（只读 viewport，不渲染）：布局按真实页面算，
+        // 混合方向/非 A4 的文档也不会错位
+        const sizes: PageSize[] = [];
+        for (let i = 1; i <= doc.numPages; i++) {
+          const viewport = (await doc.getPage(i)).getViewport({ scale: 1 });
+          sizes.push({ width: viewport.width, height: viewport.height });
+        }
+        if (cancelled) return;
+        setPageSizes(sizes);
         setLoading(false);
       } catch (err: unknown) {
         if (cancelled) return;
@@ -107,40 +123,65 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
     };
   }, [mountId, path, runId]);
 
-  // 可视页渲染：占位 div 进入视口才画 canvas（±1 页 overscan），缩放变化全量重画
+  // 容器可用宽度：ResizeObserver 跟随（拖面板宽度 / 窗口变化 → 重新布局）
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const measure = () => {
+      const cs = getComputedStyle(container);
+      const padX = parseFloat(cs.paddingLeft || '0') + parseFloat(cs.paddingRight || '0');
+      setAvailWidth(Math.max(0, container.clientWidth - padX));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // 布局：适配宽度 × zoom（纯计算在 pdf-layout.ts，可单测——历史上尺寸算不准
+  // 会把页面压扁，回归测试守的就是"宽高同源、比例不变"）
+  const layout = useMemo(
+    () => computePageLayout(pageSizes, availWidth, zoom),
+    [pageSizes, availWidth, zoom],
+  );
+
+  const numPages = pageSizes.length;
+
+  // 可视页渲染：占位 div 进入视口才画 canvas（±1 页 overscan），布局变化全量重画
   useEffect(() => {
     const doc = docRef.current;
     const container = containerRef.current;
-    if (!doc || !container || numPages === 0) return;
+    if (!doc || !container || layout.length === 0) return;
 
     observerRef.current?.disconnect();
-    const rendered = new Map<number, HTMLCanvasElement>();
+    // 缩放/容器宽度变化后所有 canvas 的尺寸都作废：先清空，滚到再按新布局画
+    for (const placeholder of container.querySelectorAll<HTMLElement>('[data-page]')) {
+      placeholder.replaceChildren();
+    }
+
+    const rendered = new Set<number>();
     const pending = new Set<number>();
 
     const renderPage = async (pageNumber: number, placeholder: HTMLElement) => {
       if (pending.has(pageNumber) || rendered.has(pageNumber)) return;
       pending.add(pageNumber);
       try {
+        const dims = layout[pageNumber - 1];
         const page = await doc.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: zoom });
-        const canvas = document.createElement('canvas');
-        // devicePixelRatio 让文字在高分屏不糊
+        // 缓冲区 = 显示尺寸 × dpr（高分屏不糊）；显示尺寸由布局算准，不再变形
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        canvas.width = viewport.width * dpr;
-        canvas.height = viewport.height * dpr;
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
+        const viewport = page.getViewport({ scale: dims.scale * dpr });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        canvas.style.width = `${dims.width}px`;
+        canvas.style.height = `${dims.height}px`;
         canvas.className = styles.pageCanvas;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
-        await page.render({
-          canvas,
-          canvasContext: ctx,
-          viewport,
-          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-        }).promise;
+        await page.render({ canvas, canvasContext: ctx, viewport }).promise;
         placeholder.replaceChildren(canvas);
-        rendered.set(pageNumber, canvas);
+        rendered.add(pageNumber);
       } catch {
         // 单页渲染失败不拖垮整篇：占位留空即可
       } finally {
@@ -165,9 +206,8 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
 
     return () => {
       observer.disconnect();
-      rendered.clear();
     };
-  }, [numPages, zoom]);
+  }, [layout]);
 
   // 滚动同步当前页码（页码跳转框的展示值）
   useEffect(() => {
@@ -245,24 +285,20 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
       </div>
       <div className={styles.pages} ref={containerRef}>
         {loading && <div className={styles.loading}>{t('preview.viewer.loading')}</div>}
-        {!loading &&
-          Array.from({ length: numPages }, (_, i) => (
-            // data-page 是虚拟渲染与页码跳转的锚点；scale 由 CSS 变量驱动占位高度
-            <div
-              // biome-ignore lint/suspicious/noArrayIndexKey: 页码是位置性身份（无重排），index 即页号
-              key={i}
-              className={styles.pagePlaceholder}
-              data-page={i + 1}
-              style={{ aspectRatio: `${A4_RATIO}` }}
-            />
-          ))}
+        {layout.map((dims, i) => (
+          // data-page 是虚拟渲染与页码跳转的锚点；尺寸由布局算准（行内），不用固定宽高比
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: 页码是位置性身份（无重排），index 即页号
+            key={i}
+            className={styles.pagePlaceholder}
+            data-page={i + 1}
+            style={{ width: `${dims.width}px`, height: `${dims.height}px` }}
+          />
+        ))}
       </div>
     </div>
   );
 }
-
-/** A4 竖版近似宽高比：占位撑高度，避免渲染前滚动条跳动。 */
-const A4_RATIO = '210 / 297';
 
 /** pdfjs 的网络失败不经过我们的 fetch：用 HEAD 式 GET 探一次拿结构化错误码。 */
 async function probeError(

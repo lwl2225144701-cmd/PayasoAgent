@@ -69,8 +69,10 @@
   background: var(--bg-secondary);
 }
 
+/* 占位尺寸由 JS 布局写成行内（按真实页面 + 容器宽度算准）；
+   这里只负责外观。不再用 width/aspect-ratio 兜底——那会和行内尺寸打架。 */
 .pagePlaceholder {
-  width: min(100%, 820px);
+  flex-shrink: 0;
   background: var(--bg-primary);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm, 4px);
@@ -81,9 +83,9 @@
   overflow: hidden;
 }
 
+/* 显示尺寸由行内样式精确给出（宽高同源，比例不会变形）；
+   绝不加 max-width/height:auto —— 行内高会赢、宽度被限，页面就被压扁。 */
 .pageCanvas {
-  max-width: 100%;
-  height: auto;
   display: block;
 }
 

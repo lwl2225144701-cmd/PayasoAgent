@@ -26,6 +26,7 @@ import {
   toPreviewFileUrl,
 } from '../web/src/preview/rewrite-relative-images';
 import { PREVIEW_ERROR_CODES } from '../web/src/preview/types';
+import { computePageLayout } from '../web/src/preview/viewers/pdf-layout';
 import { columnLabel, visibleRowRange } from '../web/src/preview/viewers/sheet-utils';
 
 const tests: { name: string; fn: () => void | Promise<void> }[] = [];
@@ -381,6 +382,43 @@ test('columnLabel：A-Z / AA 起', () => {
   assert.equal(columnLabel(26), 'AA');
   assert.equal(columnLabel(51), 'AZ');
   assert.equal(columnLabel(52), 'BA');
+});
+
+// ---- PdfViewer 布局（回归：canvas 曾因行内高 vs CSS max-width 被横向压扁）----
+
+const A4 = { width: 615, height: 870 };
+
+test('PDF 布局：空输入 / 零可用宽度 → 空布局', () => {
+  assert.deepEqual(computePageLayout([], 387, 1), []);
+  assert.deepEqual(computePageLayout([A4], 0, 1), []);
+});
+
+test('PDF 布局：zoom=1 铺满容器，且宽高同源（比例恒等于页面原始比例）', () => {
+  const [page] = computePageLayout([A4], 387, 1);
+  assert.equal(page.width, 387);
+  // 核心回归断言：显示比例必须等于原始比例 615/870 ≈ 0.707。
+  // 曾经的 bug 是宽度被 CSS 压到 385、行内高仍是 870 → 比例 0.443，页面被压扁。
+  assert.ok(Math.abs(page.width / page.height - A4.width / A4.height) < 1e-9);
+  // scale × 原始尺寸 = 显示尺寸（渲染与显示自洽，只有一个缩放来源）
+  assert.ok(Math.abs(page.scale * A4.width - page.width) < 1e-9);
+  assert.ok(Math.abs(page.scale * A4.height - page.height) < 1e-9);
+});
+
+test('PDF 布局：zoom 相对适配宽度等比缩放（200% → 宽高翻倍，比例不变）', () => {
+  const [page] = computePageLayout([A4], 387, 2);
+  assert.equal(page.width, 774);
+  assert.ok(Math.abs(page.height - 774 * (A4.height / A4.width)) < 1e-9);
+  assert.ok(Math.abs(page.width / page.height - A4.width / A4.height) < 1e-9);
+});
+
+test('PDF 布局：混合页面尺寸各自适配（不假设 A4）', () => {
+  const layout = computePageLayout([A4, { width: 870, height: 615 }], 400, 1);
+  assert.equal(layout.length, 2);
+  for (const [i, page] of layout.entries()) {
+    const size = i === 0 ? A4 : { width: 870, height: 615 };
+    assert.equal(page.width, 400, '都铺满容器宽度');
+    assert.ok(Math.abs(page.width / page.height - size.width / size.height) < 1e-9);
+  }
 });
 
 async function main(): Promise<void> {
