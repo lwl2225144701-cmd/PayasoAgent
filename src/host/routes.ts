@@ -4,8 +4,8 @@
 // Host 只通过 RunManager/Runtime 公开边界工作；路径一律经 Sandbox resolvePath 校验。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleOpenInApp } from './open-in-app/routes.js';
-import { handlePreview } from './preview/preview-handler.js';
+import { handleOpenInApp } from './routes/open-in-app-handler.js';
+import { handlePreview } from './routes/preview-handler.js';
 import { segs } from './routes/route-context.js';
 import { handleRuns } from './routes/runs-handler.js';
 import { handleRuntime } from './routes/runtime-handler.js';

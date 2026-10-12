@@ -9,6 +9,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  type ResolvedApp,
+  reresolveEntry,
+  resolveEntryById,
+  resolveInstalledApps,
+} from '../open-in-app/resolver.js';
+import type { RunManager } from '../run-manager.js';
+import { getWorkspace } from '../workspace.js';
+import {
   bad,
   checkOrigin,
   notFound,
@@ -16,15 +24,7 @@ import {
   readBody,
   requireAuth,
   sendJson,
-} from '../routes/route-context.js';
-import type { RunManager } from '../run-manager.js';
-import { getWorkspace } from '../workspace.js';
-import {
-  type ResolvedApp,
-  reresolveEntry,
-  resolveEntryById,
-  resolveInstalledApps,
-} from './resolver.js';
+} from './route-context.js';
 
 /** 早期失败观察窗：spawn 后等这么久，ENOENT/立即退出都算失败（可触发单条目重解析）。 */
 const EARLY_FAILURE_WINDOW_MS = 300;

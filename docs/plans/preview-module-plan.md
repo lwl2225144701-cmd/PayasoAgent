@@ -12,7 +12,7 @@
 
 | | 结论 |
 |---|---|
-| 后端 | 新增 `src/host/preview/`（types / service / handler 三件），`routes.ts` 加一行分发；**零新依赖**，安全逻辑全部复用 sandbox 与 static-handler |
+| 后端 | 新增 `src/host/preview/`（types / service）＋ `src/host/routes/preview-handler.ts`（HTTP 边界），`routes.ts` 加一行分发；**零新依赖**，安全逻辑全部复用 sandbox 与 static-handler |
 | 前端 | 新增 `web/src/preview/` 自包含模块；**viewer registry 模式**——新增一种文件类型 = 加一个 viewer 文件 + registry 一行，不改其他代码 |
 | 文档渲染库 | pdfjs-dist / mammoth / xlsx 三个库**全部动态 import 懒加载**，首屏零成本；渲染失败统一降级 |
 | 降级兜底 | 直接复用现有 `src/host/attachments/` 的 docx/xlsx/pdf 文本提取端点（已验证的生产代码），不重写 |
@@ -55,6 +55,7 @@
 src/host/preview/
   types.ts            # 契约类型 + 错误码枚举（前后端共享的镜像源）
   preview-service.ts  # 业务逻辑：目录树 / 读文件 / stat / 写回；忽略规则；权限判定
+src/host/routes/
   preview-handler.ts  # HTTP 边界：参数解析、鉴权（route-context）、响应封装
 ```
 
@@ -352,7 +353,7 @@ export const VIEWERS: ViewerSpec[] = [
 
 ### M1 后端（已完成）
 
-- `src/host/preview/{types,preview-service,preview-handler}.ts` 三件落地；`src/host/routes.ts` 加一行 `preview` 分发；`src/host/workspace-browser.ts` 导出共享 `MAX_ENTRIES = 500`。
+- `src/host/preview/{types,preview-service}.ts` 与 `src/host/routes/preview-handler.ts` 落地；`src/host/routes.ts` 加一行 `preview` 分发；`src/host/workspace-browser.ts` 导出共享 `MAX_ENTRIES = 500`。
 - 只读 GET：`/preview/tree`（单层 + truncated）、`/preview/file`（text/image/pdf/office 四类分发）、`/preview/stat`。§8 四条约束全部遵守（上限 import `attachment-policy.ts`、路径只走 sandbox-manager、忽略规则复用 `DEFAULT_IGNORED_DIRS`、错误只以 `PreviewError` 穿越）。
 - 测试：`tests/preview-api.test.ts` **21 通过 / 0 失败**（7 个错误码逐一、413 带 limit、symlink 逃逸 403、截断 500、no_workspace 409、POST 404、`message === code` 不变量）。
 

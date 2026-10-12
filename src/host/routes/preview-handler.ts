@@ -11,9 +11,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { subscribeWorkspaceChanges } from '../preview/changes.js';
 import { listTree, type PreviewScope, readFile, statFile } from '../preview/preview-service.js';
 import { PreviewError } from '../preview/types.js';
-import { checkOrigin, notFound, requireAuth, sendJson } from '../routes/route-context.js';
 import type { RunManager } from '../run-manager.js';
 import { getWorkspace } from '../workspace.js';
+import { checkOrigin, notFound, requireAuth, sendJson } from './route-context.js';
 
 function queryParams(req: IncomingMessage): URLSearchParams {
   return new URLSearchParams((req.url ?? '').split('?')[1] ?? '');
