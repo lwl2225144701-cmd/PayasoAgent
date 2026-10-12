@@ -171,14 +171,6 @@
   flex-direction: column;
 }
 
-.emptyHint {
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  border-bottom: 1px solid var(--border-light);
-  flex-shrink: 0;
-}
-
 .treeWrap {
   flex: 1;
   min-height: 0;

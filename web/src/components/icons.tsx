@@ -382,18 +382,6 @@ export function PanelRightIcon({ size, ...p }: IconProps) {
   );
 }
 
-export function HomeIcon({ size, ...p }: IconProps) {
-  return base(
-    size,
-    <>
-      <path d="M3 10.8 12 3.5l9 7.3" />
-      <path d="M5.5 9.5V20a.8.8 0 0 0 .8.8h11.4a.8.8 0 0 0 .8-.8V9.5" />
-      <path d="M9.8 20.8v-5.6h4.4v5.6" />
-    </>,
-    p,
-  );
-}
-
 export function MarkdownIcon({ size, ...p }: IconProps) {
   return base(
     size,

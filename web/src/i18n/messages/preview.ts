@@ -13,17 +13,12 @@ export const previewMessages = {
   'preview.dock.fullscreen': { 'zh-CN': '全屏', 'en-US': 'Fullscreen' },
   'preview.dock.restore': { 'zh-CN': '还原', 'en-US': 'Restore' },
   'preview.dock.closeTab': { 'zh-CN': '关闭标签', 'en-US': 'Close tab' },
-  'preview.dock.emptyHint': {
-    'zh-CN': '从下方目录选择文件开始预览',
-    'en-US': 'Pick a file from the directory below to preview',
-  },
   'preview.dock.open': { 'zh-CN': '打开文件预览', 'en-US': 'Open file preview' },
   // 面板首页（"开始"视图）的入口卡片：只做文件这一张
   'preview.dock.home.workspaceFiles.description': {
     'zh-CN': '浏览会话工作区的文件',
     'en-US': 'Browse files in the session workspace',
   },
-  'preview.dock.home.back': { 'zh-CN': '回到开始', 'en-US': 'Back to start' },
   'preview.dock.home.title': { 'zh-CN': '开始', 'en-US': 'Start' },
   // 标签条：一个"文件"标签 = 一棵独立的目录树（对齐 DSH 的面板标签形态）
   'preview.dock.filesTab': { 'zh-CN': '文件', 'en-US': 'Files' },
