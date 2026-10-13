@@ -11,7 +11,19 @@ export interface OpenInApp {
   isDefault?: boolean;
 }
 
-const SELECTED_KEY = 'payaso.openInApp';
+/**
+ * 记忆的作用域。两个目标的 id 空间不通用 —— 目录目标是白名单 id（`finder`），
+ * 文件目标是系统 .app 路径（`/Applications/…`）—— 所以分开存：
+ * 给 PDF 选过打开方式，不该把工作区胶囊的「默认应用」也顶掉。
+ */
+export type OpenInAppScope = 'folder' | 'file';
+
+/** 由目标推导作用域：给了 path 就是文件目标，缺省即工作区根（目录目标）。 */
+export function scopeOfTarget(path?: string | null): OpenInAppScope {
+  return path ? 'file' : 'folder';
+}
+
+const SELECTED_KEY_PREFIX = 'payaso.openInApp';
 /**
  * 按目标缓存（key = runId + 路径；'' = 工作区根/文件夹语义）。
  * TTL 让"展开菜单重查"成立：新装/改默认的应用很快能出现（对齐参考实现），
@@ -80,17 +92,25 @@ export function openInApp(
   });
 }
 
-/** 默认应用：localStorage 记忆优先，否则列表第一个（与 macOS「访达（默认）」同语义）。 */
-export function defaultAppId(apps: readonly OpenInApp[]): string | null {
-  return getSelectedAppId() ?? apps[0]?.id ?? null;
+/** 默认应用：**在当前列表里校验过的** localStorage 记忆优先，否则列表第一个。 */
+export function defaultAppId(apps: readonly OpenInApp[], scope: OpenInAppScope): string | null {
+  const remembered = getSelectedAppId(scope);
+  // 记忆值必须仍在当前列表里才认：两个目标的 id 空间不同（目录 = 白名单 id，
+  // 文件 = 系统 .app 路径），列表也会随装机/过滤变化。不校验就会出现
+  // 「胶囊图标回退成通用图标、菜单里没有任何一项标（默认）」——即记忆值悬空。
+  if (remembered && apps.some((app) => app.id === remembered)) return remembered;
+  return apps[0]?.id ?? null;
 }
 
 /**
  * 默认项 id：系统给的 isDefault 优先（文件目标问操作系统拿到的真实默认），
- * 否则 localStorage 记忆、再否则列表首个（目录目标白名单的同语义）。
+ * 否则当前列表里校验过的记忆值、再否则列表首个。
  */
-export function effectiveDefaultId(apps: readonly OpenInApp[]): string | null {
-  return apps.find((app) => app.isDefault === true)?.id ?? defaultAppId(apps);
+export function effectiveDefaultId(
+  apps: readonly OpenInApp[],
+  scope: OpenInAppScope,
+): string | null {
+  return apps.find((app) => app.isDefault === true)?.id ?? defaultAppId(apps, scope);
 }
 
 /**
@@ -105,17 +125,21 @@ export function openInAppItemIconUrl(app: OpenInApp, broken: boolean): string | 
   return openInAppIconUrl(app.id);
 }
 
-export function getSelectedAppId(): string | null {
+function selectedKey(scope: OpenInAppScope): string {
+  return `${SELECTED_KEY_PREFIX}.${scope}`;
+}
+
+export function getSelectedAppId(scope: OpenInAppScope): string | null {
   try {
-    return localStorage.getItem(SELECTED_KEY);
+    return localStorage.getItem(selectedKey(scope));
   } catch {
     return null;
   }
 }
 
-export function setSelectedAppId(id: string): void {
+export function setSelectedAppId(scope: OpenInAppScope, id: string): void {
   try {
-    localStorage.setItem(SELECTED_KEY, id);
+    localStorage.setItem(selectedKey(scope), id);
   } catch {
     // 隐私模式等写不进场景：选择不持久化，功能不受影响
   }

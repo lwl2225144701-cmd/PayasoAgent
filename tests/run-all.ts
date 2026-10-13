@@ -80,6 +80,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-format', file: 'tests/frontend-format.test.ts' },
   { name: 'frontend-preview-registry', file: 'tests/frontend-preview-registry.test.ts' },
   { name: 'frontend-message-image', file: 'tests/frontend-message-image.test.ts' },
+  { name: 'frontend-open-in-app', file: 'tests/frontend-open-in-app.test.ts' },
   { name: 'frontend-tool-file-path', file: 'tests/frontend-tool-file-path.test.ts' },
   { name: 'frontend-streaming', file: 'tests/frontend-streaming.test.ts' },
   { name: 'streaming-markdown', file: 'tests/streaming-markdown.test.ts' },

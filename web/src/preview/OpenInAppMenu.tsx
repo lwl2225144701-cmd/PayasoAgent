@@ -14,7 +14,13 @@ import { useI18n } from '../i18n';
 import { portalRoot } from '../portal-root';
 import styles from './OpenInAppMenu.module.css';
 import type { OpenInApp } from './open-in-app';
-import { effectiveDefaultId, openInApp, openInAppItemIconUrl, setSelectedAppId } from './open-in-app';
+import {
+  effectiveDefaultId,
+  openInApp,
+  openInAppItemIconUrl,
+  scopeOfTarget,
+  setSelectedAppId,
+} from './open-in-app';
 
 export interface OpenInAppMenuProps {
   /** 菜单是否展开（由触发按钮一侧持有状态）。 */
@@ -72,14 +78,14 @@ export default function OpenInAppMenu({
 
   const openWith = (id: string) => {
     onClose();
-    setSelectedAppId(id);
+    setSelectedAppId(scopeOfTarget(path), id);
     openInApp(id, { path, runId })
       .then(() => onToast(t('preview.launcher.opened')))
       .catch((err: unknown) => onToast(err instanceof Error ? err.message : String(err)));
   };
 
   // 默认应用：系统给的 isDefault 优先（文件目标），否则本地记忆/列表首个（目录目标）
-  const effectiveSelectedId = apps === null ? null : effectiveDefaultId(apps);
+  const effectiveSelectedId = apps === null ? null : effectiveDefaultId(apps, scopeOfTarget(path));
 
   return createPortal(
     <div

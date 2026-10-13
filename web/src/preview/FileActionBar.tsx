@@ -35,7 +35,9 @@ export default function FileActionBar({ path, runId, onRefresh, onToast }: FileA
   const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps(path, runId);
 
   const defaultApp =
-    apps === null ? null : (apps.find((app) => app.id === effectiveDefaultId(apps)) ?? null);
+    apps === null
+      ? null
+      : (apps.find((app) => app.id === effectiveDefaultId(apps, 'file')) ?? null);
   const iconUrl =
     defaultApp === null ? null : openInAppItemIconUrl(defaultApp, brokenIcons.has(defaultApp.id));
   const openTitle = defaultApp

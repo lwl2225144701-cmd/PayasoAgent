@@ -30,9 +30,13 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
 
   // 当前选中应用：系统默认/本地记忆优先，否则列表第一个（与 macOS「访达（默认）」同语义）
   const selectedApp =
-    apps === null ? null : (apps.find((app) => app.id === effectiveDefaultId(apps)) ?? null);
+    apps === null
+      ? null
+      : (apps.find((app) => app.id === effectiveDefaultId(apps, 'folder')) ?? null);
   const pillIcon =
-    selectedApp === null ? null : openInAppItemIconUrl(selectedApp, brokenIcons.has(selectedApp.id));
+    selectedApp === null
+      ? null
+      : openInAppItemIconUrl(selectedApp, brokenIcons.has(selectedApp.id));
 
   const openWorkspaceWith = (id: string) => {
     openInApp(id, { runId })
