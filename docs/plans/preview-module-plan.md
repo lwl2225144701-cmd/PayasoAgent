@@ -1,6 +1,6 @@
 # 文件预览模块 · 技术设计（Preview Module）
 
-> 状态：**M1–M4 已落地（已推送），M5 未开始**；open-in-app 的 **Windows / Linux 适配器未实现**（回落白名单，见文末「平台缺口」）。实施记录与手动验收清单见文末 §9。前置调研：[`preview-gui-调研报告.md`](preview-gui-调研报告.md)（范围与选型结论，本文不再重复论证）。
+> 状态：**M1–M4 已落地（已推送），M5 未开始**；open-in-app 的 **Windows / Linux 适配器未实现**（回落白名单，见文末「平台缺口」），图片附件的 `thumbnail` 变体（48px contain）暂无消费方。实施记录与手动验收清单见文末 §9。前置调研：[`preview-gui-调研报告.md`](preview-gui-调研报告.md)（范围与选型结论，本文不再重复论证）。
 > 范围：**独立预览模块** —— 后端 `src/host/preview/` + 前端 `web/src/preview/`。终端、浏览器预览不做。
 > 文档类型：Word（.docx）/ PDF / Excel（.xlsx）/ txt / md，另含图片与代码。
 
@@ -564,6 +564,83 @@ export const VIEWERS: ViewerSpec[] = [
       （白名单来源）→ `null`（调用方回退字形芯片）。
 - 验证：`tsc -b` + `vite build` 通过；真机 docx 胶囊左段显示 WPS 真图标。
 
+### M4 补丁 12：用户消息图片附件对齐 DSH Message Images 变体规范
+
+真机反馈多轮迭代后定型。前几版先后试过"固定 132px 方图"→"按原比例 ≤420px"→
+"多图 112px 缩略阵"，都不对：DSH 的做法是**固定盒 + 比例夹紧 + cover 裁切**，
+尺寸只由「变体 + 原图 intrinsic 宽高」决定，与视图宽度、容器查询、响应式无关。
+
+**变体分派**（唯一的尺寸决策点，对应 DSH `MessageImage.tsx:178` 同一条件）：
+
+| 变体 | 触发 | 显示尺寸 | 裁切 |
+|---|---|---|---|
+| `single` | 单张图、非 compact | `singleFit()`：长边 240 基准，渲染宽高比先夹紧到 `[0.25, 4]`，**从不放大**（小图按原始像素显示），结果取整且每边 ≥1 | `cover`；锚点极高图 `center top`、极宽图 `left center`、其余 `center` |
+| `tile` | compact，或组内多于 1 张 | 固定 **64×64** | `cover` 居中 |
+| `thumbnail` | 调用方显式要求 | 固定 **48×48** | `contain` 不裁（DSH 的 Trajectory 附件行用它；本仓暂无消费方，保留契约） |
+
+尺寸数值不是估的：48/240 是用 Pillow 量用户提供的 DSH 截图得到的（2x 截图上
+缩略图 97×97 图像 px = 48.5 CSS px；单图卡片宽 478 图像 px = 239 CSS px），
+64px 来自 DSH 包内 `dsh-client-ui-attachment/README.zh.md` 的原文。
+
+**compact 判定用附件总数而不是图片数**（DSH `MessageItem.tsx:185`）：1 张图 +
+1 个文档时那张图也是 64px 方格。前几版只数图片数，这里不对。
+
+**Host 侧补图片宽高**（消掉与 DSH 的最后一处差异）：DSH 的尺寸来自落库附件引用
+`attachment.width/height`，图片加载前就知道；本仓此前没有，只能在 `<img>`
+onLoad 里探测，首帧会跳一下。改动其实很小——`normalize.ts` 早就算出归一化后的
+宽高（EXIF 已应用）、`publish.ts` 也已经在用它组装给模型的 `attachmentImages`，
+缺的只是没写进 UI 那份 `run_started.attachments`：
+
+- `publish.ts`：图片附件的视图里带上 `width`/`height`/`originalDimensions`
+  （与 `attachmentImages` 同一份数值，不重算）；
+- `HostAttachment`（`src/host/run-events.ts`）与 `RunAttachment`（`web/src/types.ts`）
+  同步扩字段；
+- 前端新增纯函数 `singleBox()` 定**来源优先级**：Host 宽高 → onLoad 探测 →
+  240×240 兜底。历史事件缺字段时才走探测，正常路径第一帧即最终尺寸。
+
+**结构**：尺寸决策抽成 `web/src/components/Timeline/message-image.ts`（纯函数：
+`messageImageVariant` / `singleFit` / `squareBox` / `singleBox`），组件
+`MessageImage.tsx` 只做测量与渲染。尺寸不靠 CSS 宽高，而是写成盒子上的
+inline style，`<img>` 恒 `100%×100%`（CSS 里 `cover` 居中裁，thumbnail 变体
+改 `contain`）；加载态与失败态沿用同一个尺寸盒 + 重试按钮，文案变长不会撑大布局。
+
+**其余**：附件容器 gap 8 → 10px（对齐 DSH）、附件移到用户文字气泡**之前**
+（先看到带了什么，再读要它做什么）、文字气泡改 `fit-content` +
+`margin-left:auto` 不再被附件那一行撑宽、提取说明（"PDF 为简易提取…"）不再
+渲染（卡片自带预览入口；Host 仍照旧产出 `extraction.message`——那是模型可见的
+附件清单内容）、文件卡片按类型着色图标（PDF 红 / Word 蓝 / 表格绿 / 幻灯片橙 /
+图片蓝，图标取自新增的共享模块 `components/file-kind.tsx`，`registry.tsx` 改为
+import 后原样再导出）。
+
+**测试**：新增 `tests/frontend-message-image.test.ts`（20 条：常量契约、变体分派、
+`singleFit` 的小图不放大/长边 240/夹紧与锚点/兜底/整数与 ≥1/长边不超 240、
+`singleBox` 来源优先级）、`tests/text-attachments.test.ts` 补发布断言（图片视图带
+宽高、文本附件不带）。真机几何复核（1400 / 420 视口）：单图 240×160、小图 120×80、
+竖图 60×240、宽图 240×60、tile 64×64 同一行、`img` 撑满盒子、均无溢出。
+
+### M4 补丁 13：胶囊默认应用按当前列表校验，记忆不再悬空
+
+真机现象：工作区胶囊左段回退成**通用文档图标**，展开菜单里访达 / Cursor /
+IntelliJ IDEA 三项**都没有「（默认）」后缀**。
+
+根因不在图标，在默认项算不出来：`defaultAppId()` 原是
+`getSelectedAppId() ?? apps[0]?.id`，**不校验记忆值是否还在当前列表里**。而记忆键
+`payaso.openInApp` 是两个目标共用的，两边 id 空间并不通用——目录目标是白名单 id
+（`finder`），文件目标是系统 `.app` 路径（`/Applications/WPS Office.app`）。
+给 PDF 选过打开方式后，那个 `.app` 路径存进同一个键，回到目录目标时
+`apps.find(app => app.id === 记忆值)` 恒为 `undefined` → `selectedApp = null`
+→ 图标回退 `FileIcon`、菜单无任何项标默认。
+
+- **列表内校验**：记忆值不在当前列表就让位给列表首个。列表本身也会随装机 / 过滤
+  变化，所以悬空不止跨目标才发生。
+- **记忆按作用域分键**（`folder` / `file`）：`scopeOfTarget(path)` 由目标推导，
+  `OpenInAppMenu` 按 `path` 决定读写哪个键。给文件选打开方式不再顶掉胶囊的默认应用。
+- 旧的未分域键里的悬空值无需清理——校验这一层已让它无害。
+
+**测试**：新增 `tests/frontend-open-in-app.test.ts`（11 条：记忆为空 / 命中 /
+悬空各自的结果、两套键互不覆盖、`scopeOfTarget` 推导、`isDefault` 优先于记忆、
+空列表返回 `null`、localStorage 被禁时隐私模式不抛错）。
+
 ### 平台缺口：Windows / Linux 的 open-in-app 适配器（**未实现**）
 
 > 这是本轮**明确的未完成项**，不是遗漏。功能层面 Windows / Linux 可用（自动回落
@@ -602,6 +679,10 @@ JXA + NSWorkspace）。在 Windows / Linux 上 `queryFileAssociations()` 直接�
 
 - **open-in-app 的 Windows / Linux 适配器**（本轮明确的未完成项）：现状回落白名单过滤，
   精度不如 macOS 的系统查询。数据源、安全边界与分层约束见上方「平台缺口」一节。
+- **图片附件的原图灯箱**：DSH 点击消息图片打开文档级 `ImageLightbox`（`max-width:
+  min(100%, 1600px)` + `object-fit: contain` + 40px stage 内边距，不放大不裁切），
+  本仓当前是 `<a target="_blank">` 新标签页打开原件。真机反馈是尺寸/排列问题，
+  灯箱这层未做。
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。
 - **Playwright e2e**：`web/package.json` 有 `playwright` 依赖但仓库内**没有任何 e2e 配置或 spec**（无 config、无脚本），补这套等于新建一套测试基础设施（还需下载浏览器二进制 + 起 Host + fixtures）。本次先不引入：前端行为由纯函数单测（registry 路由 / URL 编码 / 图片重写 / 路径提取）+ 构建产物 chunk 分析覆盖，交互部分走下面的手动清单。**若要多这一层，需单独确认。**
 
@@ -614,6 +695,8 @@ JXA + NSWorkspace）。在 Windows / Linux 上 `queryFileAssociations()` 直接�
 5. Timeline：工具行展开 → "在预览面板中打开"；附件卡片 → "预览"；两者都进同一个标签集合。
 6. 英文界面切换后新增文案（`timeline.tool.openPreview` 等）显示为英文。
 7. 文件操作栏：路径 + 刷新 + "在应用中打开"胶囊——**胶囊左段显示系统默认应用的真图标**（补丁 11），展开菜单与胶囊图标一致，菜单末尾有"显示文件位置"。
+8. 用户消息里的图片附件：单张按原比例显示且**长边 ≤240px**（小截图保持原尺寸不放大），同一条消息附件多于 1 个时图片降级为 64px 方格、与文件卡同排；图片下方不再出现"PDF 为简易提取…"那段说明。
+9. 工作区胶囊（顶栏预览入口）：左段显示默认应用的真图标，展开菜单里默认那项带「（默认）」后缀——给某个 PDF 选过打开方式之后，回到这里**不应该**退化成通用图标（补丁 13）。
 
 ### 与设计稿的偏差
 

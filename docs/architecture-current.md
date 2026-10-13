@@ -182,6 +182,8 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 
 `run_started.attachments` 的 `path`、`sha256`、`sizeBytes` 描述上传文件。文档的可选 `extraction` 包含 `status`（`extracted` / `partial` / `failed`）、正文路径/哈希/大小及说明，不包含正文。失败仍保留原件，供后续工具转换。旧事件无此字段时继续按原路径处理；旧版已经丢失的文档原件无法自动恢复。
 
+**图片附件另带 `width` / `height` / `originalDimensions`**：`normalize.ts` 归一化后（EXIF 方向已应用）的像素尺寸随视图一起发布，和给模型的 `attachmentImages` 用同一份数值。前端据此在图片**加载前**就算好显示框，没有首帧跳动（对齐 DSH 把宽高落进附件引用的做法）；历史事件没有这三个字段时前端退回 `<img>` onLoad 探测。
+
 Office 提取仅覆盖文字/单元格，不保证保留排版、图片或图表。PDF 为简易提取，结果始终标注 `partial`；字体映射、加密、不支持的流或无可提取文字记录失败，不断言文件是扫描件。ZIP/PDF 单条解压上限 8 MiB、累计 32 MiB，正文上限 2 MiB；超限终止提取，保留原件。上传数量和大小沿用公共策略，下载允许最大 16 MiB 的 PDF。PDF 提取不够用时（`partial`/`failed`，或需要表格、OCR、表单），附件清单与 extraction message 会指向工作区 `pdf-official` skill（`.payaso/skills/`，Python venv 安装在受管 scratch），由 Agent 用 `loadSkill` 加载处理原件；skill 缺失时该指引用条件语气表述，不致误导。
 
 ### 3.2 Web 前端
@@ -197,7 +199,9 @@ web/src/
 │   ├── registry.tsx        viewer 注册表：扩展名 → 懒加载 viewer + 图标（新增类型只加一行）
 │   ├── api.ts              /preview/* 客户端 + PreviewApiError（按错误码分叉）
 │   ├── Launcher.tsx        ShellBar 预览入口胶囊（图标开关 + ⌄ 下拉：open-in-app 列表）
-│   ├── open-in-app.ts      open-in-app 客户端 controller（按「runId+路径」缓存带 10s TTL + localStorage 选择 + POST；effectiveDefaultId / openInAppItemIconUrl 纯函数）
+│   ├── open-in-app.ts      open-in-app 客户端 controller（按「runId+路径」缓存带 10s TTL + POST；effectiveDefaultId / openInAppItemIconUrl / scopeOfTarget 纯函数）
+│   │                       默认应用的记忆**按作用域分键**（folder / file）：两个目标 id 空间不通用
+│   │                       （目录 = 白名单 id，文件 = 系统 .app 路径），且记忆值必须仍在当前列表里才认
 │   ├── FileActionBar.tsx   文件视图顶部操作栏（相对路径 + 刷新 + "在应用中打开"胶囊：默认应用真图标 | ⌄）
 │   ├── OpenInAppMenu.tsx   应用下拉菜单（Launcher 与操作栏共用；渲染系统 dataURL 图标 + 系统默认标记 + 文件目标末尾"显示文件位置"）
 │   ├── dock-home.ts        面板首页登记表（"开始"视图的入口卡片；当前只有"工作区文件"一张）
@@ -211,6 +215,8 @@ web/src/
 └── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片/压缩提示)
                             / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal
                             （Timeline 工具行的"在预览面板中打开"与附件预览入口见 preview/）
+                            Timeline/ 内附件相关：FileAttachment（按类型着色的文件卡片）、
+                            MessageImage + message-image.ts（用户消息图片附件的尺寸决策纯函数）
 ```
 
 ### 3.3 文档契约：工具清单与 Trace 事件清单
