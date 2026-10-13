@@ -176,7 +176,7 @@ export default function FileTree({
                 {entry.kind === 'dir' ? (
                   <FolderIcon size={15} />
                 ) : (
-                  <FileIconFor name={fileIconName(entry.name)} size={15} />
+                  <FileIconFor kind={fileIconName(entry.name)} size={15} />
                 )}
               </span>
               <span className={`${styles.rowName} ${entry.hidden ? styles.rowHidden : ''}`}>

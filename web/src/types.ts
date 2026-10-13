@@ -475,6 +475,11 @@ export interface RunAttachment {
   name: string;
   mimeType: string;
   path: string;
+  /** 图片归一化后的像素宽高（EXIF 方向已应用）；图片附件才有，用于加载前定显示框。 */
+  width?: number;
+  height?: number;
+  /** 归一化前的原始尺寸，例如 "5000x3000"。 */
+  originalDimensions?: string;
 }
 
 // Host 生命周期事件（无 step 字段）

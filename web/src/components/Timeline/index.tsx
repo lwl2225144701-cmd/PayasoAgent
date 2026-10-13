@@ -37,6 +37,7 @@ import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from 
 import { MarkdownText } from '../MarkdownText';
 import { deriveModelWaitState, findLatestContextUsage, type ModelWaitState } from './context-gauge';
 import { FileAttachment } from './FileAttachment';
+import { MessageImage } from './MessageImage';
 import { derivePlan, derivePlanNotes, type PlanNote, type PlanView } from './plan-state';
 import { composeToolchainRetryMessage, findLastFailedShellCommand } from './preparation-retry';
 
@@ -587,6 +588,16 @@ export const Timeline = memo(function Timeline({
     !!finalError ||
     run.status !== 'stopping';
 
+  // 本条消息的附件。图片附件的判定与下面渲染分支保持一致（走缩略图链接，
+  // 其余走 FileAttachment 文件卡片）：kind 非 text 且 mimeType 是 image/*。
+  const attachments = runStarted?.type === 'run_started' ? runStarted.attachments : undefined;
+  const imageCount =
+    attachments?.filter((att) => att.kind !== 'text' && att.mimeType.startsWith('image/')).length ??
+    0;
+  // compact：附件多于 1 个 —— 图片不再按原图尺寸铺开，一律降级 64px 方格。
+  // 注意判定用的是**附件总数**而不是图片数：1 张图 + 1 个文档时那张图也是方格。
+  const attachmentsCompact = (attachments?.length ?? 0) > 1;
+
   return (
     <div
       id={run ? `run-${run.runId}` : undefined}
@@ -595,43 +606,39 @@ export const Timeline = memo(function Timeline({
     >
       <div className={styles.timeline}>
         <article className={styles.userBlock}>
+          {/* 排列顺序：附件（文件 / 图片）在用户文字消息**之前** —— 先看到"带了什么"，
+              再读到"要它做什么"；时间戳与复制按钮仍在最底下的页脚行。
+              图片的显示尺寸由 MessageImage 的三个变体决定（见 message-image.ts），
+              与视图宽度无关。 */}
+          {attachments && attachments.length > 0 && (
+            <div className={styles.userAttachments}>
+              {attachments.map((att) =>
+                att.kind === 'text' || !att.mimeType.startsWith('image/') ? (
+                  <FileAttachment
+                    key={att.path}
+                    runId={run.runId}
+                    file={att}
+                    onOpenPreview={onOpenPreview}
+                  />
+                ) : (
+                  <MessageImage
+                    key={att.path}
+                    href={workspaceFileUrl(run.runId, att.path)}
+                    name={att.name}
+                    compact={attachmentsCompact}
+                    count={imageCount}
+                    width={att.width}
+                    height={att.height}
+                  />
+                ),
+              )}
+            </div>
+          )}
           {/* 用户消息与助手正文共用 MarkdownText：手打的 **加粗**、# 标题、列表、代码块
               都按 Markdown 渲染。这里不做模型输出那套畸形 fence 修复 —— 不改写用户原文。 */}
           <div className={styles.userText}>
             <MarkdownText text={run.task} />
           </div>
-          {runStarted?.type === 'run_started' &&
-            runStarted.attachments &&
-            runStarted.attachments.length > 0 && (
-              <div className={styles.userAttachments}>
-                {runStarted.attachments.map((att) =>
-                  att.kind === 'text' || !att.mimeType.startsWith('image/') ? (
-                    <FileAttachment
-                      key={att.path}
-                      runId={run.runId}
-                      file={att}
-                      onOpenPreview={onOpenPreview}
-                    />
-                  ) : (
-                    <a
-                      key={att.path}
-                      className={styles.userAttachmentLink}
-                      href={workspaceFileUrl(run.runId, att.path)}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={att.name}
-                    >
-                      <img
-                        className={styles.userAttachmentImg}
-                        src={workspaceFileUrl(run.runId, att.path)}
-                        alt={att.name}
-                        loading="lazy"
-                      />
-                    </a>
-                  ),
-                )}
-              </div>
-            )}
           <div className={styles.userMeta}>
             <time className={styles.time}>
               {formatTime(runStarted?.timestamp ?? run.createdAt, language)}

@@ -194,11 +194,12 @@ test('registry 按扩展名路由（M3：五类文档均有正式 viewer，文�
   assert.equal(resolveViewer('a.zip')?.kind, 'text'); // 后端 415 → TextViewer 错误态转兜底
 });
 
-test('fileIconName 覆盖六类', () => {
+test('fileIconName 覆盖七类', () => {
   assert.equal(fileIconName('a.md'), 'markdown');
   assert.equal(fileIconName('a.png'), 'image');
   assert.equal(fileIconName('a.pdf'), 'pdf');
-  assert.equal(fileIconName('a.docx'), 'docx');
+  assert.equal(fileIconName('a.docx'), 'word');
+  assert.equal(fileIconName('a.pptx'), 'slides');
   assert.equal(fileIconName('a.xlsx'), 'sheet');
   assert.equal(fileIconName('a.txt'), 'file');
 });

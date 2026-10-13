@@ -1,10 +1,15 @@
 // 附件卡片：预览提取正文或普通文本，下载始终使用原件路径。
+//
+// 图标按文件类型着色（PDF 红 / Word 蓝 / 表格绿 / 幻灯片橙 / 图片蓝灰），
+// 类型判定与图标取自共享模块 components/file-kind（扩展名只在那里出现一次，
+// FileTree / 标签栏 / FallbackViewer 与本卡片同一来源）。
 import { useEffect, useRef, useState } from 'react';
 import { attachmentSizeLabel } from '../../../../src/attachment-policy';
 import { downloadWorkspaceFile, readFile } from '../../api';
 import { useI18n } from '../../i18n';
 import type { RunAttachment } from '../../types';
-import { FileIcon } from '../icons';
+import { FileKindIcon, fileKindOf } from '../file-kind';
+import { DownloadIcon, PreviewIcon } from '../icons';
 import styles from './FileAttachment.module.css';
 
 export function FileAttachment({
@@ -62,17 +67,24 @@ export function FileAttachment({
       if (active.current) setDownloading(false);
     }
   }
+  const kind = fileKindOf(file.name);
+  const meta = [
+    file.name.split('.').pop()?.toUpperCase(),
+    file.sizeBytes === undefined ? '' : attachmentSizeLabel(file.sizeBytes),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <div className={styles.attachment}>
       <div className={styles.card}>
-        <FileIcon size={24} />
+        <span className={styles.glyph} data-kind={kind} aria-hidden="true">
+          <FileKindIcon kind={kind} size={20} />
+        </span>
         {binary ? (
           <div className={styles.info} title={file.name}>
             <span className={styles.name}>{file.name}</span>
-            <span className={styles.meta}>
-              {file.name.split('.').pop()?.toUpperCase()}
-              {file.sizeBytes === undefined ? '' : ` · ${attachmentSizeLabel(file.sizeBytes)}`}
-            </span>
+            <span className={styles.meta}>{meta}</span>
           </div>
         ) : (
           <button
@@ -84,26 +96,35 @@ export function FileAttachment({
             disabled={loading}
           >
             <span className={styles.name}>{file.name}</span>
-            <span className={styles.meta}>
-              {file.name.split('.').pop()?.toUpperCase()}
-              {file.sizeBytes === undefined ? '' : ` · ${attachmentSizeLabel(file.sizeBytes)}`}
-            </span>
+            <span className={styles.meta}>{meta}</span>
           </button>
         )}
-        <button type="button" onClick={() => void download()} disabled={downloading}>
-          {t('composer.attachment.download')}
-        </button>
-        {onOpenPreview && (
+        <div className={styles.actions}>
           <button
             type="button"
-            onClick={() => onOpenPreview(file.path, file.name, runId)}
-            title={file.path}
+            className={styles.action}
+            onClick={() => void download()}
+            disabled={downloading}
+            title={t('composer.attachment.download')}
           >
-            {t('composer.attachment.preview')}
+            <DownloadIcon size={13} />
+            {t('composer.attachment.download')}
           </button>
-        )}
+          {onOpenPreview && (
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => onOpenPreview(file.path, file.name, runId)}
+              title={file.path}
+            >
+              <PreviewIcon size={13} />
+              {t('composer.attachment.preview')}
+            </button>
+          )}
+        </div>
       </div>
-      {file.extraction?.message && <p className={styles.binaryNote}>{file.extraction.message}</p>}
+      {/* 提取说明（"PDF 为简易提取…"）不渲染：卡片自带「预览」入口，长注释是噪音。
+          Host 仍照旧产出 extraction.message —— 那是模型可见的附件清单内容。 */}
       {binary && !file.extraction && (
         <p className={styles.binaryNote}>{t('composer.attachment.binaryNote')}</p>
       )}

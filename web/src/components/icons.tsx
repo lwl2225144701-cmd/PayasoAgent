@@ -475,3 +475,38 @@ export function RefreshIcon({ size, ...p }: IconProps) {
     p,
   );
 }
+
+export function SlidesIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <path d="M8 20h8M12 17v3" />
+      <path d="M7.5 12.2l3-3 2.4 2.4 3.1-3.6" />
+    </>,
+    p,
+  );
+}
+
+export function DownloadIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M12 3v11" />
+      <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+      <path d="M4 19.5h16" />
+    </>,
+    p,
+  );
+}
+
+export function PreviewIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </>,
+    p,
+  );
+}

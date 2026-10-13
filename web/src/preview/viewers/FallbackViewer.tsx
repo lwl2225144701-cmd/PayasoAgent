@@ -40,7 +40,7 @@ export default function FallbackViewer({ path, name, runId, reason }: FallbackVi
   return (
     <div className={styles.fallback}>
       <div className={styles.fallbackIcon}>
-        <FileIconFor name={fileIconName(name)} size={22} />
+        <FileIconFor kind={fileIconName(name)} size={22} />
       </div>
       <div className={styles.fallbackName}>{name}</div>
       <div className={styles.fallbackReason}>{reasonText}</div>

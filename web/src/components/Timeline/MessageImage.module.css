@@ -1,0 +1,51 @@
+/* 用户消息图片附件的盒子。
+   尺寸由组件写成 inline style（见 message-image.ts），CSS 只管形状与内部图片：
+   <img> 恒 100%×100%，单图/方格用 cover 裁，thumbnail 变体改 contain 不裁。 */
+
+.box {
+  display: block;
+  /* flex:none —— 方格与单图都不参与伸缩，保持决策层算出来的尺寸 */
+  flex: none;
+  /* 点击目标下限（对齐 DSH 的按钮 44px）；同时兜住极窄窗口，避免固定宽溢出容器 */
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: 10px;
+  background: var(--color-composer);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.box:hover {
+  border-color: var(--color-border-strong);
+}
+
+.img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.15s ease;
+}
+
+.box:hover .img {
+  transform: scale(1.04);
+}
+
+/* 列表缩略图：完整缩放不裁切 */
+.box[data-variant="thumbnail"] .img {
+  object-fit: contain;
+}
+
+.retry {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+}

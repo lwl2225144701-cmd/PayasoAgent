@@ -420,6 +420,26 @@ try {
       JSON.stringify(beforeFailedPublish),
   );
 
+  // 图片附件的像素宽高随视图一起发布：前端（MessageImage）在图片加载前就能算出
+  // 显示框，不必等 onLoad 探测，避免首帧跳动。非图片附件不带这两个字段。
+  const imageView = publishAttachments(ws, 'image-dims', [
+    {
+      name: '截图.png',
+      mimeType: 'image/png',
+      dataBase64: Buffer.from('fake-png-bytes').toString('base64'),
+      width: 2400,
+      height: 1600,
+      originalDimensions: '4800x3200',
+    },
+  ]).views[0];
+  check(imageView.kind === 'image');
+  check(imageView.width === 2400 && imageView.height === 1600);
+  check(imageView.originalDimensions === '4800x3200');
+  const textView = publishAttachments(ws, 'text-dims', [input('说明.md', Buffer.from('# hi'))])
+    .views[0];
+  check(textView.width === undefined && textView.height === undefined);
+  check(textView.originalDimensions === undefined);
+
   const rawPdf = Buffer.from(
     '%PDF-1.4\n<< /Length 33 >>\nstream\nBT (Uncompressed sentinel) Tj ET\nendstream',
   );

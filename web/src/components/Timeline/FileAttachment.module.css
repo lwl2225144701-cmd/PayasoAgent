@@ -5,48 +5,137 @@
 .card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 9px 10px 9px 11px;
   border: 1px solid var(--color-border-default);
   border-radius: 12px;
-  min-width: 220px;
+  background: var(--color-card-glass);
+  min-width: 240px;
   max-width: 420px;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
-.card button,
-.preview button {
-  color: inherit;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
+.card:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-card-glass-hover);
 }
-.card button:disabled {
-  opacity: 0.5;
-  cursor: wait;
+
+/* 类型图标块：底色按文件类型走语义色（深/浅主题都由 token 保证对比度） */
+.glyph {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  color: var(--text-tertiary);
+  background: var(--color-surface-subtle);
 }
+.glyph[data-kind="pdf"] {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+.glyph[data-kind="word"] {
+  color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+.glyph[data-kind="sheet"] {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.glyph[data-kind="slides"] {
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+.glyph[data-kind="image"] {
+  color: var(--color-info);
+  background: var(--color-info-soft);
+}
+
 .info {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  gap: 4px;
+  gap: 3px;
+  padding: 0;
   text-align: left;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.info:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 .name {
   width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.35;
 }
 .meta {
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.action:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-default);
+}
+.action:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .preview {
   margin-top: 8px;
   max-width: min(650px, 75vw);
+}
+.preview button {
+  padding: 3px 9px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.preview button:hover {
+  color: var(--text-primary);
+  background: var(--color-surface-hover);
 }
 .preview pre {
   padding: 12px;
@@ -63,9 +152,10 @@
   overflow-wrap: anywhere;
 }
 .binaryNote {
-  margin-top: 8px;
-  color: var(--text-secondary);
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
   font-size: 12px;
+  line-height: 1.5;
   max-width: 420px;
   overflow-wrap: anywhere;
 }

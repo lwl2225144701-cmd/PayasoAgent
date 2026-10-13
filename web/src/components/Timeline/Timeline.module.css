@@ -79,6 +79,11 @@
   text-align: left;
   /* 用户输入按字面换行：Enter 就是换行（Markdown 软换行此时也按换行渲染）。 */
   white-space: pre-wrap;
+  /* 气泡始终贴合自己的文字，不被附件那一行撑宽 —— 否则短句会待在一个跟
+     缩略图同宽的大空泡里（"test," 撑在 300px 气泡中）。长文仍由 max-width 收敛。 */
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
 }
 
 /* 用户消息页脚：时间戳 + 复制按钮同处一行，整体靠右（气泡本身右对齐）。
@@ -1068,35 +1073,18 @@
   }
 }
 
-/* 用户随消息上传的图片附件（气泡下方、右对齐） */
+/* 用户随消息上传的附件（文字消息之前、右对齐）：间距在下方，
+   因为它现在排在用户文字气泡上面。gap 10px 对齐 DSH 的 Message Images。
+   align-items: flex-start 不能省 —— flex 默认 stretch 会把每个附件的盒子拉到
+   本行最高项的高度（矮图下方留一片空白背景）。
+   图片附件自身的盒子与尺寸见 MessageImage.module.css / message-image.ts。 */
 .userAttachments {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.userAttachmentLink {
-  display: block;
-  width: 132px;
-  height: 132px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--color-border-default);
-  background: var(--color-composer);
-}
-
-.userAttachmentImg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  transition: transform 0.15s ease;
-}
-
-.userAttachmentLink:hover .userAttachmentImg {
-  transform: scale(1.03);
+  gap: 10px;
+  margin: 0 0 8px;
 }
 
 /* 工具结果附带的图片（如视觉模型读取图片文件）：行内缩略图，点击开原图 */

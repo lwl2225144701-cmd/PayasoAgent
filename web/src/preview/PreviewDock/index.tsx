@@ -309,7 +309,7 @@ export default function PreviewDock({
                   role="tab"
                   aria-selected={active}
                 >
-                  <FileIconFor name={fileIconName(tab.name)} size={13} />
+                  <FileIconFor kind={fileIconName(tab.name)} size={13} />
                   <span className={styles.tabName}>{tab.name}</span>
                 </button>
                 <button

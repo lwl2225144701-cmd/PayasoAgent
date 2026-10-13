@@ -103,6 +103,17 @@ export function publishAttachments(
             : 'text',
         sizeBytes: Buffer.from(attachment.dataBase64, 'base64').length,
         sha256,
+        // 图片尺寸随视图一起发布：前端在图片加载前就能算好显示框（避免首帧跳动），
+        // 与 attachmentImages 用的是同一份归一化后的宽高。
+        ...(attachment.mimeType.startsWith('image/')
+          ? {
+              ...(attachment.width === undefined ? {} : { width: attachment.width }),
+              ...(attachment.height === undefined ? {} : { height: attachment.height }),
+              ...(attachment.originalDimensions === undefined
+                ? {}
+                : { originalDimensions: attachment.originalDimensions }),
+            }
+          : {}),
       });
     }
 
