@@ -1,7 +1,13 @@
-// open-in-app 三路由 —— GET /open-in-app/apps、GET /open-in-app/icon/<id>、
+// open-in-app 路由 —— GET /open-in-app/apps、GET /open-in-app/icon/<id>、
 // POST /open-in-app/open（detached 启动 + scrubbed 环境 + 早期失败观察窗）。
 //
-// 边界：前端只传 target id（封闭清单），工作区路径由 Host 解析（当前工作区或
+// 两种目标、两套数据源（对齐参考实现）：
+//   - **文件**（path 给出）：每次现问操作系统（macOS LaunchServices，见 os-assoc.ts）——
+//     文件与应用的关联是系统事实，静态清单只会猜错（PDF 菜单里出现 Cursor 那种）；
+//   - **目录**（path 缺省）：编译期白名单（catalog.ts）——系统没有"用某 App 打开
+//     目录"的统一关联机制。
+//
+// 边界：前端只传 target id 与工作区相对路径，工作区根由 Host 解析（当前工作区或
 // 指定 Run 的工作区，与 /preview 同一套作用域）——前端拿不到也传不进宿主绝对路径。
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -9,6 +15,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { filterAppsForTarget } from '../open-in-app/openable.js';
+import { queryFileAssociations } from '../open-in-app/os-assoc.js';
 import {
   type ResolvedApp,
   reresolveEntry,
@@ -47,18 +54,40 @@ export async function handleOpenInApp(
   checkOrigin(req, port);
   requireAuth(req);
 
-  // GET /open-in-app/apps[?path=<rel>] —— 已装应用列表（只含证明过的）。
-  // path 给出 = 目标是工作区内的某个文件：按后缀过滤出**能打开它**的应用
-  // （预览面板文件视图的"在应用中打开"）；缺省 = 工作区根（文件夹语义）。
+  // GET /open-in-app/apps[?path=<rel>[&runId=<id>]] —— 能打开目标的应用列表。
+  // path 给出 = 文件目标：问操作系统（LaunchServices），拿到"真能打开它"的应用；
+  //   系统不可用/非 macOS → 回落白名单（openable.ts 按后缀过滤）。
+  // path 缺省 = 目录目标（工作区根）：编译期白名单里能打开文件夹的应用。
   if (s.length === 2 && s[1] === 'apps' && method === 'GET') {
-    const rel = queryParams(req).get('path');
+    const params = queryParams(req);
+    const rel = params.get('path');
     const target = rel !== null && rel.length > 0 ? rel : null;
+    const root = resolveWorkspaceRoot(manager, paramRunId(params));
+
+    if (target !== null && root !== null) {
+      const abs = resolveInside(root, target);
+      if (abs !== null) {
+        const osApps = await queryFileAssociations(abs);
+        if (osApps !== null) {
+          return sendJson(res, 200, {
+            source: 'os',
+            apps: osApps.map((app) => ({
+              id: app.id,
+              label: app.label,
+              icon: app.icon,
+              isDefault: app.isDefault,
+            })),
+          });
+        }
+      }
+    }
+
     const apps = filterAppsForTarget(resolveInstalledApps(), target).map((app) => ({
       id: app.id,
       label: app.label,
       opens: app.opens,
     }));
-    return sendJson(res, 200, { apps });
+    return sendJson(res, 200, { source: 'catalog', apps });
   }
 
   // GET /open-in-app/icon/<id> —— macOS 从 .app 提 PNG（plutil + sips），进程内缓存
@@ -76,9 +105,11 @@ export async function handleOpenInApp(
     return;
   }
 
-  // POST /open-in-app/open {id, path?, runId?}
-  //   path 缺省 = 打开工作区根（ShellBar 入口胶囊的语义）；
-  //   path 给出 = 打开工作区内的某个文件（预览面板文件视图的"在应用中打开"）。
+  // POST /open-in-app/open {id?, path?, runId?, action?}
+  //   action: 'reveal'  = 在文件管理器里显示该文件（path 必填；不打开文件本身）
+  //   path 给出          = 打开工作区内的某个文件：id 必须是**最新**系统关联列表里的
+  //                       .app 路径（打开前复验，伪造/陈旧的 id 拒掉）
+  //   path 缺省          = 打开工作区根：id 是白名单（catalog）里的应用 id
   if (s.length === 2 && s[1] === 'open' && method === 'POST') {
     let body: Record<string, unknown>;
     try {
@@ -90,24 +121,32 @@ export async function handleOpenInApp(
       throw err;
     }
     const id = typeof body.id === 'string' ? body.id : '';
-    const runId = typeof body.runId === 'string' && body.runId ? body.runId : null;
+    const action = body.action === 'reveal' ? 'reveal' : null;
     const rel = typeof body.path === 'string' ? body.path.trim() : '';
-    if (!id) return bad(res, '缺少 id');
-    const root = resolveWorkspaceRoot(manager, runId);
+    if (!id && action === null) return bad(res, '缺少 id');
+    if (action === 'reveal' && !rel) return bad(res, '显示文件位置需要 path');
+    const root = resolveWorkspaceRoot(manager, paramRunId(body));
     if (!root) return bad(res, '没有可打开的工作区（未选择工作区且会话不存在）');
     // 目标路径：与 /preview 读文件同一套越界校验（单一实现，防 symlink/穿越）
     let target = root;
     if (rel) {
-      try {
-        target = resolveChecked(root, normalizeRelPath(rel));
-      } catch (err) {
-        if (err instanceof PreviewError) {
-          return bad(res, err.code === 'outside_workspace' ? '路径越出工作区' : '路径无效');
-        }
-        throw err;
-      }
+      const abs = resolveInside(root, rel);
+      if (abs === null) return bad(res, '路径越出工作区或无效');
+      target = abs;
     }
     try {
+      if (action === 'reveal') {
+        await revealPath(target);
+        return sendJson(res, 200, { opened: true });
+      }
+      if (rel) {
+        // 文件目标：用最新系统列表复验 id（应用可能已卸载/关联已变）
+        const fresh = await queryFileAssociations(target);
+        const match = fresh?.find((app) => app.id === id);
+        if (!match) return bad(res, '该应用不能打开此文件（或已卸载）');
+        await launch({ bundlePath: match.id }, target);
+        return sendJson(res, 200, { opened: true, id });
+      }
       await openPathInApp(id, target);
       return sendJson(res, 200, { opened: true, id });
     } catch (err) {
@@ -121,6 +160,43 @@ export async function handleOpenInApp(
 function resolveWorkspaceRoot(manager: RunManager, runId: string | null): string | null {
   if (runId) return manager.getWorkspaceRoot(runId);
   return getWorkspace()?.rootPath ?? null;
+}
+
+/** 查询串 / 请求体里的 runId（空串按缺省处理）。 */
+function paramRunId(source: URLSearchParams | Record<string, unknown>): string | null {
+  const raw = source instanceof URLSearchParams ? source.get('runId') : source.runId;
+  return typeof raw === 'string' && raw.length > 0 ? raw : null;
+}
+
+/** 工作区内相对路径 → 绝对路径；越界/无效返回 null（不抛，供 GET 端点静默回落）。 */
+function resolveInside(root: string, rel: string): string | null {
+  try {
+    return resolveChecked(root, normalizeRelPath(rel));
+  } catch (err) {
+    if (err instanceof PreviewError) return null;
+    throw err;
+  }
+}
+
+/** 在文件管理器里显示目标（不打开它）。explorer 的退出码不可靠，只认 spawn 错误。 */
+async function revealPath(target: string): Promise<void> {
+  if (process.platform === 'darwin') {
+    await observe(spawn('open', ['-R', target], { env: scrubbedEnv() }));
+    return;
+  }
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('explorer', [`/select,${target}`], { env: scrubbedEnv() });
+      child.on('error', reject);
+      child.on('spawn', resolve);
+    });
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('xdg-open', [path.dirname(target)], { env: scrubbedEnv() });
+    child.on('error', reject);
+    child.on('spawn', resolve);
+  });
 }
 
 /** 用指定应用打开一个路径（工作区根本身，或工作区内的某个文件）。 */
@@ -137,25 +213,29 @@ async function openPathInApp(id: string, target: string): Promise<void> {
   }
 }
 
-async function launch(app: ResolvedApp, root: string): Promise<void> {
+/** 启动目标路径（结构最小化：只有定位方式参与启动，白名单/系统 id 都满足）。 */
+async function launch(
+  app: { bundlePath?: string; executablePath?: string },
+  target: string,
+): Promise<void> {
   if (process.platform === 'darwin') {
     if (app.bundlePath) {
-      await observe(spawn('open', ['-a', app.bundlePath, root], { env: scrubbedEnv() }));
+      await observe(spawn('open', ['-a', app.bundlePath, target], { env: scrubbedEnv() }));
       return;
     }
     if (app.executablePath) {
-      await observe(spawn(app.executablePath, [root], { cwd: root, env: scrubbedEnv() }));
+      await observe(spawn(app.executablePath, [target], { cwd: target, env: scrubbedEnv() }));
       return;
     }
     throw new Error('该应用未提供可执行定位方式');
   }
   if (app.executablePath) {
-    await observe(spawn(app.executablePath, [root], { cwd: root, env: scrubbedEnv() }));
+    await observe(spawn(app.executablePath, [target], { cwd: target, env: scrubbedEnv() }));
     return;
   }
   // linux desktop-entry：交系统默认文件管理器打开目录（文档化简化）
   if (process.platform === 'linux') {
-    await observe(spawn('xdg-open', [root], { env: scrubbedEnv() }));
+    await observe(spawn('xdg-open', [target], { env: scrubbedEnv() }));
     return;
   }
   throw new Error('当前平台无法启动该应用');

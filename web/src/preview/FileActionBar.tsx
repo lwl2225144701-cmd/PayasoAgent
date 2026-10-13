@@ -32,7 +32,7 @@ export default function FileActionBar({ path, runId, onRefresh, onToast }: FileA
   const pillRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   // 按**当前文件**取能打开它的应用（换文件即换列表；Host 侧按后缀过滤）
-  const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps(path);
+  const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps(path, runId);
 
   const defaultApp =
     apps === null ? null : (apps.find((app) => app.id === defaultAppId(apps)) ?? null);

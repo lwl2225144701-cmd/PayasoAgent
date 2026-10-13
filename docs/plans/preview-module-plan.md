@@ -508,6 +508,39 @@ export const VIEWERS: ViewerSpec[] = [
   `ts → [访达, Cursor, IntelliJ IDEA, Safari, Chrome, 文本编辑]`、`zip → [访达]`、
   文件夹 → [访达, Cursor, IntelliJ IDEA]；docx 菜单 UI 实测只剩访达 + WPS Office。
 
+### M4 补丁 10：打开方式改为"问操作系统"（对齐参考实现）
+
+参考实现点明关键分工：**目录**用编译期白名单（系统没有"用某 App 打开目录"的统一
+关联机制），**文件**每次现问操作系统（文件关联是系统事实，静态清单只会猜错——
+上一版 PDF 菜单里出现 Cursor 就是猜的代价）。本轮把文件目标切成真查询。
+
+- **新模块 `src/host/open-in-app/os-assoc.ts`（macOS 适配器）**：内嵌一段**固定** JXA
+  脚本，`osascript -l JavaScript -e <脚本> <路径>` 跑 NSWorkspace：
+  `URLsForApplicationsToOpenURL`（列表）+ `URLForApplicationToOpenURL`（默认项）。
+  - 路径只经 argv 传入（不经 shell、不插脚本文本）；只读关联，绝不改系统默认；
+  - **图标**：直读 bundle 内 icns 走 ImageIO 缩略图（32px，~10ms / ~1.5KB）——
+    曾实测 `NSWorkspace.iconForFile` 的 TIFFRepresentation 会把整张 1024px 图标
+    光栅出来（74MB / 190ms），只为 32px 缩略图代价荒谬，故列为兜底；
+  - **去重**（同参考实现）：同 bundleId + 同显示名折叠一条——自更新 App 会留多份
+    拷贝（本机 3 份 LibreOffice：codex / TRAE / MiMo 各带一份），保留默认项、
+    否则版本最高的；
+  - selector 坑记录：JXA 对以缩写开头的方法名**保留大写**（`URLsForApplications…`，
+    小写 `urls…` 是 undefined）；CF 函数返回的 Ref 无法直接枚举，故全走 ObjC 方法。
+- **端点分流**：`GET /open-in-app/apps?path=<rel>[&runId=]` —— 文件目标问系统
+  （拿不到/非 macOS → 回落 `openable.ts` 白名单过滤），目录目标恒走白名单；
+  响应带 `source: 'os' | 'catalog'`。
+- **安全边界**（对齐参考实现）：`POST /open-in-app/open` 的文件目标**打开前用最新
+  系统列表复验 id**（伪造/陈旧的 .app 路径拒掉）；新增 `action: 'reveal'`
+  （`open -R` / `explorer /select` / `xdg-open`，即"显示文件位置"，文案不点名访达）。
+- **前端**：`OpenInApp` 带 `icon`（dataURL）/`isDefault`；`listOpenInApps` 改按
+  「runId+路径」缓存并加 10s TTL（展开菜单重查 → 新装应用很快出现）；菜单直接渲染
+  dataURL 图标、按系统默认标记「（默认）」，文件目标末尾多一项"显示文件位置"。
+- 测试扩到 12 条：端点按来源分流断言（os 形状 vs catalog 形状）、真机
+  `queryFileAssociations` 结构断言、reveal 缺 path 400、伪造 id 400。
+- 真机验证：docx 菜单 = wpsoffice（默认）+ Pages/TextEdit/WorkBuddy/ChatGPT/
+  LibreOffice×2 + 显示文件位置，全部真图标；单次查询 ~0.5s、图标合计 13KB。
+  Windows / Linux 暂无适配器 → 自动回落白名单（`openable.ts` 的分类型过滤）。
+
 ### 待做
 
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。

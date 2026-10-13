@@ -9,7 +9,7 @@
 
 import { type RefObject, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileIcon } from '../components/icons';
+import { FileIcon, FolderIcon } from '../components/icons';
 import { useI18n } from '../i18n';
 import { portalRoot } from '../portal-root';
 import styles from './OpenInAppMenu.module.css';
@@ -78,8 +78,9 @@ export default function OpenInAppMenu({
       .catch((err: unknown) => onToast(err instanceof Error ? err.message : String(err)));
   };
 
-  // 默认应用：localStorage 记忆优先，否则过滤后列表的第一个
-  const effectiveSelectedId = apps === null ? null : defaultAppId(apps);
+  // 默认应用：系统给的 isDefault 优先（文件目标），否则本地记忆/列表首个（目录目标）
+  const effectiveSelectedId =
+    apps === null ? null : (apps.find((app) => app.isDefault === true)?.id ?? defaultAppId(apps));
 
   return createPortal(
     <div
@@ -95,32 +96,58 @@ export default function OpenInAppMenu({
       {apps !== null && apps.length === 0 && (
         <div className={styles.menuHint}>{t('preview.launcher.empty')}</div>
       )}
-      {apps?.map((app) => (
+      {apps?.map((app) => {
+        // 图标：系统关联来源带 32px PNG data URL；白名单来源（非 macOS）回退端点
+        const iconUrl =
+          brokenIcons.has(app.id) || (app.icon === undefined && app.id.startsWith('/'))
+            ? null
+            : (app.icon ?? openInAppIconUrl(app.id));
+        return (
+          <button
+            key={app.id}
+            type="button"
+            role="menuitem"
+            className={`${styles.menuItem} ${app.id === effectiveSelectedId ? styles.menuItemActive : ''}`}
+            onClick={() => openWith(app.id)}
+          >
+            <span className={styles.chip}>
+              {iconUrl === null ? (
+                <FileIcon size={15} />
+              ) : (
+                <img
+                  className={styles.appIcon}
+                  src={iconUrl}
+                  alt=""
+                  onError={() => setBrokenIcons((prev) => new Set(prev).add(app.id))}
+                />
+              )}
+            </span>
+            <span className={styles.menuLabel}>
+              {app.label}
+              {app.id === effectiveSelectedId ? t('preview.launcher.defaultSuffix') : ''}
+            </span>
+          </button>
+        );
+      })}
+      {/* 文件目标专属：在文件管理器里显示位置（不打开文件本身） */}
+      {path ? (
         <button
-          key={app.id}
           type="button"
           role="menuitem"
-          className={`${styles.menuItem} ${app.id === effectiveSelectedId ? styles.menuItemActive : ''}`}
-          onClick={() => openWith(app.id)}
+          className={styles.menuItem}
+          onClick={() => {
+            onClose();
+            openInApp('', { action: 'reveal', path, runId })
+              .then(() => onToast(t('preview.fileBar.revealed')))
+              .catch((err: unknown) => onToast(err instanceof Error ? err.message : String(err)));
+          }}
         >
           <span className={styles.chip}>
-            {brokenIcons.has(app.id) ? (
-              <FileIcon size={15} />
-            ) : (
-              <img
-                className={styles.appIcon}
-                src={openInAppIconUrl(app.id)}
-                alt=""
-                onError={() => setBrokenIcons((prev) => new Set(prev).add(app.id))}
-              />
-            )}
+            <FolderIcon size={15} />
           </span>
-          <span className={styles.menuLabel}>
-            {app.label}
-            {app.id === effectiveSelectedId ? t('preview.launcher.defaultSuffix') : ''}
-          </span>
+          <span className={styles.menuLabel}>{t('preview.fileBar.reveal')}</span>
         </button>
-      ))}
+      ) : null}
     </div>,
     portalRoot(),
   );

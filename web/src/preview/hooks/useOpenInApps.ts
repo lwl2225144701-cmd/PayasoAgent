@@ -18,19 +18,19 @@ export interface OpenInAppsState {
   markIconBroken: (id: string) => void;
 }
 
-export function useOpenInApps(path?: string | null): OpenInAppsState {
+export function useOpenInApps(path?: string | null, runId?: string | null): OpenInAppsState {
   const [apps, setApps] = useState<OpenInApp[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [brokenIcons, setBrokenIcons] = useState<ReadonlySet<string>>(new Set());
 
-  // 目标变化（换了文件/切会话）→ 重新取过滤后的列表；
-  // controller 按目标缓存，同一个文件再次进入不重复请求。
+  // 目标变化（换了文件/切会话）→ 重新取列表；
+  // controller 按目标缓存（带 TTL），同一文件连续打开不重复跑系统查询。
   useEffect(() => {
     let cancelled = false;
     setApps(null);
     setLoadFailed(false);
     setBrokenIcons(new Set());
-    listOpenInApps(path)
+    listOpenInApps(path, runId)
       .then((list) => {
         if (!cancelled) setApps(list);
       })
@@ -42,7 +42,7 @@ export function useOpenInApps(path?: string | null): OpenInAppsState {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, runId]);
 
   return {
     apps,

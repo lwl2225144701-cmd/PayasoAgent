@@ -1,6 +1,7 @@
-// 模块: open-in-app 契约测试 —— /open-in-app/apps 与 /open-in-app/open 的
-// path 目标校验（越界拒、合法路径到达应用阶段；用不存在的 app id 收尾，
-// 因此不会真正启动任何应用）。
+// 模块: open-in-app 契约测试 —— /open-in-app/apps 与 /open-in-app/open。
+// 两种目标两套数据源：文件目标问操作系统（macOS LaunchServices，其它平台回落
+// 白名单），目录目标走编译期白名单。路径越界一律拒；用不存在的 app id 收尾，
+// 因此不会真正启动任何应用。
 // 用法: npx tsx tests/open-in-app.test.ts（或随 npm run test:all 运行）
 
 import assert from 'node:assert/strict';
@@ -8,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { filterAppsForTarget, openableKindForPath } from '../src/host/open-in-app/openable.js';
+import { queryFileAssociations } from '../src/host/open-in-app/os-assoc.js';
 import { createHostServer, RunManager } from '../src/host/server.js';
 import { setWorkspace } from '../src/host/workspace.js';
 
@@ -114,36 +116,63 @@ test('GET /open-in-app/apps → 200 + apps 数组', async () => {
 });
 
 /** 拉取（可选按目标过滤的）应用列表。 */
-async function listApps(path?: string): Promise<{ apps: { id: string; opens: string[] }[] }> {
+async function listApps(path?: string): Promise<{
+  source: string;
+  apps: {
+    id: string;
+    label: string;
+    icon?: string | null;
+    isDefault?: boolean;
+    opens?: string[];
+  }[];
+}> {
   const qs = path ? `?path=${encodeURIComponent(path)}` : '';
   const resp = await fetch(`${baseUrl}/open-in-app/apps${qs}`);
   assert.equal(resp.status, 200);
-  return (await resp.json()) as { apps: { id: string; opens: string[] }[] };
+  return (await resp.json()) as Awaited<ReturnType<typeof listApps>>;
 }
 
-test('apps 端点按目标过滤：PDF 只列 pdf/any，docx 只列 word/any，无 path 只列 folder/any', async () => {
+test('apps 端点：文件目标问系统（macOS）/回落白名单（其它平台），目录目标恒走白名单', async () => {
+  const isDarwin = process.platform === 'darwin';
   const pdf = await listApps('docs/a.pdf');
-  for (const app of pdf.apps) {
-    assert.ok(
-      app.opens.includes('pdf') || app.opens.includes('any'),
-      `${app.id} 不该出现在 PDF 的列表里`,
-    );
-  }
-  const docx = await listApps('docs/a.docx');
-  for (const app of docx.apps) {
-    assert.ok(
-      app.opens.includes('word') || app.opens.includes('any'),
-      `${app.id} 不该出现在 docx 列表里`,
-    );
+  assert.equal(pdf.source, isDarwin ? 'os' : 'catalog');
+  if (pdf.source === 'os') {
+    // 系统来源：id 是 .app 绝对路径，最多一个默认，图标是 32px PNG data URL 或 null
+    for (const app of pdf.apps) {
+      assert.ok(app.id.startsWith('/') && app.id.endsWith('.app'), `${app.id} 应是 .app 绝对路径`);
+      assert.ok(app.label.length > 0);
+      if (app.icon != null) assert.match(app.icon, /^data:image\/png;base64,/);
+    }
+    assert.ok(pdf.apps.filter((app) => app.isDefault === true).length <= 1, '最多一个默认应用');
+  } else {
+    for (const app of pdf.apps) {
+      assert.ok(
+        (app.opens ?? []).includes('pdf') || (app.opens ?? []).includes('any'),
+        `${app.id} 不该出现在 PDF 的列表里`,
+      );
+    }
   }
   const folder = await listApps();
+  assert.equal(folder.source, 'catalog', '目录目标恒走白名单（系统无目录关联机制）');
   for (const app of folder.apps) {
-    assert.ok(app.opens.includes('folder') || app.opens.includes('any'), `${app.id} 打不开文件夹`);
+    assert.ok(
+      (app.opens ?? []).includes('folder') || (app.opens ?? []).includes('any'),
+      `${app.id} 打不开文件夹`,
+    );
   }
-  const unknown = await listApps('a.zip');
-  for (const app of unknown.apps) {
-    assert.ok(app.opens.includes('any'), `${app.id} 不该出现在未识别后缀的列表里`);
+});
+
+test('queryFileAssociations：真机文件 → 结构化系统关联列表（仅 macOS）', async () => {
+  if (process.platform !== 'darwin') return; // 其它平台无适配器，由白名单兜底
+  const apps = await queryFileAssociations(path.join(wsRoot, 'a.md'));
+  assert.ok(apps !== null, 'macOS 上应拿到系统关联列表');
+  for (const app of apps ?? []) {
+    assert.ok(app.id.startsWith('/') && app.id.endsWith('.app'), app.id);
+    assert.ok(app.label.length > 0);
+    assert.equal(typeof app.isDefault, 'boolean');
+    if (app.icon !== null) assert.match(app.icon, /^data:image\/png;base64,/);
   }
+  assert.ok((apps ?? []).filter((app) => app.isDefault).length <= 1, '最多一个默认应用');
 });
 
 test('open 缺 id → 400', async () => {
@@ -158,10 +187,17 @@ test('open 无 path → 打开工作区根（到达应用阶段）', async () =>
   assert.match(String(json.message), /应用未安装/);
 });
 
-test('open 带合法 path → 通过越界校验，到达应用阶段', async () => {
+test('open 带合法 path → 通过越界校验，倒在系统列表复验（不启动任何应用）', async () => {
   const { status, json } = await openApp({ id: NO_SUCH_APP, path: 'sub/nested.txt' });
   assert.equal(status, 400);
-  assert.match(String(json.message), /应用未安装/, '合法路径必须被接受并走到应用查找');
+  // 路径合法 → 走到"用最新系统关联列表复验 id"这一步；伪造 id 在此被拒
+  assert.match(String(json.message), /该应用不能打开此文件/, '合法路径必须被接受并走到复验');
+});
+
+test('open action=reveal 缺 path → 400', async () => {
+  const { status, json } = await openApp({ action: 'reveal' });
+  assert.equal(status, 400);
+  assert.match(String(json.message), /显示文件位置需要 path/);
 });
 
 test('open 带 ../ 穿越 path → 400 路径无效（归一化层就拒，应用阶段之前）', async () => {

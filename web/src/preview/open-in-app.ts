@@ -5,27 +5,38 @@ import { jsonFetch } from '../api';
 export interface OpenInApp {
   id: string;
   label: string;
+  /** 32px PNG data URL（系统关联来源才有；白名单来源走 /icon/<id> 端点）。 */
+  icon?: string;
+  /** 是否默认应用（系统默认，或白名单来源的本地记忆）。 */
+  isDefault?: boolean;
 }
 
 const SELECTED_KEY = 'payaso.openInApp';
-/** 按目标缓存（key = 路径；'' = 工作区根/文件夹语义）。 */
-const appsCache = new Map<string, Promise<OpenInApp[]>>();
+/**
+ * 按目标缓存（key = runId + 路径；'' = 工作区根/文件夹语义）。
+ * TTL 让"展开菜单重查"成立：新装/改默认的应用很快能出现（对齐参考实现），
+ * 同时同一文件连续打开不重复跑系统查询。
+ */
+const appsCache = new Map<string, { at: number; loaded: Promise<OpenInApp[]> }>();
+const APPS_TTL_MS = 10_000;
 
 /**
  * 能打开目标的应用列表（Host 按目标过滤后返回）。
  * path 缺省 = 工作区根本身（ShellBar 入口胶囊的语义）；给出 = 工作区内的某个文件
  * （预览面板文件视图的"在应用中打开"——PDF 只会列出浏览器/预览/访达之流）。
  */
-export function listOpenInApps(path?: string | null): Promise<OpenInApp[]> {
-  const key = path ?? '';
-  let loaded = appsCache.get(key);
-  if (loaded === undefined) {
-    const query = path ? `?path=${encodeURIComponent(path)}` : '';
-    loaded = jsonFetch<{ apps: OpenInApp[] }>(`/open-in-app/apps${query}`, {
-      cache: 'no-store',
-    }).then((resp) => resp.apps);
-    appsCache.set(key, loaded);
-  }
+export function listOpenInApps(path?: string | null, runId?: string | null): Promise<OpenInApp[]> {
+  const key = `${runId ?? ''}|${path ?? ''}`;
+  const cached = appsCache.get(key);
+  if (cached && Date.now() - cached.at < APPS_TTL_MS) return cached.loaded;
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  if (runId) params.set('runId', runId);
+  const query = params.toString();
+  const loaded = jsonFetch<{ apps: OpenInApp[] }>(`/open-in-app/apps${query ? `?${query}` : ''}`, {
+    cache: 'no-store',
+  }).then((resp) => resp.apps);
+  appsCache.set(key, { at: Date.now(), loaded });
   return loaded;
 }
 
@@ -44,9 +55,15 @@ export interface OpenInAppTarget {
   path?: string | null;
   /** 会话级作用域 Run（历史会话也能开它自己工作区里的文件）。 */
   runId?: string | null;
+  /** 'reveal' = 在文件管理器里显示目标（不打开）。 */
+  action?: 'reveal';
 }
 
-/** 打开目标：path 给出时开工作区内的某个文件，否则开工作区根。 */
+/**
+ * 打开目标：path 给出时开工作区内的某个文件（id = 系统关联列表里的 .app 路径，
+ * 宿主打开前会用最新列表复验），否则开工作区根（id = 白名单应用 id）。
+ * `action: 'reveal'` = 在文件管理器里显示该文件而不打开它。
+ */
 export function openInApp(
   id: string,
   target: OpenInAppTarget = {},
@@ -55,6 +72,7 @@ export function openInApp(
     method: 'POST',
     body: JSON.stringify({
       id,
+      ...(target.action ? { action: target.action } : {}),
       ...(target.path ? { path: target.path } : {}),
       ...(target.runId ? { runId: target.runId } : {}),
     }),
