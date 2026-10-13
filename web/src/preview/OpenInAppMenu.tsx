@@ -14,7 +14,7 @@ import { useI18n } from '../i18n';
 import { portalRoot } from '../portal-root';
 import styles from './OpenInAppMenu.module.css';
 import type { OpenInApp } from './open-in-app';
-import { defaultAppId, openInApp, openInAppIconUrl, setSelectedAppId } from './open-in-app';
+import { effectiveDefaultId, openInApp, openInAppItemIconUrl, setSelectedAppId } from './open-in-app';
 
 export interface OpenInAppMenuProps {
   /** 菜单是否展开（由触发按钮一侧持有状态）。 */
@@ -79,8 +79,7 @@ export default function OpenInAppMenu({
   };
 
   // 默认应用：系统给的 isDefault 优先（文件目标），否则本地记忆/列表首个（目录目标）
-  const effectiveSelectedId =
-    apps === null ? null : (apps.find((app) => app.isDefault === true)?.id ?? defaultAppId(apps));
+  const effectiveSelectedId = apps === null ? null : effectiveDefaultId(apps);
 
   return createPortal(
     <div
@@ -97,11 +96,8 @@ export default function OpenInAppMenu({
         <div className={styles.menuHint}>{t('preview.launcher.empty')}</div>
       )}
       {apps?.map((app) => {
-        // 图标：系统关联来源带 32px PNG data URL；白名单来源（非 macOS）回退端点
-        const iconUrl =
-          brokenIcons.has(app.id) || (app.icon === undefined && app.id.startsWith('/'))
-            ? null
-            : (app.icon ?? openInAppIconUrl(app.id));
+        // 图标：系统关联来源带 32px PNG data URL；白名单来源回退端点
+        const iconUrl = openInAppItemIconUrl(app, brokenIcons.has(app.id));
         return (
           <button
             key={app.id}

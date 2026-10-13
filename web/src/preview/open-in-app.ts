@@ -85,6 +85,26 @@ export function defaultAppId(apps: readonly OpenInApp[]): string | null {
   return getSelectedAppId() ?? apps[0]?.id ?? null;
 }
 
+/**
+ * 默认项 id：系统给的 isDefault 优先（文件目标问操作系统拿到的真实默认），
+ * 否则 localStorage 记忆、再否则列表首个（目录目标白名单的同语义）。
+ */
+export function effectiveDefaultId(apps: readonly OpenInApp[]): string | null {
+  return apps.find((app) => app.isDefault === true)?.id ?? defaultAppId(apps);
+}
+
+/**
+ * 单项图标 URL：系统关联来源自带 32px PNG dataURL（直接渲染，别再打 /icon/<id>——
+ * 那种 .app 路径不在白名单里，端点会 404，而列表里其实就带着真图标）；
+ * 白名单来源回退 /icon/<id>；两者都拿不到（或已 broken）→ null，调用方回退字形芯片。
+ */
+export function openInAppItemIconUrl(app: OpenInApp, broken: boolean): string | null {
+  if (broken) return null;
+  if (app.icon) return app.icon;
+  if (app.id.startsWith('/')) return null; // 系统来源但无图标（罕见）→ 字形回退
+  return openInAppIconUrl(app.id);
+}
+
 export function getSelectedAppId(): string | null {
   try {
     return localStorage.getItem(SELECTED_KEY);

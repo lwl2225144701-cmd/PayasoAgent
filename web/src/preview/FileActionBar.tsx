@@ -14,7 +14,7 @@ import { useI18n } from '../i18n';
 import styles from './FileActionBar.module.css';
 import { useOpenInApps } from './hooks/useOpenInApps';
 import OpenInAppMenu from './OpenInAppMenu';
-import { defaultAppId, openInApp, openInAppIconUrl } from './open-in-app';
+import { effectiveDefaultId, openInApp, openInAppItemIconUrl } from './open-in-app';
 
 export interface FileActionBarProps {
   /** 工作区相对路径（POSIX；即宿主上的相对位置）。 */
@@ -35,9 +35,9 @@ export default function FileActionBar({ path, runId, onRefresh, onToast }: FileA
   const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps(path, runId);
 
   const defaultApp =
-    apps === null ? null : (apps.find((app) => app.id === defaultAppId(apps)) ?? null);
+    apps === null ? null : (apps.find((app) => app.id === effectiveDefaultId(apps)) ?? null);
   const iconUrl =
-    defaultApp && !brokenIcons.has(defaultApp.id) ? openInAppIconUrl(defaultApp.id) : null;
+    defaultApp === null ? null : openInAppItemIconUrl(defaultApp, brokenIcons.has(defaultApp.id));
   const openTitle = defaultApp
     ? t('preview.fileBar.openWith', { app: defaultApp.label })
     : t('preview.fileBar.openIn');

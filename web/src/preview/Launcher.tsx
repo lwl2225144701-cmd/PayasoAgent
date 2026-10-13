@@ -8,7 +8,7 @@ import { useI18n } from '../i18n';
 import { useOpenInApps } from './hooks/useOpenInApps';
 import styles from './Launcher.module.css';
 import OpenInAppMenu from './OpenInAppMenu';
-import { defaultAppId, openInApp, openInAppIconUrl } from './open-in-app';
+import { effectiveDefaultId, openInApp, openInAppItemIconUrl } from './open-in-app';
 
 interface PreviewLauncherProps {
   /** 面板当前是否打开（侧栏开关的高亮依赖它）。 */
@@ -28,11 +28,11 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
   // 工作区根（文件夹）语义：列表 = 能打开文件夹的应用
   const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps();
 
-  // 当前选中应用：localStorage 记忆优先，否则默认列表第一个（与 macOS「访达（默认）」同语义）
+  // 当前选中应用：系统默认/本地记忆优先，否则列表第一个（与 macOS「访达（默认）」同语义）
   const selectedApp =
-    apps === null ? null : (apps.find((app) => app.id === defaultAppId(apps)) ?? null);
+    apps === null ? null : (apps.find((app) => app.id === effectiveDefaultId(apps)) ?? null);
   const pillIcon =
-    selectedApp && !brokenIcons.has(selectedApp.id) ? openInAppIconUrl(selectedApp.id) : null;
+    selectedApp === null ? null : openInAppItemIconUrl(selectedApp, brokenIcons.has(selectedApp.id));
 
   const openWorkspaceWith = (id: string) => {
     openInApp(id, { runId })
