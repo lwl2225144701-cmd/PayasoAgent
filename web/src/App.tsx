@@ -1150,6 +1150,7 @@ export default function App() {
           <PreviewDock
             tabsApi={previewTabs}
             onClose={() => setPreviewOpen(false)}
+            onToast={showToast}
             // 面板与侧栏共用同一条"打开/选择工作区"流程（native picker 或网页选择器）
             onRequestWorkspace={() => void handleOpenWorkspace()}
             // 会话级作用域：直接点开历史会话也能浏览它自己的工作区（不必先切工作区）

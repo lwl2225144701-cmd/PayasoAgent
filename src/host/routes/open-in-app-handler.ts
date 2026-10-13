@@ -14,6 +14,8 @@ import {
   resolveEntryById,
   resolveInstalledApps,
 } from '../open-in-app/resolver.js';
+import { normalizeRelPath, resolveChecked } from '../preview/preview-service.js';
+import { PreviewError } from '../preview/types.js';
 import type { RunManager } from '../run-manager.js';
 import { getWorkspace } from '../workspace.js';
 import {
@@ -61,7 +63,9 @@ export async function handleOpenInApp(
     return;
   }
 
-  // POST /open-in-app/open {id, runId?}
+  // POST /open-in-app/open {id, path?, runId?}
+  //   path 缺省 = 打开工作区根（ShellBar 入口胶囊的语义）；
+  //   path 给出 = 打开工作区内的某个文件（预览面板文件视图的"在应用中打开"）。
   if (s.length === 2 && s[1] === 'open' && method === 'POST') {
     let body: Record<string, unknown>;
     try {
@@ -74,11 +78,24 @@ export async function handleOpenInApp(
     }
     const id = typeof body.id === 'string' ? body.id : '';
     const runId = typeof body.runId === 'string' && body.runId ? body.runId : null;
+    const rel = typeof body.path === 'string' ? body.path.trim() : '';
     if (!id) return bad(res, '缺少 id');
     const root = resolveWorkspaceRoot(manager, runId);
     if (!root) return bad(res, '没有可打开的工作区（未选择工作区且会话不存在）');
+    // 目标路径：与 /preview 读文件同一套越界校验（单一实现，防 symlink/穿越）
+    let target = root;
+    if (rel) {
+      try {
+        target = resolveChecked(root, normalizeRelPath(rel));
+      } catch (err) {
+        if (err instanceof PreviewError) {
+          return bad(res, err.code === 'outside_workspace' ? '路径越出工作区' : '路径无效');
+        }
+        throw err;
+      }
+    }
     try {
-      await openRootInApp(id, root);
+      await openPathInApp(id, target);
       return sendJson(res, 200, { opened: true, id });
     } catch (err) {
       return bad(res, (err as Error).message);
@@ -93,16 +110,17 @@ function resolveWorkspaceRoot(manager: RunManager, runId: string | null): string
   return getWorkspace()?.rootPath ?? null;
 }
 
-async function openRootInApp(id: string, root: string): Promise<void> {
+/** 用指定应用打开一个路径（工作区根本身，或工作区内的某个文件）。 */
+async function openPathInApp(id: string, target: string): Promise<void> {
   const app = resolveEntryById(id);
   if (!app) throw new Error('应用未安装或已卸载');
   try {
-    await launch(app, root);
+    await launch(app, target);
   } catch (err) {
     // 早期失败（典型：启动瞬间发现可执行文件没了）→ 单条目重解析后重试一次
     const fresh = reresolveEntry(id);
     if (!fresh) throw err instanceof Error ? err : new Error(String(err));
-    await launch(fresh, root);
+    await launch(fresh, target);
   }
 }
 

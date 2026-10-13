@@ -90,6 +90,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'os-sandbox', file: 'tests/os-sandbox.test.ts' },
   { name: 'workspace', file: 'tests/workspace.test.ts' },
   { name: 'preview-api', file: 'tests/preview-api.test.ts' },
+  { name: 'open-in-app', file: 'tests/open-in-app.test.ts' },
   { name: 'context', file: 'tests/context.test.ts' },
   { name: 'context-budget', file: 'tests/context-budget.test.ts' },
   { name: 'context-compaction', file: 'tests/context-compaction.test.ts' },

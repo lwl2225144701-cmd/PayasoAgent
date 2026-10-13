@@ -461,6 +461,25 @@ export const VIEWERS: ViewerSpec[] = [
   小 docx 0.5s 正常。回归：`tests/preview-api.test.ts` 新增"超旧上限的大文件也返 200"用例，
   `tests/run-all.ts` 117 套件全绿 + web build 通过。
 
+### M4 补丁 8：文件预览操作栏（路径 + 刷新 + 在应用中打开）
+
+真机参照 DSH 的文件预览形态，在文件视图顶部加一条窄栏：
+
+- **`web/src/preview/FileActionBar.tsx`**（+ 私有 CSS）：左侧等宽字体显示**工作区相对路径**
+  （宿主绝对路径不出前端，与 /preview 的安全立场一致；要定位到机器上的位置用右侧动作），
+  右侧两个动作 —— **刷新**（`manualReload` 令牌并入 viewer key → 重挂载重取）与
+  **"在应用中打开"分段胶囊**（默认应用图标 | ⌄，默认应用 = localStorage 记忆，否则列表首个）。
+- **后端 `POST /open-in-app/open` 扩可选 `path`**：给出即打开工作区内的**该文件**（此前只能开
+  工作区根，ShellBar 入口胶囊的语义不变）。路径校验复用 preview 域的 `resolveChecked`
+  （从 preview-service 导出，**单一实现**）——`..` 穿越 / symlink 逃逸在应用查找之前就拒。
+- **菜单抽成共享组件 `OpenInAppMenu.tsx`**：Launcher 与操作栏共用（装机列表 / 真图标 /
+  默认应用记忆 / 单条目重解析都在原有 controller 与 Host，零重复）；`useClickOutside`
+  增加 `ignoreRef` 参数——触发按钮不再被"点外部"抢先关掉，toggle 行为修正。
+- 新增 `tests/open-in-app.test.ts`（6 条：apps 列表、缺 id、开工作区根、合法 path 到达应用
+  阶段、`..` 拒、symlink 逃逸拒；用不存在的 app id 收尾，**不真启动任何应用**）。
+- 真机验证：9MB docx 上三件套齐备；刷新触发重新请求；点默认应用（访达）→ 200
+  `{"opened":true,"id":"finder"}` 且 Finder 真起来；菜单列访达（默认）/Cursor/IntelliJ IDEA 带真图标。
+
 ### 待做
 
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。

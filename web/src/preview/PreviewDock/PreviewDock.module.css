@@ -56,6 +56,14 @@
 }
 
 /* 非激活的文件浏览面板：保持挂载（各自记住浏览位置），仅隐藏 */
+/* 文件视图：操作条（固定高）+ viewer（占满剩余，可内滚） */
+.fileView {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .browserPane {
   flex: 1;
   min-height: 0;

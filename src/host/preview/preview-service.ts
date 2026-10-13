@@ -152,7 +152,12 @@ function isTraversal(p: string): boolean {
  * 双重校验：resolveWorkspacePath（字符串级）+ assertInsideRoot（realpath/symlink 级），
  * 与 run 文件端点（readFileChecked）同一套链。
  */
-function resolveChecked(root: string, rel: string): string {
+/**
+ * 工作区内路径的安全解析（normalize + resolve + assertInsideRoot）。
+ * 导出给 open-in-app 复用：预览面板的"在应用中打开"要把相对路径落到
+ * 绝对路径上，越界判定必须与 /preview 读文件完全一致（单一实现）。
+ */
+export function resolveChecked(root: string, rel: string): string {
   if (rel.length === 0) return root;
   if (isTraversal(rel)) throw new PreviewError('invalid_path');
   let abs: string;

@@ -26,6 +26,7 @@ import {
   initialDockTabs,
   openFilesTab,
 } from '../dock-tabs';
+import FileActionBar from '../FileActionBar';
 import FileTree from '../FileTree';
 import type { PreviewTabs } from '../hooks/usePreviewTabs';
 import { FallbackViewer, FileIconFor, fileIconName, resolveViewer } from '../registry';
@@ -54,6 +55,8 @@ export interface PreviewDockProps {
   onRequestWorkspace?: () => void;
   /** 当前会话 Run：面板按它的工作区取文件（会话级浏览；空 = Host 当前工作区）。 */
   runId?: string | null;
+  /** 宿主 toast（"在应用中打开"的成功/失败文案；缺省则不提示）。 */
+  onToast?: (message: string) => void;
 }
 
 export default function PreviewDock({
@@ -61,6 +64,7 @@ export default function PreviewDock({
   onClose,
   onRequestWorkspace,
   runId,
+  onToast,
 }: PreviewDockProps) {
   const { t } = useI18n();
   const { tabs, activePath, open, close, setActive } = tabsApi;
@@ -70,6 +74,8 @@ export default function PreviewDock({
   const [dockTabs, setDockTabs] = useState<DockTabs>(initialDockTabs);
   // 面板当前视图：首页卡片 / 某个停靠标签 / 某个文件标签。
   const [activeKind, setActiveKind] = useState<'home' | 'browser' | 'file'>('home');
+  // 手动重载令牌：操作栏"刷新"按下即 +1，viewer 的 key 带上它 → 重挂载重取
+  const [manualReload, setManualReload] = useState(0);
   // 全屏：面板铺满整个窗口（窄屏媒体查询本来就是全屏，这里给宽屏手动开关）
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -376,14 +382,25 @@ export default function PreviewDock({
             ))}
           </div>
         ) : activeKind === 'file' && activeTab ? (
-          <Suspense fallback={<div className={styles.loading}>{t('preview.viewer.loading')}</div>}>
-            <ViewerHost
-              key={`${activeTab.path}@${reloadNonce[activeTab.path] ?? 0}`}
+          <div className={styles.fileView}>
+            {/* 操作条：路径（工作区相对）+ 刷新 + 在应用中打开（对齐 DSH 文件预览形态） */}
+            <FileActionBar
               path={activeTab.path}
-              name={activeTab.name}
               runId={runId}
+              onRefresh={() => setManualReload((n) => n + 1)}
+              onToast={onToast ?? (() => undefined)}
             />
-          </Suspense>
+            <Suspense
+              fallback={<div className={styles.loading}>{t('preview.viewer.loading')}</div>}
+            >
+              <ViewerHost
+                key={`${activeTab.path}@${reloadNonce[activeTab.path] ?? 0}@${manualReload}`}
+                path={activeTab.path}
+                name={activeTab.name}
+                runId={runId}
+              />
+            </Suspense>
+          </div>
         ) : (
           dockTabs.tabs
             .filter((tab) => tab.kind === 'browser')

@@ -1,0 +1,72 @@
+/* OpenInAppMenu：open-in-app 应用下拉（Launcher / 文件操作栏共用）。
+   样式自 Launcher.module.css 原样搬来（视觉不变，只是换了归属）。 */
+.menu {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  min-width: 236px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: var(--bg-secondary);
+}
+
+.menuItemActive {
+  background: color-mix(in srgb, var(--accent-blue-bg) 55%, transparent);
+}
+
+/* app 图标（Host 从 .app 提取的 PNG）与回退字形芯片 */
+.appIcon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--border-color) 55%, transparent);
+  color: var(--text-secondary);
+}
+
+.menuHint {
+  padding: 8px 10px;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+}
+
+.menuLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

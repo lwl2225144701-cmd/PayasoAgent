@@ -464,3 +464,14 @@ export function SheetIcon({ size, ...p }: IconProps) {
     p,
   );
 }
+
+export function RefreshIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <path d="M20.5 12a8.5 8.5 0 1 1-2.49-6.01" />
+      <path d="M20.5 4.5v4.2h-4.2" />
+    </>,
+    p,
+  );
+}

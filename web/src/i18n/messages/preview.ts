@@ -24,6 +24,10 @@ export const previewMessages = {
   'preview.dock.filesTab': { 'zh-CN': '文件', 'en-US': 'Files' },
   'preview.dock.filesTabN': { 'zh-CN': '文件 {n}', 'en-US': 'Files {n}' },
   'preview.dock.newTab': { 'zh-CN': '新建标签', 'en-US': 'New tab' },
+  // 文件预览视图顶部的操作条（路径 + 刷新 + 在应用中打开）
+  'preview.fileBar.path': { 'zh-CN': '文件路径', 'en-US': 'File path' },
+  'preview.fileBar.openIn': { 'zh-CN': '在应用中打开', 'en-US': 'Open in app' },
+  'preview.fileBar.openWith': { 'zh-CN': '用 {app} 打开', 'en-US': 'Open with {app}' },
   'preview.launcher.menu': { 'zh-CN': '预览菜单', 'en-US': 'Preview menu' },
   'preview.launcher.opened': { 'zh-CN': '已在外部工具中打开', 'en-US': 'Opened in external tool' },
   'preview.launcher.openDefault': {

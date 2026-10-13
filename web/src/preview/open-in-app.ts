@@ -31,15 +31,32 @@ export function openInAppIconUrl(id: string): string {
   return `/open-in-app/icon/${encodeURIComponent(id)}`;
 }
 
+export interface OpenInAppTarget {
+  /** 要打开的目标：工作区相对路径（缺省 = 工作区根本身）。 */
+  path?: string | null;
+  /** 会话级作用域 Run（历史会话也能开它自己工作区里的文件）。 */
+  runId?: string | null;
+}
+
+/** 打开目标：path 给出时开工作区内的某个文件，否则开工作区根。 */
 export function openInApp(
   id: string,
-  runId?: string | null,
+  target: OpenInAppTarget = {},
 ): Promise<{ opened: boolean; id: string }> {
   return jsonFetch('/open-in-app/open', {
     method: 'POST',
-    body: JSON.stringify({ id, ...(runId ? { runId } : {}) }),
+    body: JSON.stringify({
+      id,
+      ...(target.path ? { path: target.path } : {}),
+      ...(target.runId ? { runId: target.runId } : {}),
+    }),
     cache: 'no-store',
   });
+}
+
+/** 默认应用：localStorage 记忆优先，否则列表第一个（与 macOS「访达（默认）」同语义）。 */
+export function defaultAppId(apps: readonly OpenInApp[]): string | null {
+  return getSelectedAppId() ?? apps[0]?.id ?? null;
 }
 
 export function getSelectedAppId(): string | null {
