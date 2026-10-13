@@ -9,12 +9,12 @@ export const MAX_OFFICE_BYTES = 8 * 1024 * 1024; // docx / pptx / xlsx / doc / p
 export const MAX_PDF_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_BODY_BYTES = 24 * 1024 * 1024;
 export const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const TEXT_EXTENSIONS = new Set(
+export const TEXT_EXTENSIONS = new Set(
   'txt md markdown json jsonc yaml yml toml csv tsv ts tsx js jsx mjs cjs py pyi html htm css scss less sql sh bash zsh xml ini conf cfg log c h cpp hpp rs go java kt swift rb php vue svelte graphql proto'.split(
     ' ',
   ),
 );
-const TEXT_NAMES = new Set([
+export const TEXT_NAMES = new Set([
   'dockerfile',
   'makefile',
   'license',

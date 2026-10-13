@@ -1,20 +1,14 @@
 // Launcher：ShellBar 上的预览入口 —— 分段胶囊（默认 app 图标 | ⌄）+ 侧栏开关。
 // 图标段：用默认 app 打开工作区（Host 端点，controller 见 open-in-app.ts）；
-// ⌄ 段：应用菜单（OpenInAppMenu：Host 探测的已装列表，真图标由 /open-in-app/icon/<id> 提供）；
+// ⌄ 段：应用菜单（OpenInAppMenu，Host 探测的已装列表，真图标由 /open-in-app/icon/<id> 提供）；
 // 侧栏 glyph：开/关右侧预览面板（与 ⌘P 同一动作）。
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { ChevronDownIcon, FileIcon, PanelRightIcon } from '../components/icons';
 import { useI18n } from '../i18n';
+import { useOpenInApps } from './hooks/useOpenInApps';
 import styles from './Launcher.module.css';
 import OpenInAppMenu from './OpenInAppMenu';
-import {
-  defaultAppId,
-  invalidateOpenInApps,
-  listOpenInApps,
-  type OpenInApp,
-  openInApp,
-  openInAppIconUrl,
-} from './open-in-app';
+import { defaultAppId, openInApp, openInAppIconUrl } from './open-in-app';
 
 interface PreviewLauncherProps {
   /** 面板当前是否打开（侧栏开关的高亮依赖它）。 */
@@ -31,22 +25,8 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
   const { t } = useI18n();
   const pillRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [apps, setApps] = useState<OpenInApp[] | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  // 图标 404（非 macOS / 提取失败）→ 回退字形芯片
-  const [brokenIcons, setBrokenIcons] = useState<ReadonlySet<string>>(new Set());
-
-  // 页载读一次（controller 约定）：胶囊要显示"当前选中应用"的图标
-  useEffect(() => {
-    if (apps === null && !loadFailed) {
-      listOpenInApps()
-        .then(setApps)
-        .catch(() => {
-          invalidateOpenInApps();
-          setLoadFailed(true);
-        });
-    }
-  }, [apps, loadFailed]);
+  // 工作区根（文件夹）语义：列表 = 能打开文件夹的应用
+  const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps();
 
   // 当前选中应用：localStorage 记忆优先，否则默认列表第一个（与 macOS「访达（默认）」同语义）
   const selectedApp =
@@ -86,9 +66,7 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
               className={styles.pillIcon}
               src={pillIcon}
               alt=""
-              onError={() =>
-                selectedApp && setBrokenIcons((prev) => new Set(prev).add(selectedApp.id))
-              }
+              onError={() => selectedApp && markIconBroken(selectedApp.id)}
             />
           ) : (
             <FileIcon size={14} />
@@ -122,6 +100,8 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         anchorRef={pillRef}
+        apps={apps}
+        loadFailed={loadFailed}
         runId={runId}
         onToast={onToast}
       />

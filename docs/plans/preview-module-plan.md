@@ -480,6 +480,34 @@ export const VIEWERS: ViewerSpec[] = [
 - 真机验证：9MB docx 上三件套齐备；刷新触发重新请求；点默认应用（访达）→ 200
   `{"opened":true,"id":"finder"}` 且 Finder 真起来；菜单列访达（默认）/Cursor/IntelliJ IDEA 带真图标。
 
+### M4 补丁 9：open-in-app 按文档后缀过滤可用应用
+
+真机反馈：PDF 的"在应用中打开"菜单列出 Cursor / IntelliJ IDEA——代码编辑器打不开 PDF，
+列表没有信息量。要求"根据文档后缀自动识别宿主机有哪些应用可以打开预览文件"。
+
+- **能力声明进 catalog**：`AppCatalogEntry` 新增 `opens: OpenableKind[]`
+  （`folder/pdf/image/word/sheet/slides/text/any`；`any` = 访达这种不挑的，
+  `folder` = 终端/IDE 只对文件夹有意义）。原 16 个条目全部补齐声明。
+- **补全文档类应用**（此前清单只有编辑器/IDE/终端 + 访达，PDF 只能挑出访达）：
+  Safari / Chrome / Firefox / Edge（pdf+image+text）、**预览**（pdf+image）、
+  文本编辑（text）、Microsoft Word/Excel/PowerPoint（各自 office 类）、
+  WPS Office（word+sheet+slides 三态）。装机与否仍由 resolver 逐条证明。
+- **纯模块 `src/host/open-in-app/openable.ts`**：`openableKindForPath`（后缀 → 类别；
+  文本/代码类后缀表与无扩展名特知名称**复用 attachment-policy 导出的
+  TEXT_EXTENSIONS/TEXT_NAMES**，不复制第二份）+ `filterAppsForTarget`（文件夹目标取
+  folder/any，文件目标取该类别/any）。未识别后缀（.zip）只剩访达。
+- **端点过滤**：`GET /open-in-app/apps?path=<rel>` 按目标返回（缺 path = 工作区根的
+  文件夹语义，ShellBar 入口胶囊不受影响）；响应带 `opens` 供契约断言。
+- **前端按目标缓存**：`listOpenInApps(path)` 换目标即换列表；状态抽成
+  `hooks/useOpenInApps.ts`（Launcher 与操作栏共用，含图标 404 回退）；
+  `OpenInAppMenu` 改为纯展示（apps/loadFailed 由父级传入）。
+  默认应用在**过滤后的列表**里选（localStorage 记忆不在列表里则让位给列表首个）。
+- 测试扩到 10 条：类别判定（含大小写/无扩展名/未识别）、过滤矩阵
+  （文件夹/PDF/docx/代码/zip）、端点按 path 过滤（逐条断言 opens 含目标类别或 any）。
+- 真机验证（本机）：`pdf → [访达, Safari, Chrome, 预览]`、`docx → [访达, WPS Office]`、
+  `ts → [访达, Cursor, IntelliJ IDEA, Safari, Chrome, 文本编辑]`、`zip → [访达]`、
+  文件夹 → [访达, Cursor, IntelliJ IDEA]；docx 菜单 UI 实测只剩访达 + WPS Office。
+
 ### 待做
 
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。

@@ -18,11 +18,28 @@ export type LocateSpec =
   | { kind: 'win-registry'; key: string }
   | { kind: 'desktop-entry'; names: string[] };
 
+/**
+ * 应用可打开的目标类别（"这个后缀能用哪些应用打开"的应用侧事实）。
+ * 'any' = 不挑（访达：任何文件/文件夹都能定位并打开）；
+ * 'folder' = 只对文件夹有意义（终端；IDE 也能把文件夹当项目打开）。
+ */
+export type OpenableKind =
+  | 'folder'
+  | 'pdf'
+  | 'image'
+  | 'word'
+  | 'sheet'
+  | 'slides'
+  | 'text'
+  | 'any';
+
 export interface AppCatalogEntry {
   /** 稳定 id（URL 与 localStorage 选择用）。 */
   id: string;
   /** 显示名（原样渲染，不做 i18n——应用名是专有名词）。 */
   label: string;
+  /** 能打开的目标类别（端点按目标路径过滤列表用；见 openable.ts）。 */
+  opens: OpenableKind[];
   darwin?: LocateSpec;
   win32?: LocateSpec;
   linux?: LocateSpec;
@@ -30,22 +47,44 @@ export interface AppCatalogEntry {
 
 export const APP_CATALOG: readonly AppCatalogEntry[] = [
   // —— 系统默认 ——
-  { id: 'finder', label: '访达', darwin: { kind: 'app-bundle', names: ['Finder.app'] } },
+  {
+    id: 'finder',
+    label: '访达',
+    opens: ['any'],
+    darwin: { kind: 'app-bundle', names: ['Finder.app'] },
+  },
   {
     id: 'terminal',
     label: '终端',
+    opens: ['folder'],
     darwin: { kind: 'app-bundle', names: ['Terminal.app'] },
     win32: { kind: 'path', names: ['wt.exe', 'cmd.exe'] },
     linux: { kind: 'desktop-entry', names: ['org.gnome.Terminal.desktop', 'xterm.desktop'] },
   },
   // —— 终端 ——
-  { id: 'iterm2', label: 'iTerm2', darwin: { kind: 'app-bundle', names: ['iTerm.app'] } },
-  { id: 'warp', label: 'Warp', darwin: { kind: 'app-bundle', names: ['Warp.app'] } },
-  { id: 'ghostty', label: 'Ghostty', darwin: { kind: 'app-bundle', names: ['Ghostty.app'] } },
+  {
+    id: 'iterm2',
+    label: 'iTerm2',
+    opens: ['folder'],
+    darwin: { kind: 'app-bundle', names: ['iTerm.app'] },
+  },
+  {
+    id: 'warp',
+    label: 'Warp',
+    opens: ['folder'],
+    darwin: { kind: 'app-bundle', names: ['Warp.app'] },
+  },
+  {
+    id: 'ghostty',
+    label: 'Ghostty',
+    opens: ['folder'],
+    darwin: { kind: 'app-bundle', names: ['Ghostty.app'] },
+  },
   // —— 编辑器 / IDE ——
   {
     id: 'vscode',
     label: 'VS Code',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Visual Studio Code.app'] },
     win32: { kind: 'win-path', rel: 'AppData/Local/Programs/VS Code/Code.exe' },
     linux: { kind: 'desktop-entry', names: ['code.desktop'] },
@@ -53,6 +92,7 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
   {
     id: 'cursor',
     label: 'Cursor',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Cursor.app'] },
     win32: { kind: 'win-path', rel: 'AppData/Local/Programs/cursor/Cursor.exe' },
     linux: { kind: 'desktop-entry', names: ['cursor.desktop', 'cursor-url-handler.desktop'] },
@@ -60,18 +100,21 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
   {
     id: 'zed',
     label: 'Zed',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Zed.app'] },
     linux: { kind: 'path', names: ['zed'] },
   },
   {
     id: 'sublime',
     label: 'Sublime Text',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Sublime Text.app'] },
     linux: { kind: 'desktop-entry', names: ['sublime_text.desktop'] },
   },
   {
     id: 'intellij-idea',
     label: 'IntelliJ IDEA',
+    opens: ['text', 'folder'],
     darwin: {
       kind: 'app-bundle',
       names: ['IntelliJ IDEA.app', 'IntelliJ IDEA Ultimate.app', 'IntelliJ IDEA CE.app'],
@@ -88,12 +131,14 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
   {
     id: 'webstorm',
     label: 'WebStorm',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['WebStorm.app'] },
     linux: { kind: 'desktop-entry', names: ['jetbrains-webstorm.desktop'] },
   },
   {
     id: 'pycharm',
     label: 'PyCharm',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['PyCharm.app', 'PyCharm Professional.app'] },
     linux: {
       kind: 'desktop-entry',
@@ -103,23 +148,94 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
   {
     id: 'goland',
     label: 'GoLand',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['GoLand.app'] },
     linux: { kind: 'desktop-entry', names: ['jetbrains-goland.desktop'] },
   },
   {
     id: 'datagrip',
     label: 'DataGrip',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['DataGrip.app'] },
     linux: { kind: 'desktop-entry', names: ['jetbrains-datagrip.desktop'] },
   },
   {
     id: 'xcode',
     label: 'Xcode',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Xcode.app'] },
   },
   {
     id: 'android-studio',
     label: 'Android Studio',
+    opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Android Studio.app'] },
+  },
+  // —— 浏览器（pdf/图片/文本都能渲染）——
+  {
+    id: 'safari',
+    label: 'Safari',
+    opens: ['pdf', 'image', 'text'],
+    darwin: { kind: 'app-bundle', names: ['Safari.app'] },
+  },
+  {
+    id: 'chrome',
+    label: 'Chrome',
+    opens: ['pdf', 'image', 'text'],
+    darwin: { kind: 'app-bundle', names: ['Google Chrome.app'] },
+    win32: { kind: 'win-path', rel: 'AppData/Local/Google/Chrome/Application/chrome.exe' },
+    linux: { kind: 'desktop-entry', names: ['google-chrome.desktop'] },
+  },
+  {
+    id: 'firefox',
+    label: 'Firefox',
+    opens: ['pdf', 'image', 'text'],
+    darwin: { kind: 'app-bundle', names: ['Firefox.app'] },
+    linux: { kind: 'desktop-entry', names: ['firefox.desktop'] },
+  },
+  {
+    id: 'edge',
+    label: 'Edge',
+    opens: ['pdf', 'image', 'text'],
+    darwin: { kind: 'app-bundle', names: ['Microsoft Edge.app'] },
+    win32: { kind: 'win-path', rel: 'AppData/Local/Microsoft/Edge/Application/msedge.exe' },
+  },
+  // —— 系统查看器 ——
+  {
+    id: 'preview',
+    label: '预览',
+    opens: ['pdf', 'image'],
+    darwin: { kind: 'app-bundle', names: ['Preview.app'] },
+  },
+  {
+    id: 'textedit',
+    label: '文本编辑',
+    opens: ['text'],
+    darwin: { kind: 'app-bundle', names: ['TextEdit.app'] },
+  },
+  // —— Office 三件套 + WPS（docx/xlsx/pptx 的主场）——
+  {
+    id: 'word',
+    label: 'Microsoft Word',
+    opens: ['word'],
+    darwin: { kind: 'app-bundle', names: ['Microsoft Word.app'] },
+  },
+  {
+    id: 'excel',
+    label: 'Microsoft Excel',
+    opens: ['sheet'],
+    darwin: { kind: 'app-bundle', names: ['Microsoft Excel.app'] },
+  },
+  {
+    id: 'powerpoint',
+    label: 'Microsoft PowerPoint',
+    opens: ['slides'],
+    darwin: { kind: 'app-bundle', names: ['Microsoft PowerPoint.app'] },
+  },
+  {
+    id: 'wps',
+    label: 'WPS Office',
+    opens: ['word', 'sheet', 'slides'],
+    darwin: { kind: 'app-bundle', names: ['WPS Office.app', 'wpsoffice.app'] },
   },
 ];

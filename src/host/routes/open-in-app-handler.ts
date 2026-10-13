@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { filterAppsForTarget } from '../open-in-app/openable.js';
 import {
   type ResolvedApp,
   reresolveEntry,
@@ -28,6 +29,10 @@ import {
   sendJson,
 } from './route-context.js';
 
+function queryParams(req: IncomingMessage): URLSearchParams {
+  return new URLSearchParams((req.url ?? '').split('?')[1] ?? '');
+}
+
 /** 早期失败观察窗：spawn 后等这么久，ENOENT/立即退出都算失败（可触发单条目重解析）。 */
 const EARLY_FAILURE_WINDOW_MS = 300;
 
@@ -42,9 +47,17 @@ export async function handleOpenInApp(
   checkOrigin(req, port);
   requireAuth(req);
 
-  // GET /open-in-app/apps —— 已装应用列表（只含证明过的）
+  // GET /open-in-app/apps[?path=<rel>] —— 已装应用列表（只含证明过的）。
+  // path 给出 = 目标是工作区内的某个文件：按后缀过滤出**能打开它**的应用
+  // （预览面板文件视图的"在应用中打开"）；缺省 = 工作区根（文件夹语义）。
   if (s.length === 2 && s[1] === 'apps' && method === 'GET') {
-    const apps = resolveInstalledApps().map((app) => ({ id: app.id, label: app.label }));
+    const rel = queryParams(req).get('path');
+    const target = rel !== null && rel.length > 0 ? rel : null;
+    const apps = filterAppsForTarget(resolveInstalledApps(), target).map((app) => ({
+      id: app.id,
+      label: app.label,
+      opens: app.opens,
+    }));
     return sendJson(res, 200, { apps });
   }
 

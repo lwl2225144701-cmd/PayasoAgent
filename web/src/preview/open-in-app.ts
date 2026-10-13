@@ -8,22 +8,30 @@ export interface OpenInApp {
 }
 
 const SELECTED_KEY = 'payaso.openInApp';
-let appsPromise: Promise<OpenInApp[]> | null = null;
+/** 按目标缓存（key = 路径；'' = 工作区根/文件夹语义）。 */
+const appsCache = new Map<string, Promise<OpenInApp[]>>();
 
-/** 应用列表（每页载只拉一次；失败后下次打开菜单会重试）。 */
-export function listOpenInApps(): Promise<OpenInApp[]> {
-  if (appsPromise === null) {
-    const loaded = jsonFetch<{ apps: OpenInApp[] }>('/open-in-app/apps', {
+/**
+ * 能打开目标的应用列表（Host 按目标过滤后返回）。
+ * path 缺省 = 工作区根本身（ShellBar 入口胶囊的语义）；给出 = 工作区内的某个文件
+ * （预览面板文件视图的"在应用中打开"——PDF 只会列出浏览器/预览/访达之流）。
+ */
+export function listOpenInApps(path?: string | null): Promise<OpenInApp[]> {
+  const key = path ?? '';
+  let loaded = appsCache.get(key);
+  if (loaded === undefined) {
+    const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    loaded = jsonFetch<{ apps: OpenInApp[] }>(`/open-in-app/apps${query}`, {
       cache: 'no-store',
     }).then((resp) => resp.apps);
-    appsPromise = loaded;
+    appsCache.set(key, loaded);
   }
-  return appsPromise;
+  return loaded;
 }
 
-/** 失败后重置缓存（下次打开菜单重试）。 */
+/** 失败后清缓存（下次打开重试）。 */
 export function invalidateOpenInApps(): void {
-  appsPromise = null;
+  appsCache.clear();
 }
 
 /** 图标直链（macOS 由 Host 从 .app 提取 PNG；取不到 404，客户端回退字形芯片）。 */

@@ -7,11 +7,18 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { APP_CATALOG, type AppCatalogEntry, type LocateSpec } from './catalog.js';
+import {
+  APP_CATALOG,
+  type AppCatalogEntry,
+  type LocateSpec,
+  type OpenableKind,
+} from './catalog.js';
 
 export interface ResolvedApp {
   id: string;
   label: string;
+  /** 能打开的目标类别（catalog 声明，端点按目标过滤用）。 */
+  opens: OpenableKind[];
   /** darwin：解析出的 .app 绝对路径（`open -a <path>` 与图标提取用）。 */
   bundlePath?: string;
   /** 可执行定位（PATH / win-path）：直接 spawn 的绝对路径。 */
@@ -68,7 +75,8 @@ function probeSpec(entry: AppCatalogEntry, spec: LocateSpec): ResolvedApp | null
       for (const base of darwinAppDirs()) {
         for (const name of spec.names) {
           const bundle = path.join(base, name);
-          if (isDirectory(bundle)) return { id: entry.id, label: entry.label, bundlePath: bundle };
+          if (isDirectory(bundle))
+            return { id: entry.id, label: entry.label, opens: entry.opens, bundlePath: bundle };
         }
       }
       return null;
@@ -76,23 +84,27 @@ function probeSpec(entry: AppCatalogEntry, spec: LocateSpec): ResolvedApp | null
     case 'path': {
       for (const name of spec.names) {
         const exe = resolveOnPath(name);
-        if (exe) return { id: entry.id, label: entry.label, executablePath: exe };
+        if (exe)
+          return { id: entry.id, label: entry.label, opens: entry.opens, executablePath: exe };
       }
       return null;
     }
     case 'win-path': {
       const exe = path.join(os.homedir(), ...spec.rel.split('/'));
-      return isFile(exe) ? { id: entry.id, label: entry.label, executablePath: exe } : null;
+      return isFile(exe)
+        ? { id: entry.id, label: entry.label, opens: entry.opens, executablePath: exe }
+        : null;
     }
     case 'win-registry': {
       // reg query <key> 退出码 0 = 键存在（即安装过）
       const proc = spawnSync('reg', ['query', spec.key], { timeout: 5000 });
-      return proc.status === 0 ? { id: entry.id, label: entry.label } : null;
+      return proc.status === 0 ? { id: entry.id, label: entry.label, opens: entry.opens } : null;
     }
     case 'desktop-entry': {
       for (const base of linuxApplicationDirs()) {
         for (const name of spec.names) {
-          if (isFile(path.join(base, name))) return { id: entry.id, label: entry.label };
+          if (isFile(path.join(base, name)))
+            return { id: entry.id, label: entry.label, opens: entry.opens };
         }
       }
       return null;

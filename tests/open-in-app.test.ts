@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { filterAppsForTarget, openableKindForPath } from '../src/host/open-in-app/openable.js';
 import { createHostServer, RunManager } from '../src/host/server.js';
 import { setWorkspace } from '../src/host/workspace.js';
 
@@ -49,6 +50,58 @@ async function openApp(body: Record<string, unknown>): Promise<{ status: number;
   return { status: resp.status, json: (await resp.json()) as any };
 }
 
+// ---- 目标类别判定（纯函数）----
+
+test('openableKindForPath：pdf/图片/office/文本/未识别', () => {
+  assert.equal(openableKindForPath('a/b.pdf'), 'pdf');
+  assert.equal(openableKindForPath('a/b.PNG'), 'image', '后缀大小写不敏感');
+  assert.equal(openableKindForPath('a/b.docx'), 'word');
+  assert.equal(openableKindForPath('a/b.xlsx'), 'sheet');
+  assert.equal(openableKindForPath('a/b.csv'), 'sheet');
+  assert.equal(openableKindForPath('a/b.pptx'), 'slides');
+  assert.equal(openableKindForPath('a/b.ts'), 'text');
+  assert.equal(openableKindForPath('a/Makefile'), 'text', '无扩展名走文本表');
+  assert.equal(openableKindForPath('a/b.zip'), null, '未识别后缀 → null（只有 any 应用会列出）');
+});
+
+// ---- 按目标过滤（纯函数）----
+
+const APPS = [
+  { id: 'finder', label: '访达', opens: ['any' as const] },
+  { id: 'cursor', label: 'Cursor', opens: ['text' as const, 'folder' as const] },
+  { id: 'chrome', label: 'Chrome', opens: ['pdf' as const, 'image' as const, 'text' as const] },
+  { id: 'word', label: 'Word', opens: ['word' as const] },
+];
+
+test('filterAppsForTarget：文件夹目标 → 只要 folder/any（IDE 与访达）', () => {
+  assert.deepEqual(
+    filterAppsForTarget(APPS, null).map((a) => a.id),
+    ['finder', 'cursor'],
+  );
+});
+
+test('filterAppsForTarget：文件目标 → 只要该类别/any（PDF 不该出现 Cursor/Word）', () => {
+  assert.deepEqual(
+    filterAppsForTarget(APPS, 'docs/a.pdf').map((a) => a.id),
+    ['finder', 'chrome'],
+  );
+  assert.deepEqual(
+    filterAppsForTarget(APPS, 'docs/a.docx').map((a) => a.id),
+    ['finder', 'word'],
+  );
+  assert.deepEqual(
+    filterAppsForTarget(APPS, 'src/a.ts').map((a) => a.id),
+    ['finder', 'cursor', 'chrome'],
+  );
+  // 未识别后缀：只有 any（访达）
+  assert.deepEqual(
+    filterAppsForTarget(APPS, 'a.zip').map((a) => a.id),
+    ['finder'],
+  );
+});
+
+// ---- 端点：列表按目标过滤 ----
+
 test('GET /open-in-app/apps → 200 + apps 数组', async () => {
   const resp = await fetch(`${baseUrl}/open-in-app/apps`);
   assert.equal(resp.status, 200);
@@ -57,6 +110,39 @@ test('GET /open-in-app/apps → 200 + apps 数组', async () => {
   for (const app of body.apps) {
     assert.equal(typeof (app as { id: unknown }).id, 'string');
     assert.equal(typeof (app as { label: unknown }).label, 'string');
+  }
+});
+
+/** 拉取（可选按目标过滤的）应用列表。 */
+async function listApps(path?: string): Promise<{ apps: { id: string; opens: string[] }[] }> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+  const resp = await fetch(`${baseUrl}/open-in-app/apps${qs}`);
+  assert.equal(resp.status, 200);
+  return (await resp.json()) as { apps: { id: string; opens: string[] }[] };
+}
+
+test('apps 端点按目标过滤：PDF 只列 pdf/any，docx 只列 word/any，无 path 只列 folder/any', async () => {
+  const pdf = await listApps('docs/a.pdf');
+  for (const app of pdf.apps) {
+    assert.ok(
+      app.opens.includes('pdf') || app.opens.includes('any'),
+      `${app.id} 不该出现在 PDF 的列表里`,
+    );
+  }
+  const docx = await listApps('docs/a.docx');
+  for (const app of docx.apps) {
+    assert.ok(
+      app.opens.includes('word') || app.opens.includes('any'),
+      `${app.id} 不该出现在 docx 列表里`,
+    );
+  }
+  const folder = await listApps();
+  for (const app of folder.apps) {
+    assert.ok(app.opens.includes('folder') || app.opens.includes('any'), `${app.id} 打不开文件夹`);
+  }
+  const unknown = await listApps('a.zip');
+  for (const app of unknown.apps) {
+    assert.ok(app.opens.includes('any'), `${app.id} 不该出现在未识别后缀的列表里`);
   }
 });
 

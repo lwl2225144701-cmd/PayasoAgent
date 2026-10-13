@@ -5,19 +5,16 @@
 // 与 /preview 路由一致）；要定位到机器上的位置，用右侧"在应用中打开"。
 // 打开动作走 open-in-app：Host 装机探测 + 默认应用记忆 + 单条目重解析，
 // 平台逻辑全在 Host；菜单与 ShellBar 入口共用 OpenInAppMenu。
+// **列表按当前文件后缀过滤**（useOpenInApps(path) → Host 的 openable 判定）：
+// PDF 只会列出浏览器/预览/访达之流，不会拿 Cursor/IntelliJ 凑数。
 
-import { useEffect, useRef, useState } from 'react';
-import { useI18n } from '../i18n';
+import { useRef, useState } from 'react';
 import { ChevronDownIcon, FileIcon, RefreshIcon } from '../components/icons';
+import { useI18n } from '../i18n';
 import styles from './FileActionBar.module.css';
+import { useOpenInApps } from './hooks/useOpenInApps';
 import OpenInAppMenu from './OpenInAppMenu';
-import {
-  defaultAppId,
-  listOpenInApps,
-  type OpenInApp,
-  openInApp,
-  openInAppIconUrl,
-} from './open-in-app';
+import { defaultAppId, openInApp, openInAppIconUrl } from './open-in-app';
 
 export interface FileActionBarProps {
   /** 工作区相对路径（POSIX；即宿主上的相对位置）。 */
@@ -34,18 +31,8 @@ export default function FileActionBar({ path, runId, onRefresh, onToast }: FileA
   const { t } = useI18n();
   const pillRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [apps, setApps] = useState<OpenInApp[] | null>(null);
-  // 图标 404（非 macOS / 提取失败）→ 回退字形芯片
-  const [brokenIcons, setBrokenIcons] = useState<ReadonlySet<string>>(new Set());
-
-  // 与 Launcher 共用 controller 缓存（每页载只拉一次）；失败按空列表降级
-  useEffect(() => {
-    if (apps === null) {
-      listOpenInApps()
-        .then(setApps)
-        .catch(() => setApps([]));
-    }
-  }, [apps]);
+  // 按**当前文件**取能打开它的应用（换文件即换列表；Host 侧按后缀过滤）
+  const { apps, loadFailed, brokenIcons, markIconBroken } = useOpenInApps(path);
 
   const defaultApp =
     apps === null ? null : (apps.find((app) => app.id === defaultAppId(apps)) ?? null);
@@ -91,9 +78,7 @@ export default function FileActionBar({ path, runId, onRefresh, onToast }: FileA
               className={styles.appIcon}
               src={iconUrl}
               alt=""
-              onError={() =>
-                defaultApp && setBrokenIcons((prev) => new Set(prev).add(defaultApp.id))
-              }
+              onError={() => defaultApp && markIconBroken(defaultApp.id)}
             />
           ) : (
             <FileIcon size={14} />
@@ -115,6 +100,8 @@ export default function FileActionBar({ path, runId, onRefresh, onToast }: FileA
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         anchorRef={pillRef}
+        apps={apps}
+        loadFailed={loadFailed}
         path={path}
         runId={runId}
         onToast={onToast}

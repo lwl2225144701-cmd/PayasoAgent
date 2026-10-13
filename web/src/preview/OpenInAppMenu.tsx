@@ -1,27 +1,20 @@
 // OpenInAppMenu：open-in-app 的应用下拉菜单（Launcher 与文件预览操作栏共用）。
 //
-// 只负责"选哪个应用"：列表来自 Host 装机探测（controller 见 open-in-app.ts），
+// 只负责"选哪个应用"：列表由调用方按目标取好再传入（useOpenInApps → Host 过滤），
 // 真图标由 /open-in-app/icon/<id> 提供（404 回退字形芯片）；点击即 POST 打开，
 // 选择记 localStorage（默认应用）。平台逻辑全在 Host，这里零平台判断。
 //
 // 菜单 portal 到 portalRoot()：index.css 把 body 直接子元素 display:none，
 // 挂在组件树里会被误伤（与 Timeline 的 Modal 同因）。
 
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type RefObject, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileIcon } from '../components/icons';
 import { useI18n } from '../i18n';
 import { portalRoot } from '../portal-root';
 import styles from './OpenInAppMenu.module.css';
-import {
-  defaultAppId,
-  invalidateOpenInApps,
-  listOpenInApps,
-  type OpenInApp,
-  openInApp,
-  openInAppIconUrl,
-  setSelectedAppId,
-} from './open-in-app';
+import type { OpenInApp } from './open-in-app';
+import { defaultAppId, openInApp, openInAppIconUrl, setSelectedAppId } from './open-in-app';
 
 export interface OpenInAppMenuProps {
   /** 菜单是否展开（由触发按钮一侧持有状态）。 */
@@ -30,6 +23,10 @@ export interface OpenInAppMenuProps {
   onClose: () => void;
   /** 锚点（触发按钮）：菜单定位到它下方、右缘对齐；点在锚点上不算"外部"。 */
   anchorRef: RefObject<HTMLElement | null>;
+  /** 已按目标过滤的应用列表（null = 加载中；空数组 = 没有应用能打开这个目标）。 */
+  apps: OpenInApp[] | null;
+  /** 列表加载失败（端点不可达 / 旧 Host）。 */
+  loadFailed?: boolean;
   /** 打开目标：工作区相对路径（缺省 = 工作区根）。 */
   path?: string | null;
   /** 会话级作用域 Run（历史会话也能开它自己工作区里的文件）。 */
@@ -44,6 +41,8 @@ export default function OpenInAppMenu({
   open,
   onClose,
   anchorRef,
+  apps,
+  loadFailed = false,
   path,
   runId,
   onToast,
@@ -51,22 +50,8 @@ export default function OpenInAppMenu({
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const [apps, setApps] = useState<OpenInApp[] | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  // 图标 404（非 macOS / 提取失败）→ 回退字形芯片
+  // 图标 404（非 macOS / 提取失败）→ 该项回退字形芯片
   const [brokenIcons, setBrokenIcons] = useState<ReadonlySet<string>>(new Set());
-
-  // 页载读一次（controller 约定）；失败重置缓存，下次展开重试
-  useEffect(() => {
-    if (apps === null && !loadFailed) {
-      listOpenInApps()
-        .then(setApps)
-        .catch(() => {
-          invalidateOpenInApps();
-          setLoadFailed(true);
-        });
-    }
-  }, [apps, loadFailed]);
 
   // 定位：锚点下方 + 右缘对齐，视口内钳制。
   // useLayoutEffect：首帧前算完，不出现"先闪在左上角"。
@@ -93,6 +78,7 @@ export default function OpenInAppMenu({
       .catch((err: unknown) => onToast(err instanceof Error ? err.message : String(err)));
   };
 
+  // 默认应用：localStorage 记忆优先，否则过滤后列表的第一个
   const effectiveSelectedId = apps === null ? null : defaultAppId(apps);
 
   return createPortal(
@@ -100,12 +86,7 @@ export default function OpenInAppMenu({
       className={styles.menu}
       role="menu"
       ref={menuRef}
-      style={
-        pos
-          ? { top: pos.top, left: pos.left }
-          : // 定位未算完前先藏（useLayoutEffect 会在首帧前补上，正常不可见）
-            { visibility: 'hidden' }
-      }
+      style={pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden' }}
     >
       {apps === null && !loadFailed && (
         <div className={styles.menuHint}>{t('preview.viewer.loading')}</div>
@@ -114,20 +95,17 @@ export default function OpenInAppMenu({
       {apps !== null && apps.length === 0 && (
         <div className={styles.menuHint}>{t('preview.launcher.empty')}</div>
       )}
-      {apps?.map((app) => {
-        const iconBroken = brokenIcons.has(app.id);
-        return (
-          <button
-            key={app.id}
-            type="button"
-            role="menuitem"
-            className={`${styles.menuItem} ${app.id === effectiveSelectedId ? styles.menuItemActive : ''}`}
-            onClick={() => openWith(app.id)}
-          >
-            {iconBroken ? (
-              <span className={styles.chip}>
-                <FileIcon size={15} />
-              </span>
+      {apps?.map((app) => (
+        <button
+          key={app.id}
+          type="button"
+          role="menuitem"
+          className={`${styles.menuItem} ${app.id === effectiveSelectedId ? styles.menuItemActive : ''}`}
+          onClick={() => openWith(app.id)}
+        >
+          <span className={styles.chip}>
+            {brokenIcons.has(app.id) ? (
+              <FileIcon size={15} />
             ) : (
               <img
                 className={styles.appIcon}
@@ -136,13 +114,13 @@ export default function OpenInAppMenu({
                 onError={() => setBrokenIcons((prev) => new Set(prev).add(app.id))}
               />
             )}
-            <span className={styles.menuLabel}>
-              {app.label}
-              {app.id === effectiveSelectedId ? t('preview.launcher.defaultSuffix') : ''}
-            </span>
-          </button>
-        );
-      })}
+          </span>
+          <span className={styles.menuLabel}>
+            {app.label}
+            {app.id === effectiveSelectedId ? t('preview.launcher.defaultSuffix') : ''}
+          </span>
+        </button>
+      ))}
     </div>,
     portalRoot(),
   );
