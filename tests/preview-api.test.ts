@@ -1,14 +1,13 @@
 // 模块: Preview API 契约测试 — 真实 HTTP server 覆盖 /preview* 只读端点与错误码全集。
 // 用法: npx tsx tests/preview-api.test.ts（或随 npm run test:all 运行；无 LLM/网络）
 // 覆盖: 目录树（懒加载/忽略规则/dotfile/截断）、文件四类分发（text/image/pdf/office）、
-//   大小上限（text/image）、7 个错误码逐一触发、PreviewError.message===code 不变量、
-//   前后端错误码集合一致性、M1 只读（POST 404）、Origin 校验。
+//   6 个错误码逐一触发、PreviewError.message===code 不变量、前后端错误码集合一致性、
+//   M1 只读（POST 404）、Origin 校验。预览不做大小上限（大文件也尝试渲染）。
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MAX_IMAGE_BYTES, MAX_TEXT_BYTES } from '../src/attachment-policy.js';
 import { PREVIEW_ERROR_CODES, PreviewError } from '../src/host/preview/types.js';
 import { createHostServer, RunManager } from '../src/host/server.js';
 import { clearWorkspace, setWorkspace } from '../src/host/workspace.js';
@@ -37,11 +36,6 @@ fs.writeFileSync(path.join(wsRoot, 'data.pdf'), Buffer.from('%PDF-1.4 fake'));
 fs.writeFileSync(path.join(wsRoot, 'doc.docx'), Buffer.from('PK\x03\x04 fake docx'));
 fs.writeFileSync(path.join(wsRoot, 'sheet.xlsx'), Buffer.from('PK\x03\x04 fake xlsx'));
 fs.writeFileSync(path.join(wsRoot, 'archive.zip'), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00])); // 已知二进制（zip 魔数）
-fs.writeFileSync(path.join(wsRoot, 'big.txt'), 'x'.repeat(MAX_TEXT_BYTES + 1), 'utf8');
-fs.writeFileSync(
-  path.join(wsRoot, 'huge.png'),
-  Buffer.concat([PNG_BYTES, Buffer.alloc(MAX_IMAGE_BYTES + 1)]),
-);
 fs.writeFileSync(path.join(wsRoot, '.hidden.txt'), 'dotfile\n', 'utf8');
 fs.writeFileSync(path.join(wsRoot, 'sub', 'nested.txt'), 'nested\n', 'utf8');
 fs.writeFileSync(path.join(wsRoot, 'node_modules', 'pkg', 'junk.txt'), 'junk\n', 'utf8');
@@ -219,16 +213,20 @@ test('file 已知二进制：415 unsupported', async () => {
   assert.equal(jsonBody(body).error, 'unsupported');
 });
 
-test('file 大小上限：文本 2MB / 图片 8MB → 413 too_large 带 limit', async () => {
-  const text = await getPreview('file', { path: 'big.txt' });
-  assert.equal(text.status, 413);
-  const textBody = jsonBody(text.body);
-  assert.equal(textBody.error, 'too_large');
-  assert.equal(textBody.limit, MAX_TEXT_BYTES);
-
-  const image = await getPreview('file', { path: 'huge.png' });
-  assert.equal(image.status, 413);
-  assert.equal(jsonBody(image.body).limit, MAX_IMAGE_BYTES);
+test('file 无大小上限：超过旧附件上限的大文件也正常返回 200', async () => {
+  // 9MB docx（真实简历）：预览不做大小限制，原样吐出由前端解析渲染
+  const big = path.join(wsRoot, 'big.docx');
+  fs.writeFileSync(
+    big,
+    Buffer.concat([Buffer.from('PK\x03\x04 fake docx'), Buffer.alloc(9 * 1024 * 1024)]),
+  );
+  try {
+    const resp = await getPreview('file', { path: 'big.docx' });
+    assert.equal(resp.status, 200);
+    assert.match(resp.contentType ?? '', /wordprocessingml/);
+  } finally {
+    fs.unlinkSync(big);
+  }
 });
 
 test('file 路径错误：不存在 404 / 空路径 400 / 目录 400 / symlink 逃逸 403', async () => {
@@ -368,14 +366,13 @@ test('runId 作用域：路径穿越仍被拒（作用域不放松路径校验�
   }
 });
 
-test('错误码封闭集合：PREVIEW_ERROR_CODES 恰好 7 个且 message===code', () => {
+test('错误码封闭集合：PREVIEW_ERROR_CODES 恰好 6 个且 message===code', () => {
   assert.deepEqual(
     [...PREVIEW_ERROR_CODES],
     [
       'invalid_path',
       'outside_workspace',
       'not_found',
-      'too_large',
       'unsupported',
       'permission_denied',
       'no_workspace',
@@ -388,8 +385,8 @@ test('错误码封闭集合：PREVIEW_ERROR_CODES 恰好 7 个且 message===code
     assert.ok(err.status >= 400 && err.status <= 416, `${code} 的 HTTP 状态应落在 4xx`);
   }
   // detail 只携带机器可读字段
-  const tooLarge = new PreviewError('too_large', { limit: 1024 });
-  assert.equal(tooLarge.detail?.limit, 1024);
+  const withDetail = new PreviewError('invalid_path', { path: '/abs' });
+  assert.equal(withDetail.detail?.path, '/abs');
 });
 
 async function main(): Promise<void> {

@@ -4,18 +4,14 @@
 // - 本模块**不认识 HTTP**（无 req/res）；参数是纯数据，错误只抛 PreviewError；
 // - 安全一律委托 sandbox-manager（resolveWorkspacePath + assertInsideRoot），
 //   禁止在本模块内做 path.resolve 直算；
-// - 大小上限一律 import attachment-policy，禁止出现新的字节数常量；
+// - 不做大小上限（用户明确要求：大文件也要能预览）——读取为整文件缓冲交给
+//   前端解析，超大文件由浏览器/解析器自然失败，走 FallbackViewer 下载兜底；
 // - 忽略规则复用 tools/workspace-scan 的 DEFAULT_IGNORED_DIRS，不得复制第二份；
 // - 只读优先：M1 不含写端点（写回与 permission_denied 属 M5）。
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  MAX_IMAGE_BYTES,
-  MAX_OFFICE_BYTES,
-  MAX_PDF_BYTES,
-  MAX_TEXT_BYTES,
-} from '../../attachment-policy.js';
+
 import { assertInsideRoot, resolveWorkspacePath } from '../../sandbox/sandbox-manager.js';
 import { DEFAULT_IGNORED_DIRS } from '../../tools/workspace-scan.js';
 import { IMAGE_EXT_MIME } from '../routes/static-handler.js';
@@ -96,18 +92,17 @@ const KNOWN_BINARY_EXTS: ReadonlySet<string> = new Set([
 interface ContentCategory {
   kind: PreviewContentKind;
   mimeType?: string;
-  maxBytes?: number;
 }
 
-/** 扩展名 → 内容类别 + MIME + 大小上限。上限常量只来自 attachment-policy。 */
+/** 扩展名 → 内容类别 + MIME。预览不做大小上限（用户明确要求：大文件也要能看）。 */
 function categorize(ext: string): ContentCategory {
   const imageMime = IMAGE_EXT_MIME[ext];
-  if (imageMime) return { kind: 'image', mimeType: imageMime, maxBytes: MAX_IMAGE_BYTES };
-  if (ext === '.pdf') return { kind: 'pdf', mimeType: PDF_MIME, maxBytes: MAX_PDF_BYTES };
+  if (imageMime) return { kind: 'image', mimeType: imageMime };
+  if (ext === '.pdf') return { kind: 'pdf', mimeType: PDF_MIME };
   const officeMime = OFFICE_EXT_MIME[ext];
-  if (officeMime) return { kind: 'office', mimeType: officeMime, maxBytes: MAX_OFFICE_BYTES };
+  if (officeMime) return { kind: 'office', mimeType: officeMime };
   if (KNOWN_BINARY_EXTS.has(ext)) return { kind: 'unsupported' };
-  return { kind: 'text', mimeType: 'text/plain; charset=utf-8', maxBytes: MAX_TEXT_BYTES };
+  return { kind: 'text', mimeType: 'text/plain; charset=utf-8' };
 }
 
 /**
@@ -275,10 +270,8 @@ export function readFile(rel: string, scope?: PreviewScope): PreviewFileContent 
 
   const category = categorize(path.extname(norm).toLowerCase());
   if (category.kind === 'unsupported') throw new PreviewError('unsupported');
-  const limit = category.maxBytes ?? 0;
-  if (st.size > limit) {
-    throw new PreviewError('too_large', { limit, size: st.size });
-  }
+  // 不做大小上限：文件多大都尝试交给前端渲染（读取为整文件缓冲，
+  // 几十 MB 量级无压力；真正超大文件由浏览器/解析器自然失败，走下载兜底）。
 
   if (category.kind === 'text') {
     return { kind: 'text', text: fs.readFileSync(abs, 'utf8') };

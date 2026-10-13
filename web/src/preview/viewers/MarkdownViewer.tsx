@@ -25,7 +25,6 @@ export default function MarkdownViewer({ path, name, runId }: ViewerProps) {
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [failure, setFailure] = useState<{
     reason?: PreviewErrorCode;
-    detail?: { limit?: number };
   } | null>(null);
 
   useEffect(() => {
@@ -39,7 +38,7 @@ export default function MarkdownViewer({ path, name, runId }: ViewerProps) {
       .catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof PreviewApiError) {
-          setFailure({ reason: err.code, detail: err.detail });
+          setFailure({ reason: err.code });
         } else {
           setFailure({});
         }
@@ -50,9 +49,7 @@ export default function MarkdownViewer({ path, name, runId }: ViewerProps) {
   }, [path, runId]);
 
   if (failure) {
-    return (
-      <FallbackViewer path={path} name={name} reason={failure.reason} detail={failure.detail} />
-    );
+    return <FallbackViewer path={path} name={name} reason={failure.reason} />;
   }
   if (markdown === null) {
     return <div className={styles.loading}>{t('preview.viewer.loading')}</div>;

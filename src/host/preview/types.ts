@@ -16,7 +16,6 @@ export const PREVIEW_ERROR_CODES = [
   'invalid_path', // 400 空路径/含 ..//绝对路径/目录当文件读
   'outside_workspace', // 403 解析结果逃逸工作区根（含 symlink 逃逸、无权限读取）
   'not_found', // 404 路径不存在
-  'too_large', // 413 超分类型大小上限（detail 带 limit 数值）
   'unsupported', // 415 类型不在白名单（已知二进制等）
   'permission_denied', // 403 read-only 工作区的写回（M5 写端点启用）
   'no_workspace', // 409 未选择工作区
@@ -29,7 +28,6 @@ const CODE_STATUS: Record<PreviewErrorCode, number> = {
   invalid_path: 400,
   outside_workspace: 403,
   not_found: 404,
-  too_large: 413,
   unsupported: 415,
   permission_denied: 403,
   no_workspace: 409,
@@ -45,7 +43,7 @@ const CODE_STATUS: Record<PreviewErrorCode, number> = {
  *
  * 契约：
  * - `message === code`：日志与 HTTP 响应以 code 为唯一身份，禁止散文消息；
- * - `detail` 只携带机器可读补充字段（如 too_large 的 limit 字节数），
+ * - `detail` 只携带机器可读补充字段，
  *   禁止放给人看的句子（给人看的句子归前端 i18n）。
  */
 export class PreviewError extends Error {

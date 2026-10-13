@@ -443,6 +443,24 @@ export const VIEWERS: ViewerSpec[] = [
 - **顺带修正的两处**：① 占位高度不再硬编码 A4 宽高比，改为文档加载时逐页读真实 viewport（混合方向/非 A4 文档也不会错位）；② zoom 语义从"绝对缩放"改为"相对适配宽度"（100% = 铺满容器，窄面板里默认就能看全，放大出横向滚动条）——与常见 PDF 查看器一致。
 - **验证**：playwright（系统 Chrome，deviceScaleFactor=2）驱动真机 app 量化——修复前 `attr 1230×1740 / css 385×870`，修复后 `attr 774×1093 / css 387×547`，比例 0.708 全程一致，200% 下等比翻倍；5 页文档虚拟渲染、页码同步正常。回归测试 4 条（`computePageLayout`）守住"宽高同源、比例不变"。
 
+### M4 补丁 7：去掉预览大小上限（真机反馈）
+
+真机预览 9.4MB docx 被"文件超过 8.0 MB 上限"挡住。用户明确要求："这个限制去掉，不要加。"
+
+- **只动预览域，不动附件上传**：上限常量本就在 `src/attachment-policy.ts`（附件上传与预览共用），
+  上传侧的上限保留；预览侧 `preview-service.ts` 的 `readFile` 不再做大小校验，
+  `categorize` 的 `maxBytes` 字段与 4 个 `MAX_*_BYTES` import 一并移除。
+- **`too_large` 错误码整套摘除**（预览域不再产生它，留着即死代码）：后端
+  `PREVIEW_ERROR_CODES`/`CODE_STATUS`、前端镜像 `web/src/preview/types.ts`、
+  `api.ts` 的码集合与 `PreviewApiError.detail`、`FallbackViewer` 的 reason 分支、
+  i18n `preview.viewer.reason.too_large`；6 个 viewer 的 `detail: {limit}` 失败态管线同步清掉。
+  错误码集合 7 → 6（两侧测试断言同步）。
+- 代价（已在代码注释里写明）：host 整文件读入内存后吐给浏览器，几十 MB 无压力；
+  真正超大文件由浏览器/解析器自然失败，走 FallbackViewer 下载兜底——不再前置拦截。
+- 真机验证：9.4MB docx（含 35 张内嵌图）HTTP 200 全量返回、**1.5s** 渲染完成、35 图全部 inline；
+  小 docx 0.5s 正常。回归：`tests/preview-api.test.ts` 新增"超旧上限的大文件也返 200"用例，
+  `tests/run-all.ts` 117 套件全绿 + web build 通过。
+
 ### 待做
 
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。

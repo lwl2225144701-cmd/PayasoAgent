@@ -10,7 +10,6 @@ export const PREVIEW_ERROR_CODES = [
   'invalid_path',
   'outside_workspace',
   'not_found',
-  'too_large',
   'unsupported',
   'permission_denied',
   'no_workspace',

@@ -37,7 +37,6 @@ export default function SheetViewer({ path, name, runId }: ViewerProps) {
   const [activeSheet, setActiveSheet] = useState(0);
   const [failure, setFailure] = useState<{
     reason?: PreviewErrorCode;
-    detail?: { limit?: number };
   } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(600);
@@ -58,7 +57,7 @@ export default function SheetViewer({ path, name, runId }: ViewerProps) {
       .catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof PreviewApiError) {
-          setFailure({ reason: err.code, detail: err.detail });
+          setFailure({ reason: err.code });
         } else {
           setFailure({ reason: 'unsupported' });
         }
@@ -89,9 +88,7 @@ export default function SheetViewer({ path, name, runId }: ViewerProps) {
   );
 
   if (failure) {
-    return (
-      <FallbackViewer path={path} name={name} reason={failure.reason} detail={failure.detail} />
-    );
+    return <FallbackViewer path={path} name={name} reason={failure.reason} />;
   }
   if (!sheets) {
     return <div className={styles.loading}>{t('preview.viewer.loading')}</div>;

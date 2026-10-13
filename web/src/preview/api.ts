@@ -2,8 +2,8 @@
 //
 // 为什么不用通用 jsonFetch（web/src/api.ts）：它把错误体丢成纯文本
 // （`API 400: 原文`），前端无法按错误码分叉。这里保留解析后的 { error: code }
-// 并转成 PreviewApiError —— too_large 要展示 limit 数值、unsupported 要转
-// FallbackViewer、permission_denied 要禁写回按钮，全都以 code 为身份。
+// 并转成 PreviewApiError —— unsupported 要转 FallbackViewer、
+// permission_denied 要禁写回按钮，全都以 code 为身份。
 //
 // 只读优先：M1/M2 只有 GET；写回（M5）在此文件扩展。
 
@@ -14,18 +14,14 @@ const PREVIEW_ERROR_CODE_SET: ReadonlySet<string> = new Set([
   'invalid_path',
   'outside_workspace',
   'not_found',
-  'too_large',
   'unsupported',
   'permission_denied',
   'no_workspace',
 ]);
 
-/** 按码分叉的预览 API 异常。detail.limit 仅 too_large 携带（字节数）。 */
+/** 按码分叉的预览 API 异常（code 即身份，不携带 detail）。 */
 export class PreviewApiError extends Error {
-  constructor(
-    readonly code: PreviewErrorCode,
-    readonly detail?: { limit?: number },
-  ) {
+  constructor(readonly code: PreviewErrorCode) {
     super(code);
     this.name = 'PreviewApiError';
   }
@@ -51,10 +47,7 @@ async function parseError(resp: Response): Promise<Error> {
   }
   const code = (payload as { error?: unknown } | null)?.error;
   if (typeof code === 'string' && PREVIEW_ERROR_CODE_SET.has(code)) {
-    const detail = (payload as { limit?: unknown }).limit;
-    return new PreviewApiError(code as PreviewErrorCode, {
-      limit: typeof detail === 'number' ? detail : undefined,
-    });
+    return new PreviewApiError(code as PreviewErrorCode);
   }
   return new PreviewNetworkError(resp.status, `preview api ${resp.status}`);
 }

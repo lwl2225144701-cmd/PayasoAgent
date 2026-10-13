@@ -63,7 +63,6 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [failure, setFailure] = useState<{
     reason?: PreviewErrorCode;
-    detail?: { limit?: number };
   } | null>(null);
   const [loading, setLoading] = useState(true);
   // 滚动容器的可用宽度（扣除 padding）：zoom 的基准 = 适配这个宽度
@@ -106,7 +105,7 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
         if (cancelled) return;
         setLoading(false);
         if (err instanceof PreviewApiError) {
-          setFailure({ reason: err.code, detail: err.detail });
+          setFailure({ reason: err.code });
         } else {
           // pdfjs 的网络错误不经过我们的 fetch 封装：按 URL 再探一次拿到结构化错误码
           void probeError(path, runId, mountId).then((code) => setFailure({ reason: code }));
@@ -228,9 +227,7 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
   }, [numPages]);
 
   if (failure) {
-    return (
-      <FallbackViewer path={path} name={name} reason={failure.reason} detail={failure.detail} />
-    );
+    return <FallbackViewer path={path} name={name} reason={failure.reason} />;
   }
 
   const jumpTo = (pageNumber: number) => {

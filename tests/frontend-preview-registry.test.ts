@@ -274,7 +274,7 @@ function stubFetch(response: StubResponse | ((url: string) => StubResponse)): vo
   }) as unknown as typeof fetch;
 }
 
-test('fetchFileText：413 too_large → PreviewApiError 带 limit', async () => {
+test('fetchFileText：未知错误码 → PreviewNetworkError（不伪装成已知 code）', async () => {
   stubFetch({
     ok: false,
     status: 413,
@@ -282,11 +282,10 @@ test('fetchFileText：413 too_large → PreviewApiError 带 limit', async () => 
     json: async () => ({ error: 'too_large', limit: 2097152 }),
   });
   await assert.rejects(
-    () => fetchFileText('big.txt'),
+    () => fetchFileText('big.docx'),
     (err: unknown) => {
-      assert.ok(err instanceof PreviewApiError);
-      assert.equal(err.code, 'too_large');
-      assert.equal(err.detail?.limit, 2097152);
+      assert.ok(err instanceof PreviewNetworkError);
+      assert.equal(err.status, 413);
       return true;
     },
   );
@@ -351,14 +350,13 @@ test('previewFileUrl：路径逐段编码', () => {
   assert.equal(previewFileUrl('a b/c.png'), '/preview/file?path=a%20b/c.png');
 });
 
-test('错误码集合与后端一致（7 个）', () => {
+test('错误码集合与后端一致（6 个；预览无大小上限，too_large 已摘除）', () => {
   assert.deepEqual(
     [...PREVIEW_ERROR_CODES],
     [
       'invalid_path',
       'outside_workspace',
       'not_found',
-      'too_large',
       'unsupported',
       'permission_denied',
       'no_workspace',

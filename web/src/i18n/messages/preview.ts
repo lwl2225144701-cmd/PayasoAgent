@@ -82,10 +82,6 @@ export const previewMessages = {
     'zh-CN': '暂不支持预览该文件类型',
     'en-US': 'Preview is not supported for this file type',
   },
-  'preview.viewer.reason.too_large': {
-    'zh-CN': '文件超过 {limit} 上限',
-    'en-US': 'File exceeds the {limit} limit',
-  },
   'preview.viewer.reason.not_found': {
     'zh-CN': '文件不存在或已被删除',
     'en-US': 'File not found or deleted',
