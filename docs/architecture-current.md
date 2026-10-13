@@ -159,9 +159,11 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/host/preview/preview-service.ts`             | Preview 域业务逻辑（不认识 HTTP）：工作区目录树（懒加载/忽略规则/截断）、文件按类别读取（text/image/pdf/office）、stat；作用域 `PreviewScope`（缺省 = 当前工作区，显式 rootPath = 会话 Run 的工作区）；安全委托 sandbox-manager，大小上限取自 attachment-policy，忽略规则复用 tools/workspace-scan |
 | `src/host/routes/preview-handler.ts`              | Preview 域 HTTP 边界：`/preview/tree|file|stat|changes`（只读；changes 为 SSE 变更流）；`?runId=` 经 RunManager 解析该 Run 的工作区根；PreviewError → `{error:code}` 结构化响应，未预期错误冒泡 server.ts 顶层 catch |
 | `src/host/preview/changes.ts`                     | 工作区文件变更流：每根一个 `fs.watch`（recursive），400ms 去抖聚合成批次推给订阅者；SSE 与外部写入发现共用（Linux 无递归 → 降级为手动刷新） |
-| `src/host/open-in-app/catalog.ts`                 | 「在工具中打开」固定应用清单：35 项 × 各平台定位方式（app-bundle 候选名 / PATH 名 / win-path / 注册表 / desktop entry）；本文件不做 IO |
+| `src/host/open-in-app/catalog.ts`                 | 「在工具中打开」固定应用清单：26 项 × 各平台定位方式（app-bundle 候选名 / PATH 名 / win-path / 注册表 / desktop entry）+ 每项声明 `opens` 能力（folder/pdf/image/word/sheet/slides/text/any），驱动**目录目标**过滤；本文件不做 IO |
 | `src/host/open-in-app/resolver.ts`                | 装机探测：逐条证明清单应用已装（扫 /Applications、PATH X_OK、win-path、reg.exe、XDG），每进程缓存一次即权威；open 撞 ENOENT → 单条目重解析 |
-| `src/host/routes/open-in-app-handler.ts`          | 三路由：`GET /open-in-app/apps`（已装列表）、`GET /open-in-app/icon/<id>`（macOS plutil+sips 从 .app 提 PNG）、`POST /open-in-app/open`（detached + scrubbed 环境 + 早期失败观察窗）；工作区路径 Host 自解析，前端只传 id |
+| `src/host/open-in-app/openable.ts`                | 纯函数：`openableKindForPath`（后缀 → 能力类别，文本/无扩展名表复用 attachment-policy）+ `filterAppsForTarget`（文件夹目标取 folder/any，文件目标取该类别/any）；**非 macOS 或系统查询失败时的回落实现** |
+| `src/host/open-in-app/os-assoc.ts`                | **文件目标的 macOS 适配器**：内嵌固定 JXA 脚本经 `osascript` 跑 NSWorkspace（`URLsForApplicationsToOpenURL` 列表 + `URLForApplicationToOpenURL` 默认项），bundle icns + ImageIO 出 32px 图标（~10ms/1.5KB），同 bundleId+显示名去重；路径只经 argv。非 darwin 返回 `null` → 回落 openable.ts。**Windows / Linux 适配器未实现**（见 `preview-module-plan.md`「平台缺口」） |
+| `src/host/routes/open-in-app-handler.ts`          | 三路由：`GET /open-in-app/apps`（**文件目标问系统** `source:'os'` / **目录目标走白名单** `source:'catalog'`）、`GET /open-in-app/icon/<id>`（macOS plutil+sips 从 .app 提 PNG，**仅白名单 id**）、`POST /open-in-app/open`（文件目标**打开前用最新系统列表复验 id**；`action:'reveal'`=显示文件位置；detached + scrubbed 环境 + 早期失败观察窗）；工作区路径 Host 自解析，前端只传 id |
 | `src/host/persistence/store.ts`                   | 薄 RunStore 接口（Session/Run CRUD + Event append/list）                                                                                                                            |
 | `src/host/persistence/sqlite-store.ts`            | 原生 `node:sqlite` 实现；默认 `REPO_ROOT/.data/payaso.db`（`PAYASO_DB_PATH` 可覆盖，失败回退 `:memory:`）                                                                                       |
 | `src/host/persistence/settings-store.ts`          | Provider metadata（settings 表 key='app' JSON blob，**无 raw apiKey**）+ 默认项 + .env 一次性导入 + legacy 凭证迁移（先写 SecretStore 后剥 SQLite）                                                   |
@@ -195,7 +197,9 @@ web/src/
 │   ├── registry.tsx        viewer 注册表：扩展名 → 懒加载 viewer + 图标（新增类型只加一行）
 │   ├── api.ts              /preview/* 客户端 + PreviewApiError（按错误码分叉）
 │   ├── Launcher.tsx        ShellBar 预览入口胶囊（图标开关 + ⌄ 下拉：open-in-app 列表）
-│   ├── open-in-app.ts      open-in-app 客户端 controller（页载读一次 + localStorage 选择 + POST）
+│   ├── open-in-app.ts      open-in-app 客户端 controller（按「runId+路径」缓存带 10s TTL + localStorage 选择 + POST；effectiveDefaultId / openInAppItemIconUrl 纯函数）
+│   ├── FileActionBar.tsx   文件视图顶部操作栏（相对路径 + 刷新 + "在应用中打开"胶囊：默认应用真图标 | ⌄）
+│   ├── OpenInAppMenu.tsx   应用下拉菜单（Launcher 与操作栏共用；渲染系统 dataURL 图标 + 系统默认标记 + 文件目标末尾"显示文件位置"）
 │   ├── dock-home.ts        面板首页登记表（"开始"视图的入口卡片；当前只有"工作区文件"一张）
 │   ├── dock-tabs.ts         停靠标签状态机（"开始"/"文件"两类；三步交互序列：空态→卡片转文件→＋新建开始）
 │   ├── PreviewDock/        右侧停靠面板：标签条（停靠标签 + 文件标签 + ＋）+ 首页卡片 + viewer
@@ -203,7 +207,7 @@ web/src/
 │   ├── FileTree/           面包屑 + 单层懒加载目录树（忽略规则开关/过滤）
 │   ├── viewers/            Markdown / Text / Image / PDF / Word / Sheet / Fallback
 │   │                       （PDF=pdfjs-dist、Word=mammoth+DOMPurify、Sheet=xlsx，均懒加载独立 chunk）
-│   └── hooks/              usePreviewTabs / useFileTree
+│   └── hooks/              usePreviewTabs / useFileTree / useOpenInApps
 └── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片/压缩提示)
                             / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal
                             （Timeline 工具行的"在预览面板中打开"与附件预览入口见 preview/）
@@ -369,9 +373,9 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | GET      | `/preview/file?path=&runId=`                                | Preview 域：读工作区文件，按扩展名分发（text utf8 / image / pdf / office 二进制；已知二进制 415；超分类型上限 413 带 limit） |
 | GET      | `/preview/stat?path=&runId=`                                | Preview 域：单文件元数据（kind/size/mtimeMs）                                                  |
 | GET      | `/preview/changes?runId=`                                   | Preview 域：SSE 文件变更流（fs.watch recursive，400ms 去抖批次）；无工作区 409 no_workspace      |
-| GET      | `/open-in-app/apps`                                         | Open-in-app：Host 探测到的已装应用列表（id + label）                                            |
-| GET      | `/open-in-app/icon/<id>`                                    | Open-in-app：应用图标 PNG（macOS plutil+sips 从 .app 提取；失败 404，客户端回退字形）             |
-| POST     | `/open-in-app/open`                                         | Open-in-app：detached 启动外部工具打开工作区（body: id + runId?；scrubbed 环境 + 早期失败观察窗） |
+| GET      | `/open-in-app/apps?path=&runId=`                            | Open-in-app：能打开目标的应用列表。**path 给出 = 文件目标：每次问操作系统**（macOS LaunchServices；`source:'os'`，含 icon dataURL 与 isDefault）；**缺省 = 目录目标：白名单按 `opens` 过滤**（`source:'catalog'`）。系统查询不可用（非 macOS）自动回落白名单 |
+| GET      | `/open-in-app/icon/<id>`                                    | Open-in-app：应用图标 PNG（macOS plutil+sips 从 .app 提取，**仅白名单 id**；系统来源图标已随 apps 响应以 dataURL 返回；失败 404，客户端回退字形） |
+| POST     | `/open-in-app/open`                                         | Open-in-app：detached 启动外部工具打开目标（body: id + path? + runId? + action?）。文件目标**打开前用最新系统列表复验 id**（伪造/陈旧 → 400）；`action:'reveal'` = 显示文件位置；scrubbed 环境 + 早期失败观察窗 |
 | GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id`      | 模型提供方 CRUD；**读 API 只回 hasApiKey/mask，key 绝不出 Host**（写入路径：key → SecretStore）         |
 | GET/POST | `/settings`，`/settings/default`                             | 默认模型查询 / 设置（providerId + modelId 成对校验）                                              |
 | GET      | `/settings/pi-ai/providers`                                 | 内置 Provider 公开目录（名称/地址/模型能力，**无任何凭证**）。叠加启动后台探测写入的远端目录缓存（`builtinRemoteCatalog`），供应商上新无需等 pi-ai 升级或用户点刷新；探测失败标 `catalogStale` 并沿用上次成功结果 |

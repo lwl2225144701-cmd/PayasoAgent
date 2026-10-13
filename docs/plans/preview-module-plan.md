@@ -1,6 +1,6 @@
 # 文件预览模块 · 技术设计（Preview Module）
 
-> 状态：**M1–M4 已落地（待提交），M5 未开始** —— 实施记录与手动验收清单见文末 §9。前置调研：[`preview-gui-调研报告.md`](preview-gui-调研报告.md)（范围与选型结论，本文不再重复论证）。
+> 状态：**M1–M4 已落地（已推送），M5 未开始**；open-in-app 的 **Windows / Linux 适配器未实现**（回落白名单，见文末「平台缺口」）。实施记录与手动验收清单见文末 §9。前置调研：[`preview-gui-调研报告.md`](preview-gui-调研报告.md)（范围与选型结论，本文不再重复论证）。
 > 范围：**独立预览模块** —— 后端 `src/host/preview/` + 前端 `web/src/preview/`。终端、浏览器预览不做。
 > 文档类型：Word（.docx）/ PDF / Excel（.xlsx）/ txt / md，另含图片与代码。
 
@@ -539,10 +539,69 @@ export const VIEWERS: ViewerSpec[] = [
   `queryFileAssociations` 结构断言、reveal 缺 path 400、伪造 id 400。
 - 真机验证：docx 菜单 = wpsoffice（默认）+ Pages/TextEdit/WorkBuddy/ChatGPT/
   LibreOffice×2 + 显示文件位置，全部真图标；单次查询 ~0.5s、图标合计 13KB。
-  Windows / Linux 暂无适配器 → 自动回落白名单（`openable.ts` 的分类型过滤）。
+  Windows / Linux 暂无适配器 → 自动回落白名单（`openable.ts` 的分类型过滤，
+  见下方「平台缺口」）。
+
+### M4 补丁 11：操作栏胶囊显示系统默认应用图标（真机反馈）
+
+真机反馈：文件预览操作栏"在应用中打开"**胶囊左段显示的是通用文件图标**，
+而展开菜单里同一个应用（WPS）却有真图标——两处图标来源不一致。
+
+- **根因**：胶囊图标走 `openInAppIconUrl(id)` → `GET /open-in-app/icon/<id>`
+  端点。但补丁 10 之后文件目标的列表来自**问操作系统**（`source: 'os'`），
+  id 是 `/Applications/X.app` 这种路径，**不在白名单里 → 端点 404** →
+  `<img>` `onError` 回退字形。而列表响应里其实就带着系统给的 32px PNG
+  dataURL（`app.icon`），胶囊没用它。
+  另有第二处不一致：`defaultAppId()` 只认 localStorage 记忆 / 列表首个，
+  **不认系统返回的 `isDefault` 标记**，所以"默认那一个"也可能选错。
+- **修复**（纯前端 `web/src/preview/`，后端零改动）：
+  - 胶囊改读 `app.icon`（dataURL）直接渲染，与菜单**同源**；
+  - 默认项解析改为系统 `isDefault` 优先；
+  - 抽出两个纯函数到 `open-in-app.ts`，三个调用点（`FileActionBar` /
+    `OpenInAppMenu` / `Launcher`）统一调用，消除此前各写一份的分叉：
+    - `effectiveDefaultId(apps)`：系统 `isDefault` → localStorage 记忆 → 列表首个；
+    - `openInAppItemIconUrl(app, broken)`：`app.icon` dataURL → `/icon/<id>`
+      （白名单来源）→ `null`（调用方回退字形芯片）。
+- 验证：`tsc -b` + `vite build` 通过；真机 docx 胶囊左段显示 WPS 真图标。
+
+### 平台缺口：Windows / Linux 的 open-in-app 适配器（**未实现**）
+
+> 这是本轮**明确的未完成项**，不是遗漏。功能层面 Windows / Linux 可用（自动回落
+> 白名单过滤），但**精度不如系统查询**，与 macOS 不对等。
+
+现状：补丁 10 的"文件目标问操作系统"**只有 macOS 适配器**（`os-assoc.ts` 内嵌
+JXA + NSWorkspace）。在 Windows / Linux 上 `queryFileAssociations()` 直接返回
+`null`，端点自动回落到补丁 9 的白名单过滤（`openable.ts` 按后缀分类型）。
+
+**回落后的行为差异**（相对 macOS）：
+
+| | macOS（问系统） | Windows / Linux（回落白名单） |
+|---|---|---|
+| 列表来源 | LaunchServices 实时关联 | 编译期 `catalog.ts` + `opens` 声明 |
+| 新装应用 | 立刻出现（10s TTL 重查） | 只有清单里声明过、且 resolver 探测到装机才出现 |
+| 默认项 | 系统真实默认（`isDefault`） | 无系统默认 → localStorage 记忆 / 列表首个 |
+| 图标 | bundle icns 直读，真图标 | 走 `/icon/<id>` 端点（现为 macOS plutil+sips；Win/Linux 无提取实现 → 字形回退） |
+| 未声明后缀 | 仍能列出系统认得的所有应用 | 只剩"不挑类型"的条目（如访达类） |
+
+**未做的原因**：本轮只在 macOS 本机验证过。Windows / Linux 适配器无法在开发机
+真机验证，按项目"不盲写无法验证的平台代码"的立场暂缓——宁可不写，也不提交一段
+只有编译期正确、运行语义未知的实现。
+
+**要补的话，两端的正确姿势**（已调研，待实现）：
+
+| 平台 | 数据源 | 要点 |
+|---|---|---|
+| **Windows** | `SHAssocEnumHandlers` / `AssocQueryString`（shell32） | 由扩展名拿关联 ProgID → 枚举 handlers。Node 侧无现成 API，需 PowerShell + `Add-Type` 内联 C#（或原生 napi 模块）。**必须一并实现"打开前用最新列表复验 id"的安全边界**（与 macOS 对齐），以及从 `.exe`/`.lnk` 提图标（`SHGetFileInfo`）。 |
+| **Linux** | GIO（`gio mime`）+ XDG desktop entries | `gio mime <mime-type>` 拿默认项与候选；mime-type 由 `xdg-mime query filetype <path>` 或后缀映射得到。desktop entry 的 `Exec=` 解析要处理 field codes（`%f`/`%u`）与引号转义，**路径绝不能进 shell**（沿用 `execFile` + argv）。 |
+
+实现时**保持现有分层与契约不变**：新增 `os-assoc-win.ts` / `os-assoc-linux.ts`，
+`queryFileAssociations` 按 `process.platform` 分派，返回同一 `OsAssocApp` 形状
+（`id` / `label` / `isDefault` / `icon?`）→ **前端零改动**；图标字段缺省即回落字形芯片。
 
 ### 待做
 
+- **open-in-app 的 Windows / Linux 适配器**（本轮明确的未完成项）：现状回落白名单过滤，
+  精度不如 macOS 的系统查询。数据源、安全边界与分层约束见上方「平台缺口」一节。
 - **M5 剩余**：轻量写回（编辑保存）；agent 编辑侧 FS_STALE_VERSION 守卫。
 - **Playwright e2e**：`web/package.json` 有 `playwright` 依赖但仓库内**没有任何 e2e 配置或 spec**（无 config、无脚本），补这套等于新建一套测试基础设施（还需下载浏览器二进制 + 起 Host + fixtures）。本次先不引入：前端行为由纯函数单测（registry 路由 / URL 编码 / 图片重写 / 路径提取）+ 构建产物 chunk 分析覆盖，交互部分走下面的手动清单。**若要多这一层，需单独确认。**
 
@@ -551,9 +610,10 @@ export const VIEWERS: ViewerSpec[] = [
 1. 顶栏文件图标 / `⌘P`：面板开合，宽度拖拽后在刷新后保持。
 2. 面板内 FileTree：逐级展开（每次只请求一层）、忽略目录开关、过滤框、截断提示。
 3. `md`（含相对路径图片）、`png/jpg`（缩放/拖拽）、`pdf`（滚动虚拟渲染 + 跳页 + 缩放）、`docx`（含表格/内嵌图，且样式未被 DOMPurify 清空）、`xlsx`（多 sheet 切换 + 行列表头）、`txt`/代码（行号）、无扩展名文件。
-4. 超限（>2MB 文本 / >8MB 图片、Office / >16MB PDF）→ FallbackViewer + 下载入口；已知二进制（zip）→ 415 提示。
+4. 已知二进制（zip）→ 415 提示；**预览已无大小上限**（补丁 7 移除 `too_large`），超大 docx（约 9MB）应正常 200 渲染。
 5. Timeline：工具行展开 → "在预览面板中打开"；附件卡片 → "预览"；两者都进同一个标签集合。
 6. 英文界面切换后新增文案（`timeline.tool.openPreview` 等）显示为英文。
+7. 文件操作栏：路径 + 刷新 + "在应用中打开"胶囊——**胶囊左段显示系统默认应用的真图标**（补丁 11），展开菜单与胶囊图标一致，菜单末尾有"显示文件位置"。
 
 ### 与设计稿的偏差
 
