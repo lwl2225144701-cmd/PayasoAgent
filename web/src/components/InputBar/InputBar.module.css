@@ -84,22 +84,16 @@
   opacity: 0.6;
 }
 
-/* 发送队列（形态对齐 DSH）：每条一行 = 序号 + 会话图标 + 文字 + 右侧三个
-   图标动作（编辑 / 删除 / 发送）；面板底部一行快捷键提示。
-   旧形态是「标题行 + 编号 + 文字按钮」，占地方且和 DSH 不一致。 */
+/* 发送队列：**扁平拼接，不套卡片**（对齐 DSH）。
+   无底色、无边框、无圆角 —— 就是「若干行消息 + 一行快捷键提示」贴在 composer 上。
+   曾套过一层 brand-soft 底 + brand-border 边的面板，真机反馈不是想要的。 */
 .queuePanel {
-  margin: 8px 14px 0;
-  overflow: hidden;
-  border: 1px solid var(--color-brand-border);
-  border-radius: 10px;
-  background: var(--color-brand-soft);
+  margin: 6px 0 0;
 }
 
 .queueList {
   display: flex;
   flex-direction: column;
-  max-height: 180px;
-  overflow-y: auto;
 }
 
 .queueItem {
@@ -107,12 +101,8 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 7px 10px;
+  padding: 5px 2px;
   color: var(--text-secondary);
-}
-
-.queueItem + .queueItem {
-  border-top: 1px solid color-mix(in srgb, var(--color-brand-border) 42%, transparent);
 }
 
 .queueItemContent {
@@ -121,15 +111,6 @@
   gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
-}
-
-.queueItemIndex {
-  flex: 0 0 auto;
-  min-width: 14px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
 }
 
 .queueItemIcon {
@@ -154,7 +135,7 @@
   flex: 0 0 auto;
 }
 
-/* 图标按钮：清掉 button 默认样式，方圆形悬停底 */
+/* 图标按钮：清掉 button 默认样式，圆形悬停底 */
 .queueAction {
   display: grid;
   place-items: center;
@@ -187,10 +168,9 @@
   color: var(--color-danger);
 }
 
-/* 底部快捷键提示（DSH 同款） */
+/* 底部快捷键提示：纯文字，无分隔线无底色（DSH 同款） */
 .queueHint {
-  padding: 6px 10px;
-  border-top: 1px solid color-mix(in srgb, var(--color-brand-border) 42%, transparent);
+  padding: 2px 2px 0;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.4;

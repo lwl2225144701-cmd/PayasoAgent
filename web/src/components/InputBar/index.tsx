@@ -600,15 +600,16 @@ export function InputBar({
         {attachmentStrip}
         {visionWarning}
         {queuedMessages.length > 0 && (
-          // 形态对齐 DSH：每条一行（会话图标 + 文字 + 右侧三个图标动作），
-          // 面板底部挂一行快捷键提示。旧形态是「标题行 + 编号 + 文字按钮」，
-          // 占地方且和 DSH 不一致。
+          // 形态对齐 DSH：**不套卡片**——无底色、无边框、无圆角，
+          // 就是「若干行消息 + 一行快捷键提示」直接贴在 composer 上。
+          // 每条一行 = 会话图标 + 文字 + 右侧三个图标动作（编辑/删除/立即发送）。
+          // 曾套过一层蓝色面板（queuePanel 带 brand-soft 底 + brand-border 边），
+          // 真机反馈"不是想要的"——DSH 是扁平拼接，不是卡片。
           <div className={styles.queuePanel} role="status" aria-label={t('composer.queue.title')}>
             <div className={styles.queueList}>
-              {queuedMessages.map((message, index) => (
+              {queuedMessages.map((message) => (
                 <div className={styles.queueItem} key={message.id}>
                   <div className={styles.queueItemContent}>
-                    <span className={styles.queueItemIndex}>{index + 1}</span>
                     <ChatIcon size={15} className={styles.queueItemIcon} />
                     <span className={styles.queueItemText} title={message.task}>
                       {message.task}
