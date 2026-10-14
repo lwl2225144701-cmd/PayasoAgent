@@ -71,7 +71,7 @@ function StatsGroup({
       aria-haspopup="dialog"
       aria-expanded={open}
     >
-      <Icon size={14} className={styles.icon} />
+      <Icon size={13} className={styles.icon} />
       {segments.map((segment) => (
         <span key={segment} className={styles.item}>
           {segment}

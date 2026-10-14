@@ -198,14 +198,15 @@
 }
 
 /* ---- 上下文预算环形指示器 ---- */
+/* 与做小后的统计条匹配：收紧外距与内距 */
 .gaugeWrap {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  margin-right: 4px;
-  padding: 4px;
+  margin-right: 2px;
+  padding: 1px 2px;
   cursor: help;
   outline: none;
 }
@@ -221,11 +222,13 @@
 }
 
 /* 底部统计条里的可见百分比：与 pill 同层级的小字，不抢视觉。 */
+/* 与做小后的统计条同规格（pill 字号 11） */
 .gaugePercent {
-  margin-left: 5px;
-  color: var(--text-secondary);
+  margin-left: 4px;
+  color: var(--text-tertiary);
+  /* 与统计条同规格（pill 字号 12） */
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.3;
   font-variant-numeric: tabular-nums;
 }
 
