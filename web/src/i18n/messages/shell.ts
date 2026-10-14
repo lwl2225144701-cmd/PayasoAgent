@@ -53,9 +53,6 @@ export const shellMessages = {
   'shell.stats.toolTime': { 'zh-CN': '工具调用用时', 'en-US': 'Tool time' },
   'shell.stats.ttftAvg': { 'zh-CN': '首 token 平均（TTFT）', 'en-US': 'Avg first token (TTFT)' },
   'shell.stats.tps': { 'zh-CN': '输出速度（TPS）', 'en-US': 'Output speed (TPS)' },
-  'shell.stats.llmCallsLabel': { 'zh-CN': 'LLM 调用', 'en-US': 'LLM calls' },
-  'shell.stats.toolCallsLabel': { 'zh-CN': '工具调用', 'en-US': 'Tool calls' },
-  'shell.stats.tokensPerTurn': { 'zh-CN': '平均每轮 token', 'en-US': 'Tokens per turn' },
   'shell.stats.activeLabel': { 'zh-CN': '活跃时长', 'en-US': 'Active time' },
   'shell.stats.sampleCount': { 'zh-CN': '{count} 个样本', 'en-US': '{count} samples' },
 

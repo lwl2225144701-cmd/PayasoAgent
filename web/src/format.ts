@@ -50,14 +50,25 @@ export function formatBytes(bytes: number | undefined | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function formatDurationMs(ms: number, language: LanguageMode = 'zh-CN'): string {
+/**
+ * 时长格式化。`secondsDigits` 控制秒的小数位（默认 1：`13.4秒` / `13.4s`）；
+ * 传 0 得整数秒（`13秒`）—— DSH 的 TTFT 读数就是整数秒，小数位没有信息量，
+ * 只会让行宽抖动。分钟及以上本来不带小数，该参数对它们无影响。
+ */
+export function formatDurationMs(
+  ms: number,
+  language: LanguageMode = 'zh-CN',
+  secondsDigits = 1,
+): string {
   if (ms < 1000) {
     return translate(language, 'common.time.milliseconds', {
       value: Math.max(0, Math.round(ms)),
     });
   }
   const sec = ms / 1000;
-  if (sec < 60) return translate(language, 'common.time.seconds', { value: sec.toFixed(1) });
+  if (sec < 60) {
+    return translate(language, 'common.time.seconds', { value: sec.toFixed(secondsDigits) });
+  }
   const min = Math.floor(sec / 60);
   return translate(language, 'common.time.minutesSeconds', {
     min,

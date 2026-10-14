@@ -17,6 +17,7 @@ import {
   tokenBuckets,
   tokenStatRows,
 } from '../web/src/components/StatsBar/session-stats-view.js';
+import { formatDurationMs } from '../web/src/format.js';
 import type { SessionStats } from '../web/src/types.js';
 
 let passed = 0;
@@ -271,12 +272,37 @@ check('会话统计卡：模型/工具用时、TTFT 平均、TPS、调用数、�
   assert.ok(labels.includes('工具调用用时'), labels.join(' | '));
   assert.ok(labels.includes('首 token 平均（TTFT）'), labels.join(' | '));
   assert.ok(labels.includes('输出速度（TPS）'), labels.join(' | '));
-  assert.ok(labels.includes('平均每轮 token'), labels.join(' | '));
+  // 只此四行：调用数与平均每轮 token 按 DSH 的口径不进面板
+  // （调用数留在条上悬停 title，每轮 token 撤掉）
+  assert.deepEqual(labels, [
+    '模型用时',
+    '工具调用用时',
+    '首 token 平均（TTFT）',
+    '输出速度（TPS）',
+  ]);
   // 样本数作为 hint 挂在 TTFT 与 TPS 上
   const ttft = rows.find((r) => r.label === '首 token 平均（TTFT）');
   assert.equal(ttft?.hint, '2 个样本');
   const tps = rows.find((r) => r.label === '输出速度（TPS）');
   assert.equal(tps?.hint, '2 个样本');
+});
+
+check('TTFT 取整到秒（对齐 DSH 的 13秒，不带小数）', () => {
+  const rows = sessionStatRows(stats({ ttftMs: 8_200, ttftCount: 2 }), 'zh-CN');
+  const ttft = rows.find((r) => r.label === '首 token 平均（TTFT）');
+  assert.equal(ttft?.value, '4秒');
+});
+
+check('formatDurationMs 的 secondsDigits=0 只影响秒档，不影响分钟档', () => {
+  // 秒档：默认一位小数，传 0 取整
+  assert.equal(formatDurationMs(4_100), '4.1秒');
+  assert.equal(formatDurationMs(4_100, 'zh-CN', 0), '4秒');
+  assert.equal(formatDurationMs(4_900, 'zh-CN', 0), '5秒');
+  // 分钟档：本来就不带小数，参数无影响
+  assert.equal(formatDurationMs(128_000, 'zh-CN', 0), '2分8秒');
+  assert.equal(formatDurationMs(128_000), '2分8秒');
+  // 毫秒档同理
+  assert.equal(formatDurationMs(414, 'zh-CN', 0), '414毫秒');
 });
 
 check('会话统计卡：无数据时整行不渲染（不是显示 0）', () => {

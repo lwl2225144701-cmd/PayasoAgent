@@ -180,6 +180,9 @@ export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'z
   const t = translator(language);
   const rows: StatRow[] = [];
 
+  // 只保留 DSH 那四行：模型用时 / 工具调用用时 / 首 token 平均 / 输出速度。
+  // LLM 与工具调用数、平均每轮 token 曾经加在这里，真机对照 DSH 后发现它的面板
+  // 只有这四项 —— 调用数留在条上悬停的 title 里，每轮 token 直接撤掉。
   const model = modelMs(stats);
   if (model > 0) {
     rows.push({ label: t('shell.stats.modelTime'), value: formatDurationMs(model, language) });
@@ -193,9 +196,11 @@ export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'z
     });
   }
   if (stats.ttftCount > 0) {
+    // DSH 的 TTFT 是整数秒（13秒 而不是 13.4秒）：平均后直接取整，
+    // 小数位对"首 token 大概多快"没有信息量，反而让行宽抖动。
     rows.push({
       label: t('shell.stats.ttftAvg'),
-      value: formatDurationMs(Math.round(stats.ttftMs / stats.ttftCount), language),
+      value: formatDurationMs(Math.round(stats.ttftMs / stats.ttftCount), language, 0),
       hint: t('shell.stats.sampleCount', { count: stats.ttftCount }),
     });
   }
@@ -208,25 +213,6 @@ export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'z
         stats.decodeCount > 0
           ? t('shell.stats.sampleCount', { count: stats.decodeCount })
           : undefined,
-    });
-  }
-  if (stats.llmCalls > 0) {
-    rows.push({ label: t('shell.stats.llmCallsLabel'), value: String(stats.llmCalls) });
-  }
-  if (stats.toolCalls > 0) {
-    rows.push({ label: t('shell.stats.toolCallsLabel'), value: String(stats.toolCalls) });
-  }
-  // 平均每轮 token：每回合摊薄的用量，长会话里比总量更能说明"一轮多重"。
-  if (stats.turns > 0 && stats.tokens > 0) {
-    rows.push({
-      label: t('shell.stats.tokensPerTurn'),
-      value: formatContextTokens(Math.round(stats.tokens / stats.turns)),
-    });
-  }
-  if (stats.durationMs > 0) {
-    rows.push({
-      label: t('shell.stats.activeLabel'),
-      value: formatDurationMs(stats.durationMs, language),
     });
   }
   return rows;
