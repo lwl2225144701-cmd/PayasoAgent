@@ -82,10 +82,6 @@ export const widgetsMessages = {
   'widgets.contextRing.tools': { 'zh-CN': '工具', 'en-US': 'Tools' },
   'widgets.contextRing.messages': { 'zh-CN': '对话消息', 'en-US': 'Conversation messages' },
   'widgets.contextRing.used': { 'zh-CN': '上下文已用', 'en-US': 'Context used' },
-  'widgets.contextRing.anchoredDetail': {
-    'zh-CN': '真实上报 {pressure} · 本次请求预估 {estimate}',
-    'en-US': 'Reported actual {pressure} · estimated for this request {estimate}',
-  },
   'widgets.contextRing.fallbackNotice': {
     'zh-CN': '模型能力未知，当前使用保守预算',
     'en-US': 'Model limits unknown; using a conservative budget',

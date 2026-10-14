@@ -384,16 +384,11 @@
   letter-spacing: -0.01em;
 }
 
-.gaugeTooltipDetail,
 .gaugeTooltipNotice,
 .gaugeTooltipDanger {
   font-size: 12px;
   line-height: 1.45;
   text-align: center;
-}
-
-.gaugeTooltipDetail {
-  color: var(--text-secondary);
 }
 
 .gaugeTooltipNotice {

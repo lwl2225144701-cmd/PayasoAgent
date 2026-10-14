@@ -37,7 +37,6 @@ export function ContextUsageRing({
   const view = contextGaugeView(usage);
   const displayTokens = view.displayTokens;
   const percent = view.percent;
-  const anchored = view.anchored;
   const parts =
     usage.systemTokens == null
       ? [
@@ -118,14 +117,8 @@ export function ContextUsageRing({
             ~{formatContextTokens(displayTokens)} / {formatContextTokens(view.capacityTokens)}
           </span>
         </span>
-        {anchored && (
-          <span className={styles.gaugeTooltipDetail} role="note">
-            {t('widgets.contextRing.anchoredDetail', {
-              pressure: formatContextTokens(usage.pressureTokens as number),
-              estimate: formatContextTokens(usage.estimatedInputTokens),
-            })}
-          </span>
-        )}
+        {/* 不显示「真实上报 X · 本次请求预估 Y」：DSH 的同类弹窗没有这行，
+            两个口径并列只会让人怀疑该看哪个；顶部「上下文已用 %」已经是一个确定值。 */}
         <span className={styles.contextBar} aria-hidden="true">
           {parts.map((part) => (
             <span
