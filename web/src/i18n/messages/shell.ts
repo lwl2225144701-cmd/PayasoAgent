@@ -43,6 +43,37 @@ export const shellMessages = {
   'shell.stats.cacheHit': { 'zh-CN': '缓存命中 {percent}%', 'en-US': '{percent}% cached' },
   'shell.stats.ttft': { 'zh-CN': '首token {duration}', 'en-US': 'First token {duration}' },
   'shell.stats.active': { 'zh-CN': '活跃 {duration}', 'en-US': 'Active {duration}' },
+  // 条上的紧凑用时片段：模型 X · 工具 Y（明细进展开面板）
+  'shell.stats.timeSplit': {
+    'zh-CN': '模型 {model} · 工具 {tool}',
+    'en-US': 'model {model} · tools {tool}',
+  },
+
+  // 展开面板（点击统计条的两枚 pill 弹出）—— 会话统计卡
+  'shell.stats.modelTime': { 'zh-CN': '模型用时', 'en-US': 'Model time' },
+  'shell.stats.toolTime': { 'zh-CN': '工具调用用时', 'en-US': 'Tool time' },
+  'shell.stats.ttftAvg': { 'zh-CN': '首 token 平均（TTFT）', 'en-US': 'Avg first token (TTFT)' },
+  'shell.stats.tps': { 'zh-CN': '输出速度（TPS）', 'en-US': 'Output speed (TPS)' },
+  'shell.stats.llmCallsLabel': { 'zh-CN': 'LLM 调用', 'en-US': 'LLM calls' },
+  'shell.stats.toolCallsLabel': { 'zh-CN': '工具调用', 'en-US': 'Tool calls' },
+  'shell.stats.tokensPerTurn': { 'zh-CN': '平均每轮 token', 'en-US': 'Tokens per turn' },
+  'shell.stats.activeLabel': { 'zh-CN': '活跃时长', 'en-US': 'Active time' },
+  'shell.stats.sampleCount': { 'zh-CN': '{count} 个样本', 'en-US': '{count} samples' },
+
+  // 展开面板 —— Token 用量卡
+  'shell.stats.totalTokens': { 'zh-CN': '总用量', 'en-US': 'Total' },
+  'shell.stats.cacheRead': { 'zh-CN': '缓存读取', 'en-US': 'Cache read' },
+  'shell.stats.cacheWrite': { 'zh-CN': '缓存写入', 'en-US': 'Cache write' },
+  'shell.stats.uncachedInput': { 'zh-CN': '未缓存输入', 'en-US': 'Uncached input' },
+  'shell.stats.outputTokens': { 'zh-CN': '输出', 'en-US': 'Output' },
+  'shell.stats.cacheHitLabel': { 'zh-CN': '缓存命中率', 'en-US': 'Cache hit rate' },
+  // 命中率分母只由上报了缓存分桶的调用构成（缺分桶 ≠ 未命中）
+  'shell.stats.cacheHitHint': {
+    'zh-CN': '仅统计上报了缓存分桶的调用',
+    'en-US': 'Counts only calls reporting cache buckets',
+  },
+  'shell.stats.panelSession': { 'zh-CN': '会话统计', 'en-US': 'Session stats' },
+  'shell.stats.panelTokens': { 'zh-CN': 'Token 用量', 'en-US': 'Token usage' },
 
   // 会话项
   'shell.session.untitled': { 'zh-CN': '未命名任务', 'en-US': 'Untitled task' },

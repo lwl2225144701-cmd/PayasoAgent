@@ -66,6 +66,15 @@ export function sessionStatsGroups(
   if (stats.steps > 0) activity.push(t('shell.stats.steps', { count: stats.steps }));
   const rate = tokensPerSecond(stats);
   if (rate !== undefined) activity.push(t('shell.stats.tokensPerSecond', { value: rate }));
+  // 模型/工具用时：条上只放一个"模型 X·工具 Y"的紧凑片段，明细（样本数等）进面板。
+  const model = modelMs(stats);
+  if (model > 0)
+    activity.push(
+      t('shell.stats.timeSplit', {
+        model: formatDurationMs(model, language),
+        tool: formatDurationMs(stats.toolMs, language),
+      }),
+    );
 
   const usage: string[] = [];
   if (stats.tokens > 0) usage.push(`${formatContextTokens(stats.tokens)} tok`);
@@ -97,4 +106,132 @@ export function sessionStatsDetails(
     );
   }
   return details;
+}
+
+// ---- 展开面板（点击 pill 弹出）：把条上放不下的读数分两张卡铺开 ----
+
+/**
+ * 模型用时 = 活跃时长 − 工具执行耗时。
+ * 两者都可能为 0 或缺失，宁缺勿错：算不出正数就不显示，不拿活跃时长冒充。
+ */
+export function modelMs(stats: SessionStats): number {
+  const model = stats.durationMs - stats.toolMs;
+  return model > 0 ? model : 0;
+}
+
+/** Token 用量分桶。缺失分桶显示为 0（总量=各桶之和，缺的那桶就是 0）。 */
+export interface TokenBuckets {
+  /** 总计费 token。 */
+  total: number;
+  /** 未命中缓存的输入。 */
+  input: number;
+  /** 命中缓存的输入。 */
+  cacheRead: number;
+  /** 写入缓存的输入。 */
+  cacheWrite: number;
+  /** 模型输出。 */
+  output: number;
+  /** 缓存命中率；数据不可靠时 undefined（界面应不出数）。 */
+  hitPercent?: string;
+}
+
+export function tokenBuckets(stats: SessionStats): TokenBuckets {
+  return {
+    total: stats.tokens,
+    input: stats.inputTokens ?? 0,
+    cacheRead: stats.cacheReadTokens ?? 0,
+    cacheWrite: stats.cacheWriteTokens ?? 0,
+    output: stats.outputTokens ?? 0,
+    hitPercent: cacheHitPercent(stats),
+  };
+}
+
+/** 面板里的一行读数：标签 + 值。值为 undefined 表示该行不渲染。 */
+export interface StatRow {
+  label: string;
+  value: string;
+  /** 行内补充说明（如样本数、占比），可省。 */
+  hint?: string;
+}
+
+/**
+ * 「会话统计」卡的读数。DSH 的同类卡片是：模型用时 / 工具调用用时 /
+ * 首 token 平均 / 输出速度；我们再补两项自己的：LLM 与工具调用数、平均每轮 token。
+ */
+export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'zh-CN'): StatRow[] {
+  const t = translator(language);
+  const rows: StatRow[] = [];
+
+  const model = modelMs(stats);
+  if (model > 0) {
+    rows.push({ label: t('shell.stats.modelTime'), value: formatDurationMs(model, language) });
+  }
+  if (stats.toolMs > 0) {
+    rows.push({
+      label: t('shell.stats.toolTime'),
+      value: formatDurationMs(stats.toolMs, language),
+      hint:
+        stats.toolCalls > 0 ? t('shell.stats.toolCalls', { count: stats.toolCalls }) : undefined,
+    });
+  }
+  if (stats.ttftCount > 0) {
+    rows.push({
+      label: t('shell.stats.ttftAvg'),
+      value: formatDurationMs(Math.round(stats.ttftMs / stats.ttftCount), language),
+      hint: t('shell.stats.sampleCount', { count: stats.ttftCount }),
+    });
+  }
+  const rate = tokensPerSecond(stats);
+  if (rate !== undefined) {
+    rows.push({
+      label: t('shell.stats.tps'),
+      value: `${rate} tok/s`,
+      hint:
+        stats.decodeCount > 0
+          ? t('shell.stats.sampleCount', { count: stats.decodeCount })
+          : undefined,
+    });
+  }
+  if (stats.llmCalls > 0) {
+    rows.push({ label: t('shell.stats.llmCallsLabel'), value: String(stats.llmCalls) });
+  }
+  if (stats.toolCalls > 0) {
+    rows.push({ label: t('shell.stats.toolCallsLabel'), value: String(stats.toolCalls) });
+  }
+  // 平均每轮 token：每回合摊薄的用量，长会话里比总量更能说明"一轮多重"。
+  if (stats.turns > 0 && stats.tokens > 0) {
+    rows.push({
+      label: t('shell.stats.tokensPerTurn'),
+      value: formatContextTokens(Math.round(stats.tokens / stats.turns)),
+    });
+  }
+  if (stats.durationMs > 0) {
+    rows.push({
+      label: t('shell.stats.activeLabel'),
+      value: formatDurationMs(stats.durationMs, language),
+    });
+  }
+  return rows;
+}
+
+/** 「Token 用量」卡的读数：总量 + 四个分桶 + 命中率。 */
+export function tokenStatRows(stats: SessionStats, language: LanguageMode = 'zh-CN'): StatRow[] {
+  const t = translator(language);
+  const b = tokenBuckets(stats);
+  const rows: StatRow[] = [];
+  if (b.total > 0) {
+    rows.push({ label: t('shell.stats.totalTokens'), value: formatContextTokens(b.total) });
+  }
+  rows.push({ label: t('shell.stats.cacheRead'), value: formatContextTokens(b.cacheRead) });
+  rows.push({ label: t('shell.stats.cacheWrite'), value: formatContextTokens(b.cacheWrite) });
+  rows.push({ label: t('shell.stats.uncachedInput'), value: formatContextTokens(b.input) });
+  rows.push({ label: t('shell.stats.outputTokens'), value: formatContextTokens(b.output) });
+  if (b.hitPercent !== undefined) {
+    rows.push({
+      label: t('shell.stats.cacheHitLabel'),
+      value: `${b.hitPercent}%`,
+      hint: t('shell.stats.cacheHitHint'),
+    });
+  }
+  return rows;
 }
