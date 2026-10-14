@@ -11,6 +11,7 @@
 // 之前用 240×240 兜底。
 import { useState } from 'react';
 import { useI18n } from '../../i18n';
+import { ImageLightbox } from './ImageLightbox';
 import styles from './MessageImage.module.css';
 import {
   type ImageBox,
@@ -51,6 +52,7 @@ export function MessageImage({
   const [failed, setFailed] = useState(false);
   // 重试计数：当作 <img> 的 key，换 key 即重新发起一次请求
   const [attempt, setAttempt] = useState(0);
+  const [lightbox, setLightbox] = useState(false);
 
   // 固定变体当场就有框；单图走来源优先级（Host 宽高 → onLoad 探测 → 240×240 兜底）。
   const box = variant === 'single' ? singleBox({ width, height, measured }) : squareBox(variant);
@@ -75,30 +77,40 @@ export function MessageImage({
   }
 
   return (
-    <a
-      className={styles.box}
-      style={boxStyle}
-      data-variant={variant}
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      title={name}
-    >
-      <img
-        key={attempt}
-        className={styles.img}
-        style={{ objectPosition: box.objectPosition }}
-        src={href}
-        alt={name}
-        loading="lazy"
-        onLoad={(event) => {
-          // 单图才需要按原图收敛；Host 已经给了宽高就不必再探测
-          if (variant !== 'single' || (width && height)) return;
-          const img = event.currentTarget;
-          setMeasured(singleFit(img.naturalWidth, img.naturalHeight));
+    <>
+      <a
+        className={styles.box}
+        style={boxStyle}
+        data-variant={variant}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        title={name}
+        // 左键点开灯箱；不 preventDefault 之外的修饰点击（中键 / Cmd / 右键）
+        // 仍走浏览器原生的"新标签页打开"，保留直接拿到原件的能力。
+        onClick={(event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          setLightbox(true);
         }}
-        onError={() => setFailed(true)}
-      />
-    </a>
+      >
+        <img
+          key={attempt}
+          className={styles.img}
+          style={{ objectPosition: box.objectPosition }}
+          src={href}
+          alt={name}
+          loading="lazy"
+          onLoad={(event) => {
+            // 单图才需要按原图收敛；Host 已经给了宽高就不必再探测
+            if (variant !== 'single' || (width && height)) return;
+            const img = event.currentTarget;
+            setMeasured(singleFit(img.naturalWidth, img.naturalHeight));
+          }}
+          onError={() => setFailed(true)}
+        />
+      </a>
+      {lightbox && <ImageLightbox src={href} name={name} onClose={() => setLightbox(false)} />}
+    </>
   );
 }

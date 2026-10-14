@@ -14,6 +14,7 @@ import {
   WrenchIcon,
 } from '../icons';
 import type { ToolCallData } from './index';
+import { MessageImage } from './MessageImage';
 import styles from './Timeline.module.css';
 import { baseName, extractToolFilePath } from './tool-file-path';
 
@@ -94,23 +95,18 @@ export function ToolActionRow({ data, runId, onOpenPreview }: ToolActionRowProps
       )}
 
       {data.images && data.images.length > 0 && (
+        // 工具结果图片 = 轨迹里的附件行：走 MessageImage 的 thumbnail 变体
+        // （48px contain，完整缩放不裁），点击同样开原图灯箱。
+        // 每行自成一组（count 传 1、不传 compact），不会被误判成 tile。
         <div className={styles.toolImageStrip}>
           {data.images.map((img) => (
-            <a
+            <MessageImage
               key={img.path}
+              thumbnail
+              count={1}
               href={workspaceFileUrl(runId, img.path)}
-              target="_blank"
-              rel="noreferrer"
-              title={img.path}
-              className={styles.toolImageLink}
-            >
-              <img
-                src={workspaceFileUrl(runId, img.path)}
-                alt={img.path}
-                loading="lazy"
-                className={styles.toolImage}
-              />
-            </a>
+              name={img.path}
+            />
           ))}
         </div>
       )}
