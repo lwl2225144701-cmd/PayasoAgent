@@ -72,6 +72,14 @@ export const widgetsMessages = {
   },
   'widgets.runUsage.duration': { 'zh-CN': '用时 {value}', 'en-US': 'Duration {value}' },
   'widgets.runUsage.unknown': { 'zh-CN': '未知', 'en-US': 'Unknown' },
+  // 「本轮用量」面板（点「用量」弹出）
+  'widgets.runUsage.panelTitle': { 'zh-CN': '本轮用量', 'en-US': 'This turn' },
+  'widgets.runUsage.providerModel': { 'zh-CN': '提供方 / 模型', 'en-US': 'Provider / model' },
+  'widgets.runUsage.cacheHit': { 'zh-CN': '缓存命中', 'en-US': 'Cache hit' },
+  'widgets.runUsage.uncachedInput': { 'zh-CN': '未缓存输入', 'en-US': 'Uncached input' },
+  'widgets.runUsage.cacheRead': { 'zh-CN': '缓存读取', 'en-US': 'Cache read' },
+  'widgets.runUsage.cacheWrite': { 'zh-CN': '缓存写入', 'en-US': 'Cache write' },
+  'widgets.runUsage.output': { 'zh-CN': '输出', 'en-US': 'Output' },
 
   // ---- 上下文占用环（ContextUsageRing）----
   'widgets.contextRing.messagesWithSystem': {

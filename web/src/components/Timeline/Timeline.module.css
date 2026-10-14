@@ -352,6 +352,9 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
+/* 每轮用量行：**默认隐藏**，鼠标进到本轮区块（.agentBlock）才淡入。
+   用 opacity 而不是 display:none —— 隐藏态仍占位，悬停时整页内容不会跳动。
+   键盘聚焦（ Tab 到「用量」按钮）同样显示。 */
 .runUsage {
   display: flex;
   flex-wrap: wrap;
@@ -362,11 +365,98 @@
   font-size: 12px;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
+
+.agentBlock:hover .runUsage,
+.runUsage:focus-within {
+  opacity: 1;
+}
+
 .runUsage > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* 「用量」是可点的：清掉 button 默认样式，外观与旁边的纯文本片段一致 */
+.runUsageButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.runUsageButton:hover {
+  color: var(--text-primary);
+}
+
+/* ---- 「本轮用量」面板（点「用量」弹出）---- */
+
+.usagePanel {
+  position: fixed;
+  z-index: 1000;
+  width: 300px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  background: var(--color-modal-glass);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-100%);
+}
+
+.usagePanelTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.usagePanelTitle > svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+/* 总量靠右（DSH 同款：标题行右侧是总数） */
+.usagePanelTotal {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.usagePanelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usagePanelLabel {
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.usagePanelValue {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .gaugeTooltipPercent {

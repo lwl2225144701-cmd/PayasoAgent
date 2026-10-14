@@ -358,6 +358,7 @@ export const Timeline = memo(function Timeline({
   onContextUsage,
   onPlan,
   onOpenPreview,
+  modelFallback,
 }: TimelineProps) {
   const { t, language } = useI18n();
   // 传输方式按 Run 状态分流：
@@ -825,7 +826,7 @@ export const Timeline = memo(function Timeline({
               ))}
             {!finalAnswer && showError && <div className={styles.finalError}>{finalError}</div>}
 
-            <RunUsage run={run} events={events} />
+            <RunUsage run={run} events={events} modelLabel={modelFallback} />
           </section>
         ) : (
           // Empty agent section: reserved vertical rhythm so input isn't jumpy.
