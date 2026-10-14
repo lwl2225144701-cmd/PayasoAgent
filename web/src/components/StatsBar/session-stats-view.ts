@@ -55,6 +55,25 @@ function cacheHitPercent(stats: SessionStats): string | undefined {
   return '<100';
 }
 
+/**
+ * 紧凑时长：统计条专用。DSH 的条上是 `2m 8s` / `22.1s` / `414ms` 这种英文紧凑
+ * 单位，**不随界面语言翻成中文全称**——中文「494分4秒」会把 pill 撑爆，而条上
+ * 只是"一眼扫过"的读数，不需要完整可读性（面板里仍用本地化全称）。
+ * 秒以下保留一位小数；整分省略秒（DSH 同款 `5m` 而非 `5m 0s`）。
+ */
+export function compactDurationMs(ms: number): string {
+  const value = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  if (value < 1000) return `${Math.round(value)}ms`;
+  const sec = value / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const min = Math.floor(sec / 60);
+  const rest = Math.round(sec - min * 60);
+  if (min < 60) return rest === 0 ? `${min}m` : `${min}m ${rest}s`;
+  const hr = Math.floor(min / 60);
+  const remMin = min - hr * 60;
+  return remMin === 0 ? `${hr}h` : `${hr}h ${remMin}m`;
+}
+
 /** 状态条上的两枚 pill：[活动, 用量]。零值片段自动省略。 */
 export function sessionStatsGroups(
   stats: SessionStats,
@@ -66,15 +85,14 @@ export function sessionStatsGroups(
   if (stats.steps > 0) activity.push(t('shell.stats.steps', { count: stats.steps }));
   const rate = tokensPerSecond(stats);
   if (rate !== undefined) activity.push(t('shell.stats.tokensPerSecond', { value: rate }));
-  // 模型/工具用时：条上只放一个"模型 X·工具 Y"的紧凑片段，明细（样本数等）进面板。
+  // 模型/工具用时：DSH 是两个独立片段（model 2m 8s · tools 22.1s），
+  // 而不是一条「模型 X · 工具 Y」的长文案 —— 分开后每条都能单独省略，
+  // 窄屏换行时也不会把一整块挤成两行。
   const model = modelMs(stats);
-  if (model > 0)
-    activity.push(
-      t('shell.stats.timeSplit', {
-        model: formatDurationMs(model, language),
-        tool: formatDurationMs(stats.toolMs, language),
-      }),
-    );
+  if (model > 0) activity.push(t('shell.stats.modelShort', { value: compactDurationMs(model) }));
+  if (stats.toolMs > 0) {
+    activity.push(t('shell.stats.toolShort', { value: compactDurationMs(stats.toolMs) }));
+  }
 
   const usage: string[] = [];
   if (stats.tokens > 0) usage.push(`${formatContextTokens(stats.tokens)} tok`);
