@@ -229,6 +229,9 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 盒模型刻意与 StatsBar 的 .panel 保持一致（同宽 320 / 同内距 12 14 /
+   同圆角 12 / 同阴影同背景）：三个弹窗（会话统计 / Token 用量 / 上下文）
+   必须是同一个尺寸规格，否则并排看会一大两小。 */
 .gaugeTooltip {
   position: absolute;
   left: 50%;
@@ -238,19 +241,15 @@
   width: 320px;
   min-width: 218px;
   max-width: calc(100vw - 32px);
-  padding: 18px;
+  padding: 12px 14px;
   flex-direction: column;
   align-items: stretch;
-  gap: 12px;
+  gap: 10px;
   color: var(--text-primary);
-  background: var(--color-surface-raised, #20242d);
-  border: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
-  border-radius: 14px;
-  box-shadow:
-    0 14px 38px rgb(0 0 0 / 32%),
-    inset 0 1px 0 var(--color-glass-highlight, rgb(255 255 255 / 5%));
-  backdrop-filter: blur(18px) saturate(130%);
-  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  background: var(--color-modal-glass);
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -262,26 +261,14 @@
     visibility 140ms ease;
 }
 
-/* 浅色主题：亮面板 + 柔和投影（深色保持默认的暗玻璃投影） */
+/* 投影与 StatsBar 的 .panel 同用 --shadow-lg：浅色主题下曾用自己的投影，
+   视觉重量和前两个弹窗不一致。 */
 :root[data-theme="light"] .gaugeTooltip {
-  border-color: var(--border-color);
-  box-shadow:
-    0 18px 40px rgb(49 66 97 / 16%),
-    inset 0 1px 0 rgb(255 255 255 / 85%);
+  border-color: var(--color-border-default);
 }
 
-.gaugeTooltip::after {
-  position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 9px;
-  height: 9px;
-  content: "";
-  background: inherit;
-  border-right: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 76%, transparent);
-  transform: translateX(-50%) rotate(45deg);
-}
+/* 不做 ::after 小箭头：StatsBar 的两个弹窗都没有，三个弹窗必须同一规格；
+   箭头还会让上下文这个看起来"多一块"。 */
 
 .gaugeWrap:hover .gaugeTooltip,
 .gaugeWrap:focus-visible .gaugeTooltip {
@@ -296,12 +283,14 @@
   line-height: 1.4;
 }
 
+/* 行内字号对齐 StatsBar 的 panelLabel/panelValue（11.5/12）：
+   弹窗之间的字号不一致会显得"最后一个更大"，即使盒模型已经相同。 */
 .contextHeading,
 .contextRow {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 .contextHeading {
