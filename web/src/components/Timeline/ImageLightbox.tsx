@@ -7,7 +7,7 @@
 //
 // portal 到 portalRoot()：index.css 把 body 直接子元素 display:none，
 // 挂在组件树里会被误伤（与 Timeline 的 Modal 同因）。
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useI18n } from '../../i18n';
@@ -25,12 +25,16 @@ export interface ImageLightboxProps {
 
 export function ImageLightbox({ src, name, onClose }: ImageLightboxProps) {
   const { t } = useI18n();
+  const closeRef = useRef<HTMLButtonElement>(null);
   useEscapeKey(true, onClose);
 
-  // 焦点还给打开者：挂载时记下当时的 activeElement，卸载时还原。
-  // 灯箱是"看一眼就关"的临时层，不还焦点的话键盘用户会被扔回文档开头。
   useEffect(() => {
+    // 焦点还给打开者：挂载时记下当时的 activeElement，卸载时还原。
+    // 灯箱是"看一眼就关"的临时层，不还焦点的话键盘用户会被扔回文档开头。
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // 焦点移入对话框：否则焦点仍停在遮罩后面的缩略图上，Tab 顺序会先落回文档，
+    // 再才轮到关闭钮 —— aria-modal 对话框应当自己接管焦点。
+    closeRef.current?.focus();
     return () => opener?.focus();
   }, []);
 
@@ -47,6 +51,7 @@ export function ImageLightbox({ src, name, onClose }: ImageLightboxProps) {
       />
       <img className={styles.image} src={src} alt={name} />
       <button
+        ref={closeRef}
         type="button"
         className={styles.close}
         onClick={onClose}

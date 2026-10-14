@@ -22,7 +22,7 @@ import {
 } from './message-image';
 
 export interface MessageImageProps {
-  /** 原图直链（新标签页打开原件）。 */
+  /** 原图直链（左键开灯箱；中键/Cmd/右键仍走新标签页拿原件）。 */
   href: string;
   /** 文件名（title / alt）。 */
   name: string;
