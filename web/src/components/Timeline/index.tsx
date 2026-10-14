@@ -572,6 +572,12 @@ export const Timeline = memo(function Timeline({
     globalThinking,
   } = structure;
 
+  // 用户主动停止的 Run 不显示那条红色错误（对齐 DSH：只显示"已停止 · 用时 X"）。
+  // "Aborted" 来自 AbortSignal 的 DOMException，是"停止"的正常产物而不是故障，
+  // 状态行已经说清楚了，再挂一条红的是噪音。
+  // 进程重启导致的 interrupted 仍然显示 —— 那不是用户干的，值得知晓。
+  const showError = finalError !== null && run.status !== 'stopped';
+
   // 首个 token 等待期：运行中且最后一条事件是 llm_call_started（任何后续事件都意味着等待结束）。
   // 父组件 running 期间每 1.2s tick，秒数随之实时刷新。
   const modelWait = run.status === 'running' ? deriveModelWaitState(events, Date.now()) : null;
@@ -814,10 +820,10 @@ export const Timeline = memo(function Timeline({
               ) : (
                 <div className={styles.finalBlock}>
                   <CollapsibleText text={finalAnswer} streaming={lastStepRunning} />
-                  {finalError && <div className={styles.finalError}>{finalError}</div>}
+                  {showError && <div className={styles.finalError}>{finalError}</div>}
                 </div>
               ))}
-            {!finalAnswer && finalError && <div className={styles.finalError}>{finalError}</div>}
+            {!finalAnswer && showError && <div className={styles.finalError}>{finalError}</div>}
 
             <RunUsage run={run} events={events} />
           </section>
