@@ -14,8 +14,12 @@ import {
 } from './context-gauge';
 import styles from './Timeline.module.css';
 
-const SIZE = 18;
-const STROKE = 2.5;
+// 尺寸对齐 DSH。**注意 DPR**：参考截图是 2x 视网膜，量到 26px 图像像素，
+// 实际 CSS 是 13px（描边 1.5px）。曾直接按 26px 实现，真机反馈"环太大了"。
+// 配色**刻意不照搬**：DSH 是恒双色灰，我们按占用率变色（正常/警告/危险），
+// 作为"上下文快满了"的视觉预警 —— 这是比 DSH 多的一件事，有测试覆盖。
+const SIZE = 13;
+const STROKE = 1.5;
 const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 

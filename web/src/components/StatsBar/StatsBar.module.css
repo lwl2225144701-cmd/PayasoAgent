@@ -12,7 +12,8 @@
   justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 6px 0 0;
+  /* 上内距 4px：环高 26px 是全条最高项，再给 4px 呼吸即可（曾 6px，条会被撑到 34px） */
+  padding: 4px 0 0;
   flex-shrink: 0;
 }
 

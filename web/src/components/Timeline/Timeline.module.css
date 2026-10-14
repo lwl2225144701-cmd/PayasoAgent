@@ -198,15 +198,16 @@
 }
 
 /* ---- 上下文预算环形指示器 ---- */
-/* 与做小后的统计条匹配：收紧外距与内距 */
+/* 环本体 26px（对齐 DSH）。外距内距都归零，避免把整条统计条撑高 ——
+   26px 的环本身就是足够的悬停目标。 */
 .gaugeWrap {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  margin-right: 2px;
-  padding: 1px 2px;
+  margin-right: 0;
+  padding: 0;
   cursor: help;
   outline: none;
 }
