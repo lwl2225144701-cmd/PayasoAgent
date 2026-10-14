@@ -9,7 +9,6 @@
 
 import assert from 'node:assert/strict';
 import {
-  compactDurationMs,
   modelMs,
   sessionStatRows,
   sessionStatsDetails,
@@ -176,7 +175,7 @@ check('用时拆分：模型用时 = 活跃 − 工具，宁缺勿错', () => {
   assert.equal(modelMs(stats({ durationMs: 0, toolMs: 0 })), 0);
 });
 
-check('活动组的用时片段是紧凑格式（model / tools 各自独立）', () => {
+check('活动 pill 只有 回合 · 步 · tok/s 三项，用时不上条', () => {
   const [activity] = sessionStatsGroups(
     stats({
       turns: 1,
@@ -188,56 +187,7 @@ check('活动组的用时片段是紧凑格式（model / tools 各自独立）',
     }),
     'zh-CN',
   );
-  assert.ok(activity.includes('model 9.0s'), activity.join(' | '));
-  assert.ok(activity.includes('tools 3.0s'), activity.join(' | '));
-});
-
-// ---- 紧凑时长（条上专用，对齐 DSH 的 2m 8s / 22.1s）----
-
-check('compactDurationMs：英文紧凑单位，秒以下一位小数', () => {
-  assert.equal(compactDurationMs(414), '414ms');
-  assert.equal(compactDurationMs(22_100), '22.1s');
-  assert.equal(compactDurationMs(59_999), '60.0s');
-  assert.equal(compactDurationMs(60_000), '1m');
-  assert.equal(compactDurationMs(128_000), '2m 8s');
-  assert.equal(compactDurationMs(300_000), '5m');
-  assert.equal(compactDurationMs(3_600_000), '1h');
-  assert.equal(compactDurationMs(5_400_000), '1h 30m');
-});
-
-check('compactDurationMs：脏输入兜底为 0ms', () => {
-  assert.equal(compactDurationMs(Number.NaN), '0ms');
-  assert.equal(compactDurationMs(-5), '0ms');
-});
-
-check('条上用时拆成两个独立片段，且用紧凑格式', () => {
-  const [activity] = sessionStatsGroups(
-    stats({
-      turns: 1,
-      steps: 62,
-      decodeMs: 2_000,
-      outputTokens: 100,
-      durationMs: 128_000,
-      toolMs: 22_100,
-    }),
-    'zh-CN',
-  );
-  assert.ok(activity.includes('model 1m 46s'), activity.join(' | '));
-  assert.ok(activity.includes('tools 22.1s'), activity.join(' | '));
-  // 不再是单条「模型 X · 工具 Y」
-  assert.ok(!activity.some((s) => s.startsWith('模型 ')), activity.join(' | '));
-});
-
-check('条上用时片段各自可省略：无模型用时/无工具用时不出对应片段', () => {
-  const [onlyTool] = sessionStatsGroups(stats({ turns: 1, durationMs: 3_000, toolMs: 3_000 }));
-  assert.ok(!onlyTool.some((s) => s.startsWith('model')), onlyTool.join(' | '));
-  assert.ok(
-    onlyTool.some((s) => s.startsWith('tools')),
-    onlyTool.join(' | '),
-  );
-
-  const [neither] = sessionStatsGroups(stats({ turns: 1, steps: 2 }));
-  assert.ok(!neither.some((s) => /^(model|tools)/.test(s)), neither.join(' | '));
+  assert.deepEqual(activity, ['1 回合', '4 步', '50 tok/s']);
 });
 
 check('面板里的用时仍用本地化全称（可读性优先）', () => {

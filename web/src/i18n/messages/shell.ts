@@ -43,10 +43,6 @@ export const shellMessages = {
   'shell.stats.cacheHit': { 'zh-CN': '缓存命中 {percent}%', 'en-US': '{percent}% cached' },
   'shell.stats.ttft': { 'zh-CN': '首token {duration}', 'en-US': 'First token {duration}' },
   'shell.stats.active': { 'zh-CN': '活跃 {duration}', 'en-US': 'Active {duration}' },
-  // 条上的紧凑用时片段（对齐 DSH：英文紧凑单位，不随语言翻成全称，
-  // 否则「494分4秒」会把 pill 撑爆；面板里仍用本地化全称）
-  'shell.stats.modelShort': { 'zh-CN': 'model {value}', 'en-US': 'model {value}' },
-  'shell.stats.toolShort': { 'zh-CN': 'tools {value}', 'en-US': 'tools {value}' },
 
   // 展开面板（点击统计条的两枚 pill 弹出）—— 会话统计卡
   'shell.stats.modelTime': { 'zh-CN': '模型用时', 'en-US': 'Model time' },
