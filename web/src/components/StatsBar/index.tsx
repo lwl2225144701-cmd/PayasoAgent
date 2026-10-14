@@ -188,6 +188,8 @@ export function StatsBar({ stats, contextUsage }: StatsBarProps) {
         onActivate={() => toggle('activity')}
         anchorRef={activityRef}
       />
+      {/* 三块之间的分隔：极淡的竖线（比 DSH 的纯间距更明确，用户要求"有空隔开"） */}
+      {usage.length > 0 && <span className={styles.separator} aria-hidden="true" />}
       <StatsGroup
         kind="usage"
         segments={usage}
@@ -196,7 +198,12 @@ export function StatsBar({ stats, contextUsage }: StatsBarProps) {
         onActivate={() => toggle('usage')}
         anchorRef={usageRef}
       />
-      {contextUsage && <ContextUsageRing usage={contextUsage} showPercent />}
+      {contextUsage && (
+        <>
+          <span className={styles.separator} aria-hidden="true" />
+          <ContextUsageRing usage={contextUsage} showPercent />
+        </>
+      )}
       {openPanel === 'activity' && (
         <StatsPanel
           kind="activity"

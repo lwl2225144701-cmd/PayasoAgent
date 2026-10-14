@@ -3,23 +3,28 @@
    不抢 composer 注意力；下边距交给 .inputBar 的内边距，这里只收紧与输入框的间距。 */
 
 /* 整条做小（真机反馈）：pill 去掉边框与底色，退化成轻量文字行 ——
-   与 DSH 状态条一致，也不跟 composer 抢视觉重量。 */
+   与 DSH 状态条一致，也不跟 composer 抢视觉重量。
+   三块（活动 / 用量 / 上下文环）之间用 gap 拉开，DSH 同款做法：
+   不画分隔线，靠间距分组，挤时整块换行而不是吞字。 */
 .bar {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 8px;
   padding: 6px 0 0;
   flex-shrink: 0;
 }
 
+/* pill 是完整的一行读数：**不收缩、不截断、不省略**。
+   曾经有 min-width:0 + overflow:hidden + max-width:100% 三件套，
+   窄容器下 flex 把 pill 压窄，文字直接被吃掉（真机反馈"有些字都不见啦"）。
+   DSH 的状态条同样是一行完整展示，挤不下时整条换行而不是吞字。 */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
-  max-width: 100%;
+  flex: 0 0 auto;
   padding: 2px 6px;
   border: 1px solid transparent;
   border-radius: 999px;
@@ -30,7 +35,14 @@
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  overflow: hidden;
+}
+
+/* 三块之间的分隔线：极淡，只做视觉分组，不抢读数 */
+.separator {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 12px;
+  background: var(--color-border-subtle);
 }
 
 .icon {
@@ -39,14 +51,13 @@
 }
 
 .item {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .item + .item::before {
   content: "·";
-  margin-right: 4px;
+  margin-right: 5px;
   color: var(--text-muted);
 }
 
