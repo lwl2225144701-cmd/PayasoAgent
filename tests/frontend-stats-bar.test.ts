@@ -280,11 +280,11 @@ check('会话统计卡：模型/工具用时、TTFT 平均、TPS、调用数、�
     '首 token 平均（TTFT）',
     '输出速度（TPS）',
   ]);
-  // 样本数作为 hint 挂在 TTFT 与 TPS 上
-  const ttft = rows.find((r) => r.label === '首 token 平均（TTFT）');
-  assert.equal(ttft?.hint, '2 个样本');
-  const tps = rows.find((r) => r.label === '输出速度（TPS）');
-  assert.equal(tps?.hint, '2 个样本');
+  // 行内不带 hint：DSH 的面板只有"标签 + 值"两列，
+  // 样本数 / 工具数这些补充说明一律不显示（真机反馈）
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row).sort(), ['label', 'value'], JSON.stringify(row));
+  }
 });
 
 check('TTFT 取整到秒（对齐 DSH 的 13秒，不带小数）', () => {

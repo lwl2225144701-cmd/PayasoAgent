@@ -91,7 +91,7 @@ function StatsPanel({
   anchorRef,
 }: {
   kind: PanelKind;
-  rows: { label: string; value: string; hint?: string }[];
+  rows: { label: string; value: string }[];
   onClose: () => void;
   anchorRef: React.MutableRefObject<HTMLElement | null>;
 }) {
@@ -149,10 +149,7 @@ function StatsPanel({
       {rows.map((row) => (
         <div key={row.label} className={styles.panelRow}>
           <span className={styles.panelLabel}>{row.label}</span>
-          <span className={styles.panelValue}>
-            {row.value}
-            {row.hint && <span className={styles.panelHint}>{row.hint}</span>}
-          </span>
+          <span className={styles.panelValue}>{row.value}</span>
         </div>
       ))}
     </div>,

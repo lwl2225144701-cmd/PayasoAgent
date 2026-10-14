@@ -54,7 +54,6 @@ export const shellMessages = {
   'shell.stats.ttftAvg': { 'zh-CN': '首 token 平均（TTFT）', 'en-US': 'Avg first token (TTFT)' },
   'shell.stats.tps': { 'zh-CN': '输出速度（TPS）', 'en-US': 'Output speed (TPS)' },
   'shell.stats.activeLabel': { 'zh-CN': '活跃时长', 'en-US': 'Active time' },
-  'shell.stats.sampleCount': { 'zh-CN': '{count} 个样本', 'en-US': '{count} samples' },
 
   // 展开面板 —— Token 用量卡
   'shell.stats.totalTokens': { 'zh-CN': '总用量', 'en-US': 'Total' },
@@ -63,11 +62,6 @@ export const shellMessages = {
   'shell.stats.uncachedInput': { 'zh-CN': '未缓存输入', 'en-US': 'Uncached input' },
   'shell.stats.outputTokens': { 'zh-CN': '输出', 'en-US': 'Output' },
   'shell.stats.cacheHitLabel': { 'zh-CN': '缓存命中率', 'en-US': 'Cache hit rate' },
-  // 命中率分母只由上报了缓存分桶的调用构成（缺分桶 ≠ 未命中）
-  'shell.stats.cacheHitHint': {
-    'zh-CN': '仅统计上报了缓存分桶的调用',
-    'en-US': 'Counts only calls reporting cache buckets',
-  },
   'shell.stats.panelSession': { 'zh-CN': '会话统计', 'en-US': 'Session stats' },
   'shell.stats.panelTokens': { 'zh-CN': 'Token 用量', 'en-US': 'Token usage' },
 

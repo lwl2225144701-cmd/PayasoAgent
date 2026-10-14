@@ -168,8 +168,6 @@ export function tokenBuckets(stats: SessionStats): TokenBuckets {
 export interface StatRow {
   label: string;
   value: string;
-  /** 行内补充说明（如样本数、占比），可省。 */
-  hint?: string;
 }
 
 /**
@@ -191,8 +189,6 @@ export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'z
     rows.push({
       label: t('shell.stats.toolTime'),
       value: formatDurationMs(stats.toolMs, language),
-      hint:
-        stats.toolCalls > 0 ? t('shell.stats.toolCalls', { count: stats.toolCalls }) : undefined,
     });
   }
   if (stats.ttftCount > 0) {
@@ -201,19 +197,11 @@ export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'z
     rows.push({
       label: t('shell.stats.ttftAvg'),
       value: formatDurationMs(Math.round(stats.ttftMs / stats.ttftCount), language, 0),
-      hint: t('shell.stats.sampleCount', { count: stats.ttftCount }),
     });
   }
   const rate = tokensPerSecond(stats);
   if (rate !== undefined) {
-    rows.push({
-      label: t('shell.stats.tps'),
-      value: `${rate} tok/s`,
-      hint:
-        stats.decodeCount > 0
-          ? t('shell.stats.sampleCount', { count: stats.decodeCount })
-          : undefined,
-    });
+    rows.push({ label: t('shell.stats.tps'), value: `${rate} tok/s` });
   }
   return rows;
 }
@@ -231,11 +219,7 @@ export function tokenStatRows(stats: SessionStats, language: LanguageMode = 'zh-
   rows.push({ label: t('shell.stats.uncachedInput'), value: formatContextTokens(b.input) });
   rows.push({ label: t('shell.stats.outputTokens'), value: formatContextTokens(b.output) });
   if (b.hitPercent !== undefined) {
-    rows.push({
-      label: t('shell.stats.cacheHitLabel'),
-      value: `${b.hitPercent}%`,
-      hint: t('shell.stats.cacheHitHint'),
-    });
+    rows.push({ label: t('shell.stats.cacheHitLabel'), value: `${b.hitPercent}%` });
   }
   return rows;
 }
