@@ -1,12 +1,13 @@
 // 会话统计条（v2.3 起从顶栏挪到底部）：挂在输入框正下方、与 composer 同宽居中。
 // 布局对齐 DSH 底部状态条：两枚图标 pill（活动 / 用量）+ 一枚上下文占用环。
-//   pill 1：回合 · 步 · 吞吐(tok/s) · 模型用时 · 工具用时
+//   pill 1：回合 · 步 · 吞吐(tok/s) · model X · tools Y
 //   pill 2：总量 tok · 缓存命中率
 //   ring  ：上下文占用（含可见百分比）
 //
-// 点击 pill 展开面板，把条上放不下的读数分两张卡铺开（对齐 DSH 的「会话统计」与
-// 「Token 用量」）：会话统计卡 + Token 用量卡。悬停仍有 title 兜底（键盘/读屏用）。
-// 分组口径见 session-stats-view.ts（纯函数）；零值片段自动省略，无统计不渲染。
+// 两枚 pill **各自弹各自的窗**（对齐 DSH：会话统计与 Token 用量是两个独立弹窗，
+// 不是一块面板并两列）：点活动 pill 出「会话统计」，点用量 pill 出「Token 用量」。
+// 每个弹窗都是 图标+标题行 + 分隔线 + 读数行 的卡片；Esc / 点窗外 / 再点本 pill 关闭。
+// 悬停仍有 title 兜底（键盘/读屏用）。分组口径见 session-stats-view.ts（纯函数）。
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -30,28 +31,44 @@ interface StatsBarProps {
   contextUsage?: ContextUsageEvent | null;
 }
 
+/** 弹窗内容：哪一枚 pill 决定弹哪张卡。 */
+type PanelKind = 'activity' | 'usage';
+
+const PANEL_WIDTH = 320;
+
 function StatsGroup({
   kind,
   segments,
   title,
+  open,
   onActivate,
+  anchorRef,
 }: {
-  kind: 'activity' | 'usage';
+  kind: PanelKind;
   segments: string[];
   title?: string;
-  /** 点击展开面板；传了才可点。 */
+  /** 本 pill 的弹窗是否展开（用于 aria-expanded）。 */
+  open?: boolean;
   onActivate?: () => void;
+  /** 弹窗定位到本 pill；由父级持有 ref（HTMLElement 以便兼容 button 的 ref prop）。 */
+  anchorRef: React.MutableRefObject<HTMLElement | null>;
 }) {
   if (segments.length === 0) return null;
   const Icon = kind === 'activity' ? ChartIcon : DatabaseIcon;
   return (
     <button
+      // callback ref 桥接：父级给的是 RefObject<HTMLElement>，直接赋给 button 的
+      // ref 会被 React 18 的 LegacyRef 类型卡住（OpenInAppMenu 的锚点是 div 才没这问题）
+      ref={(el) => {
+        anchorRef.current = el;
+      }}
       type="button"
       className={styles.pill}
       data-stats-group={kind}
       title={title}
       onClick={onActivate}
       aria-haspopup="dialog"
+      aria-expanded={open}
     >
       <Icon size={14} className={styles.icon} />
       {segments.map((segment) => (
@@ -63,17 +80,20 @@ function StatsGroup({
   );
 }
 
-/** 展开面板：两张读数卡（会话统计 / Token 用量）。 */
+/**
+ * 单枚 pill 的弹窗。DSH 的两张卡各自独立，所以这里一个组件只渲染一组读数行；
+ * 定位到锚点上方居中，视口内钳制。
+ */
 function StatsPanel({
-  stats,
-  language,
+  kind,
+  rows,
   onClose,
   anchorRef,
 }: {
-  stats: SessionStats;
-  language: 'zh-CN' | 'en-US';
+  kind: PanelKind;
+  rows: { label: string; value: string; hint?: string }[];
   onClose: () => void;
-  anchorRef: React.RefObject<HTMLElement | null>;
+  anchorRef: React.MutableRefObject<HTMLElement | null>;
 }) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -83,14 +103,16 @@ function StatsPanel({
   useLayoutEffect(() => {
     const rect = anchorRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const w = 320;
     setPos({
       top: Math.max(8, rect.top - 8),
-      left: Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 8)),
+      left: Math.max(
+        8,
+        Math.min(rect.left + rect.width / 2 - PANEL_WIDTH / 2, window.innerWidth - PANEL_WIDTH - 8),
+      ),
     });
   }, [anchorRef]);
 
-  // 点面板外 / Esc 关闭（与 open-in-app 菜单同因）
+  // 点窗外 / Esc 关闭。点**本 pill** 不算窗外（toggle 收起由 pill 自己的 onClick 负责）。
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       const el = panelRef.current;
@@ -109,41 +131,30 @@ function StatsPanel({
     };
   }, [onClose, anchorRef]);
 
-  const sessionRows = sessionStatRows(stats, language);
-  const tokenRows = tokenStatRows(stats, language);
+  const Icon = kind === 'activity' ? ChartIcon : DatabaseIcon;
+  const title = kind === 'activity' ? t('shell.stats.panelSession') : t('shell.stats.panelTokens');
 
   return createPortal(
     <div
       ref={panelRef}
       className={styles.panel}
       role="dialog"
-      aria-label={t('shell.stats.title')}
+      aria-label={title}
       style={pos ? { top: pos.top, left: pos.left } : { visibility: 'hidden' }}
     >
-      <div className={styles.panelCard}>
-        <div className={styles.panelCardTitle}>{t('shell.stats.panelSession')}</div>
-        {sessionRows.map((row) => (
-          <div key={row.label} className={styles.panelRow}>
-            <span className={styles.panelLabel}>{row.label}</span>
-            <span className={styles.panelValue}>
-              {row.value}
-              {row.hint && <span className={styles.panelHint}>{row.hint}</span>}
-            </span>
-          </div>
-        ))}
+      <div className={styles.panelTitle}>
+        <Icon size={14} className={styles.panelTitleIcon} />
+        {title}
       </div>
-      <div className={styles.panelCard}>
-        <div className={styles.panelCardTitle}>{t('shell.stats.panelTokens')}</div>
-        {tokenRows.map((row) => (
-          <div key={row.label} className={styles.panelRow}>
-            <span className={styles.panelLabel}>{row.label}</span>
-            <span className={styles.panelValue}>
-              {row.value}
-              {row.hint && <span className={styles.panelHint}>{row.hint}</span>}
-            </span>
-          </div>
-        ))}
-      </div>
+      {rows.map((row) => (
+        <div key={row.label} className={styles.panelRow}>
+          <span className={styles.panelLabel}>{row.label}</span>
+          <span className={styles.panelValue}>
+            {row.value}
+            {row.hint && <span className={styles.panelHint}>{row.hint}</span>}
+          </span>
+        </div>
+      ))}
     </div>,
     portalRoot(),
   );
@@ -151,35 +162,53 @@ function StatsPanel({
 
 export function StatsBar({ stats, contextUsage }: StatsBarProps) {
   const { t, language } = useI18n();
-  const barRef = useRef<HTMLDivElement>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
+  // 两枚 pill 各自持自己的展开状态：同一时刻只开一个（点另一枚会顶掉当前这个）。
+  const [openPanel, setOpenPanel] = useState<PanelKind | null>(null);
+  // | null 才能得到 MutableRefObject（callback ref 要写 .current）
+  const activityRef = useRef<HTMLElement | null>(null);
+  const usageRef = useRef<HTMLElement | null>(null);
   if (!stats) return null;
   const [activity, usage] = sessionStatsGroups(stats, language);
   // 鼠标悬停补全条上放不下的读数（调用数 / 首 token / 活跃时长）。
   const details = sessionStatsDetails(stats, language);
   const detailTitle = details.length > 0 ? details.join(' · ') : t('shell.stats.title');
   if (activity.length === 0 && usage.length === 0 && !contextUsage) return null;
+
+  const toggle = (kind: PanelKind) => setOpenPanel((cur) => (cur === kind ? null : kind));
+
   return (
-    <div className={styles.bar} data-session-stats-bar ref={barRef}>
+    <div className={styles.bar} data-session-stats-bar>
       <StatsGroup
         kind="activity"
         segments={activity}
         title={detailTitle}
-        onActivate={() => setPanelOpen((v) => !v)}
+        open={openPanel === 'activity'}
+        onActivate={() => toggle('activity')}
+        anchorRef={activityRef}
       />
       <StatsGroup
         kind="usage"
         segments={usage}
         title={detailTitle}
-        onActivate={() => setPanelOpen((v) => !v)}
+        open={openPanel === 'usage'}
+        onActivate={() => toggle('usage')}
+        anchorRef={usageRef}
       />
       {contextUsage && <ContextUsageRing usage={contextUsage} showPercent />}
-      {panelOpen && (
+      {openPanel === 'activity' && (
         <StatsPanel
-          stats={stats}
-          language={language}
-          onClose={() => setPanelOpen(false)}
-          anchorRef={barRef}
+          kind="activity"
+          rows={sessionStatRows(stats, language)}
+          onClose={() => setOpenPanel(null)}
+          anchorRef={activityRef}
+        />
+      )}
+      {openPanel === 'usage' && (
+        <StatsPanel
+          kind="usage"
+          rows={tokenStatRows(stats, language)}
+          onClose={() => setOpenPanel(null)}
+          anchorRef={usageRef}
         />
       )}
     </div>
