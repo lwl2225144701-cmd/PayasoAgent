@@ -457,9 +457,6 @@ export default function App() {
   const sessionBusy =
     latestSessionRun?.status === 'running' || latestSessionRun?.status === 'stopping';
   const [sendQueue, setSendQueue] = useState<QueuedMessage[]>([]);
-  // 排队消息"放回输入框编辑"的种子：InputBar 收到后写入自己的 text 状态并回调清除。
-  // InputBar 自持 text，外部要灌内容只能走这条单向种子通道。
-  const [queueEditSeed, setQueueEditSeed] = useState<{ seq: number; text: string } | null>(null);
   const queueDispatchingRef = useRef(false);
   const immediateStopRunIdRef = useRef<string | null>(null);
   const [sentRunId, setSentRunId] = useState<string | null>(null);
@@ -638,13 +635,11 @@ export default function App() {
     setSendQueue((queue) => queue.filter((message) => message.id !== messageId));
   }, []);
 
-  // 放回输入框编辑：移出队列 + 把原文灌进输入框（seq 保证同一条文本再次编辑也能触发 effect）
-  const handleEditQueued = useCallback((messageId: string) => {
-    setSendQueue((queue) => {
-      const target = queue.find((message) => message.id === messageId);
-      if (target) setQueueEditSeed((seed) => ({ seq: (seed?.seq ?? 0) + 1, text: target.task }));
-      return queue.filter((message) => message.id !== messageId);
-    });
+  // 行内编辑排队消息：就地改文字（对齐 DSH —— 队列是就地编辑，不是放回输入框）
+  const handleUpdateQueued = useCallback((messageId: string, text: string) => {
+    setSendQueue((queue) =>
+      queue.map((message) => (message.id === messageId ? { ...message, task: text } : message)),
+    );
   }, []);
 
   useEffect(() => {
@@ -1143,9 +1138,7 @@ export default function App() {
               queuedMessages={sendQueue}
               onSendQueuedNow={handleSendQueuedNow}
               onDeleteQueued={handleDeleteQueued}
-              onEditQueued={handleEditQueued}
-              queueEditSeed={queueEditSeed}
-              onQueueEditSeedApplied={() => setQueueEditSeed(null)}
+              onUpdateQueued={handleUpdateQueued}
               permissionMode={permissionMode}
               onSelectPermission={setPermissionMode}
               onBuiltinCommand={handleBuiltinCommand}

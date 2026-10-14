@@ -100,14 +100,6 @@ export const composerMessages = {
     'zh-CN': '发送队列',
     'en-US': 'Send queue',
   },
-  'composer.queue.notice': {
-    'zh-CN': '已加入发送队列 · {count} 条消息等待中',
-    'en-US': 'Added to the send queue · {count} message(s) waiting',
-  },
-  'composer.queue.sendNow': {
-    'zh-CN': '立即发送',
-    'en-US': 'Send now',
-  },
   'composer.queue.sendNowHint': {
     'zh-CN': '当前任务结束后优先发送',
     'en-US': 'Send first once the current task finishes',
@@ -117,13 +109,21 @@ export const composerMessages = {
     'en-US': 'Remove from the send queue',
   },
   'composer.queue.editHint': {
-    'zh-CN': '放回输入框编辑',
-    'en-US': 'Back to the composer for editing',
+    'zh-CN': '编辑排队消息',
+    'en-US': 'Edit queued message',
   },
-  // 队列底部快捷键提示（DSH 同款：插话发送）
-  'composer.queue.interruptHint': {
+  // 队列面板折叠标题（>1 条时显示，对齐 DSH 的 queue.count）
+  'composer.queue.count': {
+    'zh-CN': '{count} 条排队消息',
+    'en-US': '{count} queued message(s)',
+  },
+  'composer.queue.edit': { 'zh-CN': '编辑排队消息', 'en-US': 'Edit queued message' },
+  'composer.queue.save': { 'zh-CN': '保存排队消息', 'en-US': 'Save queued message' },
+  'composer.queue.cancelEdit': { 'zh-CN': '取消编辑', 'en-US': 'Cancel editing' },
+  // 队列非空时的输入框占位符（DSH 把"插话发送"提示做成 placeholder，不是独立一行）
+  'composer.queue.steerPlaceholder': {
     'zh-CN': 'Cmd/Ctrl+Enter 插话发送全部排队消息',
-    'en-US': 'Cmd/Ctrl+Enter sends all queued messages',
+    'en-US': 'Cmd/Ctrl+Enter steers all queued messages',
   },
 
   // 模型下拉

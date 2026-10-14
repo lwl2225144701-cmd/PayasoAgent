@@ -28,6 +28,7 @@ import type { ModelProviderView, ModelSelection, PermissionMode, PromptCommand }
 import {
   ArrowUpIcon,
   ChatIcon,
+  CheckIcon,
   ChevronDownIcon,
   CloseIcon,
   FolderIcon,
@@ -75,12 +76,8 @@ interface InputBarProps {
   queuedMessages?: QueuedComposerMessage[];
   onSendQueuedNow?: (messageId: string) => void;
   onDeleteQueued?: (messageId: string) => void;
-  /** 把排队消息放回输入框编辑（移出队列）。 */
-  onEditQueued?: (messageId: string) => void;
-  /** 编辑种子：App 移除排队消息后把原文灌进来（seq 变化即重新触发）。 */
-  queueEditSeed?: { seq: number; text: string } | null;
-  /** 种子已应用（输入框已写入），App 据此清除种子。 */
-  onQueueEditSeedApplied?: () => void;
+  /** 行内编辑排队消息：把该条的文字改成 text（DSH 的队列是就地编辑，不是放回输入框）。 */
+  onUpdateQueued?: (messageId: string, text: string) => void;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
   // 内置斜杠命令执行器：发送 /cmd 时被拦截调用（不作为任务发给模型）
@@ -110,9 +107,7 @@ export function InputBar({
   queuedMessages = [],
   onSendQueuedNow,
   onDeleteQueued,
-  onEditQueued,
-  queueEditSeed,
-  onQueueEditSeedApplied,
+  onUpdateQueued,
   permissionMode,
   onSelectPermission,
   onBuiltinCommand,
@@ -120,17 +115,18 @@ export function InputBar({
   footerSlot,
 }: InputBarProps) {
   const { t } = useI18n();
-  // 未传 placeholder 时用跟随语言的默认占位符（传了就尊重调用方，如 hero 态的定制文案）
-  const activePlaceholder = placeholder ?? t('composer.placeholder');
+  // 未传 placeholder 时用跟随语言的默认占位符（传了就尊重调用方，如 hero 态的定制文案）。
+  // 队列非空时换成"插话发送全部排队消息"——DSH 那句提示就是输入框 placeholder，
+  // 不是队列下方的独立一行（曾误解成独立提示行，多出一行、结构就不对了）。
+  const activePlaceholder =
+    queuedMessages.length > 0
+      ? t('composer.queue.steerPlaceholder')
+      : (placeholder ?? t('composer.placeholder'));
   const [text, setText] = useState('');
-
-  // 排队消息"放回编辑"：App 把原文作为种子送进来，写入输入框后通知清除。
-  // 依赖整个对象（seq 变化才会重跑）——同一条文本二次编辑也能触发。
-  useEffect(() => {
-    if (!queueEditSeed) return;
-    setText(queueEditSeed.text);
-    onQueueEditSeedApplied?.();
-  }, [queueEditSeed, onQueueEditSeedApplied]);
+  // 队列面板的折叠态（对齐 DSH：>1 条时折叠成一行标题，默认折叠）
+  const [queueCollapsed, setQueueCollapsed] = useState(true);
+  // 行内编辑：正在编辑哪一条 + 草稿文本
+  const [queueEditing, setQueueEditing] = useState<{ id: string; text: string } | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 附件状态用 ref 镜像一份，粘贴事件回调里始终读到最新值
@@ -595,61 +591,160 @@ export function InputBar({
   return (
     <div className={`${styles.inputBar} ${styles.conversationBar}`}>
       {headerSlot && <div className={styles.inputBarHeader}>{headerSlot}</div>}
+      {queuedMessages.length > 0 &&
+        (() => {
+          // 对齐 DSH 的 QueueDock：
+          // - 面板是**菜单质感的一层**（底 + blur），只上方两角圆、无下边框，
+          //   负 margin 贴在 composer 上方，视觉上与输入框连成一体；
+          // - 只有 1 条时不显示标题行（行首直接带队列图标）；
+          //   >1 条时折叠成「图标 + N 条排队消息 + chevron」，默认折叠；
+          // - 编辑是**行内** textarea，动作换成 保存 / 取消。
+          const rowCount = queuedMessages.length;
+          const expanded = !queueCollapsed || queueEditing !== null;
+          const listVisible = rowCount === 1 || expanded;
+          return (
+            <div className={styles.queueDock} data-queue-dock>
+              <div className={styles.queuePanel}>
+                {rowCount > 1 && (
+                  <button
+                    type="button"
+                    className={styles.queueHeader}
+                    aria-expanded={expanded}
+                    disabled={queueEditing !== null}
+                    onClick={() => setQueueCollapsed((v) => !v)}
+                  >
+                    <span className={styles.queueLead} aria-hidden="true">
+                      <ChatIcon size={15} />
+                    </span>
+                    <span className={styles.queueCount}>
+                      {t('composer.queue.count', { count: rowCount })}
+                    </span>
+                    <span className={styles.queueChevron} aria-hidden="true">
+                      <ChevronDownIcon
+                        size={14}
+                        className={expanded ? styles.queueChevronOpen : ''}
+                      />
+                    </span>
+                  </button>
+                )}
+                <ul className={styles.queueList} hidden={!listVisible}>
+                  {listVisible &&
+                    queuedMessages.map((message) => {
+                      const editing = queueEditing?.id === message.id;
+                      return (
+                        <li className={styles.queueItem} key={message.id}>
+                          {rowCount === 1 && (
+                            <span className={styles.queueLead} aria-hidden="true">
+                              <ChatIcon size={15} />
+                            </span>
+                          )}
+                          {editing ? (
+                            <textarea
+                              className={styles.queueEditor}
+                              value={queueEditing.text}
+                              aria-label={t('composer.queue.edit')}
+                              // biome-ignore lint/a11y/noAutofocus: 进入行内编辑即应聚焦
+                              autoFocus
+                              onChange={(e) =>
+                                setQueueEditing({ id: message.id, text: e.target.value })
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                  e.preventDefault();
+                                  const next = queueEditing.text.trim();
+                                  if (next) {
+                                    onUpdateQueued?.(message.id, next);
+                                    setQueueEditing(null);
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  setQueueEditing(null);
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span className={styles.queueItemText} title={message.task}>
+                              {message.task}
+                            </span>
+                          )}
+                          <div className={styles.queueItemActions}>
+                            {editing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className={styles.queueAction}
+                                  disabled={queueEditing.text.trim() === ''}
+                                  onClick={() => {
+                                    const next = queueEditing.text.trim();
+                                    if (!next) return;
+                                    onUpdateQueued?.(message.id, next);
+                                    setQueueEditing(null);
+                                  }}
+                                  title={t('composer.queue.save')}
+                                  aria-label={t('composer.queue.save')}
+                                >
+                                  <CheckIcon size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.queueAction}
+                                  onClick={() => setQueueEditing(null)}
+                                  title={t('composer.queue.cancelEdit')}
+                                  aria-label={t('composer.queue.cancelEdit')}
+                                >
+                                  <CloseIcon size={14} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className={styles.queueAction}
+                                  onClick={() =>
+                                    setQueueEditing({ id: message.id, text: message.task })
+                                  }
+                                  title={t('composer.queue.editHint')}
+                                  aria-label={t('composer.queue.editHint')}
+                                >
+                                  <PencilIcon size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.queueAction}
+                                  onClick={() => onDeleteQueued?.(message.id)}
+                                  title={t('composer.queue.deleteHint')}
+                                  aria-label={t('composer.queue.deleteHint')}
+                                >
+                                  <TrashIcon size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.queueAction}
+                                  onClick={() => onSendQueuedNow?.(message.id)}
+                                  title={t('composer.queue.sendNowHint')}
+                                  aria-label={t('composer.queue.sendNowHint')}
+                                >
+                                  <ArrowUpIcon size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                </ul>
+              </div>
+            </div>
+          );
+        })()}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: 拖放落点容器，非交互控件，无键盘语义可给 */}
-      <div className={styles.conversationComposer} onDragOver={handleDragOver} onDrop={handleDrop}>
+      <div
+        className={`${styles.conversationComposer}${queuedMessages.length > 0 ? ` ${styles.composerDocked}` : ''}`}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         {attachmentStrip}
         {visionWarning}
-        {queuedMessages.length > 0 && (
-          // 形态对齐 DSH：**不套卡片**——无底色、无边框、无圆角，
-          // 就是「若干行消息 + 一行快捷键提示」直接贴在 composer 上。
-          // 每条一行 = 会话图标 + 文字 + 右侧三个图标动作（编辑/删除/立即发送）。
-          // 曾套过一层蓝色面板（queuePanel 带 brand-soft 底 + brand-border 边），
-          // 真机反馈"不是想要的"——DSH 是扁平拼接，不是卡片。
-          <div className={styles.queuePanel} role="status" aria-label={t('composer.queue.title')}>
-            <div className={styles.queueList}>
-              {queuedMessages.map((message) => (
-                <div className={styles.queueItem} key={message.id}>
-                  <div className={styles.queueItemContent}>
-                    <ChatIcon size={15} className={styles.queueItemIcon} />
-                    <span className={styles.queueItemText} title={message.task}>
-                      {message.task}
-                    </span>
-                  </div>
-                  <div className={styles.queueItemActions}>
-                    <button
-                      type="button"
-                      className={styles.queueAction}
-                      onClick={() => onEditQueued?.(message.id)}
-                      title={t('composer.queue.editHint')}
-                      aria-label={t('composer.queue.editHint')}
-                    >
-                      <PencilIcon size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.queueAction}
-                      onClick={() => onDeleteQueued?.(message.id)}
-                      title={t('composer.queue.deleteHint')}
-                      aria-label={t('composer.queue.deleteHint')}
-                    >
-                      <TrashIcon size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.queueAction}
-                      onClick={() => onSendQueuedNow?.(message.id)}
-                      title={t('composer.queue.sendNowHint')}
-                      aria-label={t('composer.queue.sendNowHint')}
-                    >
-                      <ArrowUpIcon size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className={styles.queueHint}>{t('composer.queue.interruptHint')}</div>
-          </div>
-        )}
         {templatePreview}
         <ComposerTextarea
           ref={textareaRef}
