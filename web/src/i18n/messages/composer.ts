@@ -116,6 +116,15 @@ export const composerMessages = {
     'zh-CN': '从发送队列删除',
     'en-US': 'Remove from the send queue',
   },
+  'composer.queue.editHint': {
+    'zh-CN': '放回输入框编辑',
+    'en-US': 'Back to the composer for editing',
+  },
+  // 队列底部快捷键提示（DSH 同款：插话发送）
+  'composer.queue.interruptHint': {
+    'zh-CN': 'Cmd/Ctrl+Enter 插话发送全部排队消息',
+    'en-US': 'Cmd/Ctrl+Enter sends all queued messages',
+  },
 
   // 模型下拉
   'composer.model.select': {

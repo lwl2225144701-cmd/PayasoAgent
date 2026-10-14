@@ -25,7 +25,15 @@ import {
 } from '../../commands/builtin-commands';
 import { useI18n } from '../../i18n';
 import type { ModelProviderView, ModelSelection, PermissionMode, PromptCommand } from '../../types';
-import { ChevronDownIcon, CloseIcon, FolderIcon } from '../icons';
+import {
+  ArrowUpIcon,
+  ChatIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  FolderIcon,
+  PencilIcon,
+  TrashIcon,
+} from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
@@ -67,6 +75,12 @@ interface InputBarProps {
   queuedMessages?: QueuedComposerMessage[];
   onSendQueuedNow?: (messageId: string) => void;
   onDeleteQueued?: (messageId: string) => void;
+  /** 把排队消息放回输入框编辑（移出队列）。 */
+  onEditQueued?: (messageId: string) => void;
+  /** 编辑种子：App 移除排队消息后把原文灌进来（seq 变化即重新触发）。 */
+  queueEditSeed?: { seq: number; text: string } | null;
+  /** 种子已应用（输入框已写入），App 据此清除种子。 */
+  onQueueEditSeedApplied?: () => void;
   permissionMode: PermissionMode;
   onSelectPermission: (mode: PermissionMode) => void;
   // 内置斜杠命令执行器：发送 /cmd 时被拦截调用（不作为任务发给模型）
@@ -96,6 +110,9 @@ export function InputBar({
   queuedMessages = [],
   onSendQueuedNow,
   onDeleteQueued,
+  onEditQueued,
+  queueEditSeed,
+  onQueueEditSeedApplied,
   permissionMode,
   onSelectPermission,
   onBuiltinCommand,
@@ -106,6 +123,14 @@ export function InputBar({
   // 未传 placeholder 时用跟随语言的默认占位符（传了就尊重调用方，如 hero 态的定制文案）
   const activePlaceholder = placeholder ?? t('composer.placeholder');
   const [text, setText] = useState('');
+
+  // 排队消息"放回编辑"：App 把原文作为种子送进来，写入输入框后通知清除。
+  // 依赖整个对象（seq 变化才会重跑）——同一条文本二次编辑也能触发。
+  useEffect(() => {
+    if (!queueEditSeed) return;
+    setText(queueEditSeed.text);
+    onQueueEditSeedApplied?.();
+  }, [queueEditSeed, onQueueEditSeedApplied]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 附件状态用 ref 镜像一份，粘贴事件回调里始终读到最新值
@@ -575,15 +600,16 @@ export function InputBar({
         {attachmentStrip}
         {visionWarning}
         {queuedMessages.length > 0 && (
+          // 形态对齐 DSH：每条一行（会话图标 + 文字 + 右侧三个图标动作），
+          // 面板底部挂一行快捷键提示。旧形态是「标题行 + 编号 + 文字按钮」，
+          // 占地方且和 DSH 不一致。
           <div className={styles.queuePanel} role="status" aria-label={t('composer.queue.title')}>
-            <div className={styles.queueNotice}>
-              {t('composer.queue.notice', { count: queuedMessages.length })}
-            </div>
             <div className={styles.queueList}>
               {queuedMessages.map((message, index) => (
                 <div className={styles.queueItem} key={message.id}>
                   <div className={styles.queueItemContent}>
                     <span className={styles.queueItemIndex}>{index + 1}</span>
+                    <ChatIcon size={15} className={styles.queueItemIcon} />
                     <span className={styles.queueItemText} title={message.task}>
                       {message.task}
                     </span>
@@ -592,23 +618,35 @@ export function InputBar({
                     <button
                       type="button"
                       className={styles.queueAction}
-                      onClick={() => onSendQueuedNow?.(message.id)}
-                      title={t('composer.queue.sendNowHint')}
+                      onClick={() => onEditQueued?.(message.id)}
+                      title={t('composer.queue.editHint')}
+                      aria-label={t('composer.queue.editHint')}
                     >
-                      {t('composer.queue.sendNow')}
+                      <PencilIcon size={14} />
                     </button>
                     <button
                       type="button"
-                      className={`${styles.queueAction} ${styles.queueDelete}`}
+                      className={styles.queueAction}
                       onClick={() => onDeleteQueued?.(message.id)}
                       title={t('composer.queue.deleteHint')}
+                      aria-label={t('composer.queue.deleteHint')}
                     >
-                      {t('common.delete')}
+                      <TrashIcon size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.queueAction}
+                      onClick={() => onSendQueuedNow?.(message.id)}
+                      title={t('composer.queue.sendNowHint')}
+                      aria-label={t('composer.queue.sendNowHint')}
+                    >
+                      <ArrowUpIcon size={14} />
                     </button>
                   </div>
                 </div>
               ))}
             </div>
+            <div className={styles.queueHint}>{t('composer.queue.interruptHint')}</div>
           </div>
         )}
         {templatePreview}
