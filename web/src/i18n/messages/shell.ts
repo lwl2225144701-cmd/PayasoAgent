@@ -52,9 +52,7 @@ export const shellMessages = {
   'shell.stats.activeLabel': { 'zh-CN': '活跃时长', 'en-US': 'Active time' },
 
   // 展开面板 —— Token 用量卡
-  'shell.stats.totalTokens': { 'zh-CN': '总用量', 'en-US': 'Total' },
   'shell.stats.cacheRead': { 'zh-CN': '缓存读取', 'en-US': 'Cache read' },
-  'shell.stats.cacheWrite': { 'zh-CN': '缓存写入', 'en-US': 'Cache write' },
   'shell.stats.uncachedInput': { 'zh-CN': '未缓存输入', 'en-US': 'Uncached input' },
   'shell.stats.outputTokens': { 'zh-CN': '输出', 'en-US': 'Output' },
   'shell.stats.cacheHitLabel': { 'zh-CN': '缓存命中率', 'en-US': 'Cache hit rate' },

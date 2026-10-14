@@ -22,6 +22,7 @@ import {
   sessionStatsDetails,
   sessionStatsGroups,
   tokenStatRows,
+  tokenTotalLabel,
 } from './session-stats-view';
 
 interface StatsBarProps {
@@ -87,11 +88,14 @@ function StatsGroup({
 function StatsPanel({
   kind,
   rows,
+  titleValue,
   onClose,
   anchorRef,
 }: {
   kind: PanelKind;
   rows: { label: string; value: string }[];
+  /** 标题行右侧的读数（Token 卡的总量；DSH 同款把总数放标题行）。 */
+  titleValue?: string;
   onClose: () => void;
   anchorRef: React.MutableRefObject<HTMLElement | null>;
 }) {
@@ -144,7 +148,8 @@ function StatsPanel({
     >
       <div className={styles.panelTitle}>
         <Icon size={14} className={styles.panelTitleIcon} />
-        {title}
+        <span className={styles.panelTitleText}>{title}</span>
+        {titleValue && <span className={styles.panelTitleValue}>{titleValue}</span>}
       </div>
       {rows.map((row) => (
         <div key={row.label} className={styles.panelRow}>
@@ -204,6 +209,7 @@ export function StatsBar({ stats, contextUsage }: StatsBarProps) {
         <StatsPanel
           kind="usage"
           rows={tokenStatRows(stats, language)}
+          titleValue={tokenTotalLabel(stats, language)}
           onClose={() => setOpenPanel(null)}
           anchorRef={usageRef}
         />

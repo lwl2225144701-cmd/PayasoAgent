@@ -55,6 +55,15 @@ function cacheHitPercent(stats: SessionStats): string | undefined {
   return '<100';
 }
 
+/**
+ * token 数的千分位全量展示（1_234_567 → "1,234,567"）。
+ * DSH 的 Token 用量分桶就是这个格式；`formatContextTokens` 的 K/M 缩写是给
+ * 上下文环那种极小空间用的，面板里放不下"精确"二字的诉求。
+ */
+function groupThousands(tokens: number, language: LanguageMode): string {
+  return Math.max(0, Math.round(tokens)).toLocaleString(language === 'zh-CN' ? 'zh-CN' : 'en-US');
+}
+
 /** 状态条上的两枚 pill：[活动, 用量]。零值片段自动省略。 */
 export function sessionStatsGroups(
   stats: SessionStats,
@@ -183,19 +192,32 @@ export function sessionStatRows(stats: SessionStats, language: LanguageMode = 'z
 }
 
 /** 「Token 用量」卡的读数：总量 + 四个分桶 + 命中率。 */
+/**
+ * Token 用量卡的四行，顺序对齐 DSH：缓存命中 → 未缓存输入 → 缓存读取 → 输出。
+ *
+ * 两处与旧版不同（真机对照 DSH 后改）：
+ * 1. **总数不在行里** —— DSH 把总量放在标题行右侧（`Token 用量   455,971,858 tok`），
+ *    行里再放一个「总用量」是重复；组件用 `tokenTotalLabel()` 渲染标题行。
+ * 2. **去掉「缓存写入」行** —— DSH 只有这四项，cacheWrite 仍计入命中率分母。
+ */
 export function tokenStatRows(stats: SessionStats, language: LanguageMode = 'zh-CN'): StatRow[] {
   const t = translator(language);
   const b = tokenBuckets(stats);
   const rows: StatRow[] = [];
-  if (b.total > 0) {
-    rows.push({ label: t('shell.stats.totalTokens'), value: formatContextTokens(b.total) });
-  }
-  rows.push({ label: t('shell.stats.cacheRead'), value: formatContextTokens(b.cacheRead) });
-  rows.push({ label: t('shell.stats.cacheWrite'), value: formatContextTokens(b.cacheWrite) });
-  rows.push({ label: t('shell.stats.uncachedInput'), value: formatContextTokens(b.input) });
-  rows.push({ label: t('shell.stats.outputTokens'), value: formatContextTokens(b.output) });
   if (b.hitPercent !== undefined) {
     rows.push({ label: t('shell.stats.cacheHitLabel'), value: `${b.hitPercent}%` });
   }
+  rows.push({ label: t('shell.stats.uncachedInput'), value: groupThousands(b.input, language) });
+  rows.push({ label: t('shell.stats.cacheRead'), value: groupThousands(b.cacheRead, language) });
+  rows.push({ label: t('shell.stats.outputTokens'), value: groupThousands(b.output, language) });
   return rows;
+}
+
+/** 标题行右侧的总量读数（DSH 同款：千分位 + tok 后缀）；无用量时 undefined。 */
+export function tokenTotalLabel(
+  stats: SessionStats,
+  language: LanguageMode = 'zh-CN',
+): string | undefined {
+  if (stats.tokens <= 0) return undefined;
+  return `${groupThousands(stats.tokens, language)} tok`;
 }

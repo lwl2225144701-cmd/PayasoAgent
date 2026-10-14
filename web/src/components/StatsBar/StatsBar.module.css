@@ -91,6 +91,21 @@ button.pill:hover {
   color: var(--text-muted);
 }
 
+.panelTitleText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 标题行右侧读数（Token 总量）：与读数行同一套数字字体，靠右 */
+.panelTitleValue {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .panelRow {
   display: flex;
   align-items: baseline;

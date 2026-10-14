@@ -15,6 +15,7 @@ import {
   sessionStatsGroups,
   tokenBuckets,
   tokenStatRows,
+  tokenTotalLabel,
 } from '../web/src/components/StatsBar/session-stats-view.js';
 import { formatDurationMs } from '../web/src/format.js';
 import type { SessionStats } from '../web/src/types.js';
@@ -262,26 +263,56 @@ check('会话统计卡：无数据时整行不渲染（不是显示 0）', () =>
 
 // ---- 展开面板：Token 用量卡 ----
 
-check('Token 用量卡：四桶 + 总量 + 命中率', () => {
+check('Token 用量卡：四行 + 顺序对齐 DSH，总数与缓存写入不在行里', () => {
+  const s = stats({
+    turns: 1,
+    tokens: 1_200,
+    inputTokens: 100,
+    outputTokens: 50,
+    cacheReadTokens: 900,
+    cacheWriteTokens: 150,
+    cacheUsageCalls: 1,
+  });
+  const rows = tokenStatRows(s, 'zh-CN');
+  // 顺序：缓存命中 → 未缓存输入 → 缓存读取 → 输出（DSH 同款）
+  assert.deepEqual(
+    rows.map((r) => r.label),
+    ['缓存命中率', '未缓存输入', '缓存读取', '输出'],
+  );
+  const by = Object.fromEntries(rows.map((r) => [r.label, r.value]));
+  // 分桶用千分位全量（DSH 同款），不是 K/M 缩写
+  assert.equal(by.未缓存输入, '100');
+  assert.equal(by.缓存读取, '900');
+  assert.equal(by.输出, '50');
+  assert.equal(by.缓存命中率, '78%');
+  // 总数挪到标题行，行里不再重复；缓存写入整行去掉（仍计入命中率分母）
+  assert.ok(!by.总用量, '总用量不该出现在行里');
+  assert.ok(!by.缓存写入, '缓存写入不该出现在行里');
+});
+
+check('总量读数走标题行：千分位 + tok，无用量时 undefined', () => {
+  assert.equal(tokenTotalLabel(stats({ tokens: 455_971_858 }), 'zh-CN'), '455,971,858 tok');
+  assert.equal(tokenTotalLabel(stats({ tokens: 455_971_858 }), 'en-US'), '455,971,858 tok');
+  assert.equal(tokenTotalLabel(stats({ tokens: 298_000 }), 'zh-CN'), '298,000 tok');
+  assert.equal(tokenTotalLabel(stats()), undefined);
+  assert.equal(tokenTotalLabel(stats({ tokens: 0 })), undefined);
+});
+
+check('Token 分桶是大数时也用千分位全量（不缩成 K/M）', () => {
   const rows = tokenStatRows(
     stats({
-      turns: 1,
-      tokens: 1_200,
-      inputTokens: 100,
-      outputTokens: 50,
-      cacheReadTokens: 900,
-      cacheWriteTokens: 150,
-      cacheUsageCalls: 1,
+      tokens: 455_971_858,
+      inputTokens: 14_301_986,
+      outputTokens: 1_259_248,
+      cacheReadTokens: 440_410_624,
+      cacheUsageCalls: 14,
     }),
     'zh-CN',
   );
   const by = Object.fromEntries(rows.map((r) => [r.label, r.value]));
-  assert.equal(by.总用量, '1.2K');
-  assert.equal(by.缓存读取, '900');
-  assert.equal(by.缓存写入, '150');
-  assert.equal(by.未缓存输入, '100');
-  assert.equal(by.输出, '50');
-  assert.ok(by.缓存命中率, rows.map((r) => `${r.label}=${r.value}`).join(' | '));
+  assert.equal(by.未缓存输入, '14,301,986');
+  assert.equal(by.缓存读取, '440,410,624');
+  assert.equal(by.输出, '1,259,248');
 });
 
 check('Token 用量卡：缺分桶数据 → 命中率整行不渲染', () => {
