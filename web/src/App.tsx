@@ -10,7 +10,6 @@ import {
   downloadSessionExport,
   fetchSessionStats,
   getDefaultModel,
-  getDirectoryPickerCapability,
   getSessionGoal,
   getSessionPlanMode,
   getWorkspace,
@@ -43,7 +42,6 @@ import {
 import { PlanPanel } from './components/Timeline/PlanPanel';
 import type { PlanView } from './components/Timeline/plan-state';
 import { TurnNavigator } from './components/TurnNavigator';
-import { WorkspacePickerModal } from './components/WorkspacePickerModal';
 import { useConversationScroll } from './hooks/useConversationScroll';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
 import { useThemeMode } from './hooks/useThemeMode';
@@ -58,7 +56,6 @@ import { reconcileRuns } from './run-reconcile';
 import type {
   ContextUsageEvent,
   DefaultModelView,
-  DirectoryPickerCapability,
   FileEntry,
   HostRun,
   HostSession,
@@ -146,10 +143,6 @@ export default function App() {
   const sidebarUserOverrideRef = useRef(false);
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerCapability, setPickerCapability] = useState<DirectoryPickerCapability | null>(null);
-  // 目录选择器的 error/loading/creating/listing 状态由 WorkspacePickerModal 自己持有，
-  // 这里不再放同名 state（曾用 `_` 前缀压 biome 告警，实为死代码，直接删）。
   const [resumingRun, setResumingRun] = useState(false);
   const [preferredWorkspaceName, setPreferredWorkspaceName] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -175,13 +168,13 @@ export default function App() {
       if (event.key !== 'p' && event.key !== 'P') return;
       if (!event.metaKey && !event.ctrlKey) return;
       if (event.altKey || event.shiftKey) return;
-      if (settingsOpen || pickerOpen) return;
+      if (settingsOpen) return;
       event.preventDefault();
       setPreviewOpen((open) => !open);
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [settingsOpen, pickerOpen]);
+  }, [settingsOpen]);
 
   const handleSelectModel = useCallback(
     (providerId: string, model: string) => {
@@ -349,9 +342,6 @@ export default function App() {
     getWorkspace()
       .then((resp) => setWorkspace(resp.workspace))
       .catch(() => {});
-    getDirectoryPickerCapability()
-      .then((resp) => setPickerCapability(resp.capability))
-      .catch(() => setPickerCapability({ kind: 'browse' as const }));
     void refreshModels();
     void refreshPiProviders();
     void refreshDefaultModel();
@@ -963,10 +953,10 @@ export default function App() {
     if (openingWorkspace) return;
     setOpeningWorkspace(true);
     try {
-      // 桌面壳：走 Electron 主进程的原生对话框。**这是 mac / Windows 都要"快"
-      // 的关键** —— 进程内原生调用，不 spawn 子进程（旧实现 win32 走 PowerShell
-      // 冷启动 + 加载 WinForms 程序集，真机反馈很慢），且对话框归应用窗口，
-      // 不会被遮挡。详见 apps/desktop/src/main.ts 的 registerDirectoryPicker。
+      // **一律出系统原生面板**（页内目录选择弹窗已弃用）。两条入口都指向同一件事，
+      // 只是执行位置不同（浏览器没有原生对话能力，只能由 Host 代开）：
+      // - 桌面壳 → Electron 主进程的原生对话框（归应用窗口）
+      // - 浏览器 → Host 侧原生选择器（macOS osascript / Windows koffi+COM）
       const bridge = window.payasoDesktop;
       if (bridge) {
         const picked = await bridge.pickDirectory();
@@ -977,37 +967,15 @@ export default function App() {
         }
         return;
       }
-      // 纯浏览器（无桌面壳）：没有原生对话能力，回落页内选择器
-      if (pickerCapability?.kind === 'browse') {
-        setPickerOpen(true);
-      } else {
-        const resp = await openWorkspace();
-        if (!resp.cancelled) setWorkspace(resp.workspace);
-      }
+      const resp = await openWorkspace();
+      if (!resp.cancelled) setWorkspace(resp.workspace);
     } catch (err) {
       console.error('Failed to open workspace:', err);
-      // 与网页选择器失败同一条路径：报错走 toast（此前的 pickerError state 只写不读）
       showToast(err instanceof Error ? err.message : t('app.openWorkspaceFailed'));
     } finally {
       setOpeningWorkspace(false);
     }
-  }, [openingWorkspace, pickerCapability, showToast, t]);
-
-  // 网页内目录选择器确认后采纳：与 native picker 等价地切换 Host 当前
-  // Workspace（Host 侧走 canonicalizeWorkspaceRoot 校验，不弹系统窗口）。
-  const handlePickerSelect = useCallback(
-    async (path: string) => {
-      try {
-        const resp = await apiSelectWorkspace(path);
-        setWorkspace(resp.workspace);
-        setPickerOpen(false);
-      } catch (err) {
-        console.error('Failed to select workspace:', err);
-        showToast(err instanceof Error ? err.message : t('app.selectWorkspaceFailed'));
-      }
-    },
-    [showToast, t],
-  );
+  }, [openingWorkspace, showToast, t]);
 
   void online;
   void loading;
@@ -1178,16 +1146,6 @@ export default function App() {
             onRequestWorkspace={() => void handleOpenWorkspace()}
             // 会话级作用域：直接点开历史会话也能浏览它自己的工作区（不必先切工作区）
             runId={previewRunId}
-          />
-        )}
-
-        {pickerOpen && (
-          <WorkspacePickerModal
-            open={pickerOpen}
-            onClose={() => setPickerOpen(false)}
-            onSelect={(path) => {
-              void handlePickerSelect(path);
-            }}
           />
         )}
 

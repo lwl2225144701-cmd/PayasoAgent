@@ -9,3 +9,7 @@ copyFileSync(
   new URL('../src/host/attachments/pdf-extract-worker.mjs', import.meta.url),
   new URL('../dist/host/attachments/pdf-extract-worker.mjs', import.meta.url),
 );
+copyFileSync(
+  new URL('../src/host/win32-folder-dialog-worker.mjs', import.meta.url),
+  new URL('../dist/host/win32-folder-dialog-worker.mjs', import.meta.url),
+);
