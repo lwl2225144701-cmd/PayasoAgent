@@ -164,10 +164,11 @@ async function loadWin32DialogBindings() {
           const item = itemOut[0];
           try {
             const nameOut = [null];
-            const gotName = method(item, SLOT_GET_DISPLAY_NAME, protoGetDisplayName)(
-              SIGDN_FILESYSPATH,
-              nameOut,
-            );
+            const gotName = method(
+              item,
+              SLOT_GET_DISPLAY_NAME,
+              protoGetDisplayName,
+            )(SIGDN_FILESYSPATH, nameOut);
             if (gotName < 0) return { hr: gotName };
             const path = readUtf16(koffi, nameOut[0], pointerSize);
             coTaskMemFree(nameOut[0]);
@@ -233,5 +234,8 @@ try {
   });
   post({ kind: 'done', path });
 } catch (error) {
-  post({ kind: 'error', message: error instanceof Error ? (error.stack ?? error.message) : String(error) });
+  post({
+    kind: 'error',
+    message: error instanceof Error ? (error.stack ?? error.message) : String(error),
+  });
 }

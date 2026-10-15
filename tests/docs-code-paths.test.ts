@@ -136,6 +136,7 @@ function collectBacktickPaths(text: string): Finding[] {
   const findings: Finding[] = [];
   const re = /`([^`\n]+)`/g;
   let m: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: 正则逐次匹配的惯用写法，循环体依赖 m 非空
   while ((m = re.exec(text))) {
     for (const rawToken of m[1].split(/\s+/)) {
       const token = trimPunctuation(rawToken.trim());
@@ -153,6 +154,7 @@ function collectLinkTargets(text: string): Finding[] {
   const findings: Finding[] = [];
   const re = /\[([^\]]*)\]\(([^)\s]+)\)/g;
   let m: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: 同上，正则逐次匹配
   while ((m = re.exec(text))) {
     // 空链接文本 `[](...)` 是 markdown 语法示例（如 `![](img/x.png)`），不是引用
     if (m[1].trim().length === 0) continue;

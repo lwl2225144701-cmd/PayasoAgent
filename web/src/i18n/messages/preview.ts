@@ -29,7 +29,10 @@ export const previewMessages = {
   'preview.fileBar.openIn': { 'zh-CN': '在应用中打开', 'en-US': 'Open in app' },
   'preview.fileBar.openWith': { 'zh-CN': '用 {app} 打开', 'en-US': 'Open with {app}' },
   'preview.fileBar.reveal': { 'zh-CN': '显示文件位置', 'en-US': 'Show in File Manager' },
-  'preview.fileBar.revealed': { 'zh-CN': '已在文件管理器中显示', 'en-US': 'Revealed in File Manager' },
+  'preview.fileBar.revealed': {
+    'zh-CN': '已在文件管理器中显示',
+    'en-US': 'Revealed in File Manager',
+  },
   'preview.launcher.menu': { 'zh-CN': '预览菜单', 'en-US': 'Preview menu' },
   'preview.launcher.opened': { 'zh-CN': '已在外部工具中打开', 'en-US': 'Opened in external tool' },
   'preview.launcher.openDefault': {
