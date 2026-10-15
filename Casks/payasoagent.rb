@@ -9,8 +9,8 @@
 cask "payasoagent" do
   arch arm: "arm64"
 
-  version "0.3.5"
-  sha256 "a449085519cfc3329c6805e03e8a73d7e801a6a046f4d951edd50ed0c084d3dc"
+  version "0.4.0"
+  sha256 "dd3cb492a004d5c888bc9c23d2ad771a757dfa6bd6e54a596fbf2333c8330204"
 
   url "https://github.com/lwl2225144701-cmd/PayasoAgent/releases/download/v#{version}/PayasoAgent-#{version}-#{arch}.dmg"
   name "PayasoAgent"
