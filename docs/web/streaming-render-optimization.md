@@ -48,7 +48,7 @@
 - ⚠️ `useMemo(<Markdown>,[text])` 只对 settled/同文本有效，救不了流式（text 每帧变化）。
 
 ### ② 增量 store：streamed + publishedSnapshot + metadata 【地基】
-- 新建 `web/src/hooks/stream-store.ts`，`useSyncExternalStore` 形态：
+- 新建 `web/src/hooks/stream-store.ts`（拟建，未落地），`useSyncExternalStore` 形态：
 
 ```ts
 interface MessageSnapshot { text: string; /* …元数据 */ }

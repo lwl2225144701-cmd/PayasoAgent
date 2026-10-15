@@ -131,4 +131,4 @@ const handleNavigateRun = useCallback((runId: string) => {
 
 ## 7. 与 Scratchpad 指示器的关系
 
-本方案**取代**先前基于 `scratchpad.completedSteps` 的「垂直步骤指示器」方向（含 RightPanel 空目录预留及 A/B 接线方案）——那是对截图的误读。项目现有 `web/src/components/RightPanel/` 为空目录（无 git 历史、无引用），实现时可直接删除或将 TurnNavigator 放入，避免遗留误导性空目录。
+本方案**取代**先前基于 `scratchpad.completedSteps` 的「垂直步骤指示器」方向（含 RightPanel 空目录预留及 A/B 接线方案）——那是对截图的误读。该空目录后续已不存在（无 git 历史、无引用，未再出现），TurnNavigator 直接落在 `web/src/components/TurnNavigator/`。

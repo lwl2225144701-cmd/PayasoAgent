@@ -111,6 +111,9 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'docs-index', file: 'tests/docs-index.test.ts' },
   // 套件数量契约：文档手抄的套件数必须等于本数组实际登记数（动态解析，杜绝手写数字漂移）
   { name: 'suite-count-contract', file: 'tests/suite-count-contract.test.ts' },
+  // 文档引用完整性契约：手写文档里的反引号代码路径 + markdown 链接必须真实存在
+  // （计划/设计/历史/生成产物目录豁免，行内「拟建/未落地/示例」为作者声明逃生标记）
+  { name: 'docs-code-paths', file: 'tests/docs-code-paths.test.ts' },
   { name: 'side-effect', file: 'tests/side-effect.test.ts' },
   { name: 'workspace-trash', file: 'tests/workspace-trash.test.ts' },
   // Provider 设置按测试域拆分（原 settings.test.ts 1672 行，各文件均 < 600 行）：

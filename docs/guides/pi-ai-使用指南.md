@@ -132,7 +132,7 @@ models.setProvider(gateway);
 
 ### 静态目录与动态 Provider
 
-内置静态目录由生成文件 `src/models.generated.ts` 提供。`getBuiltinModels()` 和内置 Provider 的 `getModels()` 只读这份最近生成的目录，读取是同步的。
+内置静态目录由生成文件 `models.generated.ts`（pi-ai 包内，非本仓库路径）提供。`getBuiltinModels()` 和内置 Provider 的 `getModels()` 只读这份最近生成的目录，读取是同步的。
 
 动态 Provider 例如本地 `llama.cpp`、会变化的 OpenRouter 目录或企业代理：
 
@@ -1050,7 +1050,7 @@ OPENAI_API_KEY='sk-...' npx tsx tool-loop.ts
 
 #### 阶段 B：只替换 LLM 请求适配，不动 Runtime
 
-增加类似 `src/llm/pi-ai-llm.ts` 的 Host-side adapter：
+增加类似 `src/llm/pi-ai-llm.ts` 的 Host-side adapter（拟建建议，未按此文件名落地——实际由 `src/llm/llm.ts` 直接集成 pi-ai 实现）：
 
 ```typescript
 import { createModels, createProvider, type Context, type Model } from '@earendil-works/pi-ai';
