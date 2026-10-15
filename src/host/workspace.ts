@@ -54,20 +54,38 @@ export async function openWorkspacePicker(): Promise<Workspace | null> {
   throw new Error('当前版本仅支持 macOS/Windows 本地文件夹选择器');
 }
 
+/**
+ * osascript 报的"用户取消"是不是取消？
+ *
+ * **判据必须与语言无关**：中文 macOS 下 osascript 输出的是
+ * `execution error: 用户已取消。 (-128)`，只匹配英文 "user canceled" 会把
+ * 取消误判成失败（曾经如此：点取消弹 `API 400 无法打开本地文件夹选择器`）。
+ * `-128` 是 `errAEEventCancelled`，各语言下都在。
+ */
+export function isAppleScriptCancelled(stderr: string): boolean {
+  return /\(-128\)/.test(stderr) || /user canceled|用户已取消/i.test(stderr);
+}
+
 async function openPickerViaOsascript(): Promise<Workspace | null> {
   const script = 'POSIX path of (choose folder with prompt "选择 PayasoAgent Workspace")';
   return await new Promise<Workspace | null>((resolve, reject) => {
     execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000 }, (err, stdout, stderr) => {
       if (err) {
-        if (/user canceled/i.test(String(stderr))) {
+        // 用户取消 → 按 null 处理（不是错误，不该弹 toast）
+        if (isAppleScriptCancelled(String(stderr))) {
           resolve(null);
           return;
         }
         reject(new Error('无法打开本地文件夹选择器'));
         return;
       }
+      const selected = String(stdout).trim();
+      if (!selected) {
+        resolve(null); // 无输出也按取消处理
+        return;
+      }
       try {
-        resolve(setWorkspace(String(stdout).trim()));
+        resolve(setWorkspace(selected));
       } catch (cause) {
         reject(cause);
       }

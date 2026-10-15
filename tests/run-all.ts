@@ -91,6 +91,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'permissions', file: 'tests/permissions.test.ts' },
   { name: 'os-sandbox', file: 'tests/os-sandbox.test.ts' },
   { name: 'workspace', file: 'tests/workspace.test.ts' },
+  { name: 'workspace-picker-cancel', file: 'tests/workspace-picker-cancel.test.ts' },
   { name: 'preview-api', file: 'tests/preview-api.test.ts' },
   { name: 'open-in-app', file: 'tests/open-in-app.test.ts' },
   { name: 'context', file: 'tests/context.test.ts' },
