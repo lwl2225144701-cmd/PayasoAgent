@@ -1,7 +1,7 @@
 // 模块: 统一测试集合入口 — 聚合所有确定性套件（无 LLM），统一统计 PASS/FAIL
 // 用法: tsx tests/run-all.ts                        （或 npm run test:all）
 //      PAYASO_TEST_CONCURRENCY=8 tsx tests/run-all.ts   （覆盖默认并发）
-// 覆盖: 90 个无 LLM 套件，含 Runtime/bootstrap 边界、静态依赖边界、工具调用状态机、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器（Windows ACL argv/失败契约）、Workspace 生命周期与软删除回收站、
+// 覆盖: 全部无 LLM 套件（数量以本数组为准，文档中的数字由 suite-count-contract 套件锁定），含 Runtime/bootstrap 边界、静态依赖边界、工具调用状态机、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器（Windows ACL argv/失败契约）、Workspace 生命周期与软删除回收站、
 //   Host 启停/路由、SQLite 持久化、前端输出清理、默认浏览器打开边界、LLM transport mock、
 //   Run 模型绑定与 Context Budget、True Cancellation、Shell 网络隔离、Malformed Tool Call 恢复、
 //   原子终态落盘、Side-Effect 生命周期/回放、Provider 设置与凭证迁移、工具链能力刷新与显式重试、docs contract、
@@ -109,6 +109,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'docs-contract', file: 'tests/docs-contract.test.ts' },
   // 文档索引契约：README 目录树登记完整 + 链接可解析（2026-09 docs 重组后新增）
   { name: 'docs-index', file: 'tests/docs-index.test.ts' },
+  // 套件数量契约：文档手抄的套件数必须等于本数组实际登记数（动态解析，杜绝手写数字漂移）
+  { name: 'suite-count-contract', file: 'tests/suite-count-contract.test.ts' },
   { name: 'side-effect', file: 'tests/side-effect.test.ts' },
   { name: 'workspace-trash', file: 'tests/workspace-trash.test.ts' },
   // Provider 设置按测试域拆分（原 settings.test.ts 1672 行，各文件均 < 600 行）：
