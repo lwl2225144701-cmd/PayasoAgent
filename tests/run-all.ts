@@ -111,7 +111,14 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'docs-index', file: 'tests/docs-index.test.ts' },
   { name: 'side-effect', file: 'tests/side-effect.test.ts' },
   { name: 'workspace-trash', file: 'tests/workspace-trash.test.ts' },
-  { name: 'settings', file: 'tests/settings.test.ts' },
+  // Provider 设置按测试域拆分（原 settings.test.ts 1672 行，各文件均 < 600 行）：
+  // CRUD/目录、默认模型、Keychain 契约、legacy 迁移、能力预算、Run 生命周期各自独立成套件
+  { name: 'settings-providers', file: 'tests/settings-providers.test.ts' },
+  { name: 'settings-default-model', file: 'tests/settings-default-model.test.ts' },
+  { name: 'settings-keychain', file: 'tests/settings-keychain.test.ts' },
+  { name: 'settings-migration', file: 'tests/settings-migration.test.ts' },
+  { name: 'settings-model-capabilities', file: 'tests/settings-model-capabilities.test.ts' },
+  { name: 'settings-run-lifecycle', file: 'tests/settings-run-lifecycle.test.ts' },
   { name: 'host-auth', file: 'tests/host-auth.test.ts' },
   { name: 'provider-url', file: 'tests/provider-url.test.ts' },
   { name: 'encrypted-file-secret', file: 'tests/encrypted-file-secret.test.ts' },

@@ -130,7 +130,7 @@
 
 ### 3.8 测试
 
-- `tests/settings.test.ts`（v1.6 闭环区，仿 `cap-chat` 用例）：
+- `tests/settings-model-capabilities.test.ts`（v1.6 闭环区，仿 `cap-chat` 用例）：
   - 创建带 `thinkingLevel` 的能力覆盖 → 视图/GET 回显；
   - 凭证读取按 model 携带 `thinkingLevel`；未配置模型不带；
   - 非法档次值（如 `"ultra"`）→ 400 拒绝。
