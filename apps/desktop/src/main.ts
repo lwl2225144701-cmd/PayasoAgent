@@ -19,7 +19,7 @@ import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -60,6 +60,8 @@ const STDERR_TAIL_BYTES = 65_536;
 let backend: ChildProcess | null = null;
 /** 后端是不是我们起的：外部已有实例时不要在退出时杀掉别人的进程。 */
 let ownsBackend = false;
+/** 主窗口引用：原生对话框要拿它当父窗口（有归属才不会跑到窗口后面去）。 */
+let mainWindow: BrowserWindow | null = null;
 let stderrTail = '';
 let quitting = false;
 
@@ -175,8 +177,13 @@ function createWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false, // 页面只是普通 Web 页面（同源 localhost），不需要 Node 能力
+      // 唯一的能力桥：选目录（原生对话框）。编译产物是 preload.cjs（CommonJS），
+      // 因为 sandbox 化的 preload 不能是 ESM，而本包是 "type": "module"。
+      preload: path.join(here, 'preload.cjs'),
     },
   });
+
+  mainWindow = win;
 
   void win.loadURL(BACKEND_URL);
 
@@ -237,8 +244,39 @@ function buildMenu(): void {
   );
 }
 
+/**
+ * 原生目录选择（渲染进程 → 这里）。这是「打开工作区」在 mac / Windows 上
+ * 都要**快**且**不被遮挡**的解法：
+ *
+ * - **进程内**：`dialog.showOpenDialog` 是已加载进程里的原生调用，不 spawn 子进程。
+ *   旧实现 win32 走 PowerShell 5.1（`powershell.exe` 冷启动 + `Add-Type` 加载
+ *   WinForms 程序集，通常 1.5~4 秒），darwin 走 osascript（实测 40~100ms 进程开销），
+ *   真机反馈"windows 打开原生目录很慢"就是这么来的。
+ * - **有归属**：传 parent 窗口，macOS 挂成窗口 sheet、Windows 是正确模态，
+ *   不会像 shell 出去那样跑到应用窗口后面。
+ * - **不设文案**：不传 title / buttonLabel —— 两个平台的原生默认就是要的样子
+ *   （macOS 原生面板 + New Folder；Windows 中文系统自带的"选择文件夹"）。
+ *   也不传 defaultPath：Electron 默认就落在用户 Downloads 目录。
+ * - properties 只开 openDirectory；createDirectory 是给 macOS 的"新建文件夹"
+ *   （Windows 的现代对话框自带"新建文件夹"，会忽略该属性）。
+ */
+function registerDirectoryPicker(): void {
+  ipcMain.handle('payaso:pickDirectory', async (): Promise<string | null> => {
+    const parent = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0] ?? null;
+  });
+}
+
 async function boot(): Promise<void> {
   buildMenu();
+  registerDirectoryPicker();
   // 端口已被占用（用户自己起过 npm run host）→ 复用已有后端，退出时也不要杀它
   if (await backendResponds()) {
     ownsBackend = false;

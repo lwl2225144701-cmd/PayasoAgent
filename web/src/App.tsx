@@ -963,6 +963,21 @@ export default function App() {
     if (openingWorkspace) return;
     setOpeningWorkspace(true);
     try {
+      // 桌面壳：走 Electron 主进程的原生对话框。**这是 mac / Windows 都要"快"
+      // 的关键** —— 进程内原生调用，不 spawn 子进程（旧实现 win32 走 PowerShell
+      // 冷启动 + 加载 WinForms 程序集，真机反馈很慢），且对话框归应用窗口，
+      // 不会被遮挡。详见 apps/desktop/src/main.ts 的 registerDirectoryPicker。
+      const bridge = window.payasoDesktop;
+      if (bridge) {
+        const picked = await bridge.pickDirectory();
+        // 取消（null）就什么都不做，不要把当前 Workspace 弄丢
+        if (picked) {
+          const resp = await apiSelectWorkspace(picked);
+          setWorkspace(resp.workspace);
+        }
+        return;
+      }
+      // 纯浏览器（无桌面壳）：没有原生对话能力，回落页内选择器
       if (pickerCapability?.kind === 'browse') {
         setPickerOpen(true);
       } else {
