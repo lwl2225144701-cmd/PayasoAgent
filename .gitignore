@@ -51,3 +51,10 @@ eval/.cache/
 eval/runs/
 eval/.ai-home/
 eval/.env
+
+# 一次性验证脚手架（探针脚本 / 临时页面）。
+# 约定把这类文件放进 scratch/，或用 *.scratch.* 命名 —— 它们不该进提交。
+# 起因：曾用 `git add -A` 把 8 个临时验证文件一起提交，靠 amend 才剔除。
+scratch/*
+!scratch/README.md
+*.scratch.*
