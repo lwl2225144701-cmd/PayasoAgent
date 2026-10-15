@@ -101,11 +101,6 @@ export const appMessages = {
   },
   'app.archived': { 'zh-CN': '已归档', 'en-US': 'Archived' },
   'app.archiveFailed': { 'zh-CN': '归档失败：{message}', 'en-US': 'Archive failed: {message}' },
-  'app.openWorkspaceFailed': { 'zh-CN': '打开工作区失败', 'en-US': 'Failed to open workspace' },
-  'app.selectWorkspaceFailed': {
-    'zh-CN': '选择工作区失败',
-    'en-US': 'Failed to select workspace',
-  },
 
   // 空态与首屏
   'app.preparingWorkspace': { 'zh-CN': '正在准备工作区…', 'en-US': 'Preparing workspace…' },

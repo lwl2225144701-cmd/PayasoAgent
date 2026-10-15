@@ -970,12 +970,13 @@ export default function App() {
       const resp = await openWorkspace();
       if (!resp.cancelled) setWorkspace(resp.workspace);
     } catch (err) {
+      // 这条链路**不弹任何提示**（用户要求）：取消就是取消，失败也不打扰界面。
+      // 只留控制台便于排查 —— 代价是失败时"点了没反应"，用户无从得知原因。
       console.error('Failed to open workspace:', err);
-      showToast(err instanceof Error ? err.message : t('app.openWorkspaceFailed'));
     } finally {
       setOpeningWorkspace(false);
     }
-  }, [openingWorkspace, showToast, t]);
+  }, [openingWorkspace]);
 
   void online;
   void loading;
