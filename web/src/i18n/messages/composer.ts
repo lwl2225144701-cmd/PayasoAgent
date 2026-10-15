@@ -125,6 +125,12 @@ export const composerMessages = {
     'zh-CN': 'Cmd/Ctrl+Enter 插话发送全部排队消息',
     'en-US': 'Cmd/Ctrl+Enter steers all queued messages',
   },
+  // 排队消息附件的无障碍名（DSH 的 queue.image / queue.file 同义）
+  'composer.queue.imageAttachment': { 'zh-CN': '排队消息图片', 'en-US': 'Queued image' },
+  'composer.queue.fileAttachment': {
+    'zh-CN': '排队文件 {name}',
+    'en-US': 'Queued file {name}',
+  },
 
   // 模型下拉
   'composer.model.select': {

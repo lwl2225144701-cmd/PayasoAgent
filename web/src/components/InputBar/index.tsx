@@ -39,6 +39,7 @@ import { ComposerFooter, ComposerTextarea } from './ComposerParts';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
 import { PromptPreview } from './PromptPreview';
+import { QueueAttachments } from './QueueAttachments';
 
 interface PendingAttachment {
   id: string;
@@ -663,9 +664,15 @@ export function InputBar({
                               }}
                             />
                           ) : (
-                            <span className={styles.queueItemText} title={message.task}>
-                              {message.task}
-                            </span>
+                            <>
+                              {/* 附件在文字之前（DSH 同序）：图片出缩略图、其余出文件卡 */}
+                              {message.attachments && message.attachments.length > 0 && (
+                                <QueueAttachments files={message.attachments} />
+                              )}
+                              <span className={styles.queueItemText} title={message.task}>
+                                {message.task}
+                              </span>
+                            </>
                           )}
                           <div className={styles.queueItemActions}>
                             {editing ? (

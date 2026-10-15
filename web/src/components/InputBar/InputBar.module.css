@@ -214,6 +214,72 @@
   white-space: nowrap;
 }
 
+/* ---- 排队消息的附件（显示在文字之前，对齐 DSH 的 QueueDock）---- */
+.queueAttachments {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  min-width: 0;
+  /* DSH 同款：附件最多占行宽 55%，超出裁掉（文字优先保留） */
+  max-width: 55%;
+  overflow: hidden;
+}
+
+/* 图片：24×24 缩略图（DSH 的 .thumb 同规格）。
+   box-sizing 必须给：否则 1px 边框会撑成 26×26，和文件卡的 24 高就对不齐了。 */
+.queueThumb {
+  flex: none;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  background: var(--color-canvas);
+}
+
+/* 非图片：小文件卡（图标 + 名字 + 大小） */
+.queueFile {
+  display: inline-flex;
+  flex: 0 180px;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  min-width: 74px;
+  height: 24px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-canvas);
+}
+
+.queueFileIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-tertiary);
+}
+
+.queueFileName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queueFileSize {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 /* 行内编辑器（DSH 的 .editor：就地改文字，不是放回输入框） */
 .queueEditor {
   flex: auto;
