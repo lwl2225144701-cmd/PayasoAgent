@@ -85,12 +85,16 @@
 }
 
 /* ---- 发送队列（QueueDock，对齐 DSH）----
-   面板是 composer 卡片**外部**、上方贴合的一层：只上方两角圆、无下边框、
-   菜单质感（底 + blur），与卡片拼成一整块（有队列时 .composerDocked 收掉
-   卡片上圆角与上边框）。只有 1 条时不显示折叠标题，行首直接带队列图标。 */
+   面板是 composer 卡片**外部**的一层，而且要**比卡片窄一圈** —— 这是 DSH 那种
+   「阶梯/分层」的来源：dock 与卡片同宽居中，靠内距把面板每侧缩进 24px，
+   再给一点负 margin 让面板下沿贴住卡片上沿。只上方两角圆、无下边框、
+   菜单质感（底 + blur）。只有 1 条时不显示折叠标题，行首直接带队列图标。 */
 .queueDock {
+  box-sizing: border-box;
   width: min(860px, 100%);
-  margin: 0 auto;
+  margin: 0 auto -3px;
+  /* 面板比 composer 窄 48px（每侧 24px）：台阶宽度来源 */
+  padding: 0 24px;
   flex: none;
 }
 
@@ -267,15 +271,6 @@
 .queueAction:disabled {
   cursor: default;
   opacity: 0.45;
-}
-
-/* 有队列时 composer 收掉上圆角与上边框：与队列面板拼成一整块。
-   border-top-color 用 transparent 而不是去掉 border —— 保留 1px 高度，
-   避免出现 1px 的高度跳变。 */
-.composerDocked {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  border-top-color: transparent;
 }
 
 /* The composer owns its focus state through the wrapper's :focus-within.

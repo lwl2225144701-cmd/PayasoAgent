@@ -738,11 +738,7 @@ export function InputBar({
           );
         })()}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: 拖放落点容器，非交互控件，无键盘语义可给 */}
-      <div
-        className={`${styles.conversationComposer}${queuedMessages.length > 0 ? ` ${styles.composerDocked}` : ''}`}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-      >
+      <div className={styles.conversationComposer} onDragOver={handleDragOver} onDrop={handleDrop}>
         {attachmentStrip}
         {visionWarning}
         {templatePreview}
