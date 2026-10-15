@@ -1,6 +1,6 @@
 # PayasoAgent 当前架构基线（Current Architecture）
 
-> **文档定位**：当前代码状态的唯一权威说明。以工作区代码为准（基线日期 **2026-08-31**，v1.6 Release Closure），并如实记录已知缺口。
+> **文档定位**：当前代码状态的唯一权威说明。以工作区代码为准（基线日期 **2026-10-15**，v2.2），并如实记录已知缺口。
 >
 > **取代（Superseded）**：
 >
@@ -69,7 +69,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 │  trace.ts · side-effect.ts · output-guard.ts                  │
 │  llm.ts: OpenAI 兼容 chat/completions(fetch,无 SDK)          │
 │  tools/tools.ts: 注册表/执行/Schema/effect 契约              │
-│  tools/filesystem.ts + runtime-tools.ts: 10 个工具           │
+│  builtin-tools.ts + plan-tools.ts + filesystem.ts + runtime-tools.ts: 14 个模型可见工具 │
 └───────────────┬─────────────────────────────────────────────┘
                 │ ToolContext{ runId, workspaceRoot, onSandboxEvent }
 ┌───────────────▼─────────────────────────────────────────────┐
@@ -108,7 +108,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/harness/model-context.ts`                    | 模型上下文能力配置：显式 Run 模型优先（source=`run_model`），环境变量仅 CLI/legacy fallback；保守 token 估算                                                                                                |
 | `src/bootstrap/runtime-bootstrap.ts`              | 默认本地 Runtime 装配：注册 File/Shell Tool，创建 legacy Run sandbox，canonicalize Host 授权的 Workspace，并注入执行上下文、checkpoint writer 与 Console Observer                                                    |
 | `src/runtime/contracts.ts`                        | Runtime 输入契约：Host/bootstrap 注入 `runId + workspaceRoot + permissionMode`，模型不可覆盖                                                                                                                   |
-| `src/runtime/trace.ts`                            | 结构化事件轨迹（18 类事件，见 §3.3）                                                                                                                                                         |
+| `src/runtime/trace.ts`                            | 结构化事件轨迹（27 类事件，见 §3.3）                                                                                                                                                         |
 | `src/runtime/checkpoint-port.ts`                  | Runtime checkpoint 快照契约与 `CheckpointWriter` 持久化端口，不含文件系统实现                                                                                                                        |
 | `src/persistence/file-checkpoint-store.ts`        | 默认本地 JSON checkpoint 适配器：`.checkpoints/<runId>.json` 原子写、读取与路径管理                                                                                                                |
 | `src/runtime/observer-port.ts`                    | Runtime 诊断观察端口；接收隔离快照，Observer 修改或抛错均不影响执行语义                                                                                                                                    |
@@ -120,7 +120,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/llm/llm.ts`（SSE 归一化）                      | 兼容端点把同一调用拆成多片时，空串 `id`/`name` 不得覆盖已知身份（MiniMax-M3 实测：分片带 `id: ""` 会让参数丢失 → 全线 `INVALID_ARGUMENT_JSON`）
 | `src/llm/llm.ts`                                  | OpenAI 兼容 `/chat/completions` 封装（默认 SSE 流式、完整 Tool Call 分片组装；可用 `LLM_STREAMING=0` 回退 JSON；总超时、有限重试、响应校验；`max_tokens` 按当前请求模型逐请求解析）                                             |
 | `src/tools/tools.ts`                              | 工具注册表 / 执行 / Schema 导出 / effect 契约 / validateResult / resolveOperationKey                                                                                                      |
-| `src/tools/filesystem.ts`                         | listDir / readFile / writeFile（含可写区权限与原子写）                                                                                                                                     |
+| `src/tools/filesystem.ts`                         | ls / read / write / edit（含可写区权限、原子写、16KB 输出预算内的分页读取）                                                                                                                                     |
 | `src/tools/tool-arguments.ts`                     | 工具参数 schema 校验（未知/缺失/类型/枚举）→ 结构化回传模型
 | `src/tools/workspace-scan.ts`                     | 文件发现单一来源：目录遍历 + 默认 ignore 规则（grep/glob 共用）
 | `src/tools/glob-pattern.ts`                       | glob → RegExp 编译器（* / ? / ** / **/ / {a,b}，元字符按字面量）
@@ -128,7 +128,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/shell-command-effect.ts`             | shell 命令级副作用分类（只读命令免回放；不确定即 non_idempotent）
 | `src/sandbox/background-jobs.ts`                  | 后台作业注册表（执行器端口注入、并发上限、输出预算；v2.3 起 Session 级所有权 + 增量输出 + 完成通知） |
 | `src/runtime/tool-error-classifier.ts`            | 工具错误分类（默认不重试；瞬时错误白名单）
-| `src/tools/runtime-tools.ts`                      | grep / createDir / moveFile / deleteFile / shell / loadSkill                                                                                                                         |
+| `src/tools/runtime-tools.ts`                      | grep / glob / moveFile / deleteFile / shell / shellJob / loadSkill（另有 hidden 别名 createDir，不进 LLM 可见 schema）                                                                                                                        |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
 | `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）
 | `src/sandbox/shell-executor.ts`                   | 统一 Shell 执行入口与平台选择（darwin→Seatbelt / win32+gate→Windows ACL / 其余→无沙箱门控）；结果附 executor/enforcement；`shellIsolationCapabilities()` 诚实分级能力报告（GET /runtime/capabilities 的 shellIsolation 字段）
@@ -165,7 +165,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/host/open-in-app/os-assoc.ts`                | **文件目标的 macOS 适配器**：内嵌固定 JXA 脚本经 `osascript` 跑 NSWorkspace（`URLsForApplicationsToOpenURL` 列表 + `URLForApplicationToOpenURL` 默认项），bundle icns + ImageIO 出 32px 图标（~10ms/1.5KB），同 bundleId+显示名去重；路径只经 argv。非 darwin 返回 `null` → 回落 openable.ts。**Windows / Linux 适配器未实现**（见 `preview-module-plan.md`「平台缺口」） |
 | `src/host/routes/open-in-app-handler.ts`          | 三路由：`GET /open-in-app/apps`（**文件目标问系统** `source:'os'` / **目录目标走白名单** `source:'catalog'`）、`GET /open-in-app/icon/<id>`（macOS plutil+sips 从 .app 提 PNG，**仅白名单 id**）、`POST /open-in-app/open`（文件目标**打开前用最新系统列表复验 id**；`action:'reveal'`=显示文件位置；detached + scrubbed 环境 + 早期失败观察窗）；工作区路径 Host 自解析，前端只传 id |
 | `src/host/persistence/store.ts`                   | 薄 RunStore 接口（Session/Run CRUD + Event append/list）                                                                                                                            |
-| `src/host/persistence/sqlite-store.ts`            | 原生 `node:sqlite` 实现；默认 `REPO_ROOT/.data/payaso.db`（`PAYASO_DB_PATH` 可覆盖，失败回退 `:memory:`）                                                                                       |
+| `src/host/persistence/sqlite-store.ts`            | 原生 `node:sqlite` 实现；默认 `~/.payaso/payaso.db`（`PAYASO_DB_PATH` 可覆盖，`PAYASO_HOME` 改根，失败回退 `:memory:`）                                                                                       |
 | `src/host/persistence/settings-store.ts`          | Provider metadata（settings 表 key='app' JSON blob，**无 raw apiKey**）+ 默认项 + .env 一次性导入 + legacy 凭证迁移（先写 SecretStore 后剥 SQLite）                                                   |
 | `src/host/secrets/secret-store.ts`                | SecretStore 接口 + 稳定 secret key（`model-provider:<id>:api-key`）+ 组合根工厂（macOS=Keychain，其他平台=Unsupported，测试=Memory）                                                                |
 | `src/host/secrets/macos-keychain-secret-store.ts` | macOS Keychain：`security` CLI + spawnSync 参数数组（service=PayasoAgent，错误对外脱敏）                                                                                                     |
@@ -265,7 +265,7 @@ for (i = startIter; ; i++):
         └─ 2d. 执行：错误分类决定是否重试（v1.8，默认不重试；仅瞬时错误 ≤2 次）
               ├─ success → validate(raw) → guard(共享输出预算) → 按 valid/invalid 分支
               └─ throw   → non_idempotent markUncertain / 其余 recordFailure+分类决策
-  └─ 工具轮结束后可由 Harness.shouldStopAfterTurn 请求优雅停止；Host 另有总运行时限保险丝
+  └─ 工具轮结束后可由 Harness.shouldStopAfterTurn 请求优雅停止；Host 不设固定总运行时限（分层超时见下）
 ```
 
 > 实现归属：装配在 `agent-context.ts`，回合收尾判定（空回合/未完成收尾）在 `turn-policy.ts`，
@@ -320,7 +320,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 * **Sandbox 两层校验**：字符串级（禁 `..`/绝对路径/盘符）+ realpath 级（禁 symlink 逃逸、根不是 symlink、悬空链接拒绝）。
 
-* **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1` 重跑可能未完成的当前轮；workspace 沿用不清理。每次 Host 执行（含 resume）独立启动总运行时限，不存在 Runtime 迭代预算。
+* **Checkpoint/Resume**：每步至少保存一次；resume `startIter = iteration-1` 重跑可能未完成的当前轮；workspace 沿用不清理。不存在 Runtime 迭代预算，也不存在 Host 固定总运行时限——长任务的收口靠分层超时（LLM 看门狗 / 工具 deadline / 后台作业 Session 所有权）与用户取消。
 
 * **Context Compaction V1**：输入估算超过当前 Run 模型预算的 80% 时，Harness 从最旧完整轮开始选取前缀并增量更新结构化 summary，目标回落到约 65%；模型视图使用 `system + bounded scratchpad + summary + recent complete rounds + current turn`。完整 transcript 永不因 compaction 删除，summary 状态随 checkpoint/resume 恢复；`context_compaction` trace 可审计。
 
@@ -340,20 +340,26 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 ***
 
-## 5. 工具全景（10 个）
+## 5. 工具全景（14 个，模型可见）
 
-| 工具           | effect              | operation key                             | 说明                                                                                                                                                                       |
-| ------------ | ------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `calculator` | idempotent          | fallback JSON(args)                       | 数学表达式（仅数字/运算符白名单，`Function` 求值）                                                                                                                                          |
-| `getWeather` | read                | fallback JSON(args)                       | mock 城市天气                                                                                                                                                                |
-| `listDir`    | read                | `path:<canonical>`                        | 列目录条目，不跟随 symlink                                                                                                                                                        |
-| `readFile`   | read                | `path:<canonical>`                        | UTF-8 ≤1MB，二进制/超大 → invalid                                                                                                                                              |
-| `writeFile`  | idempotent          | `path:<canonical>:contentLen:<n>:sum:<s>` | 原子写（tmp+rename），≤1MB                                                                                                                                                     |
-| `searchText` | read                | `path:<canonical>:pattern:<p>`            | 子串查找，回前 20 匹配                                                                                                                                                            |
-| `createDir`  | idempotent          | `path:<canonical>`                        | 单层创建，父目录需存在                                                                                                                                                              |
-| `moveFile`   | **non\_idempotent** | `src:<canonical>:dst:<canonical>`         | 拒绝覆盖已存在目标                                                                                                                                                                |
-| `deleteFile` | idempotent          | `path:<canonical>`                        | 文件不存在幂等返回                                                                                                                                                                |
-| `shell`      | **non\_idempotent** | `cmd:<command>`                           | macOS sandbox-exec 执行，cwd=workspaceRoot，输出 64KB；超时默认 120s（模型可传 `timeoutMs`，上限 600s）；HOME/TMPDIR 指向受管 scratch（read-only 下仍可写缓存，不污染工作区）；**网络默认 deny**（独立 capability，shell 永远显式 false）；**fail-closed**：sandbox-exec 不可用（如 macOS 26）时拒绝执行，绝不跑无沙箱 shell |
+> 与 §3.3 机器契约一致（`getSchemas()` 视角，排除 hidden 别名）。`createDir` 等旧工具保留 hidden 别名（`write` 已支持自动创建父目录），不占 LLM 可见 schema。
+
+| 工具           | effect              | operation key                                         | 说明                                                                                                                                                                       |
+| ------------ | ------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `calculator` | idempotent          | fallback JSON(args)                                   | 数学表达式（仅数字/运算符白名单，`Function` 求值）                                                                                                                                          |
+| `getWeather` | read                | fallback JSON(args)                                   | mock 城市天气                                                                                                                                                                |
+| `loadSkill`  | read                | fallback JSON(args)                                   | 加载工作区 skill 完整 `SKILL.md`（`.payaso/skills`、`.claude/skills`、`.pi/skills`；name 限 kebab-case）                                                                              |
+| `read`       | read                | `path:<canonical>:line:<offset>:<limit>`              | 行号 + offset/limit 分页（offset 恒为起始行号，默认/最大 500 行）；16KB 输出预算内返回连续窗口并给出**唯一下一页 offset**（不拼接头尾）；视觉模型可读工作区图片（≤8MB）；二进制/超长单行省略并指路 shell |
+| `write`      | idempotent          | `path:<canonical>:contentLen:<n>:sum:<s>`             | 新建/整体覆盖（UTF-8 ≤1MB，tmp+rename 原子写，自动创建父目录）                                                                                                                          |
+| `edit`       | **non\_idempotent** | `path:<canonical>:edits:<json>`                       | 精确替换 oldText→newText（可多次）；oldText 须逐字符一致且唯一匹配，保留原文件换行风格（LF/CRLF）                                                                                         |
+| `grep`       | read                | `path:<canonical>:re:<pattern>:max:<n>:ignored:<bool>` | 递归正则搜索（JavaScript RegExp），默认跳过 node_modules/.git/dist 等依赖与产物目录，结果受 16KB 预算约束                                                                              |
+| `glob`       | read                | `path:<canonical>:glob:<pattern>:max:<n>:ignored:<bool>` | glob 模式查找（`*` / `?` / `**` / `{a,b}`），按 mtime 排序，默认跳过依赖/产物目录                                                                                             |
+| `ls`         | read                | `path:<canonical>`                                    | 列目录条目（名称与类型，不递归，不跟随 symlink）                                                                                                                                          |
+| `shell`      | **non\_idempotent** | `cmd:<command>`                                       | OS 沙箱执行（macOS seatbelt / win32+gate→Windows ACL / 其余→无沙箱门控），cwd=workspaceRoot，输出 64KB；超时默认 120s（模型可传 `timeoutMs`，上限 600s）；HOME/TMPDIR 指向受管 scratch（read-only 下仍可写缓存，不污染工作区）；**网络默认 deny**（独立 capability）；**fail-closed**：沙箱不可用时拒绝执行，绝不裸跑 |
+| `shellJob`   | idempotent          | `job:<action>:<jobId>`                                | 后台作业 query / output / wait / kill；Session 级所有权（不随单个 Run 销毁），运行中可 `offset` 增量读取，完成后 Agent 收到通知                                                            |
+| `moveFile`   | **non\_idempotent** | `src:<canonical>:dst:<canonical>`                     | 移动/重命名，拒绝覆盖已存在目标                                                                                                                                                        |
+| `deleteFile` | idempotent          | `path:<canonical>`                                    | 删除文件，不存在幂等返回                                                                                                                                                              |
+| `updatePlan` | idempotent          | fallback JSON(args)                                   | 全量替换任务清单（pending/in_progress/completed，同时最多一项 in_progress）；Harness 持有状态、随 checkpoint 恢复、有界投影注入；收尾时未完成项只发审计事件，不阻断                                          |
 
 **写区权限**：`input/` 只读、仅 `work/` 与 `output/` 可写 —— 仅对 legacy per-run sandbox 生效（见 §8 已知缺口 #2）。
 
@@ -368,13 +374,22 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | GET      | `/sessions`                                                 | 列出持久化 Session（不返回 workspaceRoot）                                                    |
 | GET      | `/sessions/:id`                                             | Session 元数据                                                                         |
 | GET/POST | `/sessions/:id/runs`                                        | 获取连续对话轮次 / 在 Session 内创建下一轮 Run                                                     |
+| PATCH    | `/sessions/:id`                                             | 会话重命名                                                                                     |
+| POST     | `/sessions/:id/archive` / `restore` / `delete`                | 软删除回收站与恢复 / 彻底删除                                                                              |
+| GET      | `/sessions/:id/stats` / `export`                            | 会话统计 / 导出                                                                                 |
+| POST     | `/sessions/:id/compact`                                     | 手动触发上下文压缩                                                                                  |
+| GET/POST | `/sessions/:id/goal` / `plan`，POST `/sessions/:id/feedback` | 会话目标 / Plan 模式 / 反馈元数据                                                                      |
 | GET      | `/runs/:id`                                                 | 单个 Run 元数据                                                                          |
 | POST     | `/runs/:id/resume`                                          | 从 checkpoint 恢复                                                                     |
 | POST     | `/runs/:id/stop`                                            | True Cancellation：running→stopping（abort signal 全链路传播），执行真正退出后才 stopping→stopped；幂等 |
+| POST     | `/runs/:id/approval`                                        | JIT 网络审批裁决（requestId 归属校验，超时 fail-closed 拒绝，裁决记审计事件）                                                  |
 | GET      | `/runs/:id/events`                                          | SQLite 历史事件回放 + 当前活跃 Run 实时 SSE；支持 Last-Event-ID                                    |
+| GET      | `/runs/:id/delivery`                                        | 从 Trace 汇总交付文件 / 疑似检查命令退出结果 / 未完成计划 / 执行诊断（只读，不扫工作区）                                        |
 | GET      | `/runs/:id/files`                                           | 工作区文件树（深度≤6，数量≤500）                                                                 |
 | GET      | `/runs/:id/files/*`                                         | 读取工作区内文件（≤1MB）                                                                      |
+| GET      | `/prompts`，POST `/prompts/preview`                          | 工作区 `.payaso/prompts/*.md` 模板命令列表 / 参数展开预览（只展示，不执行）                                              |
 | GET      | `/workspace` / DELETE `/workspace` / POST `/workspace/open` | 当前 Workspace 查询/清空/原生选择器                                                            |
+| POST     | `/workspace/{rename,delete,restore,purge,select,browse,create-directory}`，GET `/workspace/capability` | 工作区重命名 / 软删除回收站与恢复 / 彻底清除 / 切换 / 目录浏览 / 新建目录 / 受控能力查询                                  |
 | GET      | `/preview/tree?path=&includeIgnored=&runId=`                | Preview 域：工作区单层目录树（懒加载；默认跳过 node_modules/.git/dist 等；500 条截断置 truncated）；`runId` 存在时按该 Run 的工作区取（会话级浏览），解析不到 → 409 no_workspace 且不回落到当前工作区 |
 | GET      | `/preview/file?path=&runId=`                                | Preview 域：读工作区文件，按扩展名分发（text utf8 / image / pdf / office 二进制；已知二进制 415；超分类型上限 413 带 limit） |
 | GET      | `/preview/stat?path=&runId=`                                | Preview 域：单文件元数据（kind/size/mtimeMs）                                                  |
@@ -404,7 +419,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 84 个确定性套件（无 LLM，有界并发，约 17s）
+npm run test:all          # 120 个确定性套件（无 LLM，有界并发）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）
@@ -424,7 +439,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 | 4     | **~~`run_stopped`~~~~SSE 事件缺失~~**  **已修复**                                                                                                | `host/run-manager.ts`                                                                                    | `stop()` 不再预先改终态，统一由 `finish(run, "stopped")` 设状态并发布事件                                                                                                                                                                                                                              |
 | 5     | **~~resume 无"正在运行"守卫~~** **已修复**                                                                                                          | `host/run-manager.ts`                                                                                    | 同一 Host 进程内，已有 running runId 时 `resume()` 直接拒绝，不替换内存记录、不启动第二个 Agent                                                                                                                                                                                                                 |
 | 6     | **~~`readBody`~~~~无大小限制~~**  **已修复**                                                                                                      | `host/routes.ts`                                                                                         | Run JSON 请求体限制 64KB；同时检查 `Content-Length` 和实际流式字节，超限返回 413                                                                                                                                                                                                                          |
-| 7     | **~~LLM 层无重试、无防御解析、无流式输出~~** **已修复**                                                                                                      | `llm/llm.ts`                                                                                             | 默认解析 OpenAI-compatible SSE，正文/推理增量输出，Tool Call 参数完整组装并校验后才执行；保留 240s 总超时、有限重试、JSON fallback 与响应形状校验                                                                                                                                                                                 |
+| 7     | **~~LLM 层无重试、无防御解析、无流式输出~~** **已修复**                                                                                                      | `llm/llm.ts`                                                                                             | 默认解析 OpenAI-compatible SSE，正文/推理增量输出，Tool Call 参数完整组装并校验后才执行；连接超时 30s + 流空闲看门狗 120s（v2.3 起替代旧的 240s 总超时）、有限重试、JSON fallback 与响应形状校验                                                                                                                                                                                 |
 | 8     | ~~os-sandbox / workspace 两个确定性套件 FAIL~~ **已修复**：`sandbox-exec` 在某些外层受限运行环境中无法应用 profile（`sandbox_apply: Operation not permitted`，exit 71） | `sandbox/macos-sandbox.ts`、`tools/runtime-tools.ts`、`tests/os-sandbox.test.ts`、`tests/workspace.test.ts` | 修复 = 运行时能力探测 `probeSandboxAvailability()` + **fail-closed 门**；不可用则 shell 拒绝执行，可用则跑完整隔离矩阵。该能力取决于实际运行上下文，不应仅按 macOS 版本判断                                                                                                                                                              |
 | 9     | **~~system（含 Scratchpad）的模型视图尚未单独压缩~~** **已修复（Context Compaction V1）**                                                                    | `harness/context-harness.ts`、`harness/scratchpad-view.ts`                                                | Scratchpad 有界投影；旧完整轮增量 summary；canonical transcript 不删除；summary 随 checkpoint 恢复，并以 `context_compaction` / `context_usage` 观测                                                                                                                                            |
 | 10    | **~~`.env`~~~~存真实 API 密钥~~** ~~（不入库，但磁盘明文）~~ **部分修复（v1.6 SecretStore）**：SQLite 明文已迁移至 Keychain，`.env` 本身仍为磁盘明文                            | 项目根 `.env`                                                                                               | 导入完成后建议从 `.env` 移除 `OPENAI_API_KEY` 行；后续可加"导入后清理"提示                                                                                                                                                                                                                                 |
@@ -436,7 +451,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 84 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、docs contract） | `npm run test:all` | 84 套件全绿为合并门槛（有界并发，约 17s；完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 120 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、分层超时与后台作业通知、Plan 状态机、docs contract） | `npm run test:all` | 120 套件全绿为合并门槛（有界并发，完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |
@@ -450,9 +465,9 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 * 网络能力粒度控制（域名白名单、代理、流量审计）：shell 只保留 `networkAccess` deny/allow 二态开关；Browser/Network capability 属后续阶段，不通过 shell 实现
 
-* 工具执行超时（除 shell 的可配置上限）；LLM 请求已有总超时 + AbortSignal 取消，shell 已支持进程组级取消（v1.6），其余工具取消语义取决于工具自身
+* 工具级细粒度取消语义（v2.3 已有统一工具超时 deadline：缺省 `PAYASO_TOOL_TIMEOUT_MS` 5 分钟，到期返回结构化 `TOOL_TIMEOUT` 不重试；LLM 为连接超时 + 流空闲看门狗，shell 另支持进程组级取消，其余工具自身不实现独立取消逻辑）
 
-* 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排；Runtime 内部不提供固定迭代计数上限（长任务由 Harness 策略或 Host 总运行时限收口）
+* 流式/分页 Tool Output；长期 Memory / RAG；跨 Session 编排；Runtime 内部不提供固定迭代计数上限（长任务由分层超时与用户取消收口）
 
 * checkpoint 生命周期清理（Trace/Host Event 已由 SQLite 持久化）
 
@@ -474,7 +489,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 Host API 可随 Run 接收结构化 `constraints`，验证文件范围、固定来源版本并持久化到 `constraints_json`；恢复时复用原约束。Runtime 只传递私有 `writeScope`，不向模型工具 Schema 暴露授权字段。内置文件工具执行前检查范围，受限任务的 Shell 使用已有只读沙箱。普通 Web 输入仍只使用统一的 Read Only / Workspace Write / Full access 权限入口，不展示第二套约束控件。
 
-来源摘录由 Harness 提供输出契约，Host 根据指定版本和行号提取原文。未验证的模型正文不发布为公开流或最终答案，下一轮上下文使用已核验结果；校验失败直接失败。文件解析和事实投影均在 Host，不放入 Runtime。具体入口和限制见 [使用说明](task-constraints-usage.md)。
+来源摘录由 Harness 提供输出契约，Host 根据指定版本和行号提取原文。未验证的模型正文不发布为公开流或最终答案，下一轮上下文使用已核验结果；校验失败直接失败。文件解析和事实投影均在 Host，不放入 Runtime。具体入口和限制见 [使用说明](guides/task-constraints-usage.md)。
 
 ### 任务交付与模板预览
 

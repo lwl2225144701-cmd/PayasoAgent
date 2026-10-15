@@ -28,9 +28,9 @@
 
 **工具集**
 
-* 文件：`ls` / `read`（行号 + offset/limit 分页，超预算保留首尾并给出精确续读区间）/ `write`（原子写）/ `edit`（精确替换）/ `grep`（正则递归搜索，默认忽略依赖/产物目录）/ `glob`（按模式查找文件，mtime 排序）/ `moveFile` / `deleteFile`
+* 文件：`ls` / `read`（行号 + offset/limit 分页，超预算返回连续窗口并给出唯一下一页 offset）/ `write`（原子写，自动创建父目录）/ `edit`（精确替换）/ `grep`（正则递归搜索，默认忽略依赖/产物目录）/ `glob`（按模式查找文件，mtime 排序）/ `moveFile` / `deleteFile`
 
-* `shell`：文件系统边界由 OS 级沙箱强制——macOS 走 `sandbox-exec`（完整隔离）；Windows 可启用 ACL 受限令牌执行器（`PAYASO_SHELL_WINDOWS_ACL`，默认关、部分写入隔离，真机验证清单见 `docs/cross-platform-sandbox-plan.md`）。输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出（运行中可 `offset` 增量读取）/终止（长测试与构建不阻塞本轮）。后台作业是**会话级**的：不随单个 Run 结束销毁，完成后 Agent 会收到通知并读取结果，Session 删除或 Host 关闭时统一回收；HOME/TMPDIR 指向沙箱外**短路径**受管 scratch（macOS 默认 /private/tmp/payaso-shell，Read Only 下仍可写缓存，不污染工作区；短路径保证 tsx 等依赖 TMPDIR 建 Unix socket 的工具可用）；沙箱不可用时拒绝执行（绝不裸跑）
+* `shell`：文件系统边界由 OS 级沙箱强制——macOS 走 `sandbox-exec`（完整隔离）；Windows 可启用 ACL 受限令牌执行器（`PAYASO_SHELL_WINDOWS_ACL`，默认关、部分写入隔离，真机验证清单见 `docs/sandbox/cross-platform-sandbox-plan.md`）。输出上限 64KB，**超时默认 120s 可配**（模型可传 `timeoutMs`，上限 600s）；`background=true` 立即返回 jobId，用 `shellJob` 查询/取回输出（运行中可 `offset` 增量读取）/终止（长测试与构建不阻塞本轮）。后台作业是**会话级**的：不随单个 Run 结束销毁，完成后 Agent 会收到通知并读取结果，Session 删除或 Host 关闭时统一回收；HOME/TMPDIR 指向沙箱外**短路径**受管 scratch（macOS 默认 /private/tmp/payaso-shell，Read Only 下仍可写缓存，不污染工作区；短路径保证 tsx 等依赖 TMPDIR 建 Unix socket 的工具可用）；沙箱不可用时拒绝执行（绝不裸跑）
 
 * `updatePlan`：Agent 自述任务清单（全量替换；Harness 持有状态、随 checkpoint 恢复），前端在用户气泡下方实时显示进度
 
@@ -48,7 +48,11 @@
 
 **Host 与 Web UI**
 
-* HTTP API + SSE 实时事件流；SQLite 持久化 sessions / runs / events（`.data/payaso.db`），Host 重启历史不丢
+* HTTP API + SSE 实时事件流；SQLite 持久化 sessions / runs / events（默认 `~/.payaso/payaso.db`，可用绝对路径 `PAYASO_HOME` 或 `PAYASO_DB_PATH` 覆盖），Host 重启历史不丢
+
+* 消息附件：拖放/粘贴上传，Host 侧提取正文（PDF 简易提取、Office 取文字/单元格，上限与失败均有明确策略），图片随宽度/高度发布、按模型视觉能力物化；正文另存、原件保留，由 Agent 用工具按需读取
+
+* 文件预览面板：Markdown / 文本 / 图片 / PDF / Word / Sheet 查看器（懒加载）、目录树、文件变更流，以及"在应用中打开"（macOS 问系统取默认应用）
 
 * 工作区：原生文件夹选择、按工作区分组会话、工作区/会话重命名、软删除回收站与恢复
 
@@ -62,10 +66,9 @@
 要求 **Node.js ≥ 22.5**（使用 `node:sqlite`；`nvm use` 可读取仓库 `.nvmrc`）。
 
 ```bash
-# 1. 安装依赖（根目录 npm install 会自动连带安装 web/ 依赖）
-npm install
-# 若 postinstall 未生效（如 npm ci --ignore-scripts），手动补装：
-# cd web && npm install && cd ..
+# 1. 安装依赖（web/ 是独立 Vite 工程，依赖单独安装）
+npm run setup            # = npm ci && npm ci --prefix web（推荐，与 lockfile 严格一致）
+# 或手动分步：npm install && cd web && npm install && cd ..
 
 # 2. 配置模型（二选一）
 cp .env.example .env      # 填 OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
@@ -92,13 +95,13 @@ npx payaso-agent --port 5000 --no-open --help
 
 * 不读取当前目录 `.env`；数据（数据库 / checkpoint / 凭证 / 沙箱 / 附件）统一放在 `~/.payaso/`，可用绝对路径 `PAYASO_HOME` 覆盖
 * 首次使用在页面左下角「设置」配置模型，再选择工作区；启动目录不会自动授权给 Agent
-* 从源码运行迁移到 npm 包：旧数据不自动搬迁，按 `docs/npx-distribution-plan.md` 的「旧数据迁移」表在 Host 停止状态下成组迁移并验证
+* 从源码运行迁移到 npm 包：旧数据不自动搬迁，按 `docs/distribute/npx-distribution-plan.md` 的「旧数据迁移」表在 Host 停止状态下成组迁移并验证
 
 ## 测试命令
 
 | 命令                               | 内容                                                                     | 依赖            |
 | -------------------------------- | ---------------------------------------------------------------------- | ------------- |
-| `npm run test:all`               | **82 个确定性套件**（子进程隔离、有界并发，约 17s；失败详情随汇总重打，完整日志落 `.payaso/logs/`）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、Host Auth、Keychain 契约等 | 无 LLM         |
+| `npm run test:all`               | **120 个确定性套件**（子进程隔离、有界并发；失败详情随汇总重打，完整日志落 `.payaso/logs/`）：工具契约、沙箱/权限、持久化、取消、终态原子性、Context Compaction、内核不变量（空回合/参数契约/错误分类/输出预算/shell 执行环境）、P1 能力（grep 正则+ignore/glob/项目指令发现/shell 只读免回放）、P2（原始参数恢复/scratchpad 瘦身/后台长任务）、分层超时（LLM 看门狗/工具级/后台作业通知）、Host Auth、Keychain 契约、docs contract 等 | 无 LLM         |
 | `npx tsc --noEmit`               | TypeScript 类型检查                                                        | 无             |
 | `npm run build:web`              | 前端生产构建                                                                 | 无             |
 | `npm run test:host`              | Host API 集成测试（真实 HTTP server + 真实 Run）                                 | 需 LLM（`.env`） |
@@ -106,17 +109,17 @@ npx payaso-agent --port 5000 --no-open --help
 | `npm run test:stress`            | 压测 26 个场景（长链/大输出/恢复/副作用/沙箱逃逸）                                          | 需 LLM（`.env`） |
 | `npx tsx tests/keychain.test.ts` | Keychain 集成（随机账户，测后清理；不可用则 SKIP）                                       | 仅 macOS       |
 
-CI（`.github/workflows/ci.yml`，macOS + Node 22）固定执行 `npm ci` → `npx tsc --noEmit` → `npm run test:all` → `npm run build:web`；`test:host` 在配置了 LLM 密钥（`OPENAI_API_KEY` secret）时自动执行。
+CI（`.github/workflows/ci.yml`，macOS + Node 22）固定执行 `npm ci`（根）→ `cd web && npm ci` → `npx tsc --noEmit` → `npx biome check .`（lint/格式）→ `npm run test:all` → `npm run build`（server + web + 第三方许可）→ `npm pack --dry-run`（包内容终检）；`test:host` 在配置了 LLM 密钥（`OPENAI_API_KEY` secret）时自动执行。
 
 ## 当前限制
 
 * **无联网工具**：没有 web search / fetch，Agent 无法获取外部信息（`shell` 的网络能力由 `network.mode` 控制，默认 on）
 
-* **shell 沙箱平台能力分级**：macOS 完整隔离（`sandbox-exec`，不可用时整体禁用 fail-closed）；Windows ACL 执行器已就绪但默认关（`PAYASO_SHELL_WINDOWS_ACL=1` 启用，部分写入隔离，真机验证清单见 `docs/cross-platform-sandbox-plan.md`）；其余平台需显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才放行。实际能力见 `GET /runtime/capabilities` 的 `shellIsolation` 与设置界面
+* **shell 沙箱平台能力分级**：macOS 完整隔离（`sandbox-exec`，不可用时整体禁用 fail-closed）；Windows ACL 执行器已就绪但默认关（`PAYASO_SHELL_WINDOWS_ACL=1` 启用，部分写入隔离，真机验证清单见 `docs/sandbox/cross-platform-sandbox-plan.md`）；其余平台需显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才放行。实际能力见 `GET /runtime/capabilities` 的 `shellIsolation` 与设置界面
 
 * **上下文管理**：超预算先按完整旧轮增量摘要压缩（compaction），单任务长执行有当前轮紧急裁剪兜底
 
-* **纯文本交互**：无文档解析；图片输入需模型声明视觉能力
+* **模型交互以文本为主**：文档/图片以**附件**形式输入——上传时在 Host 侧提取正文（PDF 简易提取、Office 取文字/单元格），图片按模型视觉能力物化，原文不进 Runtime 循环，由 Agent 用 `read` 等工具按需读取；除此之外没有文档解析/格式转换能力
 
 * **单机单用户**：仅监听 127.0.0.1，无用户鉴权/多租户
 

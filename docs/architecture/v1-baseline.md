@@ -11,7 +11,7 @@
 > **历史文档状态**：
 > - [`runtime-kernel-freeze.md`](./runtime-kernel-freeze.md) 已显式标记为 Superseded，仅作历史参考。
 > - [`v1.0-design.md`](./v1.0-design.md) 已显式标记为 Superseded，仅作历史参考。
-> - [`architecture-current.md`](./architecture-current.md) 是当前架构权威说明；本文档在其基础上为 v1 设立正式基线。
+> - [`architecture-current.md`](../architecture-current.md) 是当前架构权威说明；本文档在其基础上为 v1 设立正式基线。
 
 ---
 
@@ -403,7 +403,7 @@ git push origin v1.0.0-local-mvp
 
 - [`runtime-kernel-freeze.md`](./runtime-kernel-freeze.md)：已在头部明确声明 Superseded，无需额外修改。
 - [`v1.0-design.md`](./v1.0-design.md)：已在头部明确声明 Superseded，无需额外修改。
-- [`architecture-current.md`](./architecture-current.md)：当前架构权威说明，其工具清单（10 个）与 Trace 事件清单（16 类）已通过 `docs-contract.test.ts` 与代码锁定，无需修改。
+- [`architecture-current.md`](../architecture-current.md)：当前架构权威说明，其工具清单（10 个）与 Trace 事件清单（16 类）已通过 `docs-contract.test.ts` 与代码锁定，无需修改。
 
 ---
 

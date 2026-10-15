@@ -59,11 +59,11 @@
 
 ## 落地记录（2026-09-20，glm-5.3-flash @ ark coding 轨道）
 
-44 题全部执行完毕（原题×3 + 变体×8，交付检查开启），**39/44 PASS**。结果表与逐题复核：[closure-2026-09-20T08-39-03-437Z/report.md](baseline/closure-2026-09-20T08-39-03-437Z/report.md)。
+44 题全部执行完毕（原题×3 + 变体×8，交付检查开启），**39/44 PASS**。结果表与逐题复核：[closure-2026-09-20T08-39-03-437Z/report.md](../baseline/closure-2026-09-20T08-39-03-437Z/report.md)。
 
 - **内容质量零缺陷**：无编造（S3 原题/变体均正确区分建议/已确认/决议）、无越界（M 系逐字保留 diff 验证全过）、不虚报完成；53 次交付检查正常运行。
 - **5 例失败分类**：1 例真实行为失败（C3-r1 越界创建 CHECKS.md——普通自然语言任务下模型仍会写未授权文件，是 writeScope 默认化的直接证据）；4 例环境类（ark 30s 传输超时 ×2、180s 冻结超时 ×2），按方案如实保留不翻案。
 - **配置纪律修正**：发现并移除传输层按模型名静默改写 baseUrl 的行为（step_plan→/v1），评测配置改为显式三元组 + 凭证/配置指纹（`tests/baseline/model-config.ts`）；配置或凭证变化即新轨道，续跑要求源码与配置指纹双一致。
 - **未完成项**：结构化授权（writeScope/evidence）轨道未在本批运行，按方案单独列示；M3/变体C3 待环境正常（shell 沙箱可用）时复跑补波动记录。
 
-依据：[连续分页与历次失败记录](baseline/continuous-read-and-grounding-fix.md)、[当前约束实现](task-constraints-usage.md)。
+依据：[连续分页与历次失败记录](../baseline/continuous-read-and-grounding-fix.md)、[当前约束实现](../guides/task-constraints-usage.md)。
