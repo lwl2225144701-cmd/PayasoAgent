@@ -10,7 +10,7 @@
 **流式链路四环节**：
 1. **SSE 入口**：`web/src/api.ts:310-318`，每 chunk `JSON.parse` → `onEvent`
 2. **进入状态**：`web/src/hooks/useEventStream.ts:56-70`，pending 队列 + 16ms 合帧后 `setEvents`
-3. **流向组件**：`web/src/components/Timeline/index.tsx:264-268`，每回合一个 Timeline，`structure = useMemo(buildStructure, [run, events])`
+3. **流向组件**：`web/src/components/Timeline/index.tsx:140-148`，每回合一个 Timeline，`structure = useMemo(buildStructure, [run, events])`
 4. **Markdown 渲染**：`web/src/components/CollapsibleText.tsx:62-82`（streaming 分支）每次渲染整条 `ReactMarkdown` 全量 parse
 
 **结论**：瓶颈在渲染链路，精确位置是「每 16ms 一次 commit × 每次 commit 对整条累计消息全量 react-markdown re-parse」。
@@ -26,7 +26,7 @@
 
 **措辞边界**（重要）：
 - 渲染审计能排除的：①「每个 SSE chunk 直接触发一次渲染」；②「合帧缺失导致掉帧」。
-- **不能**排除的：SSE chunk 到达均匀性、模型首 token 延迟、上游 prefill 慢、网络间歇停顿。这些是独立变量，需单独测量（现成埋点：`llm_call_started` 事件 + `Timeline/index.tsx:109/129` 首 token 等待秒数）。
+- **不能**排除的：SSE chunk 到达均匀性、模型首 token 延迟、上游 prefill 慢、网络间歇停顿。这些是独立变量，需单独测量（现成埋点：`llm_call_started` 事件 + `ExecutionPanel.tsx:80` 首 token 等待秒数）。
 - 20.8ms 是特定机器/特定内容的样本，且不含 DOM layout/paint；「优化后降到安全线」是**目标**，需真实 Performance 录制验证。
 
 ## 2. 问题清单（按严重程度）
@@ -34,10 +34,10 @@
 | # | 严重度 | 位置 | 现象 |
 |---|---|---|---|
 | P0 | 🔴 | `CollapsibleText.tsx:62-82` + `react-markdown/lib/index.js:178` | 每次 commit 全量 re-parse 整条消息；无 memo，同文本重渲也全额付费。16KB 超帧预算 |
-| P1 | 🟠 | `Timeline/index.tsx:283-286` | 流式期间 1.2s tick 强制整棵 Timeline 重渲（驱动执行时长/阶段文案/首 token 秒数，不能删，需下沉） |
+| P1 | 🟠 | `ExecutionPanel.tsx:44-80`（原 `Timeline/index.tsx:283-286`，时钟已按 §⑥ 下沉进面板） | 流式 tick 只重渲面板自身（驱动执行时长/阶段文案/首 token 秒数） |
 | P2 | 🟠 | `useEventStream.ts:65-70` | setTimeout(16) 非 rAF、无背压，与帧边界不对齐 |
-| P3 | 🟡 | `Timeline/index.tsx:253` + `App.tsx:916` | 无 memo → App 级重渲时全部历史回合重渲；无虚拟化，长会话 DOM 常驻 |
-| P4 | 🟡 | `Timeline/index.tsx:776-957` | buildStructure/join/stripThinkTags 每 commit 全量派生（比 parse 低 1-2 个数量级，非主因） |
+| P3 | 🟡 | `Timeline/index.tsx:62` + `App.tsx` | 无 memo → App 级重渲时全部历史回合重渲；无虚拟化，长会话 DOM 常驻 |
+| P4 | 🟡 | `Timeline/timeline-structure.ts:114-280` | buildStructure/join/stripThinkTags 每 commit 全量派生（比 parse 低 1-2 个数量级，非主因） |
 
 ## 3. 改造方案（7 条，按优先级）
 
@@ -67,7 +67,7 @@ interface StreamStore {
 - **metadata 必须保留非流式事件**：tool / terminal / approval / context usage 等不能被 message store 遗漏，否则破坏现有 Timeline 的工具/终态展示。
 
 ### ③ 拆活跃消息组件
-- `Timeline/index.tsx:253` 是聚合式组件，没有真正 MessageList。最小拆法（不必重做消息架构）：
+- `Timeline/index.tsx:62` 是聚合式组件，没有真正 MessageList。最小拆法（不必重做消息架构）：
 
 ```
 RunTimeline
@@ -88,7 +88,7 @@ RunTimeline
 - 终态事件跳过 rAF **立即 flush**。
 
 ### ⑥ 1.2s tick 下沉
-- 不能删除：它驱动执行时长（`Timeline/index.tsx:121/124-126`）、阶段文案「正在思考/正在分析」（`:128`）、首 token 等待秒数（`:109/129`），注释见 `:283`。
+- 不能删除：它驱动执行时长（`ExecutionPanel.tsx:62`）、阶段文案「正在思考/正在分析」（`ExecutionPanel.tsx:72`）、首 token 等待秒数（`ExecutionPanel.tsx:80`），下沉注释见 `ExecutionPanel.tsx:41-46`。
 - 把计时器移进 ExecutionPanel，并**把 `modelWait` 数据与秒数计算拆开**（否则父级仍会因 `Date.now()` 相关计算更新，下沉失效）。
 
 ### ⑦ 长会话虚拟化 【最后做】

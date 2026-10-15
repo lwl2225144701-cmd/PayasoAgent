@@ -30,7 +30,7 @@
 | 合帧 `useEventStream.ts:86-95` | rAF 对齐帧边界 + 隐藏页 250ms 回退 | 已实施，正确 |
 | 增量文本 `useEventStream.ts:69-75` | 独立 `streamedText`，非 delta 帧不触引用 | 已实施，正确 |
 | 流式纯文本 `CollapsibleText.tsx:62-67` | 流式期间 `<div pre-wrap>`，不 parse | 已实施，正确 |
-| 时钟下沉 `Timeline/index.tsx:120-130` | 1s tick 只在 ExecutionPanel 内 | 已实施，正确 |
+| 时钟下沉 `ExecutionPanel.tsx:41-80`（原 `Timeline/index.tsx:120-130`，拆分后随面板落位） | 1s tick 只在 ExecutionPanel 内 | 已实施，正确 |
 | App 级轮询 | **不存在**（无 `setInterval` 拉 `/runs`） | 无问题 |
 | Host 16ms 合帧 | `src/host/run-manager.ts` | 无问题，不必动 |
 | 滚动条动画 | `useConversationScroll` 直接设 `scrollTop`，无 smooth | 方向正确（见 D） |
@@ -106,7 +106,7 @@
 
 **证据链**：
 
-1. `web/src/components/Timeline/index.tsx:277` —— `useEventStream(run.runId, true, …)` 在**每个** Timeline 实例内调用。
+1. `web/src/components/Timeline/index.tsx:81` —— `useEventStream(run.runId, true, …)` 在**每个** Timeline 实例内调用。
 2. `web/src/App.tsx:942` —— `displayedSessionRuns.map(...)` 渲染**该会话全部 run**，无窗口化、无虚拟化。
 3. `src/host/routes.ts:403` —— `const live = …get('live') !== '0'`，默认 `true`。
 4. `src/host/run-manager.ts:1469` —— `subscribe()` 先 `for (const item of this.store.listEvents(runId))` **同步回放全部历史**，
@@ -147,7 +147,7 @@ mermaid.render 单次成本远高于 markdown parse（含 dagre 布局 + DOM 度
 
 1. `web/src/App.tsx:164` —— `setRuns(runResp.runs)`，`/runs` 每次返回全新 JSON 对象，身份全变。
 2. `web/src/App.tsx:340-346` —— `currentSessionRuns` / `displayedSessionRuns` 派生时 `filter().sort()`，**每次 render 新数组**。
-3. `web/src/components/Timeline/index.tsx:265` —— `memo(function Timeline(...))`，**默认浅比较，无自定义 comparator**。
+3. `web/src/components/Timeline/index.tsx:62` —— `memo(function Timeline(...))`，**默认浅比较，无自定义 comparator**。
 4. `web/src/App.tsx:943-953` —— 传入 `run={run}` + `onRetryCommand={handleCreateRun}`。
 5. `web/src/App.tsx:298` —— `currentModelSelection` 是**每次 render 重建的对象字面量**，
    而它是 `createRunNow` 的 useCallback 依赖（`App.tsx:492-533`），于是连环传染：
@@ -173,13 +173,13 @@ mermaid.render 单次成本远高于 markdown parse（含 dagre 布局 + DOM 度
 
 **证据**：
 
-- `web/src/components/Timeline/index.tsx:351-354` —— `structure = useMemo(buildStructure, [run, events, rawFinalAnswer, finalParsed])`。
+- `web/src/components/Timeline/index.tsx:140-148` —— `structure = useMemo(buildStructure, [run, events, rawFinalAnswer, finalParsed])`。
   流式中 `events` 与 `rawFinalAnswer` **每帧都变** → 每帧全量重建。
-- `web/src/components/Timeline/index.tsx:893-894` —— 在 step 循环内对**每一个历史 `llm_call`** 执行
+- `web/src/components/Timeline/timeline-structure.ts:188-197` —— 在 step 循环内对**每一个历史 `llm_call`** 执行
   `stripThinkTags(llm.response ?? '')` 与 `stripThinkTags(llm.reasoning ?? '')`。
 - `web/src/format.ts:44-65` —— `stripThinkTags` 是 2 趟全局正则 + 1 次 `match` + 1 趟 `replace`，
   **O(全串)**，并且中途有 `[...]`/`trim()` 分配。
-- `web/src/components/Timeline/index.tsx:878-881` —— `globalThinkingAcc` 每帧对全部 `reasoning_delta`
+- `web/src/components/Timeline/timeline-structure.ts:180-186` —— `globalThinkingAcc` 每帧对全部 `reasoning_delta`
   做 `filter().map().join('')`，O(累计 reasoning 文本)。
 
 **关键点**：`llm_call` 事件一旦写入就**不可变**，其 `stripThinkTags` 结果每帧重算是**纯浪费**。
@@ -240,7 +240,7 @@ effect 依赖 `[runs]`，而 `runs`（`App.tsx:936` 传的 `currentSessionRuns`�
 与 `subscribe` 的回放同源，语义一致、可加 `Cache-Control`）。
 
 **Web 侧**：
-- `Timeline/index.tsx:277` 按状态分流：
+- `Timeline/index.tsx:74-81` 按状态分流：
 
 ```tsx
 const isLive = run?.status === 'running' || run?.status === 'stopping';
@@ -255,7 +255,7 @@ const { events, streamedText } = useEventStream(
   **完全不创建 EventSource**（也就不存在自动重连问题）。
   ⚠️ 不要简单地把现有 `live` 传 `false` —— `src/host/routes.ts:403` 的语义是
   「回放完 `sink.end()`」，而 EventSource 在流结束时**必然自动重连**（`api.ts` 的 `retry: 3000`），
-  这正是 `Timeline/index.tsx:273-276` 注释里踩过的坑。**必须换成 `fetch`，或让 EventSource 收到终态后 close。**
+  这正是 `Timeline/index.tsx:74-80` 注释里踩过的坑。**必须换成 `fetch`，或让 EventSource 收到终态后 close。**
 
 **收益**：会话打开从 N 条 SSE 降为 0 条 SSE；事件取回转成可并发的普通 XHR，
 **不再挤占 live run 的连接**；去掉 N 次订阅表登记与 N 次 EventSource 生命周期。
@@ -403,7 +403,7 @@ contain-intrinsic-size: auto 800px;   /* 高度估值，避免滚动条跳动 */
 | P0-2 | mermaid 视口门控：`IntersectionObserver`（提前 600px）+ 区分「未进视口」与「渲染中」两种占位，占位块保留 180px 高度 | `web/src/components/MermaidBlock/index.tsx`、`MermaidBlock.module.css` |
 | P0-1 | 宿主新增 `RunManager.listRunEvents()` 与 `GET /runs/:id/events/snapshot`；前端 `fetchRunEvents()`；`useEventStream` 引入显式 `mode: 'live' \| 'snapshot'`，snapshot 路径**不创建 EventSource**（因此绕开 `?live=0` 的自动重连陷阱）；`Timeline` 按 `run.status` 分流 | `src/host/run-manager.ts`、`src/host/routes.ts`、`web/src/api.ts`、`web/src/hooks/useEventStream.ts`、`Timeline/index.tsx` |
 | P1-3 | 新增 `reconcileRuns()` 复用未变化 Run 的引用（带编译期护栏）；`currentModelSelection` 加 `useMemo`（这才是回调身份传染的真正源头，见 §3.3 勘误）；`currentSessionRuns` / `displayedSessionRuns` 加 `useMemo` | `web/src/run-reconcile.ts`、`web/src/App.tsx` |
-| P1-4 | `llm_call` 的 `stripThinkTags` 结果按事件对象 WeakMap 缓存（事件不可变，每帧重跑纯属浪费） | `Timeline/index.tsx` |
+| P1-4 | `llm_call` 的 `stripThinkTags` 结果按事件对象 WeakMap 缓存（事件不可变，每帧重跑纯属浪费） | `Timeline/timeline-structure.ts:98` |
 | P2-5 | 滚动跟随改为在 `ResizeObserver` 回调内**直接**补齐（该回调本就在布局后、绘制前；此前多排一次 rAF 正是差一帧的来源）；暴露 `stopFollowing`，修掉「点历史回合时平滑滚动被流式自动贴底打断」 | `web/src/hooks/useConversationScroll.ts`、`App.tsx` |
 
 **顺带清理**：`useEventStream` 里 `isConnected` 是 set 后从未被读取的死状态，随重写一并移除（唯一调用方未解构它）。

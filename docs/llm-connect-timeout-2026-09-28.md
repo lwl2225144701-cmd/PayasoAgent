@@ -20,7 +20,8 @@
 - 所有 provider 都有前缀缓存（deepseek 系 / stepfun / MiniMax），且只匹配「从头逐字相同」的段——这件事是**模型无关**的，不是「谁家有没有缓存」。
 - [`buildModelView`](../src/harness/context-harness.ts)（约 L517–L522）把 system 拼成 `内核指令 + 计划 + 草稿 + 旧轮摘要 + 进度提醒`：只有「内核指令」稳定，其余每轮都变；而这条 system 是 messages 的**第 0 号**、排在全部历史之前（`splice`/`unshift`，约 L533–L536）。
 - 于是缓存从头就断：ark 实测每轮 `cacheReadTokens` 恒为 **2048**（内核指令稳定头），之后 system 剩余部分 + 全部历史每轮重新 prefill。反证：`conversationHistory` 复用的历史本身是 append-only、字节一致的，唯一不稳定源就是这条 system。
-- 放大因素（非根因）：连接超时默认 30s（[`DEFAULT_LLM_CONNECT_TIMEOUT_MS`](../src/llm/llm.ts) L40），且 [`shouldRetry`](../src/llm/llm.ts)（L859–L866）对超时一律不重试——一越线就立刻 `failed`。
+- 放大因素（非根因）：连接超时默认 30s（[`DEFAULT_LLM_CONNECT_TIMEOUT_MS`](../src/llm/llm-transport.ts) L13），且 [`shouldRetry`](../src/llm/llm-transport.ts)（L192 起）对超时一律不重试——一越线就立刻 `failed`。
+  > 注：两符号原在 `llm.ts`，2026-10 大文件拆分后迁至 `llm-transport.ts`（行号随迁更新）。
 
 因果链一句话：**前缀被改断 → 缓存作废 → 33 万 token 每轮全量 re-prefill → 首 token 贴着并偶发越过 30s 线 → 超时。**
 

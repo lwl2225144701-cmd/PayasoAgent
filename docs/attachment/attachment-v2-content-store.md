@@ -116,7 +116,7 @@ write = (bytes) => {
 ### 4.5 数据模型与物化（`MessageImage` 扩展）
 
 ```ts
-// src/llm/llm.ts
+// src/llm/llm-types.ts（2026-10 从 llm.ts 拆出）
 interface MessageImage {
   mimeType: string;
   path?: string;          // workspace 相对路径（现有，继续支持旧数据）
