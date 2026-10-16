@@ -77,6 +77,39 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > 认标题即可分辨走的是哪条）。macOS 侧（壳 Electron dialog / 浏览器 Host
 > osascript）早已实测能出原生面板。
 
+> 2026-10-16 补：**原生 chrome 跟随页面主题**（Win11 真机截图里"上面的那一栏
+> 是白的"就是这条）。
+>
+> 症状：网页皮肤由 CSS 决定，但系统标题栏 / 菜单栏 / 原生控件是 Chromium 照
+> `nativeTheme.themeSource` 画的 —— 壳从不设它，于是永远跟**系统**外观走：
+> 页面深色 + 标题栏/菜单栏浅色（实测像素：页面侧栏 `(18,24,32)`，而窗口标题栏
+> `(243,243,243)`、菜单栏 `(255,255,255)`）。
+>
+> 修法（DSH 同款单向同步）：渲染进程把**主题模式**报给壳，壳写进 themeSource。
+> `web/src/theme.ts` 的 `applyThemeMode` → 桥 `payasoDesktop.setNativeTheme(mode)`
+> → `preload.cts` 发 `payaso:nativeThemeSet` → `main.ts` 的 `registerNativeTheme`
+> 校验 sender 是自己的主窗口 + 值域兜底后写 `nativeTheme.themeSource`。
+> 报的是**模式**（`light`/`dark`/`system`）而不是解析后的值 —— 报解析值等于把
+> 用户的"跟随系统"钉死。DSH 的对应实现：`lib/preload-app.cjs` 监听
+> `data-theme-source` 发 `dsh-desktop:native-theme-set`，`lib/main.js` 收下写
+> `nativeTheme.themeSource`。
+>
+> 兼容：桥方法与值都按"老壳可能没有"写（可选链 + try/catch，浏览器形态直接
+> no-op），**新网页配 v0.4.0 装出来的旧壳不会崩**，只是原生 chrome 不跟随。
+>
+> 验证：新增套件 `tests/frontend-native-theme.test.ts`（10 例：模式上报/
+> 浏览器形态/桥抛错/老壳无此方法/通道名两端一致 + 归属校验 + 值域兜底）；
+> 另用 scratch 里的 Electron 探针跑过真实往返 —— 真 preload →
+> `setNativeTheme('light')` → 渲染进程 `prefers-color-scheme: dark` 由 true 变
+> false，`dark` 变回 true，非法值被丢弃。
+>
+> 边界（说清楚免得误判）：**文件对话框本身不受影响**。Chromium 的 Windows
+> 文件对话框代码（`shell/browser/ui/file_dialog_win.cc`、
+> `ui/shell_dialogs/select_file_dialog_win.cc`）里没有任何主题开关，
+> `base/win/dark_mode_support.cc` 只会把进程设成 `PreferredAppMode::kAllowDark`
+> （跟随系统），从不 ForceDark —— 所以那个白色面板只有 Windows 的
+> 「设置 → 个性化 → 颜色」能改，DSH 与我们在这一点上完全同命。
+
 > 产物现状（2026-10-09 清理后）：Release 页**只保留 v0.3.5** 一个桌面版，
 > mac（`arm64.dmg` 210MB + `arm64-mac.zip` 216MB）与 Windows（`setup.exe` 172MB
 > NSIS 安装器 + `x64.zip` 234MB 便携包）**双平台齐备**，各带 blockmap；

@@ -1,8 +1,8 @@
 // 桌面壳 → 渲染进程的能力桥（唯一出口）。
 //
-// 只暴露一件事：选目录 —— 走主进程的原生对话框，**进程内调用，不 spawn 子进程**。
+// 暴露两件事：① 选目录 ② 把页面主题模式报给原生 chrome。
 //
-// 为什么必须走这里（而不是 Host 侧 shell 出去调系统命令）：
+// 选目录为什么必须走这里（而不是 Host 侧 shell 出去调系统命令）：
 // - **慢**：旧实现 win32 走 PowerShell 5.1，光 `powershell.exe` 冷启动 +
 //   `Add-Type -AssemblyName System.Windows.Forms` 加载 WinForms 程序集就要
 //   1.5~4 秒（真机反馈"windows 打开原生目录很慢"）；darwin 的 osascript
@@ -19,4 +19,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('payasoDesktop', {
   /** 打开系统目录选择框。返回选中的绝对路径；用户取消返回 null。 */
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('payaso:pickDirectory'),
+  /**
+   * 主题模式 → 主进程 `nativeTheme.themeSource`。DSH 同款配方：它的渲染进程
+   * 监听 `data-theme-source` 后发 `dsh-desktop:native-theme-set`，主进程设
+   * themeSource。不报的话，Windows/macOS 的**系统**标题栏、菜单栏会跟系统
+   * 外观走，页面深色、窗口边框却是浅色。
+   */
+  setNativeTheme: (mode: 'light' | 'dark' | 'system'): void => {
+    ipcRenderer.send('payaso:nativeThemeSet', mode);
+  },
 });

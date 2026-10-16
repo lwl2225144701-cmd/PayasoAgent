@@ -19,7 +19,7 @@ import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -274,9 +274,31 @@ function registerDirectoryPicker(): void {
   });
 }
 
+/**
+ * 页面主题模式 → 原生 chrome 外观（渲染进程 → 这里）。
+ *
+ * 网页只有一套皮肤由 CSS 决定，但**系统标题栏 / 菜单栏 / 原生控件/滚动条**
+ * 是 Chromium 照 `nativeTheme.themeSource` 画的：不设它，就永远跟**系统**
+ * 外观走 —— 页面深色 + 浅色窗口边框（真机截图里就是"上面的那一栏是白的"）。
+ *
+ * DSH 同款开关：它的渲染进程监听 `data-theme-source` 后发
+ * `dsh-desktop:native-theme-set`，主进程收下写进 `nativeTheme.themeSource`。
+ * 我们照抄这个单向同步，只认自己的主窗口（同 `registerDirectoryPicker`
+ * 的归属校验），值域兜底，非法值直接丢。
+ */
+function registerNativeTheme(): void {
+  ipcMain.on('payaso:nativeThemeSet', (event, source: unknown): void => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    if (source === 'light' || source === 'dark' || source === 'system') {
+      nativeTheme.themeSource = source;
+    }
+  });
+}
+
 async function boot(): Promise<void> {
   buildMenu();
   registerDirectoryPicker();
+  registerNativeTheme();
   // 端口已被占用（用户自己起过 npm run host）→ 复用已有后端，退出时也不要杀它
   if (await backendResponds()) {
     ownsBackend = false;
