@@ -70,8 +70,12 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > `PayasoAgent-0.4.0-x64.zip` 234.6 MiB（246019157 B）便携包，各带 blockmap。
 > cask 已自动 bump 到 0.4.0，sha256 `dd3cb492…204`（与 DMG 一致）。
 >
-> 已知缺口：Windows 原生目录选择器（koffi + COM）尚未真机验证；
-> macOS 侧（壳 Electron dialog / 浏览器 Host osascript）已实测能出原生面板。
+> 已知缺口：Windows 原生目录选择器 —— **壳路径已真机验证**（2026-10-15，Win11
+> 实测截图：点「打开工作区」直接弹出系统原生 `选择文件夹` 面板，标题/取消/选择
+> 按钮齐全，无弹窗无 toast）；**浏览器 Host 路径（koffi + COM worker）仍未真机
+> 验证**（那条路径标题是 `选择 PayasoAgent Workspace`，与壳的默认标题不同，
+> 认标题即可分辨走的是哪条）。macOS 侧（壳 Electron dialog / 浏览器 Host
+> osascript）早已实测能出原生面板。
 
 > 产物现状（2026-10-09 清理后）：Release 页**只保留 v0.3.5** 一个桌面版，
 > mac（`arm64.dmg` 210MB + `arm64-mac.zip` 216MB）与 Windows（`setup.exe` 172MB
