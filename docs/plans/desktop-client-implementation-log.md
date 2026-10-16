@@ -58,14 +58,17 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
-> 产物现状（2026-10-15，**v0.4.0 发布中**）：tag `v0.4.0` 已推送（指向 `43b3286`），
+> 产物现状（2026-10-15，**v0.4.0 已发布**）：tag `v0.4.0` 已推送（指向 `43b3286`），
 > `.github/workflows/release.yml` 随之触发 —— mac DMG/ZIP + Windows NSIS/ZIP →
 > GitHub Release → 自动 bump `Casks/payasoagent.rb` 并推回 main（因此发完要
-> `git pull`，main 上会多一个 bot 提交）。
+> `git pull`，main 上会多一个 bot 提交，即 `d0769e6`）。
 >
-> 发版前闸门本机已按 CI 同款跑过：tsc 0 / biome exit 0 / 128 套件全绿；
-> lockfile 已由 npm 重新规范化。**本版产物实测数字（DMG/ZIP 体积、cask 新 sha256）
-> 待发布落地后回填**（依据 Release 页与 `Casks/payasoagent.rb`）。
+> 本版产物实测数字（Release 页，`curl -sIL` 取 content-length）：
+> mac `PayasoAgent-0.4.0-arm64.dmg` 210.4 MiB（220618076 B）+
+> `PayasoAgent-0.4.0-arm64-mac.zip` 216.3 MiB（226837212 B）；Windows
+> `PayasoAgent-0.4.0-setup.exe` 172.5 MiB（180871916 B）NSIS 安装器 +
+> `PayasoAgent-0.4.0-x64.zip` 234.6 MiB（246019157 B）便携包，各带 blockmap。
+> cask 已自动 bump 到 0.4.0，sha256 `dd3cb492…204`（与 DMG 一致）。
 >
 > 已知缺口：Windows 原生目录选择器（koffi + COM）尚未真机验证；
 > macOS 侧（壳 Electron dialog / 浏览器 Host osascript）已实测能出原生面板。
