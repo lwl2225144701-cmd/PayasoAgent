@@ -52,6 +52,7 @@ docs/
 │   ├── desktop-client-implementation-log.md
 │   ├── builtin-model-catalog-refresh.md
 │   ├── preview-gui-调研报告.md / preview-module-plan.md
+│   ├── auto-update-调研报告.md        # DSH 自更新三条链路的逆向结论（期 3 依据）
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI
