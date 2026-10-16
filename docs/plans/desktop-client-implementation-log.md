@@ -58,6 +58,34 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 产物现状（2026-10-16，**v0.4.6 已发布**）：tag `v0.4.6` → `a086d82`（窗口按钮
+> 让位改由壳注入，见下），四件套实测：mac `arm64.dmg` 210.4 MiB（220585425 B）
+> + `arm64-mac.zip` 216.3 MiB（226840464 B）；Windows `setup.exe` 172.5 MiB
+> （180875041 B）+ `x64.zip` 234.6 MiB（246022217 B）。cask 自动 bump 到 0.4.6
+> （bot 提交 `d916e23`），sha256 `bf03b4401853…b95`（与 DMG 一致）。
+>
+> 真机现象（v0.4.5）：顶栏右侧的状态胶囊「运行中」被窗口按钮**硬切掉** —— 截图
+> 里胶囊的右圆角断在叠加层边界上。让位原本挂在**页面侧**（需要页面 CSS 里那条
+> `:root[data-shell-platform="win32"] .bar` + `<html data-shell-platform>` 两样都在），
+> 而页面是不是壳自带那一版，我远距离无法分辨（复用了 4500 上旧后端、或 preload
+> 没拿到 platform，都会让这条静默失效）。结论：**窗口几何不该由页面负责**。
+>
+> 改成壳注入（与 macOS 红绿灯那条让位同源）：
+> - `dom-ready` 注 `WCO_RESERVE_SCRIPT`：用 `navigator.windowControlsOverlay
+>   .getTitlebarAreaRect()` 量按钮区宽度写进 `--wco-reserve`（量不到兜底 138px = 46×3）
+> - `dom-ready` 注 `WCO_RESERVE_CSS`：只命中主栏顶栏
+>   `#root > :first-child > :not(aside) > [data-window-drag]`（侧栏那个同名标记在
+>   `aside` 里，不会误伤），`padding-right: calc(var(--wco-reserve, 138px) + 14px)`
+> - 删掉页面侧那一份（ShellBar 的规则、`main.tsx` 的 dataset、preload/vite-env 的
+>   `platform`）—— 一套真值源
+>
+> 验证：真 Chromium（Chrome headless 注入同一份 CSS/脚本）实测 `barPaddingRight
+> = 152px`（138+14）、侧栏 `logoPaddingRight = 0px`；仓库级门禁 biome 0 / tsc 0 /
+> 桌面壳 tsc 0 / 129 套件全绿。
+>
+> **这一版要在 Windows 上验的**：① 「运行中」胶囊完整显示、不再被按钮切；
+> ② 预览胶囊 / 侧栏开关也都完整；③ 拖拽、双击最大化、三个按钮照旧可用。
+
 > 产物现状（2026-10-16，**v0.4.5 已发布**）：tag `v0.4.5` → `bc3c363`（并进 main 的
 > 合并提交 `29eaa8a`），唯一改动是设置页「Shell 隔离」文案定稿（见下）。
 > 四件套实测：mac `arm64.dmg` 210.4 MiB（220607519 B）+ `arm64-mac.zip`
