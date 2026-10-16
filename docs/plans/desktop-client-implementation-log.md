@@ -58,6 +58,36 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-16 再补：**Windows 干脆不要系统标题栏**（v0.4.1 那版不够，真机反馈
+> "还是有大白边"）。
+>
+> v0.4.1 只修了一半，源码级原因：**系统标题栏（caption）是 DWM 画的，应用侧没有
+> 开关** —— Chromium 只在带 DWM backdrop 的窗口上才设
+> `DWMWA_USE_IMMERSIVE_DARK_MODE`（`ui/views/widget/desktop_aura/
+> desktop_window_tree_host_win.cc` 的 `UpdateBackdropColorMode()`，开头就是
+> `if (!ShouldAddDWMBackdrop()) return;`），Electron 只在 `SetBackgroundMaterial`
+> 里碰 `DWMWA_CAPTION_COLOR`。`nativeTheme.themeSource` 能改的只有 Chromium
+> 自己画的东西（菜单/原生控件）。所以深色主题下永远剩一条浅色 caption。
+>
+> 修法 = DSH 的做法（`lib/main.js` win32 分支源码为证）：
+> `titleBarStyle: "hidden"` + `titleBarOverlay: { height: 40, color, symbolColor }`，
+> 主题色经 `windowsAppearance` IPC 用 `setTitleBarOverlay({color, symbolColor})`
+> 回刷。我们照抄：
+> - `main.ts`：win32 分支 hidden + overlay（高度 = 前端 `--topbar-height` 58px，
+>   `WINDOW_CHROME_HEIGHT` 与它对齐，有套件锁）；配色 `windowChromePalette()`
+>   只认「设置里的主题」；`registerNativeTheme` 里 themeSource 与 overlay 颜色
+>   **一起刷**；win32 另加 `setAutoHideMenuBar(true)` —— 系统菜单栏同样是
+>   `GetSysColor` 画的浅色带（Alt 仍可调出）。
+> - `preload.cts` 暴露 `platform` → `main.tsx` 首帧前写
+>   `<html data-shell-platform>` → `ShellBar.module.css` 用
+>   `env(titlebar-area-x/width)` 把窗口按钮那一块宽度让出来
+>   （Electron 的 overlay `color` 只画按钮区，见 `set_overlay_button_color`，
+>   不覆盖页面内容）。
+>
+> 这样 Windows 上一条浅色原生带都不剩：顶栏就是页面自己的那一条（拖拽面靠
+> `[data-window-drag]`，与 macOS 同一套机制）。**仍需 Windows 真机验收的点**：
+> 拖拽/双击最大化、窗口按钮可用、浅色主题下按钮符号色对比度、Alt 唤出菜单。
+
 > 产物现状（2026-10-16，**v0.4.1 已发布**）：tag `v0.4.1` → `d216b58`
 > （唯一改动：原生 chrome 跟随页面主题，见下一段），CI 四件套实测（`curl -sIL`
 > 取 content-length）：mac `PayasoAgent-0.4.1-arm64.dmg` 210.4 MiB（220585952 B）

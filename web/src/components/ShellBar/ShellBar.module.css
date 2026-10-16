@@ -23,6 +23,13 @@
   backdrop-filter: blur(18px);
 }
 
+/* Windows 壳没有系统标题栏（窗口按钮是 Electron 的 WCO 叠加层，叠在页面右上角）。
+   用 Chromium 暴露的 env(titlebar-area-*) 把按钮那一块宽度让出来，否则会压住
+   预览胶囊 / 侧栏开关。macOS 与纯浏览器没有这组 env → 回落到原本的 14px。 */
+:root[data-shell-platform="win32"] .bar {
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 14px);
+}
+
 .left {
   display: flex;
   align-items: center;

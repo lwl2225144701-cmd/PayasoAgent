@@ -9,6 +9,10 @@ import { applyThemeMode, readThemeMode } from './theme';
 applyThemeMode(readThemeMode());
 applyConversationFontSize(readConversationFontSize());
 
+// 标记运行环境（桌面壳的平台 / 纯浏览器）。Windows 壳没有系统标题栏，
+// 顶栏要靠它给右上角的窗口按钮（WCO）让位 —— 必须首帧前定好，否则按钮会压住顶栏元素。
+document.documentElement.dataset.shellPlatform = window.payasoDesktop?.platform ?? 'web';
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />

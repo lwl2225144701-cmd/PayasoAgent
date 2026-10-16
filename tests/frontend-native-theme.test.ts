@@ -163,6 +163,60 @@ test('桥的类型声明在 vite-env.d.ts 里（tsc 才认 window.payasoDesktop.
   assert.ok(/setNativeTheme: \(mode: 'light' \| 'dark' \| 'system'\) => void;/.test(dts));
 });
 
+test('Windows 壳源码契约：没有系统标题栏，窗口按钮叠加层跟随主题', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  // 系统 caption/菜单栏是 DWM + GetSysColor 画的，改不了颜色 → 只能不要它们
+  assert.ok(
+    /process\.platform === 'win32'[\s\S]{0,400}titleBarStyle: 'hidden' as const/.test(main),
+    'win32 必须用 titleBarStyle:hidden（系统标题栏没有主题开关）',
+  );
+  assert.ok(
+    /titleBarOverlay: \{/.test(main),
+    'win32 必须开窗口按钮叠加层，否则没有最小化/关闭按钮',
+  );
+  assert.ok(
+    /function refreshWindowsChrome\(\)[\s\S]{0,400}setTitleBarOverlay/.test(main),
+    '主题切换后必须重刷叠加层颜色，否则按钮那一块留着上一套主题',
+  );
+  assert.ok(
+    /nativeTheme\.themeSource = source;[\s\S]{0,160}refreshWindowsChrome\(\)/.test(main),
+    'themeSource 与叠加层颜色必须一起刷（一套真值源）',
+  );
+  assert.ok(
+    /process\.platform === 'win32'\) win\.setAutoHideMenuBar\(true\)/.test(main),
+    'win32 必须收起系统菜单栏（它也是 GetSysColor 画的浅色带）',
+  );
+  // 顶栏高度必须与前端 --topbar-height 一致，否则按钮叠不到顶栏里
+  const css = fs.readFileSync(path.join('web', 'src', 'index.css'), 'utf8');
+  const topbar = Number(/--topbar-height:\s*(\d+)px/.exec(css)?.[1]);
+  const chromeHeight = Number(/WINDOW_CHROME_HEIGHT = (\d+)/.exec(main)?.[1]);
+  assert.equal(
+    chromeHeight,
+    topbar,
+    `WINDOW_CHROME_HEIGHT(${chromeHeight}) 必须等于 --topbar-height(${topbar})`,
+  );
+});
+
+test('前端按壳平台给窗口按钮让位（WCO 的 env(titlebar-area-*)）', () => {
+  const mainTsx = fs.readFileSync(path.join('web', 'src', 'main.tsx'), 'utf8');
+  assert.ok(
+    /dataset\.shellPlatform = window\.payasoDesktop\?\.platform \?\? 'web'/.test(mainTsx),
+    '首帧前必须把壳平台写进 <html data-shell-platform>',
+  );
+  const shellCss = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
+    'utf8',
+  );
+  assert.ok(
+    /:root\[data-shell-platform=["']win32["']\] \.bar \{[\s\S]{0,260}env\(titlebar-area-width/.test(
+      shellCss,
+    ),
+    'Windows 下顶栏必须用 titlebar-area-* 让出窗口按钮的宽度',
+  );
+  const preload = fs.readFileSync(path.join('apps', 'desktop', 'src', 'preload.cts'), 'utf8');
+  assert.ok(/platform: process\.platform/.test(preload), 'preload 必须暴露 platform');
+});
+
 async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;

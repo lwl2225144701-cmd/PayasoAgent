@@ -156,6 +156,31 @@ async function stopBackend(): Promise<void> {
   }
 }
 
+/**
+ * 顶部条高度（px），必须与前端 `--topbar-height` 一致（web/src/index.css）。
+ * Windows 上它是窗口按钮叠加层（WCO）的高度，按钮就叠在顶栏这一条里。
+ */
+const WINDOW_CHROME_HEIGHT = 58;
+
+/**
+ * 顶栏 / 窗口按钮的配色 —— 只认「设置里的主题」（`nativeTheme.themeSource`
+ * 由渲染进程报来），不认系统外观：一张皮，两个地方都刷它。
+ */
+function windowChromePalette(useDarkColors: boolean): { color: string; symbolColor: string } {
+  return useDarkColors
+    ? { color: '#0f1115', symbolColor: '#e6e8ec' } // 同前端深色底 / 浅色符号
+    : { color: '#f5f7fb', symbolColor: '#0f1115' };
+}
+
+/**
+ * Windows：把窗口按钮叠加层的颜色刷成当前主题色（DSH 同款 `setTitleBarOverlay`）。
+ * 主题切换后必须再刷一次，否则按钮那一小块会留着上一套主题的颜色。
+ */
+function refreshWindowsChrome(): void {
+  if (process.platform !== 'win32' || mainWindow === null) return;
+  mainWindow.setTitleBarOverlay(windowChromePalette(nativeTheme.shouldUseDarkColors));
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -174,6 +199,21 @@ function createWindow(): void {
           trafficLightPosition: { x: 16, y: 18 },
         }
       : {}),
+    // Windows：不要系统标题栏 —— 它的颜色是 DWM 画的，应用侧**没有开关**
+    // （Chromium 只在带 DWM backdrop 的窗口上才设 DWMWA_USE_IMMERSIVE_DARK_MODE，
+    // Electron 只在 SetBackgroundMaterial 里碰 DWMWA_CAPTION_COLOR），所以深色
+    // 主题下永远是浅色一条。改成 Electron 的窗口按钮叠加层（WCO）：按钮叠在
+    // 我们自己的顶栏里，颜色由上面那套 palette 决定 —— DSH 就是这么做 Windows 的
+    // （`titleBarStyle:"hidden"` + `titleBarOverlay` + `windowsAppearance` IPC）。
+    ...(process.platform === 'win32'
+      ? {
+          titleBarStyle: 'hidden' as const,
+          titleBarOverlay: {
+            height: WINDOW_CHROME_HEIGHT,
+            ...windowChromePalette(nativeTheme.shouldUseDarkColors),
+          },
+        }
+      : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false, // 页面只是普通 Web 页面（同源 localhost），不需要 Node 能力
@@ -185,6 +225,10 @@ function createWindow(): void {
 
   mainWindow = win;
 
+  // Windows：系统菜单栏的颜色也是 GetSysColor 画的（跟系统走），深色主题下还是
+  // 一条白带 —— 收起来（Alt 仍能调出，快捷键不受影响），标题栏里不放第二套 chrome。
+  if (process.platform === 'win32') win.setAutoHideMenuBar(true);
+
   void win.loadURL(BACKEND_URL);
 
   // 外部链接一律交给系统浏览器，别在壳里乱开窗口
@@ -193,15 +237,22 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
-  // 标题栏藏掉之后，前端侧栏顶部必须给红绿灯让位（它们浮在左上角）。
+  // macOS 专属：标题栏藏掉之后，前端侧栏顶部必须给红绿灯让位（它们浮在左上角）。
   // 选择器避开 CSS Modules 的哈希类名，直接认语义标签 aside；侧栏自身是
   // height:100vh + 全局 border-box，加 padding 只压缩内容高度、不会撑出窗口。
-  win.webContents.on('did-finish-load', () => {
-    win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
-    void win.webContents.insertCSS(
-      '#root > :first-child > aside { box-sizing: border-box; padding-top: 40px; }',
-    );
-  });
+  // Windows 不需要：那边没有系统标题栏，顶栏就是页面自己的第一条。
+  if (process.platform === 'darwin') {
+    win.webContents.on('did-finish-load', () => {
+      win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
+      void win.webContents.insertCSS(
+        '#root > :first-child > aside { box-sizing: border-box; padding-top: 40px; }',
+      );
+    });
+  } else {
+    win.webContents.on('did-finish-load', () => {
+      win.setTitle('PayasoAgent');
+    });
+  }
 
   win.on('closed', () => {
     if (!quitting) app.quit();
@@ -291,6 +342,8 @@ function registerNativeTheme(): void {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
     if (source === 'light' || source === 'dark' || source === 'system') {
       nativeTheme.themeSource = source;
+      // Windows 的窗口按钮叠加层不吃 themeSource，得按新主题再刷一次颜色。
+      refreshWindowsChrome();
     }
   });
 }
