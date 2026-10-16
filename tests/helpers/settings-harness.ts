@@ -156,8 +156,18 @@ export async function postJSONWithOrigin(
   });
 }
 
-/** 收尾：打印汇总行并按失败数决定退出码（与原 settings.test.ts 的 runner 约定一致）。 */
-export function reportAndExit(): never {
+/**
+ * 收尾：打印汇总行并按失败数决定退出码（与原 settings.test.ts 的 runner 约定一致）。
+ *
+ * 必须先收掉句柄再让进程自然退出：本 harness 在模块加载时 `server.listen(0)`，而
+ * `globalThis.fetch`（undici）对本地服务会留下 keep-alive 连接。若直接 `process.exit()`，
+ * Windows 上句柄处于关闭中状态时会触发 libuv fail-fast（`0xC0000409`）——表现为
+ * "断言全过、进程却以异常码退出"；若不 exit 又不收句柄，则进程永不退出。
+ * 故：`closeAllConnections()` 断开 keep-alive → `close()` 关闭服务器 → 只设 `exitCode`。
+ */
+export function reportAndExit(): void {
   console.log(`\nSettings 测试汇总: ${passed} PASS / ${failed} FAIL`);
-  process.exit(failed > 0 ? 1 : 0);
+  server.closeAllConnections();
+  server.close();
+  process.exitCode = failed > 0 ? 1 : 0;
 }
