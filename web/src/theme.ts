@@ -38,19 +38,22 @@ export function resolveThemeMode(mode: ThemeMode): ResolvedTheme {
  * 新网页配老壳不能因此抛异常。
  */
 interface NativeThemeBridge {
-  setNativeTheme?: (mode: ThemeMode) => void;
+  setNativeTheme?: (mode: ThemeMode, resolved: ResolvedTheme) => void;
 }
 
 /**
- * 把主题模式报给桌面壳，让它同步原生 chrome（系统标题栏 / 菜单栏 / 原生控件）。
+ * 把主题报给桌面壳，让它同步原生 chrome（系统标题栏 / 菜单栏 / 窗口按钮叠加层）。
+ *
+ * 报的是「模式 + 解析值」两样：模式让壳设 `themeSource`（`system` 才能继续跟随
+ * 系统），解析值让壳直接刷 Windows 的窗口按钮叠加层颜色 —— 壳不用再猜一次。
  *
  * 浏览器里没有这个桥（`window.payasoDesktop` 为 undefined）→ 静默跳过；
  * 报失败也不该影响页面主题，所以整体 try/catch。
  */
-function publishNativeTheme(mode: ThemeMode): void {
+function publishNativeTheme(mode: ThemeMode, resolved: ResolvedTheme): void {
   const bridge = (window as unknown as { payasoDesktop?: NativeThemeBridge }).payasoDesktop;
   try {
-    bridge?.setNativeTheme?.(mode);
+    bridge?.setNativeTheme?.(mode, resolved);
   } catch {
     // 桥不可用/被拒：页面主题照旧生效。
   }
@@ -65,7 +68,7 @@ export function applyThemeMode(mode: ThemeMode): ResolvedTheme {
 
   const themeColor = document.querySelector('meta[name="theme-color"]');
   themeColor?.setAttribute('content', resolved === 'dark' ? '#0f1115' : '#f5f7fb');
-  publishNativeTheme(mode);
+  publishNativeTheme(mode, resolved);
   return resolved;
 }
 

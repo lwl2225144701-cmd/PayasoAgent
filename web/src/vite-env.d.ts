@@ -17,13 +17,17 @@ interface PayasoDesktopBridge {
   /** 打开系统原生目录选择框。返回选中的绝对路径；用户取消返回 null。 */
   pickDirectory: () => Promise<string | null>;
   /**
-   * 把页面主题模式（light/dark/system）同步给壳的原生 chrome。
+   * 把页面主题同步给壳的原生 chrome。
    *
-   * 不报的话，「系统标题栏 / 菜单栏 / 原生控件」会跟着**系统**外观走 ——
-   * 页面是深色、窗口边框却是浅色（DSH 由渲染进程发
+   * 两个参数都要：`mode`（light/dark/system）让壳设 `nativeTheme.themeSource`
+   * —— 报 `system` 才能继续跟随系统；`resolved` 是解析后的实际主题，Windows 的
+   * 窗口按钮叠加层颜色按它刷（壳不用再猜一次）。
+   *
+   * 不报的话，「系统标题栏 / 菜单栏 / 窗口按钮」会跟着**系统**外观走 ——
+   * 页面是深色、窗口右上角却是浅色（DSH 由渲染进程发
    * `dsh-desktop:native-theme-set` 做同一件事）。
    */
-  setNativeTheme: (mode: 'light' | 'dark' | 'system') => void;
+  setNativeTheme: (mode: 'light' | 'dark' | 'system', resolved: 'light' | 'dark') => void;
 }
 
 interface Window {

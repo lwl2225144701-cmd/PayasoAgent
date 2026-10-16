@@ -25,9 +25,14 @@
 
 /* Windows 壳没有系统标题栏（窗口按钮是 Electron 的 WCO 叠加层，叠在页面右上角）。
    用 Chromium 暴露的 env(titlebar-area-*) 把按钮那一块宽度让出来，否则会压住
-   预览胶囊 / 侧栏开关。macOS 与纯浏览器没有这组 env → 回落到原本的 14px。 */
+   预览胶囊 / 侧栏开关（真机截图里"顶栏按钮不见了"就是这个）。
+   max(138px, …) 是兜底：三个标题栏按钮在 DIP 下恒为 46×3=138px，env() 万一没生效
+   （回落到 0）也不会让按钮压到页面元素上。macOS 与纯浏览器没有这组 env。 */
 :root[data-shell-platform="win32"] .bar {
-  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 14px);
+  padding-right: calc(
+    max(138px, 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)) +
+    14px
+  );
 }
 
 .left {

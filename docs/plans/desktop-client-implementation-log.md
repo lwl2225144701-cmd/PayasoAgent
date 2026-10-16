@@ -58,6 +58,40 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-16 三补：**右上角那块白**（v0.4.2 真机截图）。
+>
+> 现象：v0.4.2 上去掉系统标题栏后，右上角剩一块 58px 高的白色矩形（只有窗口
+> 三个按钮），页面其余部分深色。
+>
+> 取证（截图逐像素）：
+> - 那块白 = `(245,247,251)` = 我们自己的**浅色** palette `#f5f7fb` —— 说明
+>   overlay 的 `color` 生效了（系统默认色是 `COLOR_BTNFACE`，不是这个值），
+>   只是停在**创建时**那一份（那时 `themeSource` 还是 `system`、系统是浅色）。
+> - 高度 73 设备像素 ÷ 1.25 DPR ≈ 58 ✓ 就是 `WINDOW_CHROME_HEIGHT`。
+> - 顶栏右侧的预览胶囊/侧栏开关**消失了**（该区域只有 4 种颜色，旧截图同区域
+>   304 种）→ v0.4.2 的 `env(titlebar-area-*)` 让位 CSS 没生效，按钮被 overlay
+>   盖住了。
+>
+> 结论：**壳是新的、页面是旧的**。两条都指向"服务端吐的不是这一版界面"：
+> 旧页面既没有 v0.4.1 的主题上报（所以叠加层颜色没人刷），也没有 v0.4.2 的让位
+> CSS。而壳复用 4500 上已有后端时只探 `/workspace` 通不通（`backendResponds`），
+> **完全不看版本** —— 只要机器上还留着旧版 `npm run host`（或旧 `.stage/app`），
+> 就会静默拼出"新壳 + 旧界面"。
+>
+> 修法（三件，v0.4.3）：
+> 1. **壳自己盯页面主题**：`did-finish-load` 注入 `THEME_WATCH_SCRIPT` —— 读
+>    `<html data-theme/data-theme-mode>`，MutationObserver 跟随。页面主题是唯一
+>    真值源，壳自己看就不受页面版本影响（旧页面也会写这两个属性）。主动上报
+>    仍保留（快路径），主进程按 `模式+解析值` 去重。
+> 2. **版本不一致要喊**：`warnIfBackendMismatch` 拿 4500 上 `GET /` 引用的哈希
+>    资源名，跟壳自带 `web/dist/index.html` 对一下，不一致就弹窗说明"界面资源
+>    不是客户端自带的这一份，多半是旧后端还开着"（继续 / 退出）。
+> 3. **让位宽度加兜底**：`max(138px, <env 计算>) + 14px` —— 三个标题栏按钮在
+>    DIP 下恒为 46×3，`env()` 万一不生效也不会让按钮压住页面元素。
+>
+> 另：桥的 `setNativeTheme` 改成 `(mode, resolved)` 两参：壳按解析值直接刷
+> overlay，不再依赖 `shouldUseDarkColors`（实测它赋值后是同步的，但少一个假设）。
+
 > 产物现状（2026-10-16，**v0.4.2 已发布**）：tag `v0.4.2` → `b411560`
 > （去掉 Windows 系统标题栏，见下一段），四件套实测：mac `arm64.dmg` 210.4 MiB
 > （220588948 B）+ `arm64-mac.zip` 216.3 MiB（226839030 B）；Windows `setup.exe`

@@ -43,9 +43,9 @@ function stubBrowser(options: {
         ? // 老壳：桥里只有 pickDirectory（本次改动之前安装的版本）
           { pickDirectory: async (): Promise<string | null> => null }
         : {
-            setNativeTheme: (mode: string): void => {
+            setNativeTheme: (mode: string, resolved: string): void => {
               if (options.bridge === 'throw') throw new Error('bridge rejected');
-              bridgeCalls.push(mode);
+              bridgeCalls.push(`${mode}:${resolved}`);
             },
           };
 
@@ -78,7 +78,8 @@ test('dark 模式：报给桥的是 dark，且 data-theme / colorScheme 同步',
   const env = stubBrowser({ bridge: [] });
   const resolved = applyThemeMode('dark');
   assert.equal(resolved, 'dark');
-  assert.deepEqual(env.bridgeCalls, ['dark']);
+  // 报的是「模式:解析值」—— 壳用前者设 themeSource、后者刷窗口按钮叠加层
+  assert.deepEqual(env.bridgeCalls, ['dark:dark']);
   assert.equal(env.dataset.theme, 'dark');
   assert.equal(env.dataset.themeMode, 'dark');
   assert.equal(env.style.colorScheme, 'dark');
@@ -88,16 +89,16 @@ test('dark 模式：报给桥的是 dark，且 data-theme / colorScheme 同步',
 test('light 模式：报给桥的是 light（原生 chrome 要跟着变浅）', () => {
   const env = stubBrowser({ bridge: [] });
   applyThemeMode('light');
-  assert.deepEqual(env.bridgeCalls, ['light']);
+  assert.deepEqual(env.bridgeCalls, ['light:light']);
   assert.equal(env.dataset.theme, 'light');
   assert.equal(env.style.colorScheme, 'light');
   assert.equal(env.themeColorMeta.value, '#f5f7fb');
 });
 
-test('system 模式：报的是 system 本身，而不是解析后的 dark', () => {
+test('system 模式：报的是 system 本身 + 解析值，而不是只报解析后的 dark', () => {
   const env = stubBrowser({ bridge: [], systemDark: true });
   applyThemeMode('system');
-  assert.deepEqual(env.bridgeCalls, ['system']);
+  assert.deepEqual(env.bridgeCalls, ['system:dark']);
   // 页面按系统解析成 dark，但壳必须收到 system —— OS 才能自己决定原生外观。
   assert.equal(env.dataset.theme, 'dark');
   assert.equal(env.dataset.themeMode, 'system');
@@ -132,13 +133,13 @@ test('默认主题是 dark（未存过 localStorage 时）', () => {
 test('启动路径 applyThemeMode(readThemeMode()) 也会报一次给桥', () => {
   const env = stubBrowser({ bridge: [] });
   applyThemeMode(readThemeMode());
-  assert.deepEqual(env.bridgeCalls, ['dark']);
+  assert.deepEqual(env.bridgeCalls, ['dark:dark']);
 });
 
 test('壳侧源码契约：preload 发的通道 == main 收的通道，且写进 nativeTheme.themeSource', () => {
   const preload = fs.readFileSync(path.join('apps', 'desktop', 'src', 'preload.cts'), 'utf8');
   const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
-  const channel = /ipcRenderer\.send\('([^']+)', mode\)/.exec(preload)?.[1];
+  const channel = /ipcRenderer\.send\('([^']+)', mode, resolved\)/.exec(preload)?.[1];
   assert.ok(channel, 'preload 必须用 ipcRenderer.send 报主题模式');
   assert.equal(channel, 'payaso:nativeThemeSet');
   assert.ok(
@@ -155,12 +156,90 @@ test('壳侧源码契约：preload 发的通道 == main 收的通道，且写进
     'main.ts 必须校验 event.sender 是主窗口，否则任意渲染进程都能改外观',
   );
   // 值域兜底：非法值不能进 themeSource
-  assert.ok(/source === 'light' \|\| source === 'dark' \|\| source === 'system'/.test(main));
+  assert.ok(
+    /source !== 'light' && source !== 'dark' && source !== 'system'\) return;/.test(main),
+    'main.ts 必须丢掉非法模式值',
+  );
+  // 解析值也要兜底（叠加层颜色按它刷）
+  assert.ok(/resolved === 'light' \|\| resolved === 'dark' \? resolved : null/.test(main));
+});
+
+test('壳自己盯页面主题（页面版本不匹配时也能自愈）', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  assert.ok(/const THEME_WATCH_SCRIPT = /.test(main), '壳必须内置页面主题观察脚本');
+  assert.ok(
+    /attributeFilter: \['data-theme', 'data-theme-mode'\]/.test(main),
+    '观察 data-theme/data-theme-mode',
+  );
+  assert.ok(
+    /did-finish-load[\s\S]{0,400}executeJavaScript\(THEME_WATCH_SCRIPT/.test(main),
+    '页面加载完就要注入观察脚本 —— 旧页面不会主动上报，只能壳自己去看',
+  );
+});
+
+test('壳注入的观察脚本：只认页面的 data-theme，属性一变就重报', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  const script = /const THEME_WATCH_SCRIPT = `([\s\S]*?)`;/.exec(main)?.[1];
+  assert.ok(script, '要能取到注入脚本本体');
+
+  const calls: string[] = [];
+  // 用对象持有回调：TS 看不到 class 构造函数里的赋值，直接 let 会被窄化成 null
+  const observer = { fire: null as (() => void) | null };
+  class FakeObserver {
+    constructor(cb: () => void) {
+      observer.fire = cb;
+    }
+    observe(): void {
+      /* 不关心观察参数，触发由测试手动调 */
+    }
+  }
+  const root = { dataset: {} as Record<string, string> };
+  const win = {
+    payasoDesktop: {
+      setNativeTheme: (mode: string, resolved: string) => calls.push(`${mode}:${resolved}`),
+    },
+  };
+  const doc = { documentElement: root };
+  new Function('window', 'document', 'MutationObserver', script)(win, doc, FakeObserver);
+
+  // 装上去时页面还没写 data-theme → 不许瞎报
+  assert.deepEqual(calls, []);
+
+  // 页面自己应用主题（旧页面也一样会写这两个属性）→ 壳听到
+  root.dataset.theme = 'dark';
+  root.dataset.themeMode = 'dark';
+  observer.fire?.();
+  assert.deepEqual(calls, ['dark:dark']);
+
+  // 只有 data-theme 变了（例如跟随系统时系统切浅色）→ 也要重报
+  root.dataset.theme = 'light';
+  observer.fire?.();
+  assert.deepEqual(calls, ['dark:dark', 'dark:light']);
+});
+
+test('界面资源版本不一致要喊出来（复用旧后端 = 新壳配旧页面）', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  assert.ok(/function pageAssetNames\(/.test(main), '必须能提取资源指纹');
+  assert.ok(
+    /function warnIfBackendMismatch\(/.test(main),
+    '必须校验 4500 上那份界面的资源指纹（backendResponds 只看通不通，不看版本）',
+  );
+  assert.ok(/web', 'dist', 'index\.html'/.test(main), '要跟壳自带的 web/dist/index.html 比');
+  assert.ok(/showMessageBox\(win, \{/.test(main), '不一致要弹窗说明，不能静默');
+  assert.ok(
+    /did-finish-load[\s\S]{0,500}warnIfBackendMismatch\(win\)/.test(main),
+    '启动时就要检查',
+  );
 });
 
 test('桥的类型声明在 vite-env.d.ts 里（tsc 才认 window.payasoDesktop.setNativeTheme）', () => {
   const dts = fs.readFileSync(path.join('web', 'src', 'vite-env.d.ts'), 'utf8');
-  assert.ok(/setNativeTheme: \(mode: 'light' \| 'dark' \| 'system'\) => void;/.test(dts));
+  assert.ok(
+    /setNativeTheme: \(mode: 'light' \| 'dark' \| 'system', resolved: 'light' \| 'dark'\) => void;/.test(
+      dts,
+    ),
+    '桥要声明「模式 + 解析值」两个参数',
+  );
 });
 
 test('Windows 壳源码契约：没有系统标题栏，窗口按钮叠加层跟随主题', () => {
@@ -208,11 +287,13 @@ test('前端按壳平台给窗口按钮让位（WCO 的 env(titlebar-area-*)）'
     'utf8',
   );
   assert.ok(
-    /:root\[data-shell-platform=["']win32["']\] \.bar \{[\s\S]{0,260}env\(titlebar-area-width/.test(
+    /:root\[data-shell-platform=["']win32["']\] \.bar \{[\s\S]{0,400}env\(titlebar-area-width/.test(
       shellCss,
     ),
     'Windows 下顶栏必须用 titlebar-area-* 让出窗口按钮的宽度',
   );
+  // env() 不生效时也要留够位置（三个按钮恒为 46×3）
+  assert.ok(/max\(138px,/.test(shellCss), '让位宽度必须有 138px 兜底，否则按钮会压住页面元素');
   const preload = fs.readFileSync(path.join('apps', 'desktop', 'src', 'preload.cts'), 'utf8');
   assert.ok(/platform: process\.platform/.test(preload), 'preload 必须暴露 platform');
 });

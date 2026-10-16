@@ -26,8 +26,11 @@ contextBridge.exposeInMainWorld('payasoDesktop', {
    * 监听 `data-theme-source` 后发 `dsh-desktop:native-theme-set`，主进程设
    * themeSource。不报的话，Windows/macOS 的**系统**标题栏、菜单栏会跟系统
    * 外观走，页面深色、窗口边框却是浅色。
+   *
+   * 第二个参数是**解析后**的主题（light/dark）：Windows 的窗口按钮叠加层颜色
+   * 按它刷，主进程不用再猜一次（猜就要读 shouldUseDarkColors，多一次时序假设）。
    */
-  setNativeTheme: (mode: 'light' | 'dark' | 'system'): void => {
-    ipcRenderer.send('payaso:nativeThemeSet', mode);
+  setNativeTheme: (mode: 'light' | 'dark' | 'system', resolved: 'light' | 'dark'): void => {
+    ipcRenderer.send('payaso:nativeThemeSet', mode, resolved);
   },
 });

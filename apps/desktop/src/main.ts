@@ -16,7 +16,7 @@
 // 所以 cwd 必须是「app 根」（含 web/dist 的那层），不能随便选。
 
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
@@ -163,8 +163,8 @@ async function stopBackend(): Promise<void> {
 const WINDOW_CHROME_HEIGHT = 58;
 
 /**
- * 顶栏 / 窗口按钮的配色 —— 只认「设置里的主题」（`nativeTheme.themeSource`
- * 由渲染进程报来），不认系统外观：一张皮，两个地方都刷它。
+ * 顶栏 / 窗口按钮的配色 —— 只认「设置里的主题」（页面报来的解析值），
+ * 不认系统外观：一张皮，两处都刷它。
  */
 function windowChromePalette(useDarkColors: boolean): { color: string; symbolColor: string } {
   return useDarkColors
@@ -172,13 +172,18 @@ function windowChromePalette(useDarkColors: boolean): { color: string; symbolCol
     : { color: '#f5f7fb', symbolColor: '#0f1115' };
 }
 
+/** 最近一次从页面收到的主题（模式 + 解析值）。null = 还没收到过（用系统色兜底）。 */
+let appliedThemeMode: 'light' | 'dark' | 'system' | null = null;
+let appliedTheme: 'light' | 'dark' | null = null;
+
 /**
  * Windows：把窗口按钮叠加层的颜色刷成当前主题色（DSH 同款 `setTitleBarOverlay`）。
  * 主题切换后必须再刷一次，否则按钮那一小块会留着上一套主题的颜色。
  */
 function refreshWindowsChrome(): void {
   if (process.platform !== 'win32' || mainWindow === null) return;
-  mainWindow.setTitleBarOverlay(windowChromePalette(nativeTheme.shouldUseDarkColors));
+  const dark = appliedTheme === null ? nativeTheme.shouldUseDarkColors : appliedTheme === 'dark';
+  mainWindow.setTitleBarOverlay(windowChromePalette(dark));
 }
 
 function createWindow(): void {
@@ -254,6 +259,15 @@ function createWindow(): void {
     });
   }
 
+  // 页面加载完就把两件事做掉：
+  //   1. 壳自己盯页面主题（兜底观察者）—— 页面就算是不匹配的旧构建，原生 chrome
+  //      也不会停在"系统色"上；
+  //   2. 对一下界面资源版本，不一致就说出来（静默拼出新壳 + 旧界面最难查）。
+  win.webContents.on('did-finish-load', () => {
+    void win.webContents.executeJavaScript(THEME_WATCH_SCRIPT, true).catch(() => undefined);
+    void warnIfBackendMismatch(win);
+  });
+
   win.on('closed', () => {
     if (!quitting) app.quit();
   });
@@ -326,7 +340,7 @@ function registerDirectoryPicker(): void {
 }
 
 /**
- * 页面主题模式 → 原生 chrome 外观（渲染进程 → 这里）。
+ * 页面主题状态 → 原生 chrome 外观（渲染进程 → 这里）。
  *
  * 网页只有一套皮肤由 CSS 决定，但**系统标题栏 / 菜单栏 / 原生控件/滚动条**
  * 是 Chromium 照 `nativeTheme.themeSource` 画的：不设它，就永远跟**系统**
@@ -338,14 +352,80 @@ function registerDirectoryPicker(): void {
  * 的归属校验），值域兜底，非法值直接丢。
  */
 function registerNativeTheme(): void {
-  ipcMain.on('payaso:nativeThemeSet', (event, source: unknown): void => {
+  ipcMain.on('payaso:nativeThemeSet', (event, source: unknown, resolved: unknown): void => {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
-    if (source === 'light' || source === 'dark' || source === 'system') {
-      nativeTheme.themeSource = source;
-      // Windows 的窗口按钮叠加层不吃 themeSource，得按新主题再刷一次颜色。
-      refreshWindowsChrome();
-    }
+    if (source !== 'light' && source !== 'dark' && source !== 'system') return;
+    const nextResolved = resolved === 'light' || resolved === 'dark' ? resolved : null;
+    if (source === appliedThemeMode && nextResolved === appliedTheme) return; // 去重：页面与壳的观察者都会报
+    appliedThemeMode = source;
+    appliedTheme = nextResolved;
+    nativeTheme.themeSource = source;
+    refreshWindowsChrome();
   });
+}
+
+/**
+ * 壳侧的兜底观察者：直接读页面自己的 `data-theme` / `data-theme-mode`。
+ *
+ * 为什么不能只靠页面主动上报：**壳与页面可能不是同一次构建**（4500 端口上被
+ * 复用的后端带着旧 `web/dist`，壳却把新窗口 chrome 装上去了）—— 旧页面里没有
+ * 上报代码，窗口按钮叠加层就会一直停在创建时那套（系统色）颜色，右上角一块白。
+ * 页面主题才是唯一真值源，壳自己去看，就不受页面版本影响。
+ */
+const THEME_WATCH_SCRIPT = `(() => {
+  const root = document.documentElement;
+  const send = () => {
+    const resolved = root.dataset.theme;
+    if (resolved !== 'light' && resolved !== 'dark') return;
+    const mode = root.dataset.themeMode;
+    window.payasoDesktop?.setNativeTheme?.(
+      mode === 'light' || mode === 'dark' || mode === 'system' ? mode : resolved,
+      resolved,
+    );
+  };
+  new MutationObserver(send).observe(root, {
+    attributes: true,
+    attributeFilter: ['data-theme', 'data-theme-mode'],
+  });
+  send();
+})();`;
+
+/**
+ * 页面资源是不是**本次构建自带的那一份**。
+ *
+ * 壳复用 4500 上已有后端时（`backendResponds()` 只看通不通，不看版本），可能
+ * 拿到别人/旧版构建吐的页面：界面缺功能、样式错位，而且完全没有报错。用页面
+ * 引用的哈希资源名跟壳自带 `web/dist/index.html` 对一下，不一致就明确告诉用户。
+ */
+function pageAssetNames(html: string): string {
+  return (html.match(/assets\/[\w.-]+\.(?:js|css)/g) ?? []).sort().join(',');
+}
+
+async function warnIfBackendMismatch(win: BrowserWindow): Promise<void> {
+  try {
+    const ownIndex = path.join(appRoot, 'web', 'dist', 'index.html');
+    if (!existsSync(ownIndex)) return;
+    const res = await fetch(`${BACKEND_URL}/`, { signal: AbortSignal.timeout(2_000) });
+    if (!res.ok) return;
+    const served = pageAssetNames(await res.text());
+    const own = pageAssetNames(readFileSync(ownIndex, 'utf8'));
+    if (served === '' || own === '' || served === own) return;
+    const choice = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'PayasoAgent 界面资源不匹配',
+      message: `4500 端口上运行的后端不是客户端自带的这一份（界面资源版本不一致）。`,
+      detail:
+        `当前界面可能缺功能或样式错位（例如顶栏窗口按钮压住页面元素）。\n\n` +
+        `多半是另一个版本的 PayasoAgent 后端还开着（例如之前手动跑过的 npm run host）。` +
+        `关掉它再重启客户端即可。`,
+      buttons: ['继续', '退出'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (choice.response === 1) app.quit();
+  } catch {
+    // 探测失败不影响启动（离线/端口被别的软件占着等），只是不提示。
+  }
 }
 
 async function boot(): Promise<void> {
