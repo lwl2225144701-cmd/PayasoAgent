@@ -58,6 +58,21 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 产物现状（2026-10-16，**v0.4.1 已发布**）：tag `v0.4.1` → `d216b58`
+> （唯一改动：原生 chrome 跟随页面主题，见下一段），CI 四件套实测（`curl -sIL`
+> 取 content-length）：mac `PayasoAgent-0.4.1-arm64.dmg` 210.4 MiB（220585952 B）
+> + `PayasoAgent-0.4.1-arm64-mac.zip` 216.3 MiB（226837746 B）；Windows
+> `PayasoAgent-0.4.1-setup.exe` 172.5 MiB（180872509 B）+
+> `PayasoAgent-0.4.1-x64.zip` 234.6 MiB（246019660 B），各带 blockmap。
+> cask 自动 bump 到 0.4.1（bot 提交 `0eab1e5`），sha256
+> `19ce29187cba…3ae`（与 DMG 一致）。
+>
+> **这一版要在 Windows 上验的就是主题一致性**（v0.4.0 没有这个修复）：
+> 打开应用 → 设置 → 外观 → 选「深色」，窗口的**系统标题栏 + 菜单栏**应与页面
+> 一起变深（旧版是页面深、边框白）；选「浅色」应整体变浅；选「跟随系统」则跟
+> Windows 的颜色模式走。**文件对话框不在其中** —— 它只认系统设置（Chromium
+> 从不 ForceDark），DSH 同样。
+
 > 产物现状（2026-10-15，**v0.4.0 已发布**）：tag `v0.4.0` 已推送（指向 `43b3286`），
 > `.github/workflows/release.yml` 随之触发 —— mac DMG/ZIP + Windows NSIS/ZIP →
 > GitHub Release → 自动 bump `Casks/payasoagent.rb` 并推回 main（因此发完要
