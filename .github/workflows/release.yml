@@ -102,18 +102,6 @@ jobs:
           fi
           npm run desktop:dmg
 
-      # 自更新 feed 的硬门禁：配了 publish 才会写 app-update.yml / latest-mac.yml，
-      # 少任何一个都是"用户永远查不到更新"的静默故障 —— 在这里直接失败，别发出去。
-      - name: Verify updater feed
-        run: |
-          set -euo pipefail
-          APP_CONFIG=apps/desktop/release/mac-arm64/PayasoAgent.app/Contents/Resources/app-update.yml
-          test -f "$APP_CONFIG" || { echo "::error::缺少 app-update.yml —— electron-builder.yml 的 publish 没生效"; exit 1; }
-          grep -q 'provider: github' "$APP_CONFIG" || { echo "::error::app-update.yml 的 provider 不是 github"; exit 1; }
-          cat "$APP_CONFIG"
-          test -f apps/desktop/release/latest-mac.yml || { echo "::error::缺少 latest-mac.yml —— updater 拿不到 feed"; exit 1; }
-          head -20 apps/desktop/release/latest-mac.yml
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -138,6 +126,28 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest-mac.yml
           fail_on_unmatched_files: true
+
+      # 自更新 feed 的硬门禁：配了 publish 才会写 app-update.yml / latest-mac.yml，
+      # 少任何一个都是"用户永远查不到更新"的静默故障。
+      #
+      # 位置有意放在「发布之后、cask 之前」：资产先落地（真的缺 feed 时也能从 Release
+      # 页看出来），门禁再红 —— 这样"打包没产出"和"我路径写错"不会再混成同一个现象；
+      # 门禁红了就不 bump cask，brew 不会指向一个没有 feed 的版本。
+      - name: Verify updater feed
+        run: |
+          set -euo pipefail
+          # 解包目录名随 runner 架构变（mac-arm64 / mac / mac-universal）—— 用 glob 找，别写死
+          APP_CONFIG=$(ls -d apps/desktop/release/mac*/PayasoAgent.app/Contents/Resources/app-update.yml 2>/dev/null | head -1 || true)
+          if [ -z "$APP_CONFIG" ]; then
+            echo "::error::缺少 app-update.yml —— publish 没生效（或打包没走到最后）"
+            echo "--- release/ 现状 ---"; ls -la apps/desktop/release || true
+            echo "--- 目录内找 app-update.yml ---"; find apps/desktop/release -maxdepth 5 -name 'app-update.yml' || true
+            exit 1
+          fi
+          grep -q 'provider: github' "$APP_CONFIG" || { echo "::error::app-update.yml 的 provider 不是 github"; cat "$APP_CONFIG"; exit 1; }
+          echo "--- $APP_CONFIG ---"; cat "$APP_CONFIG"
+          test -f apps/desktop/release/latest-mac.yml || { echo "::error::缺少 latest-mac.yml —— updater 拿不到 feed"; ls -la apps/desktop/release; exit 1; }
+          head -20 apps/desktop/release/latest-mac.yml
 
       # Homebrew cask 自动 bump：改 version + DMG 的 sha256 后推回 main。
       # brew 通道 = 不花钱的「装完即用」（curl 下载不带 quarantine），见手账 §9。
@@ -229,17 +239,6 @@ jobs:
           done
           npm run desktop:win
 
-      # 同 mac：feed 文件少一个，用户端就永远查不到更新
-      - name: Verify updater feed
-        run: |
-          set -euo pipefail
-          APP_CONFIG=apps/desktop/release/win-unpacked/resources/app-update.yml
-          test -f "$APP_CONFIG" || { echo "::error::缺少 app-update.yml —— electron-builder.yml 的 publish 没生效"; exit 1; }
-          grep -q 'provider: github' "$APP_CONFIG" || { echo "::error::app-update.yml 的 provider 不是 github"; exit 1; }
-          cat "$APP_CONFIG"
-          test -f apps/desktop/release/latest.yml || { echo "::error::缺少 latest.yml —— updater 拿不到 feed"; exit 1; }
-          head -20 apps/desktop/release/latest.yml
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -262,3 +261,20 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest.yml
           fail_on_unmatched_files: true
+
+      # 同 mac：放在发布之后 —— 资产先落地，门禁再验（缺 feed 时现象可分辨）。
+      - name: Verify updater feed
+        run: |
+          set -euo pipefail
+          # 解包目录名不写死，失败时打印现场
+          APP_CONFIG=$(ls -d apps/desktop/release/win-unpacked/resources/app-update.yml 2>/dev/null | head -1 || true)
+          if [ -z "$APP_CONFIG" ]; then
+            echo "::error::缺少 app-update.yml —— publish 没生效（或打包没走到最后）"
+            echo "--- release/ 现状 ---"; ls -la apps/desktop/release || true
+            echo "--- 目录内找 app-update.yml ---"; find apps/desktop/release -maxdepth 5 -name 'app-update.yml' || true
+            exit 1
+          fi
+          grep -q 'provider: github' "$APP_CONFIG" || { echo "::error::app-update.yml 的 provider 不是 github"; cat "$APP_CONFIG"; exit 1; }
+          echo "--- $APP_CONFIG ---"; cat "$APP_CONFIG"
+          test -f apps/desktop/release/latest.yml || { echo "::error::缺少 latest.yml —— updater 拿不到 feed"; ls -la apps/desktop/release; exit 1; }
+          head -20 apps/desktop/release/latest.yml
