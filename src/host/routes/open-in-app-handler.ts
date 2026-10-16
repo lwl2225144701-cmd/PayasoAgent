@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { launchArgsFor } from '../open-in-app/launch-args.js';
 import { filterAppsForTarget } from '../open-in-app/openable.js';
 import { queryFileAssociations } from '../open-in-app/os-assoc.js';
 import {
@@ -213,6 +214,18 @@ async function openPathInApp(id: string, target: string): Promise<void> {
   }
 }
 
+/**
+ * 目标是不是目录 —— 决定传给应用的参数形态（目录与文件在部分应用里语义不同，
+ * 见 launch-args.ts）。探测失败按"文件"处理，把错误留给 spawn 去报。
+ */
+function isDirectory(target: string): boolean {
+  try {
+    return fs.statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** 启动目标路径（结构最小化：只有定位方式参与启动，白名单/系统 id 都满足）。 */
 async function launch(
   app: { bundlePath?: string; executablePath?: string },
@@ -224,13 +237,23 @@ async function launch(
       return;
     }
     if (app.executablePath) {
-      await observe(spawn(app.executablePath, [target], { cwd: target, env: scrubbedEnv() }));
+      await observe(
+        spawn(app.executablePath, launchArgsFor(app.executablePath, target, isDirectory(target)), {
+          cwd: target,
+          env: scrubbedEnv(),
+        }),
+      );
       return;
     }
     throw new Error('该应用未提供可执行定位方式');
   }
   if (app.executablePath) {
-    await observe(spawn(app.executablePath, [target], { cwd: target, env: scrubbedEnv() }));
+    await observe(
+      spawn(app.executablePath, launchArgsFor(app.executablePath, target, isDirectory(target)), {
+        cwd: target,
+        env: scrubbedEnv(),
+      }),
+    );
     return;
   }
   // linux desktop-entry：交系统默认文件管理器打开目录（文档化简化）

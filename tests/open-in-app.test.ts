@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { launchArgsFor } from '../src/host/open-in-app/launch-args.js';
 import { filterAppsForTarget, openableKindForPath } from '../src/host/open-in-app/openable.js';
 import { queryFileAssociations } from '../src/host/open-in-app/os-assoc.js';
 import { createHostServer, RunManager } from '../src/host/server.js';
@@ -64,6 +65,35 @@ test('openableKindForPath：pdf/图片/office/文本/未识别', () => {
   assert.equal(openableKindForPath('a/b.ts'), 'text');
   assert.equal(openableKindForPath('a/Makefile'), 'text', '无扩展名走文本表');
   assert.equal(openableKindForPath('a/b.zip'), null, '未识别后缀 → null（只有 any 应用会列出）');
+});
+
+// ---- 启动参数形态（纯函数）----
+
+test('launchArgsFor：目录目标按应用给参数（wt.exe 不能把目录当命令）', () => {
+  const dir = 'D:\\ws';
+  const file = 'D:\\ws\\a.md';
+  const wt = 'C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe';
+
+  // Windows Terminal：`-d` 才是起始目录。位置参数会被当成"要运行的命令"——
+  // 对目录 CreateProcess 得 0x80070005，真机现象是
+  // 「[出现错误 2147942405 (0x80070005) (启动"<dir>"时)]」。
+  assert.deepEqual(launchArgsFor(wt, dir, true), ['-d', dir]);
+  assert.deepEqual(
+    launchArgsFor(wt.toUpperCase(), dir, true),
+    ['-d', dir],
+    '按 basename 匹配，大小写不敏感',
+  );
+
+  // cmd.exe：传目录同样会被当成命令 → 一个参数都不传，靠调用方的 cwd。
+  assert.deepEqual(launchArgsFor('C:\\Windows\\System32\\cmd.exe', dir, true), []);
+
+  // 编辑器等把目录当项目路径打开 → 位置参数才是正确形态（默认）。
+  assert.deepEqual(launchArgsFor('C:\\apps\\Code.exe', dir, true), [dir]);
+  assert.deepEqual(launchArgsFor('C:\\apps\\Cursor.exe', dir, true), [dir]);
+
+  // 文件目标不受目录规则影响，一律位置参数。
+  assert.deepEqual(launchArgsFor(wt, file, false), [file]);
+  assert.deepEqual(launchArgsFor('C:\\Windows\\System32\\cmd.exe', file, false), [file]);
 });
 
 // ---- 按目标过滤（纯函数）----
