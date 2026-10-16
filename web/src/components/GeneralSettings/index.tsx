@@ -88,8 +88,8 @@ export function GeneralSettings({
 
 /**
  * Shell 隔离能力行：展示当前平台的执行器与隔离完整度（诚实分级）。
- * partial（Windows ACL）必须可见——写入部分隔离、读与网络不受限、
- * workspace-write 会在工作区留下持续性授权 ACE。
+ * partial（Windows ACL）必须可见 —— 一句话说清"只隔离写、读与网络不受限"即可，
+ * 实现细节（Everyone 对象 / NTFS 硬链接 / 持续性 ACE）属于文档，不进设置页。
  */
 function ShellIsolationRow() {
   const { t } = useI18n();
@@ -116,8 +116,8 @@ function ShellIsolationRow() {
         ? t('settings.shellIsolation.executor.windowsAcl')
         : t('settings.shellIsolation.executor.uncontainedGated');
 
-  // 一行说清"当前平台到底隔离到什么程度"即可；实现层细节（Everyone 对象、
-  // NTFS 硬链接、持续性 ACE）挂 hover 提示里 —— 设置页不是文档。
+  // 设置页不是文档：一行说清"当前平台隔离到什么程度"就够。实现细节（Everyone
+  // 对象 / NTFS 硬链接 / 持续性 ACE）不进 UI，也不挂 hover。
   const description =
     info === null
       ? t('settings.shellIsolation.loading')
@@ -127,15 +127,9 @@ function ShellIsolationRow() {
           ? t('settings.shellIsolation.partialCaveat')
           : t('settings.shellIsolation.noneNote');
 
-  const details =
-    info?.enforcement === 'partial' ? t('settings.shellIsolation.standingAceNote') : undefined;
-
   return (
-    <SettingRow
-      title={t('settings.shellIsolation.title')}
-      description={<span title={details}>{description}</span>}
-    >
-      <span className={styles.shellIsolationValue} title={details}>
+    <SettingRow title={t('settings.shellIsolation.title')} description={description}>
+      <span className={styles.shellIsolationValue}>
         {info === null ? '—' : executorLabel(info.executor)}
       </span>
     </SettingRow>
