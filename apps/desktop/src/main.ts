@@ -163,6 +163,30 @@ async function stopBackend(): Promise<void> {
 const WINDOW_CHROME_HEIGHT = 58;
 
 /**
+ * Windows：给窗口按钮让位的注入脚本 —— 用 WCO API 量出按钮区宽度写进
+ * `--wco-reserve`（量不到就用 138px 兜底：三个标题栏按钮 × 46 DIP）。
+ */
+const WCO_RESERVE_SCRIPT = `(() => {
+  let reserve = 138;
+  try {
+    const rect = navigator.windowControlsOverlay?.getTitlebarAreaRect?.();
+    if (rect && rect.width > 0) reserve = Math.max(138, window.innerWidth - rect.x - rect.width);
+  } catch {}
+  document.documentElement.style.setProperty('--wco-reserve', reserve + 'px');
+})();`;
+
+/**
+ * Windows：顶栏（`[data-window-drag]`，侧栏那个在 aside 里不会命中）右侧留出
+ * 窗口按钮的宽度。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
+ */
+const WCO_RESERVE_CSS = `
+  #root > :first-child > :not(aside) > [data-window-drag] {
+    box-sizing: border-box;
+    padding-right: calc(var(--wco-reserve, 138px) + 14px);
+  }
+`;
+
+/**
  * 顶栏 / 窗口按钮的配色 —— 只认「设置里的主题」（页面报来的解析值），
  * 不认系统外观：一张皮，两处都刷它。
  */
@@ -242,10 +266,22 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
+  // Windows：窗口按钮（WCO 叠加层）叠在页面右上角，顶栏必须给它让位 —— 这是
+  // **壳的窗口几何**，跟 macOS 红绿灯那条同理，所以由壳注入，不靠页面 CSS：
+  // 页面版本一旦和壳不匹配（旧 web/dist），页面里那条规则就没了，胶囊/图标会被
+  // 按钮硬切掉（真机截图："运行中被挡住了"）。
+  // 选择器认 `[data-window-drag]`（顶栏的稳定标记；侧栏那个同类标记在 aside 里，
+  // 不会误伤），宽度由注入脚本用 WCO API 算出来，算不出来兜底 138px（46×3）。
+  if (process.platform === 'win32') {
+    win.webContents.on('dom-ready', () => {
+      void win.webContents.insertCSS(WCO_RESERVE_CSS).catch(() => undefined);
+      void win.webContents.executeJavaScript(WCO_RESERVE_SCRIPT, true).catch(() => undefined);
+    });
+  }
+
   // macOS 专属：标题栏藏掉之后，前端侧栏顶部必须给红绿灯让位（它们浮在左上角）。
   // 选择器避开 CSS Modules 的哈希类名，直接认语义标签 aside；侧栏自身是
   // height:100vh + 全局 border-box，加 padding 只压缩内容高度、不会撑出窗口。
-  // Windows 不需要：那边没有系统标题栏，顶栏就是页面自己的第一条。
   if (process.platform === 'darwin') {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题

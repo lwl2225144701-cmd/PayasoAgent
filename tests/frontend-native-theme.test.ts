@@ -276,26 +276,34 @@ test('Windows 壳源码契约：没有系统标题栏，窗口按钮叠加层跟
   );
 });
 
-test('前端按壳平台给窗口按钮让位（WCO 的 env(titlebar-area-*)）', () => {
-  const mainTsx = fs.readFileSync(path.join('web', 'src', 'main.tsx'), 'utf8');
+test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住）', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  // 宽度：WCO API 量，量不到兜底 138px（46×3）
+  assert.ok(/const WCO_RESERVE_SCRIPT = /.test(main), '壳必须内置 WCO 量宽脚本');
   assert.ok(
-    /dataset\.shellPlatform = window\.payasoDesktop\?\.platform \?\? 'web'/.test(mainTsx),
-    '首帧前必须把壳平台写进 <html data-shell-platform>',
+    /getTitlebarAreaRect[\s\S]{0,200}Math\.max\(138,/.test(main),
+    '必须用 getTitlebarAreaRect 量出按钮区宽度，并有 138px 兜底',
   );
+  assert.ok(/--wco-reserve/.test(main), '量出来的宽度要落到 CSS 变量上');
+  // 选择器：认顶栏的 data-window-drag，且排除侧栏（aside 里也有一个同名标记）
+  assert.ok(
+    /#root > :first-child > :not\(aside\) > \[data-window-drag\] \{[\s\S]{0,160}var\(--wco-reserve, 138px\)/.test(
+      main,
+    ),
+    '注入的 CSS 必须只命中主栏顶栏，并用 var(--wco-reserve, 138px) 兜底',
+  );
+  assert.ok(
+    /process\.platform === 'win32'[\s\S]{0,300}insertCSS\(WCO_RESERVE_CSS\)/.test(main),
+    'win32 才注入让位 CSS',
+  );
+  // 页面侧不该再有第二份让位逻辑（一套真值源：壳的窗口几何归壳）
   const shellCss = fs.readFileSync(
     path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
     'utf8',
   );
-  assert.ok(
-    /:root\[data-shell-platform=["']win32["']\] \.bar \{[\s\S]{0,400}env\(titlebar-area-width/.test(
-      shellCss,
-    ),
-    'Windows 下顶栏必须用 titlebar-area-* 让出窗口按钮的宽度',
-  );
-  // env() 不生效时也要留够位置（三个按钮恒为 46×3）
-  assert.ok(/max\(138px,/.test(shellCss), '让位宽度必须有 138px 兜底，否则按钮会压住页面元素');
-  const preload = fs.readFileSync(path.join('apps', 'desktop', 'src', 'preload.cts'), 'utf8');
-  assert.ok(/platform: process\.platform/.test(preload), 'preload 必须暴露 platform');
+  assert.ok(!/titlebar-area/.test(shellCss), '页面 CSS 不该再留一份让位规则');
+  const mainTsx = fs.readFileSync(path.join('web', 'src', 'main.tsx'), 'utf8');
+  assert.ok(!/shellPlatform/.test(mainTsx), '页面不该再依赖 data-shell-platform');
 });
 
 async function main(): Promise<void> {

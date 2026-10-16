@@ -7,13 +7,6 @@
  * 时它是 undefined，此时必须回落到页内目录选择器。
  */
 interface PayasoDesktopBridge {
-  /**
-   * 壳所在平台（Node 的 `process.platform` 取值）。
-   *
-   * Windows 无系统标题栏（窗口按钮是 Electron 的 WCO 叠加层，叠在页面右上角），
-   * 前端要靠它给按钮让位 —— 见 ShellBar.module.css 里的 `titlebar-area-*` 计算。
-   */
-  platform: string;
   /** 打开系统原生目录选择框。返回选中的绝对路径；用户取消返回 null。 */
   pickDirectory: () => Promise<string | null>;
   /**

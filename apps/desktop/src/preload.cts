@@ -17,8 +17,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('payasoDesktop', {
-  /** 壳所在平台（'darwin' / 'win32' / 'linux'）—— 前端按它决定要不要给窗口按钮让位。 */
-  platform: process.platform,
   /** 打开系统目录选择框。返回选中的绝对路径；用户取消返回 null。 */
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('payaso:pickDirectory'),
   /**
