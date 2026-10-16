@@ -104,4 +104,19 @@ dmg:
       type: link
       path: /Applications
 
-publish: null
+# 自更新（期 3）：GitHub provider —— CI 已经往 GitHub Releases 挂 zip + blockmap，
+# 配上 provider 后 electron-builder 会额外写两个东西：
+#   1. 打包产物里的 Resources/app-update.yml（壳据此找 feed，也是开发版门禁的依据）
+#   2. 输出目录里的 latest-mac.yml / latest.yml（各平台 feed，CI 必须一并上传）
+# 别再改 provider/channel：发出去之后用户端的 channel 一旦切走会出现降级/串台
+# （DSH 把 nightly 钉死就是这个原因，调研 §5.3）。
+publish:
+  provider: github
+  owner: lwl2225144701-cmd
+  repo: PayasoAgent
+  releaseType: release # 别用 draft：latest release 就是 feed 的来源
+
+# 下载缓存目录名不在这里配：electron-builder 26 的 schema 只认 publish provider 内的
+# `updaterCacheDirName`，而 appInfo 实际派生自包名（`@payaso/desktop` →
+# `payaso-desktop-updater`，见 app-builder-lib/out/appInfo.js:126），配了也会被忽略；
+# 根级写它会直接让校验失败（本地打包实测）。派生名已经够唯一，多包同机不互相踩缓存。

@@ -20,6 +20,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { createUpdateCoordinator, type UpdateCoordinator } from './update/coordinator.js';
+import { activeTasks } from './update/tasks.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +66,8 @@ let ownsBackend = false;
 let mainWindow: BrowserWindow | null = null;
 let stderrTail = '';
 let quitting = false;
+/** 自更新协调器（开发版不启用；门禁见 update/coordinator.ts）。 */
+let updates: UpdateCoordinator | null = null;
 
 /** 就绪探针：用真实存在的只读端点，而不是"TCP 通了就算"（端口可能被别的进程占着）。 */
 async function backendResponds(): Promise<boolean> {
@@ -73,6 +77,19 @@ async function backendResponds(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * 查"有没有在跑的任务"（装更新前必须问清楚）。
+ *
+ * 复用现成端点：`GET /runs`（不鉴权、不查 origin，见 routes/runs-handler.ts）→
+ * 过滤 running/stopping（`update/tasks.ts`，与 Host 的 `isCancellable()` 对齐）。
+ * 后端零改动。
+ */
+async function listActiveTasks(): Promise<{ runId: string; task: string }[]> {
+  const res = await fetch(`${BACKEND_URL}/runs`, { signal: AbortSignal.timeout(5_000) });
+  if (!res.ok) throw new Error(`GET /runs 返回 ${res.status}`);
+  return activeTasks(await res.json());
 }
 
 async function waitForReady(): Promise<void> {
@@ -317,6 +334,13 @@ function buildMenu(): void {
         submenu: [
           { role: 'about' },
           { type: 'separator' },
+          // 手动检查更新（DSH 同款菜单位置）。自动检查在启动/focus/唤醒时跑，
+          // 这一项是"我不放心，现在就看"的出口；开发版点了会明确说"当前构建不检查更新"。
+          {
+            label: '检查更新…',
+            click: () => void updates?.checkInteractively(),
+          },
+          { type: 'separator' },
           { role: 'hide' },
           { role: 'hideOthers' },
           { role: 'unhide' },
@@ -476,6 +500,20 @@ async function boot(): Promise<void> {
     await startBackend();
   }
   createWindow();
+
+  // 自更新：启动自动检查 + 定时轮询（窗口 focus / 睡眠唤醒补查在 startAutoCheck 里接）。
+  // 开发版门禁在 coordinator 内部（app.isPackaged && app-update.yml 存在），
+  // 所以这里无条件创建也没关系 —— 未启用时它只记一行日志。
+  updates = createUpdateCoordinator({
+    currentVersion: app.getVersion(),
+    window: () => mainWindow,
+    backend: {
+      listActiveTasks,
+      stop: stopBackend,
+      start: startBackend,
+    },
+  });
+  updates.startAutoCheck();
 }
 
 // 单实例：第二次双击只负责把已有窗口拉到前面
@@ -505,7 +543,10 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('before-quit', (event) => {
-  if (quitting) return;
+  // 已经没有后端子进程（安装更新前已经优雅停过，或复用了外部后端）→ 直接放手。
+  // electron-updater 的 quitAndInstall 也走这条退出路径，别再 preventDefault 拖住它，
+  // 否则 Squirrel/NSIS 的替换时机可能被推迟。
+  if (quitting || backend === null) return;
   event.preventDefault();
   quitting = true;
   void stopBackend().finally(() => app.quit());

@@ -102,6 +102,18 @@ jobs:
           fi
           npm run desktop:dmg
 
+      # 自更新 feed 的硬门禁：配了 publish 才会写 app-update.yml / latest-mac.yml，
+      # 少任何一个都是"用户永远查不到更新"的静默故障 —— 在这里直接失败，别发出去。
+      - name: Verify updater feed
+        run: |
+          set -euo pipefail
+          APP_CONFIG=apps/desktop/release/mac-arm64/PayasoAgent.app/Contents/Resources/app-update.yml
+          test -f "$APP_CONFIG" || { echo "::error::缺少 app-update.yml —— electron-builder.yml 的 publish 没生效"; exit 1; }
+          grep -q 'provider: github' "$APP_CONFIG" || { echo "::error::app-update.yml 的 provider 不是 github"; exit 1; }
+          cat "$APP_CONFIG"
+          test -f apps/desktop/release/latest-mac.yml || { echo "::error::缺少 latest-mac.yml —— updater 拿不到 feed"; exit 1; }
+          head -20 apps/desktop/release/latest-mac.yml
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -110,6 +122,7 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
           if-no-files-found: error
 
       # 只有 push tag 才建 Release；手动触发只出 artifact，避免误发版本
@@ -123,6 +136,7 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
           fail_on_unmatched_files: true
 
       # Homebrew cask 自动 bump：改 version + DMG 的 sha256 后推回 main。
@@ -215,6 +229,17 @@ jobs:
           done
           npm run desktop:win
 
+      # 同 mac：feed 文件少一个，用户端就永远查不到更新
+      - name: Verify updater feed
+        run: |
+          set -euo pipefail
+          APP_CONFIG=apps/desktop/release/win-unpacked/resources/app-update.yml
+          test -f "$APP_CONFIG" || { echo "::error::缺少 app-update.yml —— electron-builder.yml 的 publish 没生效"; exit 1; }
+          grep -q 'provider: github' "$APP_CONFIG" || { echo "::error::app-update.yml 的 provider 不是 github"; exit 1; }
+          cat "$APP_CONFIG"
+          test -f apps/desktop/release/latest.yml || { echo "::error::缺少 latest.yml —— updater 拿不到 feed"; exit 1; }
+          head -20 apps/desktop/release/latest.yml
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -223,6 +248,7 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error
 
       - name: Publish to GitHub Release
@@ -234,4 +260,5 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
           fail_on_unmatched_files: true

@@ -58,6 +58,56 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> ### 期 3 落地：检查更新 / 自更新（2026-10-16，v0.4.7）
+>
+> 方案见 [`auto-update-调研报告.md`](./auto-update-调研报告.md) §5；**链路 A 全做，
+> 链路 B（服务端强制更新策略）不做** —— 本仓库没有策略服务，硬造一个只会多一套
+> 没人维护的设施。
+>
+> 交付：
+> - `apps/desktop/src/update/policy.ts`（纯逻辑）：版本解析/比较（预发布版恒小于
+>   同号正式版）、`isNewerVersion` 门禁、指数退避 + ±20% jitter、网络类错误识别
+>   与人话文案；
+> - `apps/desktop/src/update/tasks.ts`：`GET /runs` 里"在跑"任务的判定（与 Host
+>   `isCancellable()` 逐状态对齐，套件锁死两份一致）；
+> - `apps/desktop/src/update/coordinator.ts`：autoUpdater 包装 ——
+>   `autoDownload=false` / `autoInstallOnAppQuit=false` / `allowDowngrade=false`、
+>   挂 `error` 监听（不挂会让 EventEmitter 直接抛）、检查单飞、任务栏进度、
+>   开发版门禁（`app.isPackaged && app-update.yml` 存在）；
+> - `main.ts`：菜单「检查更新…」、boot 里 `startAutoCheck()`（启动 +20s 首查、
+>   10min 轮询、窗口 focus / 睡眠唤醒补查）、`listActiveTasks()` 直接
+>   `fetch(/runs)`（后端零改动）、`before-quit` 在后端已停时不 preventDefault
+>   （别拖住 quitAndInstall 的替换）；
+> - `electron-builder.yml`：`publish: github`（owner/repo/releaseType: release）
+>   → 生成包内 `Resources/app-update.yml` 与输出目录的 `latest-mac.yml`；
+> - `release.yml`：两个 job 都新增 **Verify updater feed** 硬门禁（缺
+>   `app-update.yml` 或 `latest*.yml` 直接失败），并把 `latest*.yml` 加进
+>   artifact 与 Release 上传清单。
+>
+> 本地实证（`electron-builder --mac zip`，`--config.electronDist=node_modules/electron/dist`
+> 绕开 Electron 下载）：
+> ```
+> Resources/app-update.yml: provider: github / owner / repo / releaseType: release /
+>                           updaterCacheDirName: '@payasodesktop-updater'
+> latest-mac.yml:           version / files[url,sha512,size] / path / releaseDate
+> ```
+> `latest-mac.yml` 不带 `blockMapSize` 属正常：那个字段只有 **NSIS**（Windows 差分
+> 下载）用（`electron-updater/out/NsisUpdater.js`）；mac 侧靠整包 zip。
+>
+> 本地打包当场抓到一个配置错误：`updaterCacheDirName` 在 electron-builder 26 里
+> **不是根级属性**（schema 直接拒），且即使放进 publish 也会被忽略 ——
+> appInfo 从包名派生（`@payaso/desktop` → `@payasodesktop-updater`）。已删配置 + 注释。
+>
+> 验证节奏（重要）：**自更新要两个版本才验得完** —— v0.4.7 自带 updater 与 feed，
+> 装它之后再发 v0.4.8，v0.4.7 才会弹"发现新版本"。v0.4.7 自己查只会得到"已是最新版"。
+> 真机验收点：菜单「检查更新…」→ 无更新提示 / 有更新 → 下载（任务栏进度）→
+> 安装确认（有任务时警告并列出会打断什么）→ 重启后版本号变化；未公证的 mac 包
+> 首次安装仍需"右键 → 打开"。
+>
+> 已知取舍：更新 UI 用原生对话框（DSH 是独立 HTML 窗口 + 强制更新全屏窗）；没有
+> 遥测/journal；`update-tasks: lock` 准入锁未做（确认到停后端只有几百毫秒）；
+> 未签名包的自更新在 macOS 上依赖 Squirrel 替换 .app（DSH nightly 同款做法）。
+
 > 产物现状（2026-10-16，**v0.4.6 已发布**）：tag `v0.4.6` → `a086d82`（窗口按钮
 > 让位改由壳注入，见下），四件套实测：mac `arm64.dmg` 210.4 MiB（220585425 B）
 > + `arm64-mac.zip` 216.3 MiB（226840464 B）；Windows `setup.exe` 172.5 MiB
