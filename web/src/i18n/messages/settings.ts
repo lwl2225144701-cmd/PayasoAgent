@@ -49,29 +49,22 @@ export const settingsMessages = {
     'en-US': 'Unsandboxed (denied by default)',
   },
   'settings.shellIsolation.fullNote': {
-    'zh-CN': '读写与网络边界由操作系统沙箱强制执行',
-    'en-US': 'Read, write and network boundaries are enforced by the OS sandbox',
+    'zh-CN': '读写与网络由系统沙箱强制',
+    'en-US': 'Read, write and network enforced by the OS sandbox',
   },
   'settings.shellIsolation.partialCaveat': {
-    'zh-CN':
-      '部分写入隔离：写入限制在工作区与受管临时目录，但 Everyone 授权对象与 NTFS 硬链接存在例外；读取不受限制',
-    'en-US':
-      'Partial write isolation: writes are confined to the workspace and managed scratch, with known Everyone and NTFS hard-link exceptions; reads are unrestricted',
+    'zh-CN': '仅写入受限；读取与网络不受限',
+    'en-US': 'Writes only; reads and network are unrestricted',
   },
   'settings.shellIsolation.noneNote': {
-    'zh-CN': '当前平台无操作系统级沙箱：shell 默认拒绝，需显式设置环境变量才可放行',
-    'en-US':
-      'No OS-level sandbox on this platform: shell is denied by default and requires an explicit opt-in',
+    'zh-CN': '无系统级沙箱，shell 默认拒绝',
+    'en-US': 'No OS-level sandbox; shell is denied by default',
   },
   'settings.shellIsolation.standingAceNote': {
     'zh-CN':
       '注意：Workspace Write 模式会在工作区目录留下持续性授权 ACE（合成 SID，无账户映射，跨会话复用；清理方式见跨平台沙箱文档）',
     'en-US':
       'Note: Workspace Write leaves a standing grant ACE on the workspace directory (a synthetic SID with no account mapping, reused across sessions; see the cross-platform sandbox doc for cleanup)',
-  },
-  'settings.shellIsolation.networkNote': {
-    'zh-CN': '网络访问不受操作系统层限制，由全局网络模式统一管控',
-    'en-US': 'Network access is not restricted at the OS level; it follows the global network mode',
   },
 
   // 外观

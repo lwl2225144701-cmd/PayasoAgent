@@ -116,6 +116,8 @@ function ShellIsolationRow() {
         ? t('settings.shellIsolation.executor.windowsAcl')
         : t('settings.shellIsolation.executor.uncontainedGated');
 
+  // 一行说清"当前平台到底隔离到什么程度"即可；实现层细节（Everyone 对象、
+  // NTFS 硬链接、持续性 ACE）挂 hover 提示里 —— 设置页不是文档。
   const description =
     info === null
       ? t('settings.shellIsolation.loading')
@@ -125,22 +127,15 @@ function ShellIsolationRow() {
           ? t('settings.shellIsolation.partialCaveat')
           : t('settings.shellIsolation.noneNote');
 
+  const details =
+    info?.enforcement === 'partial' ? t('settings.shellIsolation.standingAceNote') : undefined;
+
   return (
     <SettingRow
       title={t('settings.shellIsolation.title')}
-      description={
-        <>
-          <div>{description}</div>
-          {info?.enforcement === 'partial' && (
-            <div>{t('settings.shellIsolation.standingAceNote')}</div>
-          )}
-          {info?.networkIsolation === 'none' && info?.enforcement !== 'none' && (
-            <div>{t('settings.shellIsolation.networkNote')}</div>
-          )}
-        </>
-      }
+      description={<span title={details}>{description}</span>}
     >
-      <span className={styles.shellIsolationValue}>
+      <span className={styles.shellIsolationValue} title={details}>
         {info === null ? '—' : executorLabel(info.executor)}
       </span>
     </SettingRow>
