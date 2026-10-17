@@ -285,19 +285,11 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
           return;
         }
         log(`update available: ${version}（当前 ${options.currentVersion}）`);
+        // 只把「新版本」亮到侧边栏（设置右边），**不弹「下载/稍后」对话框**。
+        // 真机反馈：自动检查在 focus / 唤醒时都会触发，对话框每次都重弹，像在逼人更新；
+        // 现在发现后静默等人点条目（downloadNow）。安装确认仍然只弹一次。
         pendingVersion = version;
         emitStatus(availableStatus(version));
-        const response = await ask({
-          type: 'info',
-          title: 'PayasoAgent',
-          message: `发现新版本 ${version}（当前 ${options.currentVersion}）`,
-          detail: '下载完成后需要重启应用安装；进行中的任务会在安装前先确认。',
-          buttons: ['下载', '稍后'],
-          defaultId: 0,
-          cancelId: 1,
-        });
-        if (response !== 0) return;
-        await download(version);
       } catch (error) {
         failures += 1;
         // 后台检查失败**不弹窗**：用户没点任何东西，网络抖动 / 合盖唤醒都会失败，

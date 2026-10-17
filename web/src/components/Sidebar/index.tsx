@@ -110,7 +110,6 @@ export function Sidebar({
       </div>
 
       <div className={styles.footer}>
-        <UpdateStatusRow />
         <button
           className={styles.settingsBtn}
           title={t('shell.sidebar.settings')}
@@ -120,6 +119,7 @@ export function Sidebar({
           <SettingsIcon size={18} />
           <span>{t('shell.sidebar.settings')}</span>
         </button>
+        <UpdateStatusRow />
       </div>
     </aside>
   );

@@ -301,6 +301,26 @@ test('coordinator：状态必须推给页面（有新版本 / 下载中 x% / 结
   assert.match(src, /setDockProgress\(progress\.percent\)/, 'Dock/任务栏进度保留');
 });
 
+test('coordinator：发现新版本不弹窗，只亮侧边栏条目', () => {
+  const src = shellSource(path.join('src', 'update', 'coordinator.ts'));
+  // 真机反馈（v0.4.10 用户截图）：自动检查在 focus / 唤醒时都会触发，「发现新版本
+  // 0.4.12（当前 0.4.10）」的对话框每次重弹 —— 像在逼人更新。改法：发现后静默，
+  // 只把「新版本」亮到侧边栏（设置右边），用户点了才下载。
+  assert.ok(!/发现新版本/.test(src), '不许再弹「发现新版本」对话框');
+  assert.match(
+    src,
+    /pendingVersion = version;\n\s+emitStatus\(availableStatus\(version\)\);/,
+    '只推 available 状态',
+  );
+  // 下载只能由页面条目触发（downloadNow）；检查流程不许自己开下载
+  const downloadCalls = src.match(/await download\(version\);/g) ?? [];
+  assert.equal(
+    downloadCalls.length,
+    1,
+    `download(version) 只允许出现在 downloadNow，实际 ${downloadCalls.length} 处`,
+  );
+});
+
 test('壳 ↔ 页面：ipc 通道与 preload 桥对齐（改名即断）', () => {
   const mainSrc = shellSource(path.join('src', 'main.ts'));
   const preload = shellSource(path.join('src', 'preload.cts'));
@@ -322,10 +342,13 @@ test('页面：侧边栏条目 + i18n 都在（浏览器里没有桥 → 不显�
     path.join('web', 'src', 'components', 'UpdateStatus', 'index.tsx'),
     'utf8',
   );
-  assert.match(row, /t\('shell\.update\.available', \{ version: status\.version \}\)/);
-  // 百分比只显示一次（右侧），左侧写「正在下载 vX.Y.Z」
-  assert.match(row, /t\('shell\.update\.downloading', \{ version: status\.version \}\)/);
-  assert.match(row, /\{status\.percent\}%/);
+  assert.match(row, /t\('shell\.update\.available'\)/, '有新版本时显示「新版本」');
+  assert.match(row, /`\$\{status\.percent\}%`/, '下载中按百分比显示');
+  assert.match(
+    row,
+    /shell\.update\.availableHint', \{ version: status\.version \}/,
+    'tooltip 带版本号',
+  );
   assert.match(row, /status\.phase === 'idle'\) return null/, '没有更新时不渲染');
   const sidebar = fs.readFileSync(
     path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
@@ -336,7 +359,6 @@ test('页面：侧边栏条目 + i18n 都在（浏览器里没有桥 → 不显�
   for (const key of [
     'shell.update.available',
     'shell.update.availableHint',
-    'shell.update.downloading',
     'shell.update.downloadingHint',
   ]) {
     assert.ok(messages.includes(key), `缺 i18n key: ${key}`);

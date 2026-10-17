@@ -1,9 +1,11 @@
-// 侧边栏「设置」旁边的更新条目：发现新版本 / 下载中才出现。
+// 侧边栏底部「设置」同一行右侧的更新条目：发现新版本 / 下载中才出现。
 //
 // 数据来自桌面壳（preload 桥 → ipc）：
-//   - available   → 「新版本 v0.4.12」+ 点击开始下载
-//   - downloading → 「正在下载 45%」+ 底部细进度条（真机要求：按百分比显示）
+//   - available   → 「⬇ 新版本」+ 点击开始下载（tooltip 带版本号）
+//   - downloading → 「⬇ 45%」（真机要求：按百分比显示）
 // 浏览器里没有壳的桥 → 状态永远 idle → 这个组件不渲染任何东西。
+// 为什么塞进设置那一行：单独占一行会跟「设置」抢视觉重量、且左右留白对不齐
+// （v0.4.12 真机反馈：「放在这里行不」）。
 
 import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
@@ -24,30 +26,22 @@ export function UpdateStatusRow() {
 
   if (status.phase === 'idle') return null;
   const downloading = status.phase === 'downloading';
-  // 百分比只放在右侧一处（左侧再写一遍就成了 "正在下载 96% ... 96%" 的重复）
-  const label = downloading
-    ? t('shell.update.downloading', { version: status.version })
-    : t('shell.update.available', { version: status.version });
+  const hint = downloading
+    ? t('shell.update.downloadingHint', { version: status.version })
+    : t('shell.update.availableHint', { version: status.version });
+  const label = downloading ? `${status.percent}%` : t('shell.update.available');
 
   return (
     <button
-      className={styles.row}
+      className={`${styles.row} ${downloading ? styles.downloading : ''}`}
       type="button"
       disabled={downloading}
-      title={downloading ? t('shell.update.downloadingHint') : t('shell.update.availableHint')}
-      aria-label={label}
+      title={hint}
+      aria-label={hint}
       onClick={downloading ? undefined : startUpdateDownload}
     >
-      <span className={styles.head}>
-        <DownloadIcon size={16} />
-        <span className={styles.label}>{label}</span>
-        {downloading && <span className={styles.percent}>{status.percent}%</span>}
-      </span>
-      {downloading && (
-        <span className={styles.bar}>
-          <span className={styles.fill} style={{ width: `${status.percent}%` }} />
-        </span>
-      )}
+      <DownloadIcon size={15} />
+      <span className={styles.label}>{label}</span>
     </button>
   );
 }

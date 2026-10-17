@@ -122,17 +122,14 @@ export const shellMessages = {
   'shell.image.encodeFailed': { 'zh-CN': '图片编码失败', 'en-US': 'Image encoding failed' },
 
   // 侧边栏更新条目（自更新；只在桌面壳里有桥，浏览器里永远不显示）
-  'shell.update.available': { 'zh-CN': '新版本 v{version}', 'en-US': 'Update v{version}' },
+  // 放在底部「设置」同一行的右侧：只有「新版本」（可点下载）和下载百分比两种态
+  'shell.update.available': { 'zh-CN': '新版本', 'en-US': 'Update' },
   'shell.update.availableHint': {
-    'zh-CN': '点击下载；完成后会询问是否重启安装',
-    'en-US': 'Click to download. You will be asked to restart and install.',
-  },
-  'shell.update.downloading': {
-    'zh-CN': '正在下载 v{version}',
-    'en-US': 'Downloading v{version}',
+    'zh-CN': '新版本 v{version}，点击下载',
+    'en-US': 'Update v{version} available. Click to download.',
   },
   'shell.update.downloadingHint': {
-    'zh-CN': '下载中，完成后会询问是否重启安装',
-    'en-US': 'Downloading. You will be asked to restart and install.',
+    'zh-CN': '正在下载 v{version}，完成后会询问是否重启安装',
+    'en-US': 'Downloading v{version}. You will be asked to restart and install.',
   },
 } as const;
