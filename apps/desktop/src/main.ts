@@ -261,7 +261,10 @@ function createWindow(): void {
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
-          trafficLightPosition: { x: 16, y: 18 },
+          // 红绿灯**竖直位置按顶栏内容中线对齐**（真机反馈：从绿色圆圈中间画一条线
+          // 过去，要刚好平分右上角那些按钮）：顶栏 58 高、内容居中 → 中线 y=29；
+          // 按钮 12px → y = 29 - 6 = 23。
+          trafficLightPosition: { x: 16, y: 23 },
         }
       : {}),
     // Windows：不要系统标题栏 —— 它的颜色是 DWM 画的，应用侧**没有开关**
@@ -325,13 +328,14 @@ function createWindow(): void {
   if (process.platform === 'darwin') {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
-      // 数值来历（别乱改）：trafficLightPosition = {x:16,y:18}，macOS 按钮 12px，
-      // 中心 y = 24 → 28px 按钮的 top = 24 - 14 = 10（与红绿灯**同基线**）。
-      // 收起态（参考 DSH 真机截图）：展开按钮仍在红绿灯那一行、它们在 80..108，
+      // 数值来历（别乱改）：trafficLightPosition = {x:16,y:23} → 红绿灯中心 y = 23+6 = 29
+      // = 顶栏内容的中线（58/2）；28px 展开按钮的 top = 29 - 14 = 15，按钮中线才和
+      // 红绿灯中心同一条水平线（真机要求：从绿点中心画线要平分右上角按钮）。
+      // 收起态（参考 DSH 真机截图）：展开按钮仍在红绿灯那一行、在 80..108，
       // 所以栏宽 120（红绿灯到 68 + 12px 间隔 + 28 按钮 + 右边距 12）；页面把
       // 收起态的底色/分割线/高光全去掉，视觉上只剩红绿灯 + 按钮，像"没有侧栏"。
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-height: 58px; --sidebar-collapsed-width: 120px; } [data-sidebar-toggle] { top: 10px; }',
+        ':root { --sidebar-chrome-height: 58px; --sidebar-collapsed-width: 120px; } [data-sidebar-toggle] { top: 15px; }',
       );
     });
   } else {

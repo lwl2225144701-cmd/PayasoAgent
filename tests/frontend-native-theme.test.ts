@@ -316,8 +316,12 @@ test('壳：macOS 注入 chrome 行高 / 折叠按钮基线', () => {
   const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
   assert.ok(/--sidebar-chrome-height: 58px/.test(main), '要注入红绿灯那一行的高度');
   assert.ok(
-    /\[data-sidebar-toggle\] \{ top: 10px; \}/.test(main),
-    '展开态折叠按钮要跟红绿灯同一基线（红绿灯中心 y=24 - 按钮半高 14 = 10）',
+    /trafficLightPosition: \{ x: 16, y: 23 \}/.test(main),
+    '红绿灯下移到顶栏中线（中心 y=29）',
+  );
+  assert.ok(
+    /\[data-sidebar-toggle\] \{ top: 15px; \}/.test(main),
+    '展开态折叠按钮要跟红绿灯同一基线（红绿灯中心 y=29 - 按钮半高 14 = 15）',
   );
   assert.ok(
     !/aside \{ box-sizing: border-box; padding-top: 40px; \}/.test(main),
