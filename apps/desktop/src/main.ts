@@ -315,18 +315,18 @@ function createWindow(): void {
     });
   }
 
-  // macOS 专属：红绿灯浮在窗口左上角、**不占布局**。壳把"让位"的尺寸交给页面
-  // （两个 CSS 变量），页面据此把侧栏头部排到红绿灯**同一行**（v0.4.14，按用户
-  // 给的 DSH 参考图改）：红绿灯 / 折叠按钮 / 主内容标题 / 右侧控件同一条基线。
-  //   --sidebar-chrome-inset     侧栏头部左侧让位宽度（红绿灯 16..68 + 20 间距）
-  //   --sidebar-collapsed-width  收起态栏宽（要放得下红绿灯 + 展开按钮）
-  // 变量只在页面 CSS 里用 var(--x, 默认值) 读取：浏览器里没有注入 → 走无红绿灯的
-  // 默认值；选择器避开 CSS Modules 哈希类名（沿用 aside 语义标签那套思路）。
+  // macOS 专属：红绿灯浮在窗口左上角、**不占布局**，参考 DSH 的排法（用户给的
+  // 参考图）：红绿灯那一行只放折叠按钮，品牌行在它下面。壳把三件事注入给页面：
+  //   --sidebar-chrome-height    红绿灯那一行的高度（品牌行据此下移）
+  //   --sidebar-collapsed-width  收起态栏宽（放得下红绿灯 + 展开按钮）
+  //   [data-sidebar-toggle]      折叠按钮的 top（跟红绿灯同一基线）
+  // 页面 CSS 全部走 var(--x, 默认值)：浏览器里没有注入 → 无红绿灯形态；
+  // 选择器用 data 属性，避开 CSS Modules 哈希类名。
   if (process.platform === 'darwin') {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-inset: 72px; --sidebar-collapsed-width: 104px; }',
+        ':root { --sidebar-chrome-height: 58px; --sidebar-collapsed-width: 112px; } [data-sidebar-toggle] { top: 15px; }',
       );
     });
   } else {

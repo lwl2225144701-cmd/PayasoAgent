@@ -1,6 +1,5 @@
 import { useI18n } from '../../i18n';
 import type { HostSession, WorkspaceView } from '../../types';
-import { IconButton } from '../IconButton';
 import { PanelLeftIcon, PlusIcon, SettingsIcon } from '../icons';
 import { UpdateStatusRow } from '../UpdateStatus';
 import { WorkspaceSection } from '../WorkspaceSection';
@@ -44,43 +43,29 @@ export function Sidebar({
   const { t } = useI18n();
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
-      <div className={styles.logoRow} data-window-drag>
-        {collapsed ? (
-          <button
-            className={styles.collapsedLogoBtn}
-            type="button"
-            title={t('shell.sidebar.expand')}
-            aria-label={t('shell.sidebar.expand')}
-            onClick={onToggleCollapsed}
-          >
-            {/* 收起后不再只剩一个 logo（真机反馈"左上角突兀"）：给明确的展开按钮，
-                位置排在红绿灯右边，跟参考设计一致 */}
-            <PanelLeftIcon size={18} />
-          </button>
-        ) : (
-          <>
-            <div className={styles.brand}>
-              <img
-                className={styles.logoImage}
-                src="/payaso-mark-light.png"
-                alt="Payaso"
-                draggable={false}
-              />
-              <span className={styles.logoText}>Payaso</span>
-            </div>
-            <IconButton
-              buttonSize="sm"
-              variant="ghost"
-              shape="rounded"
-              title={t('shell.sidebar.collapse')}
-              aria-label={t('shell.sidebar.collapse')}
-              aria-pressed={false}
-              onClick={onToggleCollapsed}
-            >
-              <PanelLeftIcon size={18} />
-            </IconButton>
-          </>
-        )}
+      <div className={styles.headerArea} data-window-drag>
+        {/* 参考 DSH 的窗口左上角：红绿灯那一行只放折叠按钮，品牌（🦌 Payaso）在
+            红绿灯下面一行。红绿灯由 macOS 画、不占布局，壳把"chrome 行高"注入成
+            CSS 变量（--sidebar-chrome-height），浏览器里为 0 → 品牌行直接贴顶。 */}
+        <div className={styles.brandRow}>
+          <img
+            className={styles.logoImage}
+            src="/payaso-mark-light.png"
+            alt="Payaso"
+            draggable={false}
+          />
+          <span className={styles.logoText}>Payaso</span>
+        </div>
+        <button
+          className={styles.collapseBtn}
+          type="button"
+          data-sidebar-toggle
+          title={t(collapsed ? 'shell.sidebar.expand' : 'shell.sidebar.collapse')}
+          aria-label={t(collapsed ? 'shell.sidebar.expand' : 'shell.sidebar.collapse')}
+          onClick={onToggleCollapsed}
+        >
+          <PanelLeftIcon size={18} />
+        </button>
       </div>
 
       <div className={styles.newTaskWrap}>

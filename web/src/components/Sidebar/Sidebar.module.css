@@ -23,21 +23,39 @@
   width: var(--sidebar-collapsed-width, 64px);
 }
 
-.logoRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  /* 与主内容顶栏同高同基线（红绿灯 / 折叠按钮 / 标题 / 右侧控件同一行） */
-  height: var(--topbar-height);
-  min-height: var(--topbar-height);
-  /* 左侧给 macOS 红绿灯让位：壳注入 --sidebar-chrome-inset；浏览器里默认 16px */
-  padding: 0 12px 0 calc(16px + var(--sidebar-chrome-inset, 0px));
+.headerArea {
+  position: relative;
+  /* macOS：红绿灯那一行的高度（壳注入 --sidebar-chrome-height）；
+     浏览器里没有注入 → 0，品牌行直接贴顶 */
+  padding-top: var(--sidebar-chrome-height, 0px);
 }
 
-.brand {
+.brandRow {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 右侧给折叠按钮留位（浏览器形态下按钮绝对定位在右上角） */
+  padding: 6px 52px 10px 16px;
+}
+
+/* 折叠/展开按钮：绝对定位在「红绿灯那一行」的右端（浏览器形态下就是品牌行右上角）。
+   macOS 上壳再注入 top: 15px，跟红绿灯同一基线。 */
+.collapseBtn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  transition: background 0.12s ease;
+}
+
+.collapseBtn:hover {
+  background: var(--bg-hover);
 }
 
 .logoImage {
@@ -58,10 +76,9 @@
   letter-spacing: -0.025em;
 }
 
-.collapsed .logoRow {
-  justify-content: center;
-  /* 红绿灯仍占左上角：按钮排在它们右边（mac 下 72 + 4 = 76，栏宽 104 正好放下） */
-  padding: 0 0 0 calc(var(--sidebar-chrome-inset, 0px) + 4px);
+/* 收起后品牌行隐藏，只剩红绿灯那一行的展开按钮（参考设计同款） */
+.collapsed .brandRow {
+  display: none;
 }
 
 .collapsed .newTaskWrap,
@@ -75,20 +92,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.collapsedLogoBtn {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  transition: background 0.12s ease;
-}
-
-.collapsedLogoBtn:hover {
-  background: var(--bg-hover);
 }
 
 .newTaskWrap {
