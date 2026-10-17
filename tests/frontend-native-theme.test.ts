@@ -326,8 +326,9 @@ test('壳：注入 chrome 行高 / 红绿灯让位 / 折叠按钮基线；红绿
     '红绿灯下移到顶栏中线（中心 y=29）',
   );
   assert.ok(
-    /\[data-sidebar-toggle\] \{ top: 15px; \}/.test(main),
-    '展开态折叠按钮要跟红绿灯同一基线（红绿灯中心 y=29 - 按钮半高 14 = 15）',
+    /\[data-sidebar-toggle\] \{ top: 15px !important; \}/.test(main),
+    '展开态折叠按钮要跟红绿灯同一基线（红绿灯中心 y=29 - 按钮半高 14 = 15）；' +
+      '!important 不能省：注入表排在页面表前面时，同特异度会输给 .collapseBtn{top:10px}',
   );
   assert.ok(
     !/aside \{ box-sizing: border-box; padding-top: 40px; \}/.test(main),
@@ -371,6 +372,53 @@ test('页面：展开态品牌行在 chrome 行下面；收起态侧栏宽 0、�
   const app = fs.readFileSync(path.join('web', 'src', 'App.tsx'), 'utf8');
   assert.ok(/collapsed=\{sidebarCollapsed\}/.test(app), 'ShellBar 要收到 collapsed');
   assert.ok(/data-sidebar-toggle/.test(app), '收起态展开按钮由 App 渲染进顶栏');
+});
+
+// ④ 开关按钮的位置 / 图标大小对齐 DSH 真机（用户参考图逐像素量过）：
+//    侧栏右缘 278.25、按钮图标 x 245..258.5（离右缘 20）、左图标 14×14、右图标 13×13。
+test('DSH 对齐：侧栏宽 278 + 开关按钮落在 x≈245、两个面板图标同尺寸正方形', () => {
+  const indexCss = fs.readFileSync(path.join('web', 'src', 'index.css'), 'utf8');
+  assert.ok(
+    /--sidebar-width: 278px;/.test(indexCss),
+    '侧栏宽对齐 DSH（量到 278.25）：按钮 right:12 才能落到 x≈245..259',
+  );
+
+  // 两个面板图标都改正方形外框（旧的 18×16 是扁的），外框 = size×20/24
+  const icons = fs.readFileSync(path.join('web', 'src', 'components', 'icons.tsx'), 'utf8');
+  const left = icons.slice(icons.indexOf('export function PanelLeftIcon'));
+  const right = icons.slice(icons.indexOf('export function PanelRightIcon'));
+  for (const [name, block] of [
+    ['PanelLeftIcon', left],
+    ['PanelRightIcon', right],
+  ] as const) {
+    assert.ok(
+      /<rect x="3" y="3" width="18" height="18" rx="3" \/>/.test(block),
+      `${name} 要正方形外框（DSH 两个图标都是正方形）`,
+    );
+  }
+  assert.ok(/<path d="M9 3v18" \/>/.test(left), 'PanelLeftIcon 的分割线在 1/3 处');
+  assert.ok(/<path d="M15 3v18" \/>/.test(right), 'PanelRightIcon 的分割线在 2/3 处');
+
+  // 顶栏上这两个按钮同款同尺寸：17×20/24 ≈ 14.2 CSS px ≈ DSH 的 14×14
+  const sidebar = fs.readFileSync(
+    path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
+    'utf8',
+  );
+  assert.ok(/<PanelLeftIcon size=\{17\} \/>/.test(sidebar), '侧栏折叠按钮图标 17');
+  const app = fs.readFileSync(path.join('web', 'src', 'App.tsx'), 'utf8');
+  assert.ok(/<PanelLeftIcon size=\{17\} \/>/.test(app), '顶栏展开按钮图标 17（同左）');
+  const launcher = fs.readFileSync(path.join('web', 'src', 'preview', 'Launcher.tsx'), 'utf8');
+  assert.ok(/<PanelRightIcon size=\{17\} \/>/.test(launcher), '右侧预览开关图标 17（同左）');
+
+  // 标题起点 = 侧栏右缘 + 28（DSH 量到 278+28=306）
+  const shellCss = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
+    'utf8',
+  );
+  assert.ok(
+    /padding: 11px 14px 11px clamp\(22px, 2\.2vw, 32px\);/.test(shellCss),
+    '顶栏左内边距按 2.2vw（1279 宽 = 28）→ 标题落在侧栏右缘 +28',
+  );
 });
 
 async function main(): Promise<void> {

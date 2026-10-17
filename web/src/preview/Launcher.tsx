@@ -97,7 +97,9 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
           title={t('preview.dock.open')}
           aria-label={t('preview.dock.open')}
         >
-          <PanelRightIcon size={15} />
+          {/* 和左侧栏开关同款同尺寸：DSH 量到右侧图标 13×13、左侧 14×14，
+              这里统一成 14×14（正方形外框 + size 17），避免一高一低 */}
+          <PanelRightIcon size={17} />
         </button>
       )}
       <OpenInAppMenu

@@ -240,9 +240,7 @@ export function SearchIcon({ size, ...p }: IconProps) {
 export function FolderIcon({ size, ...p }: IconProps) {
   return base(
     size,
-    <>
-      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" />
-    </>,
+    <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" />,
     p,
   );
 }
@@ -277,8 +275,9 @@ export function PanelLeftIcon({ size, ...p }: IconProps) {
   return base(
     size,
     <>
-      <rect x="3" y="4" width="18" height="16" rx="3" />
-      <path d="M9 4v16" />
+      {/* 正方形外框（对齐 DSH 量到的 14×14 CSS 字形；旧的 18×16 会扁） */}
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <path d="M9 3v18" />
     </>,
     p,
   );
@@ -375,8 +374,8 @@ export function PanelRightIcon({ size, ...p }: IconProps) {
   return base(
     size,
     <>
-      <rect x="3" y="4" width="18" height="16" rx="3" />
-      <path d="M15 4v16" />
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <path d="M15 3v18" />
     </>,
     p,
   );

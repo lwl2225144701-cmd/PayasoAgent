@@ -1030,7 +1030,8 @@ export default function App() {
                   aria-label={t('shell.sidebar.expand')}
                   onClick={toggleSidebarCollapsed}
                 >
-                  <PanelLeftIcon size={18} />
+                  {/* 与侧栏折叠按钮同款同尺寸（DSH 量到 14×14 CSS 字形 → size 17） */}
+                  <PanelLeftIcon size={17} />
                 </button>
               ) : null
             }

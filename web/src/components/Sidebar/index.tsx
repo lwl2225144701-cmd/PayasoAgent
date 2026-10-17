@@ -67,7 +67,9 @@ export function Sidebar({
             aria-label={t('shell.sidebar.collapse')}
             onClick={onToggleCollapsed}
           >
-            <PanelLeftIcon size={18} />
+            {/* 尺寸来历：DSH 量到的字形外框 14×14 CSS px。正方形外框 +
+                strokeWidth 2/24 → 外框 = size×20/24 = 14 → size 17 */}
+            <PanelLeftIcon size={17} />
           </button>
         )}
       </div>

@@ -3,8 +3,10 @@
   align-items: center;
   justify-content: space-between;
   min-height: var(--topbar-height);
-  /* 右侧贴边更紧：预览入口（胶囊 + 侧栏开关）挂在右上角，DSH 同款贴角观感 */
-  padding: 11px 14px 11px clamp(22px, 3.4vw, 48px);
+  /* 右侧贴边更紧：预览入口（胶囊 + 侧栏开关）挂在右上角，DSH 同款贴角观感。
+     左侧内边距：DSH 量到「侧栏右缘 278 + 28px」= 标题 x≈306，故 2.2vw（1279 宽
+     时正好 28）；clamp 上下界 22/32，避免超宽超窄窗口跑偏。 */
+  padding: 11px 14px 11px clamp(22px, 2.2vw, 32px);
   background: var(--color-header-glass);
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--color-brand) 5%, transparent);

@@ -321,7 +321,7 @@ function createWindow(): void {
   // macOS 专属：红绿灯浮在窗口左上角、**不占布局**，参考 DSH 的排法（用户给的
   // 参考图）：红绿灯那一行只放折叠按钮，品牌行在它下面。壳把三件事注入给页面：
   //   --sidebar-chrome-height    红绿灯那一行的高度（品牌行据此下移）
-  //   --sidebar-collapsed-width  收起态栏宽（放得下红绿灯 + 展开按钮）
+  //   --sidebar-lights-inset     收起态顶栏左侧给红绿灯让位的宽度（16..68 + 4px）
   //   [data-sidebar-toggle]      折叠按钮的 top（跟红绿灯同一基线）
   // 页面 CSS 全部走 var(--x, 默认值)：浏览器里没有注入 → 无红绿灯形态；
   // 选择器用 data 属性，避开 CSS Modules 哈希类名。
@@ -334,8 +334,11 @@ function createWindow(): void {
       // - 展开态折叠按钮（侧栏里）left/top 由页面给，这里只纠正 top=15（29-14）；
       // - 收起态侧栏宽 0、顶栏横跨整窗：--sidebar-lights-inset 是顶栏左侧要给红绿灯
       //   让开的宽度（红绿灯 16..68 + 4px），页面据此算 padding-left。
+      // !important 不能省：insertCSS 注入的样式表排在页面样式表**前面**时，同特异度的
+      // `[data-sidebar-toggle]` 会输给页面里的 `.collapseBtn{top:10px}`（真机实测：
+      // 按钮比红绿灯中线高 5px）。壳的窗口几何必须赢，所以这里显式加权。
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-height: 58px; --sidebar-lights-inset: 72px; } [data-sidebar-toggle] { top: 15px; }',
+        ':root { --sidebar-chrome-height: 58px; --sidebar-lights-inset: 72px; } [data-sidebar-toggle] { top: 15px !important; }',
       );
     });
   } else {
