@@ -98,7 +98,24 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 >   `dependencies` 而不是 devDependencies）。
 >
 > **给用户的动作**：v0.4.8 / v0.4.9 无法自更新（壳起不来），只能重新下载安装；
-> 修复版 = `v0.4.10`。坏版本随后从 Releases 清掉（同 v0.4.7 的手法：删 tag）。
+> 修复版 = `v0.4.10`。坏版本已从 Releases 清掉（同 v0.4.7 的手法：删 tag）。
+>
+> **v0.4.10 产物现状（2026-10-17 晚，run #24，6m23s，两平台都成功）**：
+> `git ls-remote` tag `v0.4.10` → `864b5d0`（在 main 上）；七件资产齐全（`curl -sIL`
+> 逐个验过）：mac `arm64.dmg` 220886941 B + `arm64-mac.zip` 227107663 B（blockmap
+> 236874 B）；Windows `setup.exe` 181078781 B + `x64.zip`；两个 feed 都是
+> `version: 0.4.10`。cask 自动 bump（bot 提交 `1ef3134`，sha256
+> `3c1818ac6ef5…fcf3bed783`）。
+>
+> **发布产物本体复检**（关键是这条 —— 不是只看"文件在不在"）：把 Release 里的 mac
+> zip 实下来（227107663 B，与 feed 的 size 一致）→ 解出 `Contents/Resources/app.asar`
+> （**1206610 B / 210 个条目**）→ `node scripts/verify-package.mjs --app …/PayasoAgent.app
+> --require-feed` → **通过**：16 个依赖含 electron-updater、`app-update.yml`
+> provider=github。Windows 侧同款门禁在 CI 里跑（`dist:win` 自带 `--require-feed`），
+> job 成功即已过 —— 两个平台都拿到了"发出去的包能加载依赖"的实证。
+>
+> 清坏版本复核：`git ls-remote --tags` 只剩 `v0.4.10`；`/releases/tag/v0.4.8`、
+> `/releases/tag/v0.4.9` 均 **404**；`v0.4.10` 页面与 DMG 仍 200。
 >
 > 2026-10-17 补：**统一发布（原子发布）＋ Windows「打开终端」真机 bug**。
 >
