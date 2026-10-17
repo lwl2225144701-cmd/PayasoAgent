@@ -115,8 +115,14 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > 同类依赖的抖动），而我把 feed 门禁放在「上传前」，于是"打包挂了"被放大成"一个
 > 资产都没有"。读不到 CI 日志（GitHub API 对本出口 IP 限流 403、机器上无 `gh`；
 > main 上 `ci.yml` 是 passing，故 tsc/biome/test:all 不是原因）。处置：门禁挪到发布
-> 之后 + 目录名 glob + 失败打印现场（`b16604d`）。**这个只含 Windows 的 release
-> 留不留等用户决定。**
+> 之后 + 目录名 glob + 失败打印现场（`b16604d`）。
+>
+> **已按用户要求删除**（"不要分开发"）：`git push origin --delete v0.4.7`（本仓库
+> 的既定手法，不需要 token）→ 复核结果：`/releases/tag/v0.4.7` **404**、
+> `setup.exe` / `x64.zip` / `latest.yml` 三个资产全 **404**、`releases.atom` 里
+> 不再列 0.4.7；历史链接里可能还残留 `expanded_assets/v0.4.7` 这个片段的缓存
+> （200），但里面的资产已经拿不到。并已改成**原子发布**（见上面 2026-10-17 那段），
+> 从机制上不再产生这种半成品。
 
 > ### 期 3 落地：检查更新 / 自更新（2026-10-16，v0.4.7）
 >
