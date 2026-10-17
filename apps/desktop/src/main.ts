@@ -326,11 +326,10 @@ function createWindow(): void {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
       // 数值来历（别乱改）：trafficLightPosition = {x:16,y:18}，macOS 按钮 12px，
-      // 中心 y = 24 → 28px 按钮的 top = 24 - 14 = 10（与红绿灯**同基线**，差 1px 就看得出来）。
-      // 收起态要放得下：红绿灯 16..68 + 按钮（28）+ 右边距 12 → 120 宽时按钮在 80..108，
-      // 与红绿灯留 12px 间隔（v0.4.15 真机反馈：贴太近、按钮没对齐）。
+      // 中心 y = 24 → 28px 按钮的 top = 24 - 14 = 10（与红绿灯**同基线**）。
+      // 收起态：栏宽回落到页面默认 64，按钮改排到红绿灯**下面**（页面按本变量算 top）。
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-height: 58px; --sidebar-collapsed-width: 120px; } [data-sidebar-toggle] { top: 10px; }',
+        ':root { --sidebar-chrome-height: 58px; } [data-sidebar-toggle] { top: 10px; }',
       );
     });
   } else {

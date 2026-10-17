@@ -20,7 +20,14 @@
 }
 
 .collapsed {
+  /* 真·收起：窄栏（64）没有面板感 —— 背景/分割线/高光全去掉，跟主内容连成一片，
+     只剩窗口左上角的红绿灯 + 底下的展开按钮（真机反馈：「就是那种真的收起来的感觉」） */
   width: var(--sidebar-collapsed-width, 64px);
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: transparent;
+  box-shadow: none;
 }
 
 .headerArea {
@@ -42,7 +49,8 @@
    macOS 上壳再注入 top: 15px，跟红绿灯同一基线。 */
 .collapseBtn {
   position: absolute;
-  top: 12px;
+  /* 展开态：chrome 行右端（mac 下与红绿灯同一基线，红绿灯中心 y=24 - 14 = 10） */
+  top: 10px;
   right: 12px;
   width: 28px;
   height: 28px;
@@ -56,6 +64,13 @@
 
 .collapseBtn:hover {
   background: var(--bg-hover);
+}
+
+/* 收起态：按钮排在红绿灯下面（红绿灯 16..68 占满顶部一行），窄栏 64 正好放得下 */
+.collapsed .collapseBtn {
+  top: calc(var(--sidebar-chrome-height, 0px) + 10px);
+  left: 16px;
+  right: auto;
 }
 
 .logoImage {

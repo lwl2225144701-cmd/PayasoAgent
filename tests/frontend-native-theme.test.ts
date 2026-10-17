@@ -312,16 +312,12 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
 // （🦌 Payaso）在红绿灯**下面**一行。红绿灯是 macOS 画的、不占布局，所以壳必须把
 // 那几行的高度/基线注入给页面，页面 CSS 只读 var（浏览器形态回落到无红绿灯的默认值）。
 
-test('壳：macOS 注入 chrome 行高 / 收起栏宽 / 折叠按钮基线', () => {
+test('壳：macOS 注入 chrome 行高 / 折叠按钮基线', () => {
   const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
   assert.ok(/--sidebar-chrome-height: 58px/.test(main), '要注入红绿灯那一行的高度');
   assert.ok(
-    /--sidebar-collapsed-width: 120px/.test(main),
-    '收起宽度要放得下红绿灯 + 展开按钮，并与红绿灯留出间隔',
-  );
-  assert.ok(
     /\[data-sidebar-toggle\] \{ top: 10px; \}/.test(main),
-    '折叠按钮要跟红绿灯同一基线（红绿灯中心 y=24 - 按钮半高 14 = 10）',
+    '展开态折叠按钮要跟红绿灯同一基线（红绿灯中心 y=24 - 按钮半高 14 = 10）',
   );
   assert.ok(
     !/aside \{ box-sizing: border-box; padding-top: 40px; \}/.test(main),
@@ -340,9 +336,21 @@ test('页面：品牌行在 chrome 行下面；收起后只剩展开按钮', () 
   );
   assert.ok(
     /width: var\(--sidebar-collapsed-width, 64px\)/.test(css),
-    '收起宽度走壳注入（浏览器里回退 64px）',
+    '收起宽度回退 64px（真·收起：只剩左上角控件）',
   );
   assert.ok(/\.collapsed \.brandRow \{\s*display: none;/.test(css), '收起后品牌行隐藏');
+  // 真机反馈：「收起来的时候，这个分割线可以去掉吗」+「真的收起来的感觉」：
+  // 窄栏不能像一块面板 —— 背景/分割线/高光全去掉，跟主内容连成一片。
+  assert.ok(/\.collapsed \{[^}]*background: none;/.test(css), '收起后不再有面板底色');
+  assert.ok(/\.collapsed \{[^}]*border-right-color: transparent;/.test(css), '收起后不画右分割线');
+  assert.ok(/\.collapsed \{[^}]*box-shadow: none;/.test(css), '收起后去掉 inset 高光内线');
+  // 收起后按钮排到红绿灯下面（红绿灯占 16..68，窄栏 64 放不下同一行）
+  assert.ok(
+    /\.collapsed \.collapseBtn \{[^}]*top: calc\(var\(--sidebar-chrome-height, 0px\) \+ 10px\)/.test(
+      css,
+    ),
+    '收起后展开按钮排在红绿灯下面',
+  );
   const jsx = fs.readFileSync(
     path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
     'utf8',
