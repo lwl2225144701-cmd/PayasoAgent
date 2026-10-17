@@ -14,6 +14,13 @@ interface ShellBarProps {
   planMode?: boolean;
   /** 顶栏右侧扩展插槽（预览面板开关等；不挤占标题行）。 */
   actions?: ReactNode;
+  /**
+   * 左侧前置节点（收起侧栏时放的是「展开侧栏」按钮）。
+   * 收起后侧栏宽 0、顶栏横跨整个窗口，展开按钮必须由顶栏自己提供。
+   */
+  leading?: ReactNode;
+  /** 侧栏是否收起：收起时左侧要给 macOS 红绿灯让位（壳注入的 inset 变量）。 */
+  collapsed?: boolean;
 }
 
 // 状态 → 消息 key；null = 不常驻 pill。
@@ -31,7 +38,16 @@ const RUN_STATUS_KEY: Record<HostRun['status'], MessageKey | null> = {
  * 顶栏只保留会话身份与运行态（标题 / Plan 标记 / 状态 pill / 恢复按钮）。
  * 会话统计已挪到底部 StatsBar（composer 正下方），避免与标题争夺同一行。
  */
-export function ShellBar({ run, title, onResume, resuming, planMode, actions }: ShellBarProps) {
+export function ShellBar({
+  run,
+  title,
+  onResume,
+  resuming,
+  planMode,
+  actions,
+  leading,
+  collapsed,
+}: ShellBarProps) {
   const { t } = useI18n();
   const statusKey = run ? RUN_STATUS_KEY[run.status] : null;
   const label = statusKey ? t(statusKey) : null;
@@ -50,8 +66,12 @@ export function ShellBar({ run, title, onResume, resuming, planMode, actions }: 
   }, [run?.status]);
 
   return (
-    <div data-window-drag className={`${styles.bar} ${run ? '' : styles.landingBar}`}>
+    <div
+      data-window-drag
+      className={`${styles.bar} ${run ? '' : styles.landingBar} ${collapsed ? styles.barCollapsed : ''}`}
+    >
       <div className={styles.left}>
+        {leading}
         {displayTitle && (
           <span className={styles.taskTitle} title={displayTitle}>
             {displayTitle}

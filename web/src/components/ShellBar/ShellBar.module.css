@@ -23,6 +23,12 @@
   backdrop-filter: blur(18px);
 }
 
+/* 收起侧栏：顶栏横跨整个窗口，左侧要让开 macOS 红绿灯 + 放「展开侧栏」按钮。
+   壳注入 --sidebar-lights-inset（红绿灯 16..68 + 4px）；浏览器里回退 12px。 */
+.barCollapsed {
+  padding-left: calc(var(--sidebar-lights-inset, 12px) + 8px);
+}
+
 .left {
   display: flex;
   align-items: center;

@@ -56,16 +56,20 @@ export function Sidebar({
           />
           <span className={styles.logoText}>Payaso</span>
         </div>
-        <button
-          className={styles.collapseBtn}
-          type="button"
-          data-sidebar-toggle
-          title={t(collapsed ? 'shell.sidebar.expand' : 'shell.sidebar.collapse')}
-          aria-label={t(collapsed ? 'shell.sidebar.expand' : 'shell.sidebar.collapse')}
-          onClick={onToggleCollapsed}
-        >
-          <PanelLeftIcon size={18} />
-        </button>
+        {/* 展开态：折叠按钮挂在这里（红绿灯那一行右端）。收起后侧栏宽 0，
+            展开按钮由顶栏（ShellBar 的 leading）提供 —— 见 App.tsx。 */}
+        {!collapsed && (
+          <button
+            className={styles.collapseBtn}
+            type="button"
+            data-sidebar-toggle
+            title={t('shell.sidebar.collapse')}
+            aria-label={t('shell.sidebar.collapse')}
+            onClick={onToggleCollapsed}
+          >
+            <PanelLeftIcon size={18} />
+          </button>
+        )}
       </div>
 
       <div className={styles.newTaskWrap}>

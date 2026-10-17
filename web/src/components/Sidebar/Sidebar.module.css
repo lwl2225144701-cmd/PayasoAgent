@@ -20,9 +20,9 @@
 }
 
 .collapsed {
-  /* 真·收起：窄栏（64）没有面板感 —— 背景/分割线/高光全去掉，跟主内容连成一片，
-     只剩窗口左上角的红绿灯 + 底下的展开按钮（真机反馈：「就是那种真的收起来的感觉」） */
-  width: var(--sidebar-collapsed-width, 64px);
+  /* 真·收起（对齐 DSH 真机）：**宽 0**，整条侧栏消失；顶栏横跨整个窗口，
+     红绿灯 / 展开按钮都在顶栏那一行，跟主内容连成一片。 */
+  width: 0;
   background: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

@@ -29,6 +29,7 @@ import {
 } from './api';
 import { matchModelByQuery, matchPermissionMode } from './commands/builtin-commands';
 import { InputBar } from './components/InputBar';
+import { PanelLeftIcon } from './components/icons';
 import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
@@ -140,6 +141,10 @@ export default function App() {
   }
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const toggleSidebarCollapsed = useCallback(() => {
+    sidebarUserOverrideRef.current = true;
+    setSidebarCollapsed((value) => !value);
+  }, []);
   const sidebarUserOverrideRef = useRef(false);
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
@@ -995,10 +1000,7 @@ export default function App() {
           onRenameSession={handleRenameSession}
           onArchiveSession={handleArchiveSession}
           collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => {
-            sidebarUserOverrideRef.current = true;
-            setSidebarCollapsed((value) => !value);
-          }}
+          onToggleCollapsed={toggleSidebarCollapsed}
           workspace={workspace}
           openingWorkspace={openingWorkspace}
           onOpenWorkspace={handleOpenWorkspace}
@@ -1016,6 +1018,22 @@ export default function App() {
             onResume={handleResumeRun}
             resuming={resumingRun}
             planMode={planMode}
+            collapsed={sidebarCollapsed}
+            // 收起侧栏后侧栏宽 0，展开按钮必须由顶栏提供（红绿灯那一行的右端）
+            leading={
+              sidebarCollapsed ? (
+                <button
+                  className={styles.sidebarToggleLead}
+                  type="button"
+                  data-sidebar-toggle
+                  title={t('shell.sidebar.expand')}
+                  aria-label={t('shell.sidebar.expand')}
+                  onClick={toggleSidebarCollapsed}
+                >
+                  <PanelLeftIcon size={18} />
+                </button>
+              ) : null
+            }
             actions={
               <PreviewLauncher
                 open={previewOpen}

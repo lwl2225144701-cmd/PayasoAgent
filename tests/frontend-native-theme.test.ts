@@ -306,15 +306,21 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
   assert.ok(!/shellPlatform/.test(mainTsx), '页面不该再依赖 data-shell-platform');
 });
 
-// ── 窗口左上角：红绿灯那一行放折叠按钮，品牌行在它下面（v0.4.15）─────────────
+// ── 窗口左上角：收起 = 宽 0、顶栏横跨全窗（对齐 DSH 真机）────────────────────
 //
-// 真机反馈：用户发 DSH 的参考图 —— 红绿灯那一行只有折叠/展开按钮，品牌
-// （🦌 Payaso）在红绿灯**下面**一行。红绿灯是 macOS 画的、不占布局，所以壳必须把
-// 那几行的高度/基线注入给页面，页面 CSS 只读 var（浏览器形态回落到无红绿灯的默认值）。
+// 四轮真机反馈收敛出来的形态：
+//   ① 红绿灯那一行只放折叠/展开按钮，品牌（🦌 Payaso）在红绿灯**下面**一行；
+//   ② 收起 = 侧栏宽 **0**（不是一块透明窄栏）：顶栏横跨整个窗口，红绿灯和展开按钮
+//      都在顶栏那一行 —— DSH 收起态就是这样；
+//   ③ 红绿灯中心要和顶栏内容中线同一条线（绿点中心画线平分右上角按钮）。
 
-test('壳：macOS 注入 chrome 行高 / 折叠按钮基线', () => {
+test('壳：注入 chrome 行高 / 红绿灯让位 / 折叠按钮基线；红绿灯对齐顶栏中线', () => {
   const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
   assert.ok(/--sidebar-chrome-height: 58px/.test(main), '要注入红绿灯那一行的高度');
+  assert.ok(
+    /--sidebar-lights-inset: 72px/.test(main),
+    '收起态顶栏左侧要给红绿灯让位（红绿灯 16..68 + 4px）',
+  );
   assert.ok(
     /trafficLightPosition: \{ x: 16, y: 23 \}/.test(main),
     '红绿灯下移到顶栏中线（中心 y=29）',
@@ -329,7 +335,7 @@ test('壳：macOS 注入 chrome 行高 / 折叠按钮基线', () => {
   );
 });
 
-test('页面：品牌行在 chrome 行下面；收起后只剩展开按钮', () => {
+test('页面：展开态品牌行在 chrome 行下面；收起态侧栏宽 0、按钮移到顶栏', () => {
   const css = fs.readFileSync(
     path.join('web', 'src', 'components', 'Sidebar', 'Sidebar.module.css'),
     'utf8',
@@ -338,28 +344,33 @@ test('页面：品牌行在 chrome 行下面；收起后只剩展开按钮', () 
     /padding-top: var\(--sidebar-chrome-height, 0px\)/.test(css),
     '品牌行靠 chrome 行高下移（浏览器里 0 → 贴顶）',
   );
-  assert.ok(
-    /width: var\(--sidebar-collapsed-width, 64px\)/.test(css),
-    '收起宽度走壳注入（mac 120：红绿灯 + 同一行的展开按钮；浏览器回退 64）',
-  );
-  assert.ok(/\.collapsed \.brandRow \{\s*display: none;/.test(css), '收起后品牌行隐藏');
-  // 真机反馈：「收起来的时候，这个分割线可以去掉吗」+「真的收起来的感觉」：
-  // 窄栏不能像一块面板 —— 背景/分割线/高光全去掉，跟主内容连成一片。
+  // 真·收起：整条侧栏宽 0（不是一块窄栏），面板感彻底消失
+  assert.ok(/\.collapsed \{[^}]*width: 0;/.test(css), '收起态侧栏宽 0');
   assert.ok(/\.collapsed \{[^}]*background: none;/.test(css), '收起后不再有面板底色');
   assert.ok(/\.collapsed \{[^}]*border-right-color: transparent;/.test(css), '收起后不画右分割线');
   assert.ok(/\.collapsed \{[^}]*box-shadow: none;/.test(css), '收起后去掉 inset 高光内线');
-  // 收起态参考 DSH 真机截图：展开按钮仍在红绿灯那一行（右 12 → 80..108），
-  // 不许再单独改按钮位置（否则会掉到红绿灯下面）
-  assert.ok(
-    !/\.collapsed \.collapseBtn \{/.test(css),
-    '收起态不应单独改按钮位置（要留在 chrome 行）',
-  );
-  const jsx = fs.readFileSync(
-    path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
+
+  // 收起后展开按钮由顶栏提供：ShellBar 支持 leading + collapsed（左侧让开红绿灯）
+  const shellBar = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'index.tsx'),
     'utf8',
   );
-  assert.ok(/data-sidebar-toggle/.test(jsx), '折叠按钮要带稳定 data 属性（壳靠它定位）');
-  assert.ok(/styles\.brandRow/.test(jsx), '品牌行必须在（红绿灯下面）');
+  assert.ok(/leading\?: ReactNode;/.test(shellBar), 'ShellBar 要有 leading 插槽');
+  assert.ok(/\{leading\}/.test(shellBar), 'ShellBar 要真的渲染 leading');
+  const shellCss = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
+    'utf8',
+  );
+  assert.ok(
+    /\.barCollapsed \{[^}]*padding-left: calc\(var\(--sidebar-lights-inset, 12px\) \+ 8px\)/.test(
+      shellCss,
+    ),
+    '收起态顶栏左侧要按壳注入的 inset 让位',
+  );
+  // App 负责把展开按钮塞进顶栏（收起时侧栏已经没了）
+  const app = fs.readFileSync(path.join('web', 'src', 'App.tsx'), 'utf8');
+  assert.ok(/collapsed=\{sidebarCollapsed\}/.test(app), 'ShellBar 要收到 collapsed');
+  assert.ok(/data-sidebar-toggle/.test(app), '收起态展开按钮由 App 渲染进顶栏');
 });
 
 async function main(): Promise<void> {

@@ -73,6 +73,25 @@
   z-index: 1;
 }
 
+/* 收起侧栏时顶栏里的「展开侧栏」按钮（红绿灯那一行右端，位置由顶栏 padding 控制） */
+.sidebarToggleLead {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  transition: background 0.12s ease;
+}
+
+.sidebarToggleLead:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* The session uses the same canvas as the landing page. Keep the document
    flow and composer glass translucent so the decorative mark can remain
    visible without becoming a competing panel. */

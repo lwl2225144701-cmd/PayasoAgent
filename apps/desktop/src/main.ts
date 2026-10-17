@@ -328,14 +328,14 @@ function createWindow(): void {
   if (process.platform === 'darwin') {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
-      // 数值来历（别乱改）：trafficLightPosition = {x:16,y:23} → 红绿灯中心 y = 23+6 = 29
-      // = 顶栏内容的中线（58/2）；28px 展开按钮的 top = 29 - 14 = 15，按钮中线才和
-      // 红绿灯中心同一条水平线（真机要求：从绿点中心画线要平分右上角按钮）。
-      // 收起态（参考 DSH 真机截图）：展开按钮仍在红绿灯那一行、在 80..108，
-      // 所以栏宽 120（红绿灯到 68 + 12px 间隔 + 28 按钮 + 右边距 12）；页面把
-      // 收起态的底色/分割线/高光全去掉，视觉上只剩红绿灯 + 按钮，像"没有侧栏"。
+      // 数值来历（别乱改）：
+      // - trafficLightPosition = {x:16,y:23} → 红绿灯中心 y = 29 = 顶栏内容中线（58/2），
+      //   「从绿点中心画一条线」正好平分右上角按钮；
+      // - 展开态折叠按钮（侧栏里）left/top 由页面给，这里只纠正 top=15（29-14）；
+      // - 收起态侧栏宽 0、顶栏横跨整窗：--sidebar-lights-inset 是顶栏左侧要给红绿灯
+      //   让开的宽度（红绿灯 16..68 + 4px），页面据此算 padding-left。
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-height: 58px; --sidebar-collapsed-width: 120px; } [data-sidebar-toggle] { top: 15px; }',
+        ':root { --sidebar-chrome-height: 58px; --sidebar-lights-inset: 72px; } [data-sidebar-toggle] { top: 15px; }',
       );
     });
   } else {
