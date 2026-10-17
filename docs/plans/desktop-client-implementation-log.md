@@ -82,6 +82,22 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > 归一化、coordinator 三个推送点、ipc 通道与 preload 对齐、侧边栏条目与 i18n key）；
 > **headless Chrome + mock 桥把 available / downloading 两种状态都渲染成截图核对过**
 > （不是猜样式）；本地打包自检 asar 211 条目 / 16 依赖通过；130 套件全绿、tsc/biome 干净。
+>
+> **v0.4.12 产物现状（2026-10-17 深夜，run #26，6m56s，两平台都成功）**：tag `v0.4.12`
+> → `6ed9028`；七件资产齐全，feed 均 `version: 0.4.12`（mac zip 227111128 B / dmg
+> 220887005 B）；cask 自动 bump（bot 提交 `e4e3f98`，sha256 `7af1b0ddbcab…20ec4b`）。
+>
+> **发布产物本体复检（HTTP Range，没下 200MB）**：从 Release 的 mac zip 里抠出
+> `app.asar`（1214994 B / **211 条目** / 16 依赖含 electron-updater）逐个核：
+> `coordinator.js` 有 `availableStatus/downloadingStatus/downloadNow`、`main.js` 有
+> `payaso:updateStatus` / `payaso:updateDownload` / `stoppingIntentionally`、
+> `preload.cjs` 两个桥方法都在；再把 extraResources 里的页面包
+> `app/web/dist/assets/index-D4Q89OFu.js`（558479 B）抠出来 —— 「新版本 v」「正在下载 v」
+> 文案与 `shell.update.downloading` key 都在。**发出去的壳和页面都是 v0.4.12 版**。
+>
+> 已知小限制（未挡发布）：页面**刷新**的那一瞬间，主进程在 `did-finish-load` 发的最后一条
+> 状态可能早于 React 订阅（`ipcRenderer.on` 未注册就丢了），表现为「available 条目刷一下
+> 消失」，下次检查/窗口 focus 会补回来。下版改成 preload 里缓存最后一条、订阅时补发。
 
 > 2026-10-17 夜 补：**v0.4.11 —— 后台检查更新失败不该弹窗**（v0.4.10 真机截图）。
 >
