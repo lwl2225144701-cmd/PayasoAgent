@@ -76,6 +76,21 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 >
 > 契约锁 1 例（`tests/desktop-update.test.ts` 19 → 20）：后台失败不许走 reportFailure、
 > 唤醒补查必须有延迟常量与定时器清理；`isNetworkFailure` 补上这条真机错误串。
+>
+> **v0.4.11 产物现状（2026-10-17 夜，run #25，6m28s，两平台都成功）**：tag
+> `v0.4.11` → `383b860`；七件资产齐全，feed 均 `version: 0.4.11`（mac zip
+> 227108063 B / dmg 220887640 B）；cask 自动 bump（bot 提交 `7e21b39`，
+> sha256 `fb3339254543…05621d`）。
+>
+> **发布包本体复检（这次没下 200MB）**：用 HTTP Range 从 Release 的 mac zip 里
+> 直接抠 `app.asar`（zip 是 store 不压缩 → 只取中央目录 + 目标条目）→ 按 asar 格式
+> 取出 `dist/update/coordinator.js`（12609 B）→ 三条都在：`RESUME_CHECK_DELAY_MS =
+> 5_000`、`check failed (auto`、`if (interactive) await reportFailure('check', error)`；
+> asar 仍是 210 条目 / 16 依赖（含 electron-updater）。**发出去的就是修复版代码**。
+>
+> 自更新的真机 E2E 还是第一次：mac 侧 Squirrel.Mac 对**签名**有要求（我们是 ad-hoc
+> 签名），所以「检查→下载→重启安装」若在安装步报错属预期风险 —— 代码里已有回滚
+> （失败会重新拉起后端，壳不会晾死），兜底是手动装 dmg / `brew upgrade --cask payasoagent`。
 
 > 2026-10-17 晚 补：**v0.4.8 / v0.4.9 装完起不来 —— 发布包漏打运行时依赖**（用户实装复现）。
 >
