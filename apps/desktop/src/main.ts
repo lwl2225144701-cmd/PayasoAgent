@@ -21,6 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
 import { createUpdateCoordinator, type UpdateCoordinator } from './update/coordinator.js';
+import { IDLE_UPDATE_STATUS, type UpdateStatus } from './update/status.js';
 import { activeTasks } from './update/tasks.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -66,8 +67,22 @@ let ownsBackend = false;
 let mainWindow: BrowserWindow | null = null;
 let stderrTail = '';
 let quitting = false;
+/**
+ * 是不是我们自己发起的关停（退出或"装更新前优雅停后端"）。
+ *
+ * 真事故（v0.4.11 → v0.4.12，用户截图）：点「下载 → 安装」后，安装交接会先
+ * `stopBackend()`（后端收到 SIGTERM 优雅退出 → code=0 signal=null），而旧代码的
+ * exit 处理器只看 `quitting` / `ownsBackend` —— 安装时 `quitting` 还是 false，
+ * 于是把这次**主动关停**当成崩溃，弹「PayasoAgent 后端意外退出」再 app.quit()。
+ */
+let stoppingIntentionally = false;
 /** 自更新协调器（开发版不启用；门禁见 update/coordinator.ts）。 */
 let updates: UpdateCoordinator | null = null;
+/**
+ * 最近一次的更新状态：页面重新加载后要补发（did-finish-load 时 send 一次），
+ * 否则刷新一次页面侧边栏条目就消失了。
+ */
+let lastUpdateStatus: UpdateStatus = IDLE_UPDATE_STATUS;
 
 /** 就绪探针：用真实存在的只读端点，而不是"TCP 通了就算"（端口可能被别的进程占着）。 */
 async function backendResponds(): Promise<boolean> {
@@ -109,6 +124,8 @@ async function startBackend(): Promise<void> {
   if (!existsSync(backendEntry)) {
     throw new Error(`后端编译产物不存在：${backendEntry}\n请先执行 npm run build:server`);
   }
+  // 新进程：上一轮的"主动关停"标记作废，之后的异常退出照常要报
+  stoppingIntentionally = false;
   backend = spawn(backendCommand.command, [backendEntry], {
     cwd: appRoot,
     env: { ...process.env, ...backendCommand.env, PORT: String(PORT) },
@@ -121,8 +138,8 @@ async function startBackend(): Promise<void> {
 
   backend.on('exit', (code, signal) => {
     backend = null;
-    // 主动退出 / 外部实例都不算崩溃
-    if (quitting || !ownsBackend) return;
+    // 主动退出 / 外部实例 / 我们自己发起的关停（退出或装更新前的优雅停）都不算崩溃
+    if (quitting || stoppingIntentionally || !ownsBackend) return;
     dialog.showErrorBox(
       'PayasoAgent 后端意外退出',
       `code=${code} signal=${signal}\n\n最近的后端日志：\n${stderrTail.slice(-4_000)}`,
@@ -140,6 +157,8 @@ async function startBackend(): Promise<void> {
 async function stopBackend(): Promise<void> {
   const child = backend;
   if (!child || !ownsBackend) return;
+  // 这次退出是我们自己发起的：exit 处理器别弹「后端意外退出」
+  stoppingIntentionally = true;
   backend = null;
   if (child.exitCode !== null || child.signalCode !== null) return; // 已经退了
 
@@ -319,6 +338,8 @@ function createWindow(): void {
   win.webContents.on('did-finish-load', () => {
     void win.webContents.executeJavaScript(THEME_WATCH_SCRIPT, true).catch(() => undefined);
     void warnIfBackendMismatch(win);
+    // 页面刷新后补发：侧边栏的更新条目不能因为刷新就丢了
+    win.webContents.send('payaso:updateStatus', lastUpdateStatus);
   });
 
   win.on('closed', () => {
@@ -411,6 +432,28 @@ function registerDirectoryPicker(): void {
  * 我们照抄这个单向同步，只认自己的主窗口（同 `registerDirectoryPicker`
  * 的归属校验），值域兜底，非法值直接丢。
  */
+/**
+ * 把更新状态推给页面（侧边栏「设置」上方的条目）。
+ * 页面还没加载好时只记账，`did-finish-load` 会把最后一条补发过去。
+ */
+function pushUpdateStatus(status: UpdateStatus): void {
+  lastUpdateStatus = status;
+  const win = mainWindow;
+  if (win && !win.isDestroyed()) win.webContents.send('payaso:updateStatus', status);
+}
+
+/**
+ * 页面 → 壳：侧边栏「新版本」条目被点了 → 开始下载。
+ * 发送者校验与原生主题那条同款：只认主窗口，不给别的 webContents 开闸。
+ * 下载完成后的安装确认仍然走原生对话框（含"有任务在跑"的检查）。
+ */
+function registerUpdateBridge(): void {
+  ipcMain.on('payaso:updateDownload', (event): void => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    void updates?.downloadNow();
+  });
+}
+
 function registerNativeTheme(): void {
   ipcMain.on('payaso:nativeThemeSet', (event, source: unknown, resolved: unknown): void => {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
@@ -491,6 +534,7 @@ async function warnIfBackendMismatch(win: BrowserWindow): Promise<void> {
 async function boot(): Promise<void> {
   buildMenu();
   registerDirectoryPicker();
+  registerUpdateBridge();
   registerNativeTheme();
   // 端口已被占用（用户自己起过 npm run host）→ 复用已有后端，退出时也不要杀它
   if (await backendResponds()) {
@@ -507,6 +551,7 @@ async function boot(): Promise<void> {
   updates = createUpdateCoordinator({
     currentVersion: app.getVersion(),
     window: () => mainWindow,
+    onStatus: pushUpdateStatus,
     backend: {
       listActiveTasks,
       stop: stopBackend,

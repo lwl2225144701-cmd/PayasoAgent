@@ -125,7 +125,8 @@
   border-top: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent);
   padding: 10px 12px 12px;
   display: flex;
-  justify-content: stretch;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .settingsBtn {

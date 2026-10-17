@@ -1,0 +1,63 @@
+/* 侧边栏更新条目（「设置」上方）：单行文案 + 下载时下面一条细进度条。 */
+
+.row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: left;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-brand-soft) 68%, transparent);
+  color: var(--text-primary);
+}
+
+.row:disabled {
+  cursor: default;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.percent {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.bar {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  /* 缩进对齐文案（图标 16 + gap 9），进度条只横跨文字宽度 */
+  margin-left: 25px;
+  background: color-mix(in srgb, var(--border-light) 70%, transparent);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-brand);
+  transition: width 0.25s ease;
+}

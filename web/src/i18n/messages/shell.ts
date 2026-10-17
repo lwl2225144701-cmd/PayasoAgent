@@ -120,4 +120,19 @@ export const shellMessages = {
     'en-US': 'canvas 2d context unavailable',
   },
   'shell.image.encodeFailed': { 'zh-CN': '图片编码失败', 'en-US': 'Image encoding failed' },
+
+  // 侧边栏更新条目（自更新；只在桌面壳里有桥，浏览器里永远不显示）
+  'shell.update.available': { 'zh-CN': '新版本 v{version}', 'en-US': 'Update v{version}' },
+  'shell.update.availableHint': {
+    'zh-CN': '点击下载；完成后会询问是否重启安装',
+    'en-US': 'Click to download. You will be asked to restart and install.',
+  },
+  'shell.update.downloading': {
+    'zh-CN': '正在下载 v{version}',
+    'en-US': 'Downloading v{version}',
+  },
+  'shell.update.downloadingHint': {
+    'zh-CN': '下载中，完成后会询问是否重启安装',
+    'en-US': 'Downloading. You will be asked to restart and install.',
+  },
 } as const;

@@ -58,6 +58,31 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-17 深夜 补：**v0.4.12 —— 装更新时的误报弹窗 + 下载进度可见**（两条真机反馈）。
+>
+> **现象 1（误报）**：自更新装完后弹「PayasoAgent 后端意外退出 / code=0 signal=null」。
+> 根因：安装交接先 `stopBackend()`（后端收到 SIGTERM 优雅退出 → code 0 signal null），
+> 而 exit 处理器只看 `quitting` / `ownsBackend` —— 装更新时 `quitting` 还是 false，
+> 于是把**我们自己发起的关停**当成崩溃。修法：加 `stoppingIntentionally` 标记
+> （`stopBackend()` 置位、`startBackend()` 复位），exit 处理器跳过它；真崩溃仍然报。
+>
+> **现象 2（看不到进度）**：「点检查更新，下载的时候整个界面没有一个地方能看到下载进度」。
+> 修法：**页内**在侧边栏「设置」上方加一条更新条目（不是额外窗口）——
+> - 发现新版本：`⬇ 新版本 v0.4.12`（可点，点了开始下载）；
+> - 下载中：`⬇ 正在下载 v0.4.12 … 42%` + 底部细进度条（百分比按 download-progress 实时更新）；
+> - 链路：coordinator `onStatus` → `main.ts` `webContents.send('payaso:updateStatus')`
+>   → preload 桥 `onUpdateStatus` → `web/src/update-status.ts` 归一化（非法值退化成 idle，
+>   百分比夹紧）→ `UpdateStatusRow` 渲染；页面刷新后 `did-finish-load` 补发最后一条状态。
+> - 浏览器里没有桥 → 条目永不出现；老壳没有新方法 → 同样安静降级（桥方法全可选）。
+> - Dock / 任务栏进度条保留作兜底（条目所在的侧边栏折叠时也还有地方看）。
+> - 「发现新版本」的原生提示框**保留**（用户已知的行为不动），条目是常驻的第二入口：
+>   点了「稍后」之后仍可从侧边栏再下。
+>
+> 验证：契约锁 3 例（desktop-update 23 → 26：状态构造与夹紧、`isUpdateStatus`、页面侧
+> 归一化、coordinator 三个推送点、ipc 通道与 preload 对齐、侧边栏条目与 i18n key）；
+> **headless Chrome + mock 桥把 available / downloading 两种状态都渲染成截图核对过**
+> （不是猜样式）；本地打包自检 asar 211 条目 / 16 依赖通过；130 套件全绿、tsc/biome 干净。
+
 > 2026-10-17 夜 补：**v0.4.11 —— 后台检查更新失败不该弹窗**（v0.4.10 真机截图）。
 >
 > **现象**：用户装好 v0.4.10 正常用（顺带证明「装完起不来」已修），但合盖唤醒后弹了一个

@@ -20,6 +20,13 @@ import {
   nextCheckDelay,
   type UpdateOperation,
 } from './policy.js';
+import {
+  availableStatus,
+  clampPercent,
+  downloadingStatus,
+  IDLE_UPDATE_STATUS,
+  type UpdateStatus,
+} from './status.js';
 
 const { autoUpdater } = electronUpdater;
 
@@ -37,7 +44,6 @@ const FIRST_CHECK_DELAY_MS = 20 * 1000;
 const RESUME_CHECK_DELAY_MS = 5_000;
 /** 查"有没有在跑的任务"的超时（DSH 同款 10s）：查不出来就放弃本次安装。 */
 const TASKS_TIMEOUT_MS = 10_000;
-
 export interface UpdateBackendBridge {
   /** 查在跑任务：`GET /runs` 过滤 running/stopping。抛错 = 查不到。 */
   listActiveTasks: () => Promise<{ runId: string; task: string }[]>;
@@ -56,11 +62,21 @@ export interface UpdateCoordinatorOptions {
   backend: UpdateBackendBridge;
   /** 日志出口（默认 console；壳接到 stderr）。 */
   log?: (message: string) => void;
+  /**
+   * 状态出口：壳把「有新版本 / 下载中 x%」推给页面（侧边栏「设置」上方的条目）。
+   * 页面入口见 web/src/update-status.ts，壳侧 relay 见 main.ts。
+   */
+  onStatus?: (status: UpdateStatus) => void;
 }
 
 export interface UpdateCoordinator {
   /** 菜单入口：检查 → 有新版问下载 → 下载完问安装重启。全程有反馈。 */
   checkInteractively: () => Promise<void>;
+  /**
+   * 页面入口（侧边栏「新版本」条目点了）：下载最近一次检查发现的新版本。
+   * 没有待装版本 / 正在下载时是空操作。
+   */
+  downloadNow: () => Promise<void>;
   /** 启动自动检查 + 定时轮询 + 窗口 focus / 睡眠唤醒补查（幂等）。 */
   startAutoCheck: () => void;
   dispose: () => void;
@@ -95,6 +111,8 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
   let downloading = false;
   let resumeHandler: (() => void) | null = null;
   let focusHandler: (() => void) | null = null;
+  /** 最近一次检查发现的新版本（页面「下载」用；下载完成或已是最新时清空）。 */
+  let pendingVersion: string | null = null;
 
   /** 还活着的窗口（对话框有 owner 才不会跑到窗口后面去）。 */
   function parent(): BrowserWindow | undefined {
@@ -129,6 +147,20 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
     const raw = errorText(error);
     log(`${operation} failed: ${raw}`);
     await say('error', describeUpdateFailure(operation, raw), raw.slice(0, 800));
+  }
+
+  /** 把状态推给页面（壳侧 relay 见 main.ts）。上报失败不影响更新流程。 */
+  function emitStatus(status: UpdateStatus): void {
+    try {
+      options.onStatus?.(status);
+    } catch (error) {
+      log(`emit status failed: ${errorText(error)}`);
+    }
+  }
+
+  /** Dock / 任务栏进度条（页面条目之外的补充；负值 = 清掉）。 */
+  function setDockProgress(percent: number): void {
+    parent()?.setProgressBar(percent < 0 ? -1 : clampPercent(percent) / 100);
   }
 
   /**
@@ -200,23 +232,30 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
   async function download(version: string): Promise<void> {
     if (downloading) return;
     downloading = true;
+    // 227MB 的包下载期间，界面上必须有可见进度（真机反馈：v0.4.11 什么都没有）
+    emitStatus(downloadingStatus(version, 0));
+    setDockProgress(0);
     const onProgress = (progress: { percent?: number }): void => {
-      const win = parent();
-      if (win && typeof progress.percent === 'number') {
-        win.setProgressBar(Math.max(0, Math.min(1, progress.percent / 100)));
-      }
+      if (typeof progress.percent !== 'number') return;
+      emitStatus(downloadingStatus(version, progress.percent));
+      setDockProgress(progress.percent);
     };
     autoUpdater.on('download-progress', onProgress);
     try {
       await autoUpdater.downloadUpdate();
     } catch (error) {
+      // 下载失败：退回「有新版本」，用户可以从侧边栏条目再点一次重试
+      pendingVersion = version;
+      emitStatus(availableStatus(version));
       await reportFailure('download', error);
       return;
     } finally {
       autoUpdater.off('download-progress', onProgress);
-      parent()?.setProgressBar(-1);
       downloading = false;
+      setDockProgress(-1);
     }
+    pendingVersion = null;
+    emitStatus(IDLE_UPDATE_STATUS);
     await installAndRestart(version);
   }
 
@@ -240,10 +279,14 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
         const version = result?.updateInfo?.version ?? '';
         // 版本门禁（调研 §1.2）：feed 写错或误点旧包都不许降级。
         if (!version || !isNewerVersion(version, options.currentVersion)) {
+          pendingVersion = null;
+          emitStatus(IDLE_UPDATE_STATUS);
           if (interactive) await say('info', `已是最新版 ${options.currentVersion}`);
           return;
         }
         log(`update available: ${version}（当前 ${options.currentVersion}）`);
+        pendingVersion = version;
+        emitStatus(availableStatus(version));
         const response = await ask({
           type: 'info',
           title: 'PayasoAgent',
@@ -290,6 +333,12 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
   return {
     checkInteractively: () => runCheck(true),
 
+    downloadNow: async () => {
+      const version = pendingVersion;
+      if (!version || downloading) return;
+      await download(version);
+    },
+
     startAutoCheck: () => {
       if (!updatesEnabled()) {
         log('自更新未启用（开发模式或缺少 app-update.yml）');
@@ -331,6 +380,8 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
       timer = null;
       firstTimer = null;
       resumeTimer = null;
+      setDockProgress(-1);
+      emitStatus(IDLE_UPDATE_STATUS);
       if (focusHandler) parent()?.off('focus', focusHandler);
       if (resumeHandler) powerMonitor.off('resume', resumeHandler);
       focusHandler = null;

@@ -20,8 +20,16 @@ import {
   nextCheckDelay,
   parseVersion,
 } from '../apps/desktop/src/update/policy';
+import {
+  availableStatus,
+  clampPercent,
+  downloadingStatus,
+  IDLE_UPDATE_STATUS,
+  isUpdateStatus,
+} from '../apps/desktop/src/update/status';
 import { ACTIVE_RUN_STATUSES, activeTasks } from '../apps/desktop/src/update/tasks';
 import { isCancellable } from '../src/host/run-types';
+import { normalizeUpdateStatus } from '../web/src/update-status';
 
 const shellSource = (relative: string): string =>
   fs.readFileSync(path.join('apps', 'desktop', relative), 'utf8');
@@ -224,6 +232,115 @@ test('coordinator：后台检查失败不弹窗 + 唤醒补查要推迟', () => 
     /if \(resumeTimer\) clearTimeout\(resumeTimer\);\n\s+timer = null;/,
     'dispose 要清掉唤醒定时器',
   );
+});
+
+// ── 下载进度可见：侧边栏条目（v0.4.11 真机反馈：下载期间界面零反馈）──────────
+
+test('clampPercent / 状态构造函数：脏输入不炸，百分比夹紧', () => {
+  assert.equal(clampPercent(45.6), 46);
+  assert.equal(clampPercent(-10), 0);
+  assert.equal(clampPercent(250), 100);
+  assert.equal(clampPercent(Number.NaN), 0);
+  assert.deepEqual(availableStatus('0.4.12'), {
+    phase: 'available',
+    version: '0.4.12',
+    percent: 0,
+  });
+  assert.deepEqual(downloadingStatus('0.4.12', 150), {
+    phase: 'downloading',
+    version: '0.4.12',
+    percent: 100,
+  });
+  assert.deepEqual(IDLE_UPDATE_STATUS, { phase: 'idle', version: '', percent: 0 });
+});
+
+test('isUpdateStatus：只认三相 + 字符串版本 + 数字百分比（ipc 那头是 unknown）', () => {
+  assert.equal(isUpdateStatus({ phase: 'available', version: '0.4.12', percent: 0 }), true);
+  assert.equal(isUpdateStatus({ phase: 'downloading', version: '0.4.12', percent: 42 }), true);
+  assert.equal(isUpdateStatus({ phase: 'idle', version: '', percent: 0 }), true);
+  assert.equal(isUpdateStatus({ phase: 'nope', version: '1', percent: 0 }), false);
+  assert.equal(isUpdateStatus({ phase: 'available', version: 1, percent: 0 }), false);
+  assert.equal(isUpdateStatus(null), false);
+  assert.equal(isUpdateStatus('x'), false);
+});
+
+test('页面侧状态归一：非法值退化成 idle，百分比夹紧', () => {
+  assert.deepEqual(
+    normalizeUpdateStatus({ phase: 'downloading', version: '0.4.12', percent: 250 }),
+    {
+      phase: 'downloading',
+      version: '0.4.12',
+      percent: 100,
+    },
+  );
+  assert.deepEqual(normalizeUpdateStatus({ phase: 'available', version: '0.4.12' }), {
+    phase: 'available',
+    version: '0.4.12',
+    percent: 0,
+  });
+  assert.equal(normalizeUpdateStatus({ phase: 'available', version: '' }).phase, 'idle');
+  assert.equal(normalizeUpdateStatus(undefined).phase, 'idle');
+  assert.equal(normalizeUpdateStatus({ phase: 'what', version: '1' }).phase, 'idle');
+});
+
+test('coordinator：状态必须推给页面（有新版本 / 下载中 x% / 结束清空）', () => {
+  const src = shellSource(path.join('src', 'update', 'coordinator.ts'));
+  assert.match(src, /onStatus\?: \(status: UpdateStatus\) => void;/, 'options 要有 onStatus 入口');
+  assert.match(src, /emitStatus\(availableStatus\(version\)\);/, '发现新版本要推 available');
+  assert.match(
+    src,
+    /emitStatus\(downloadingStatus\(version, progress\.percent\)\);/,
+    '下载事件要推百分比',
+  );
+  assert.match(
+    src,
+    /pendingVersion = null;\n\s+emitStatus\(IDLE_UPDATE_STATUS\);/,
+    '下载完成要清空',
+  );
+  assert.match(src, /downloadNow: async \(\) => \{/, '页面「下载」要有壳侧入口');
+  assert.match(src, /setDockProgress\(progress\.percent\)/, 'Dock/任务栏进度保留');
+});
+
+test('壳 ↔ 页面：ipc 通道与 preload 桥对齐（改名即断）', () => {
+  const mainSrc = shellSource(path.join('src', 'main.ts'));
+  const preload = shellSource(path.join('src', 'preload.cts'));
+  assert.match(mainSrc, /win\.webContents\.send\('payaso:updateStatus', status\)/);
+  assert.match(
+    mainSrc,
+    /win\.webContents\.send\('payaso:updateStatus', lastUpdateStatus\)/,
+    '页面刷新后要补发状态',
+  );
+  assert.match(mainSrc, /ipcMain\.on\('payaso:updateDownload'/, '页面点下载的入口');
+  assert.match(mainSrc, /onStatus: pushUpdateStatus/);
+  assert.match(preload, /ipcRenderer\.on\(channel, handler\)/);
+  assert.match(preload, /ipcRenderer\.send\('payaso:updateDownload'\)/);
+  assert.match(preload, /channel = 'payaso:updateStatus'/);
+});
+
+test('页面：侧边栏条目 + i18n 都在（浏览器里没有桥 → 不显示）', () => {
+  const row = fs.readFileSync(
+    path.join('web', 'src', 'components', 'UpdateStatus', 'index.tsx'),
+    'utf8',
+  );
+  assert.match(row, /t\('shell\.update\.available', \{ version: status\.version \}\)/);
+  // 百分比只显示一次（右侧），左侧写「正在下载 vX.Y.Z」
+  assert.match(row, /t\('shell\.update\.downloading', \{ version: status\.version \}\)/);
+  assert.match(row, /\{status\.percent\}%/);
+  assert.match(row, /status\.phase === 'idle'\) return null/, '没有更新时不渲染');
+  const sidebar = fs.readFileSync(
+    path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
+    'utf8',
+  );
+  assert.match(sidebar, /<UpdateStatusRow \/>/, '条目要挂在侧边栏（设置旁边）');
+  const messages = fs.readFileSync(path.join('web', 'src', 'i18n', 'messages', 'shell.ts'), 'utf8');
+  for (const key of [
+    'shell.update.available',
+    'shell.update.availableHint',
+    'shell.update.downloading',
+    'shell.update.downloadingHint',
+  ]) {
+    assert.ok(messages.includes(key), `缺 i18n key: ${key}`);
+  }
 });
 
 // ── 打包与 CI 契约（feed 没了 = 永远查不到更新）──────────────────────────

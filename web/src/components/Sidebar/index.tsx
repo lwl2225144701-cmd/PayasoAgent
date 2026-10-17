@@ -2,6 +2,7 @@ import { useI18n } from '../../i18n';
 import type { HostSession, WorkspaceView } from '../../types';
 import { IconButton } from '../IconButton';
 import { PanelLeftIcon, PlusIcon, SettingsIcon } from '../icons';
+import { UpdateStatusRow } from '../UpdateStatus';
 import { WorkspaceSection } from '../WorkspaceSection';
 import styles from './Sidebar.module.css';
 
@@ -109,6 +110,7 @@ export function Sidebar({
       </div>
 
       <div className={styles.footer}>
+        <UpdateStatusRow />
         <button
           className={styles.settingsBtn}
           title={t('shell.sidebar.settings')}
