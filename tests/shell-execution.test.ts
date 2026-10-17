@@ -382,12 +382,25 @@ if (process.platform !== 'darwin') {
 
   await check('scratch 用完即删：调用结束后受管根内不残留目录', () =>
     withIsolatedScratchRoot(async () => {
-      fs.mkdirSync(shellScratchRoot({}), { recursive: true, mode: 0o700 });
+      // 只认这个隔离根（mkdtemp 新建，正常是空的）。CI 上出现过一次
+      // before=1 / after=0 的反向残留（某个后台清理抢先清掉树），本地复现不了；
+      // 所以判定不再拿 before 当基线，而是"跑完之后根内必须为空"，并给 2s 容忍
+      // 异步清理。起点先清干净，保证判定的起点是确定的。
       const root = shellScratchRoot({});
-      const before = fs.existsSync(root) ? fs.readdirSync(root).length : 0;
+      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      for (const name of fs.readdirSync(root)) {
+        fs.rmSync(path.join(root, name), { recursive: true, force: true });
+      }
       await shell('echo ok', 'workspace-write', readOnlyRoot);
-      const after = fs.existsSync(root) ? fs.readdirSync(root).length : 0;
-      assert.equal(after, before, `scratch 残留: ${fs.readdirSync(root).join(',')}`);
+      const deadline = Date.now() + 2_000;
+      for (;;) {
+        const residue = fs.existsSync(root) ? fs.readdirSync(root) : [];
+        if (residue.length === 0) return;
+        if (Date.now() > deadline) {
+          assert.deepEqual(residue, [], `scratch 残留: ${residue.join(',')}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
     }),
   );
 
