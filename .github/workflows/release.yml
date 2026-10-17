@@ -34,6 +34,11 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      # 必须先 checkout：后面 setup-node 读 .nvmrc、打包读源码都靠它。
+      # （这条没有 `- name:`，2026-10-17 重组 workflow 时按"名字"列步骤把它整条丢了 →
+      #  两个 job 3~4 秒就失败：The specified node version file … does not exist。）
+      - uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -143,6 +148,9 @@ jobs:
       run:
         shell: bash # 步骤脚本是 bash 语法（runner 自带 Git Bash）
     steps:
+      # 同 mac：checkout 不能少（没有 `- name:`，重建时最容易漏）
+      - uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

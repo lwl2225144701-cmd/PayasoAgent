@@ -31,6 +31,23 @@ function test(name: string, fn: () => void | Promise<void>): void {
   tests.push({ name, fn });
 }
 
+/**
+ * 解析 release.yml 的 job 块 —— 只取 `jobs:` 之后，别把 `on: push:` 当成 job。
+ * 背景（真事故）：2026-10-17 重组 workflow 时，两个 build job 里那条没有 `- name:`
+ * 的 `- uses: actions/checkout@v4` 被整条丢掉 → 工作区为空 → setup-node 报
+ * "The specified node version file … .nvmrc does not exist"，两个 job 3~4 秒就失败。
+ */
+function parseJobs(wf: string): string[] {
+  const section = wf.slice(wf.indexOf('\njobs:'));
+  return section
+    .split(/\n {2}(?=[a-z0-9-]+:\n)/)
+    .filter((block) => /^[a-z0-9-]+:$/.test(block.split('\n')[0]));
+}
+
+function jobNameOf(block: string): string {
+  return block.split('\n')[0].replace(':', '');
+}
+
 // ── 版本门禁 ────────────────────────────────────────────────────────────────
 
 test('parseVersion：核心段 + 预发布后缀', () => {
@@ -201,6 +218,52 @@ test('electron-builder：GitHub provider + updaterCacheDirName', () => {
   );
   assert.match(yml, /派生自包名/, '要在注释里写明派生规则，免得后人又去加配置');
   assert.ok(!/^publish: null$/m.test(yml), '旧的 publish: null 必须清掉');
+});
+
+test('release.yml：每个 job 第一步必须是 checkout（漏了 setup-node 读不到 .nvmrc）', () => {
+  const wf = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
+  // 真事故：2026-10-17 重组 workflow 时，两个 build job 里那条没有 `- name:` 的
+  // `- uses: actions/checkout@v4` 被整条丢掉 → 工作区为空 → setup-node 报
+  // "The specified node version file … .nvmrc does not exist"，两个 job 3~4 秒失败。
+  const jobs = parseJobs(wf);
+  assert.ok(jobs.length >= 3, `解析到 ${jobs.length} 个 job`);
+  for (const block of jobs) {
+    const jobName = jobNameOf(block);
+    const afterSteps = block.slice(block.indexOf('    steps:') + '    steps:'.length);
+    const firstStep = afterSteps.split('\n').find((line) => line.trimStart().startsWith('- '));
+    assert.match(
+      String(firstStep ?? ''),
+      /-\s*uses:\s*actions\/checkout@/,
+      `${jobName} 的第一步不是 checkout（后面 setup-node 的 node-version-file 会直接失败）`,
+    );
+  }
+});
+
+test('release.yml：只有 publish job 建 Release，且 needs 两个平台（统一发布契约）', () => {
+  const wf = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
+  const byName = new Map(parseJobs(wf).map((b) => [jobNameOf(b), b]));
+  const publish = byName.get('publish');
+  assert.ok(publish, '必须有 publish job');
+  // needs 两个平台 → 任一平台失败这里就不跑 → 不会出现"只有 Windows"的半成品（v0.4.7 的教训）
+  assert.match(String(publish), /needs:\s*\[build-macos-dmg,\s*build-windows\]/);
+  assert.match(
+    String(publish),
+    /Verify unified asset set/,
+    '发布前必须校验两平台资产齐全且版本一致',
+  );
+  // 建 Release 的动作只能出现在 publish 里
+  for (const [name, block] of byName) {
+    const hasRelease = /softprops\/action-gh-release/.test(block);
+    assert.equal(
+      hasRelease,
+      name === 'publish',
+      `建 Release 的动作只允许在 publish job（${name} ${hasRelease ? '有' : '没有'}）`,
+    );
+  }
+  // build job 只产 artifact
+  for (const name of ['build-macos-dmg', 'build-windows']) {
+    assert.ok(/actions\/upload-artifact/.test(String(byName.get(name))), `${name} 应产出 artifact`);
+  }
 });
 
 test('CI：latest-mac.yml / latest.yml 必须跟着上传（差一个等于没更新）', () => {
