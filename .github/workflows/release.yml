@@ -30,9 +30,10 @@ permissions:
 jobs:
   build-macos-dmg:
     runs-on: macos-latest # 与 ci.yml 保持一致；runner 上有 hdiutil，能打 DMG
+    # 版本号产给下游 publish job（artifact 名与 cask 版本都靠它）
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -102,37 +103,10 @@ jobs:
           fi
           npm run desktop:dmg
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: PayasoAgent-${{ steps.version.outputs.version }}-macOS
-          path: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest-mac.yml
-          if-no-files-found: error
-
-      # 只有 push tag 才建 Release；手动触发只出 artifact，避免误发版本
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: PayasoAgent ${{ steps.version.outputs.version }}
-          generate_release_notes: true
-          files: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest-mac.yml
-          fail_on_unmatched_files: true
-
-      # 自更新 feed 的硬门禁：配了 publish 才会写 app-update.yml / latest-mac.yml，
-      # 少任何一个都是"用户永远查不到更新"的静默故障。
-      #
-      # 位置有意放在「发布之后、cask 之前」：资产先落地（真的缺 feed 时也能从 Release
-      # 页看出来），门禁再红 —— 这样"打包没产出"和"我路径写错"不会再混成同一个现象；
-      # 门禁红了就不 bump cask，brew 不会指向一个没有 feed 的版本。
+      # 自更新 feed 的硬门禁：配了 publish 才会写 app-update.yml / latest-*.yml，
+      # 少任何一个都是"用户永远查不到更新"的静默故障。放在上传**之前**：这一版坏了
+      # 就连 artifact 都不产出 → 下游 publish job（needs 两个平台）不跑 → 不会出现
+      # "只有 Windows"的半成品 Release（v0.4.7 的教训）。
       - name: Verify updater feed
         run: |
           set -euo pipefail
@@ -149,38 +123,26 @@ jobs:
           test -f apps/desktop/release/latest-mac.yml || { echo "::error::缺少 latest-mac.yml —— updater 拿不到 feed"; ls -la apps/desktop/release; exit 1; }
           head -20 apps/desktop/release/latest-mac.yml
 
-      # Homebrew cask 自动 bump：改 version + DMG 的 sha256 后推回 main。
-      # brew 通道 = 不花钱的「装完即用」（curl 下载不带 quarantine），见手账 §9。
-      - name: Sync Homebrew cask
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          DMG_SHA=$(shasum -a 256 apps/desktop/release/*.dmg | awk '{print $1}')
-          git fetch origin main
-          git checkout -B main origin/main
-          sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/" Casks/payasoagent.rb
-          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"${DMG_SHA}\"/" Casks/payasoagent.rb
-          git add Casks/payasoagent.rb
-          if git diff --cached --quiet; then
-            echo "cask 无变化"
-          else
-            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore(cask): bump payasoagent to ${VERSION}"
-            git push origin main
-          fi
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayasoAgent-${{ steps.version.outputs.version }}-macOS
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
+          if-no-files-found: error
 
-  # Windows 线：NSIS 安装器 + zip 便携包。质量门禁在 mac job（shell 沙箱套件是
-  # darwin 能力），本 job 只出包。先未签名发布（SmartScreen 可"更多信息 → 仍要
-  # 运行"跳过，能用）；SignPath（开源免费）签名后续接，见手账 §10。
   build-windows:
     runs-on: windows-latest
+    # 版本号产给下游 publish job（artifact 名与 cask 版本都靠它）
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     defaults:
       run:
         shell: bash # 步骤脚本是 bash 语法（runner 自带 Git Bash）
     steps:
-      - uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -239,30 +201,10 @@ jobs:
           done
           npm run desktop:win
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: PayasoAgent-${{ steps.version.outputs.version }}-Windows
-          path: |
-            apps/desktop/release/*.exe
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest.yml
-          if-no-files-found: error
-
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: PayasoAgent ${{ steps.version.outputs.version }}
-          files: |
-            apps/desktop/release/*.exe
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest.yml
-          fail_on_unmatched_files: true
-
-      # 同 mac：放在发布之后 —— 资产先落地，门禁再验（缺 feed 时现象可分辨）。
+      # 自更新 feed 的硬门禁：配了 publish 才会写 app-update.yml / latest-*.yml，
+      # 少任何一个都是"用户永远查不到更新"的静默故障。放在上传**之前**：这一版坏了
+      # 就连 artifact 都不产出 → 下游 publish job（needs 两个平台）不跑 → 不会出现
+      # "只有 Windows"的半成品 Release（v0.4.7 的教训）。
       - name: Verify updater feed
         run: |
           set -euo pipefail
@@ -278,3 +220,76 @@ jobs:
           echo "--- $APP_CONFIG ---"; cat "$APP_CONFIG"
           test -f apps/desktop/release/latest.yml || { echo "::error::缺少 latest.yml —— updater 拿不到 feed"; ls -la apps/desktop/release; exit 1; }
           head -20 apps/desktop/release/latest.yml
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayasoAgent-${{ steps.version.outputs.version }}-Windows
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
+          if-no-files-found: error
+
+  # 统一发布：两个平台都成功才建 Release（Windows + macOS 必须同一版本，不接受
+  # "只有 Windows"的半成品 —— v0.4.7 就是这么来的）。两个 build job 只产 artifact，
+  # 本 job 用 needs 卡住：任一平台失败 → 这里不跑 → 无半成品 Release，cask 也不 bump。
+  publish:
+    needs: [build-macos-dmg, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') # 手动触发只出 artifact，不发版
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download both platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      # 统一版本的硬门禁：两平台安装包 + 两条 feed 必须同时在，且版本号一致。
+      - name: Verify unified asset set
+        run: |
+          set -euo pipefail
+          echo "--- 收到的资产 ---"; ls -la release-assets
+          missing=0
+          for pattern in 'PayasoAgent-*-arm64.dmg' 'PayasoAgent-*-arm64-mac.zip' \
+                         'PayasoAgent-*-setup.exe' 'PayasoAgent-*-x64.zip' \
+                         'latest-mac.yml' 'latest.yml'; do
+            if ! ls release-assets/${pattern} >/dev/null 2>&1; then
+              echo "::error::缺 ${pattern} —— 两个平台没齐，拒绝发布"; missing=1
+            fi
+          done
+          [ "$missing" = "0" ] || exit 1
+          VERSION="${{ needs.build-macos-dmg.outputs.version }}"
+          grep -q "^version: ${VERSION}$" release-assets/latest-mac.yml || { echo "::error::latest-mac.yml 版本不是 ${VERSION}"; exit 1; }
+          grep -q "^version: ${VERSION}$" release-assets/latest.yml || { echo "::error::latest.yml 版本不是 ${VERSION}"; exit 1; }
+          echo "两个平台 feed 版本一致：${VERSION}"
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PayasoAgent ${{ needs.build-macos-dmg.outputs.version }}
+          generate_release_notes: true
+          files: release-assets/*
+          fail_on_unmatched_files: true
+
+      # Homebrew cask 自动 bump：改 version + DMG 的 sha256 后推回 main。
+      - name: Sync Homebrew cask
+        env:
+          VERSION: ${{ needs.build-macos-dmg.outputs.version }}
+        run: |
+          DMG_SHA=$(shasum -a 256 release-assets/*.dmg | awk '{print $1}')
+          git fetch origin main
+          git checkout -B main origin/main
+          sed -i -E "s/^  version \".*\"/  version \"${VERSION}\"/" Casks/payasoagent.rb
+          sed -i -E "s/^  sha256 \".*\"/  sha256 \"${DMG_SHA}\"/" Casks/payasoagent.rb
+          git add Casks/payasoagent.rb
+          if git diff --cached --quiet; then
+            echo "cask 无变化"
+          else
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(cask): bump payasoagent to ${VERSION}"
+            git push origin main
+          fi

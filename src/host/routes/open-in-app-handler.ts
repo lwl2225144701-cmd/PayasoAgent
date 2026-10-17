@@ -10,10 +10,11 @@
 // 边界：前端只传 target id 与工作区相对路径，工作区根由 Host 解析（当前工作区或
 // 指定 Run 的工作区，与 /preview 同一套作用域）——前端拿不到也传不进宿主绝对路径。
 import { spawn, spawnSync } from 'node:child_process';
-import fs from 'node:fs';
+import fs, { statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { buildLaunchInvocation } from '../open-in-app/invocation.js';
 import { filterAppsForTarget } from '../open-in-app/openable.js';
 import { queryFileAssociations } from '../open-in-app/os-assoc.js';
 import {
@@ -213,32 +214,48 @@ async function openPathInApp(id: string, target: string): Promise<void> {
   }
 }
 
-/** 启动目标路径（结构最小化：只有定位方式参与启动，白名单/系统 id 都满足）。 */
+/**
+ * 启动目标路径（结构最小化：只有定位方式参与启动，白名单/系统 id 都满足）。
+ *
+ * 参数与 cwd 的推导走 `buildLaunchInvocation`（纯函数，套件覆盖）：Windows Terminal
+ * 把裸路径当命令执行会报 0x80070005（真机踩过），且文件目标不能拿文件当 cwd。
+ */
 async function launch(
-  app: { bundlePath?: string; executablePath?: string },
+  app: { id?: string; bundlePath?: string; executablePath?: string },
   target: string,
 ): Promise<void> {
-  if (process.platform === 'darwin') {
-    if (app.bundlePath) {
-      await observe(spawn('open', ['-a', app.bundlePath, target], { env: scrubbedEnv() }));
-      return;
-    }
-    if (app.executablePath) {
-      await observe(spawn(app.executablePath, [target], { cwd: target, env: scrubbedEnv() }));
-      return;
-    }
-    throw new Error('该应用未提供可执行定位方式');
-  }
-  if (app.executablePath) {
-    await observe(spawn(app.executablePath, [target], { cwd: target, env: scrubbedEnv() }));
+  if (process.platform === 'darwin' && app.bundlePath) {
+    await observe(spawn('open', ['-a', app.bundlePath, target], { env: scrubbedEnv() }));
     return;
   }
+  if (app.executablePath) {
+    const targetIsDirectory = isDirectory(target);
+    const { args, cwd } = buildLaunchInvocation({
+      appId: app.id ?? '',
+      executablePath: app.executablePath,
+      target,
+      platform: process.platform,
+      targetIsDirectory,
+    });
+    await observe(spawn(app.executablePath, args, { cwd, env: scrubbedEnv() }));
+    return;
+  }
+  if (process.platform === 'darwin') throw new Error('该应用未提供可执行定位方式');
   // linux desktop-entry：交系统默认文件管理器打开目录（文档化简化）
   if (process.platform === 'linux') {
     await observe(spawn('xdg-open', [target], { env: scrubbedEnv() }));
     return;
   }
   throw new Error('当前平台无法启动该应用');
+}
+
+/** stat 判定目录；失败一律按"不是目录"（宁可 cwd 取父目录，也不要传个不存在的目录）。 */
+function isDirectory(target: string): boolean {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** detached + scrubbed 环境 + 早期失败观察窗：窗口内 error/非零退出 → 失败。 */

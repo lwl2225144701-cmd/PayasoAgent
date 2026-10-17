@@ -58,6 +58,31 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-17 补：**统一发布（原子发布）＋ Windows「打开终端」真机 bug**。
+>
+> **① 统一发布**（用户要求：Windows 与 macOS 必须同一版本的完整发布，不接受
+> "只有 Windows"的半成品 —— v0.4.7 就是这么来的）。`.github/workflows/release.yml`
+> 重组为三个 job：
+> - `build-macos-dmg` / `build-windows`：只**产出 artifact**（feed 门禁移回上传
+>   **之前**：这一版坏了连 artifact 都不产出），各自产出 `outputs.version`；
+> - `publish`：`needs: [build-macos-dmg, build-windows]` → 下载两边 artifact →
+>   **Verify unified asset set**（两个安装包 + 两个 feed 都在，且 `latest-mac.yml`
+>   / `latest.yml` 的 `version` 都等于 tag 版本）→ 建 Release → bump cask。
+>   任一平台失败 → 这个 job 根本不跑 → **不存在半成品 Release**，cask 也不会指向
+>   缺平台的版本；cask 的 `sed -i` 也从 BSD 写法改成 GNU（新 job 跑在 ubuntu）。
+>
+> **② Windows「打开终端」真机 bug**：点开工作区/目录的"终端"后弹出一个黑窗口加
+> 一行 `[出现错误 2147942405 (0x80070005) (启动"D:\Iragent"时)]`。根因：catalog 把
+> Windows 终端解析成 `wt.exe`，而启动代码是 `spawn(exe, [target], {cwd: target})`
+> → 实际执行 `wt.exe D:\Iragent`，**Windows Terminal 把裸路径当成"要启动的程序"**
+> 于是报 E_ACCESSDENIED。修法（`src/host/open-in-app/invocation.ts`，纯函数）：
+> `wt.exe` → `['-d', dir]`；`cmd.exe` → 不带参（落点由 cwd 决定）；其余应用参数仍
+> 是目标本身。顺带修掉一个隐患：原来文件目标会把 **cwd 设成文件路径**（不是目录，
+> 进程起不来）→ 现在 cwd 一律取"目录目标本身 / 文件目标的父目录"。
+> 套件 14 例锁死这些推导（含真机那条 `wt.exe` 不许收到裸目录路径）；写测试时还
+> 暴露了实现里的平台依赖：用宿主默认的 `path.basename` 解析 `D:\...` 在 macOS 上
+> 认不出来 → 改为按目标平台选 `path.win32`/`path.posix`（否则"能跑但测不了"）。
+
 > 产物现状（2026-10-16，**v0.4.8 已发布**）：tag `v0.4.8` → `b16604d`，**六件齐全
 > 且 feed 在 Release 里**（`curl -sIL`）：mac `arm64.dmg` 210.4 MiB（220579607 B）
 > + `arm64-mac.zip` 216.3 MiB（226847447 B）；Windows `setup.exe` 172.5 MiB
