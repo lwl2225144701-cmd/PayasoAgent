@@ -34,7 +34,12 @@ jobs:
       - name: Lint & format check (Biome)
         run: npx biome check .
 
+      # 套件并发时共享 /private/tmp/payaso-shell（managed scratch 根）：v0.4.14 的
+      # 两次发布跑里 flake 从 shell-execution 换到 shell-executor（scratch 目录被
+      # 并发套件扰动/计数竞态）——CI 里串行跑，宁慢勿红；本地默认仍并发。
       - name: Deterministic test suites (no LLM)
+        env:
+          PAYASO_TEST_CONCURRENCY: '1'
         run: npm run test:all
 
       - name: Host integration tests (requires LLM credentials)

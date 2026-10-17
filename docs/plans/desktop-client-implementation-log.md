@@ -79,6 +79,18 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 >
 > 已知代价：新壳配**旧页面**（版本不匹配那种边界）时旧页面没有新的顶部内边距，
 > logo 会贴到红绿灯上 —— 启动时的资源版本比对会弹提示，正常版本内不受影响。
+>
+> **CI flake 复盘（v0.4.14 两次发布跑都挂，才定位到）**：run #28 挂在
+> `shell-execution` 的「scratch 用完即删」（after=0 < before=1），run #29 换成了
+> `shell-executor` 的「真实 darwin 元数据」（`sandbox policy path does not exist:
+> /private/tmp/payaso-shell/s-…`）。**同一个类**：`test:all` 6 路并发跑套件，而大家
+> 共享同一个受管 scratch 根（`/private/tmp/payaso-shell`），一个套件的
+> 创建/chmod（回退链测试把主根 chmod 0500 再还原）/清理会扰动另一个套件的断言。
+> 处理：① 那条计数断言改成「跑完必须为空」+ 2s 容忍（不再拿 before 当基线）；
+> ② **CI 里 `PAYASO_TEST_CONCURRENCY=1` 串行跑**确定性套件（本地仍并发，跑一次
+> 21s；CI 宁慢勿红）。本地启动客户端自验（用户要求先本地看再发包）：
+> `npm run build:server && npm run build:web && PORT=4600 npm run desktop`
+> （先退出已安装的客户端，避免单实例锁；4600 避开被占用的 4500）。
 
 > 2026-10-17 夜半 补：**v0.4.13 —— 更新弹窗改成「静默亮条目」+ 条目挪到设置右边**。
 >
