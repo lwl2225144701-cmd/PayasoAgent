@@ -226,7 +226,7 @@ test('release.yml：每个 job 第一步必须是 checkout（漏了 setup-node �
   // `- uses: actions/checkout@v4` 被整条丢掉 → 工作区为空 → setup-node 报
   // "The specified node version file … .nvmrc does not exist"，两个 job 3~4 秒失败。
   const jobs = parseJobs(wf);
-  assert.ok(jobs.length >= 3, `解析到 ${jobs.length} 个 job`);
+  assert.ok(jobs.length >= 2, `解析到 ${jobs.length} 个 job`);
   for (const block of jobs) {
     const jobName = jobNameOf(block);
     const afterSteps = block.slice(block.indexOf('    steps:') + '    steps:'.length);
@@ -239,31 +239,33 @@ test('release.yml：每个 job 第一步必须是 checkout（漏了 setup-node �
   }
 });
 
-test('release.yml：只有 publish job 建 Release，且 needs 两个平台（统一发布契约）', () => {
+test('release.yml：两个平台各自发布本平台资产（分开走，互不阻塞）', () => {
   const wf = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
   const byName = new Map(parseJobs(wf).map((b) => [jobNameOf(b), b]));
-  const publish = byName.get('publish');
-  assert.ok(publish, '必须有 publish job');
-  // needs 两个平台 → 任一平台失败这里就不跑 → 不会出现"只有 Windows"的半成品（v0.4.7 的教训）
-  assert.match(String(publish), /needs:\s*\[build-macos-dmg,\s*build-windows\]/);
-  assert.match(
-    String(publish),
-    /Verify unified asset set/,
-    '发布前必须校验两平台资产齐全且版本一致',
-  );
-  // 建 Release 的动作只能出现在 publish 里
+  // 2026-10-17 决策：撤回"统一 publish job" —— 一个平台挂不该拖住另一个平台出货。
+  // 代价是可能出现只含单平台的 release（v0.4.7 那种），补救 = Actions 一键 Re-run failed jobs。
+  // 因此这里锁的是"各自独立"：每个 job 自己发、只发自己平台的文件、只认自己的 feed。
+  assert.ok(!/\n {2}publish:\n/.test(wf), '不再有统一 publish job');
+  assert.ok(!/download-artifact/.test(wf), '分开走：不该有跨平台 artifact 依赖');
   for (const [name, block] of byName) {
-    const hasRelease = /softprops\/action-gh-release/.test(block);
-    assert.equal(
-      hasRelease,
-      name === 'publish',
-      `建 Release 的动作只允许在 publish job（${name} ${hasRelease ? '有' : '没有'}）`,
+    const publishes = (block.match(/softprops\/action-gh-release/g) ?? []).length;
+    assert.equal(publishes, 1, `${name} 应有且只有一个 Publish 步骤（实际 ${publishes}）`);
+    assert.match(
+      block,
+      /if: startsWith\(github\.ref, 'refs\/tags\/'\)/,
+      `${name} 的发布步骤只能在 tag 上触发（手动触发只出 artifact）`,
     );
   }
-  // build job 只产 artifact
-  for (const name of ['build-macos-dmg', 'build-windows']) {
-    assert.ok(/actions\/upload-artifact/.test(String(byName.get(name))), `${name} 应产出 artifact`);
-  }
+  // 各平台只发自己的文件：mac 带 DMG/ZIP/latest-mac.yml，win 带 exe/zip/latest.yml
+  const mac = String(byName.get('build-macos-dmg'));
+  const win = String(byName.get('build-windows'));
+  assert.match(mac, /apps\/desktop\/release\/latest-mac\.yml/);
+  assert.match(mac, /apps\/desktop\/release\/\*\.dmg/);
+  assert.match(win, /apps\/desktop\/release\/latest\.yml/);
+  assert.match(win, /apps\/desktop\/release\/\*\.exe/);
+  // cask 只跟 mac（DMG 的 sha256 是它的输入）
+  assert.match(mac, /Sync Homebrew cask/);
+  assert.ok(!/Sync Homebrew cask/.test(win), 'cask 不该出现在 windows job');
 });
 
 test('CI：latest-mac.yml / latest.yml 必须跟着上传（差一个等于没更新）', () => {

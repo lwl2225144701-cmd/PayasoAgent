@@ -77,9 +77,24 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > 教训：**workflow 这种"没有类型检查的关键脚本"，改完必须用能识别无 name 步骤的
 > 方式核对**（这次就是靠"每 job 首步必须 checkout"的套件锁把它钉住）。
 >
-> **① 统一发布**（用户要求：Windows 与 macOS 必须同一版本的完整发布，不接受
+> **① 统一发布 → 当天撤回，改回"各自发布"**（用户决策，2026-10-17 晚）：原子发布
+> 的第一版（`publish` job `needs` 两个平台）确实能挡住"只有 Windows 的半成品"，
+> 但实测代价太高——v0.4.9 跑了两次都没出 Release（第一次我漏了 checkout 3 秒挂；
+> 第二次 6m40s 失败，且**成功那个平台的资产也一并被扣住看不见**），发布节奏被
+> 拖死。用户明确："何在一起这么难发布，那就分开"。
+> **现状 = 回滚到 v0.4.8 那个已验证的版本**（`git checkout f4e2c18 -- .github/workflows/release.yml`，
+> 与该版本逐字节一致）：两个 job **各自发布自己的平台资产**，互不依赖、互不阻塞；
+> 重试 = Actions 里 "Re-run failed jobs"。保留的改进：每平台自己的 feed 门禁
+> （解包目录用 glob）、`latest*.yml` 进上传清单、发布/tag 触发条件。
+> 明确接受的代价：**可能再次出现只含单平台的 release**（v0.4.7 那种）—— 分开走的
+> 必然结果，靠"重跑失败的那一半"收尾。
+> 契约锁（`tests/desktop-update.test.ts` 17 例）相应改成：**每个 job 第一步必须是
+> `actions/checkout`**（v0.4.9 首败的真因）、**每个 job 自己发、只发本平台文件、
+> 只认本平台 feed、不含跨平台 download-artifact**（分开走的定义）。
+>
+> **原始方案（未采用）**：Windows 与 macOS 同一版本的完整发布，不接受
 > "只有 Windows"的半成品 —— v0.4.7 就是这么来的）。`.github/workflows/release.yml`
-> 重组为三个 job：
+> 曾计划重组为三个 job（已撤回，保留作记录）：
 > - `build-macos-dmg` / `build-windows`：只**产出 artifact**（feed 门禁移回上传
 >   **之前**：这一版坏了连 artifact 都不产出），各自产出 `outputs.version`；
 > - `publish`：`needs: [build-macos-dmg, build-windows]` → 下载两边 artifact →
