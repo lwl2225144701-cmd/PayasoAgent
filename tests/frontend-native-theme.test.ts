@@ -306,6 +306,46 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
   assert.ok(!/shellPlatform/.test(mainTsx), '页面不该再依赖 data-shell-platform');
 });
 
+// ── 顶栏对齐：红绿灯 / 折叠按钮 / 标题 / 右侧控件同一行（v0.4.14）─────────────
+
+test('壳：macOS 注入红绿灯让位尺寸，不再给侧栏整条加 padding-top', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  // 真机反馈（用户发的参考图）：侧栏头部被 40px 的 padding-top 顶到红绿灯下面，
+  // 和右上角控件不在一条线上；改法是把"让位"交给页面（两个 CSS 变量），
+  // 头部与主内容顶栏同高，红绿灯 / 折叠按钮 / 标题 / 右侧控件同一基线。
+  assert.ok(/--sidebar-chrome-inset: 72px/.test(main), '要注入让位宽度（注入值错了会压住红绿灯）');
+  assert.ok(
+    /--sidebar-collapsed-width: 104px/.test(main),
+    '收起态宽度也要注入（要放得下红绿灯 + 展开按钮）',
+  );
+  assert.ok(
+    !/aside \{ box-sizing: border-box; padding-top: 40px; \}/.test(main),
+    '旧的整条 padding-top 让位必须去掉（否则又回到"头部在红绿灯下面"）',
+  );
+});
+
+test('页面：头部走壳注入的让位尺寸；收起后是展开按钮，不再只剩一个 logo', () => {
+  const css = fs.readFileSync(
+    path.join('web', 'src', 'components', 'Sidebar', 'Sidebar.module.css'),
+    'utf8',
+  );
+  assert.ok(/var\(--sidebar-chrome-inset, 0px\)/.test(css), '左内边距要走壳注入的变量');
+  assert.ok(
+    /width: var\(--sidebar-collapsed-width, 64px\)/.test(css),
+    '收起宽度走壳注入（浏览器里回退 64px）',
+  );
+  assert.ok(/height: var\(--topbar-height\)/.test(css), '头部与主内容顶栏同高（同一基线）');
+  const jsx = fs.readFileSync(
+    path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
+    'utf8',
+  );
+  const collapsedBtn = jsx.slice(jsx.indexOf('collapsedLogoBtn'));
+  assert.ok(
+    /PanelLeftIcon/.test(collapsedBtn.slice(0, 600)),
+    '收起态按钮要用展开图标（真机反馈：只剩 logo 时左上角突兀）',
+  );
+});
+
 async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;

@@ -20,15 +20,18 @@
 }
 
 .collapsed {
-  width: 64px;
+  width: var(--sidebar-collapsed-width, 64px);
 }
 
 .logoRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* 与主内容顶栏同高同基线（红绿灯 / 折叠按钮 / 标题 / 右侧控件同一行） */
+  height: var(--topbar-height);
   min-height: var(--topbar-height);
-  padding: 13px 15px 10px 17px;
+  /* 左侧给 macOS 红绿灯让位：壳注入 --sidebar-chrome-inset；浏览器里默认 16px */
+  padding: 0 12px 0 calc(16px + var(--sidebar-chrome-inset, 0px));
 }
 
 .brand {
@@ -57,7 +60,8 @@
 
 .collapsed .logoRow {
   justify-content: center;
-  padding: 13px 0;
+  /* 红绿灯仍占左上角：按钮排在它们右边（mac 下 72 + 4 = 76，栏宽 104 正好放下） */
+  padding: 0 0 0 calc(var(--sidebar-chrome-inset, 0px) + 4px);
 }
 
 .collapsed .newTaskWrap,
@@ -74,8 +78,8 @@
 }
 
 .collapsedLogoBtn {
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

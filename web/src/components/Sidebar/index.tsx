@@ -53,12 +53,9 @@ export function Sidebar({
             aria-label={t('shell.sidebar.expand')}
             onClick={onToggleCollapsed}
           >
-            <img
-              className={styles.logoImage}
-              src="/payaso-mark-light.png"
-              alt=""
-              draggable={false}
-            />
+            {/* 收起后不再只剩一个 logo（真机反馈"左上角突兀"）：给明确的展开按钮，
+                位置排在红绿灯右边，跟参考设计一致 */}
+            <PanelLeftIcon size={18} />
           </button>
         ) : (
           <>
