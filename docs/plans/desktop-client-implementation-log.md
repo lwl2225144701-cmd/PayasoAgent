@@ -80,6 +80,20 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 >
 > 注意（给还在 0.4.10/0.4.11 的机器）：旧版本的弹窗逻辑改不了，装 0.4.13 这次仍会
 > 弹一次（含可能弹一次「后端意外退出」，v0.4.12 已修）；装完之后才是静默流程。
+>
+> **v0.4.13 产物现状（2026-10-17 夜半，run #27，6m36s，两平台都成功）**：tag
+> `v0.4.13` → `b2670b0`；七件资产齐全，feed 均 `version: 0.4.13`（mac zip
+> 227110988 B / dmg 220886805 B；Windows setup.exe 181081970 B）；cask 自动 bump
+> （bot 提交 `33c9ba4`，sha256 `627a04d2f23f…6d9a8db6`）。
+>
+> **发布产物本体复检（Range 抠包，没下 200MB）**：`app.asar` 1214772 B / 211 条目 /
+> 16 依赖（含 electron-updater）；`coordinator.js` **已无「发现新版本」文案**、
+> 有 `pendingVersion`/`downloadNow`；`main.js`/`preload.cjs` 的 ipc 桥都在；再把页面包
+> `app/web/dist/assets/index-Cea-aoj-.js`（558083 B）抠出来确认「新版本」「正在下载」
+> 文案与 `shell.update.*` key 都在 —— 发出去的壳和页面都是 v0.4.13 版。
+>
+> 已知未做：顶栏「红绿灯行」的重排（用户发的参考图那一块）还没动 —— 需要用户先确认
+> 具体要哪种（只对齐折叠按钮 / 折叠按钮挪到红绿灯同一行 / 连窗口材质一起）。
 
 > 2026-10-17 深夜 补：**v0.4.12 —— 装更新时的误报弹窗 + 下载进度可见**（两条真机反馈）。
 >
