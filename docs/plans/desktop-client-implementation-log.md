@@ -58,6 +58,25 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-17 夜 补：**v0.4.11 —— 后台检查更新失败不该弹窗**（v0.4.10 真机截图）。
+>
+> **现象**：用户装好 v0.4.10 正常用（顺带证明「装完起不来」已修），但合盖唤醒后弹了一个
+> 原生对话框：「检查更新失败：网络不可用 / `net::ERR_NETWORK_IO_SUSPENDED`」。
+>
+> **是不是我们弹的？是。** 链路：`powerMonitor.on('resume')` / 窗口 focus / 定时器都会
+> 触发**后台**检查（`runCheck(false)`）→ 唤醒瞬间 macOS 挂起网络 I/O → electron-updater
+> 抛 `net::ERR_NETWORK_IO_SUSPENDED` → 旧代码 `catch` 里**无条件** `reportFailure`
+> （内部就是 `dialog.showMessageBox`）→ 用户什么都没点却被弹窗。
+>
+> **修法（两处）**：
+> 1. `runCheck` 的 catch 分叉：`interactive`（菜单手点）才 `reportFailure`；后台只
+>    `log(...)` 并走原有指数退避重试 —— **后台失败永远不打扰用户**；
+> 2. 唤醒补查推迟 `RESUME_CHECK_DELAY_MS = 5_000`（唤醒瞬间查必失败），重复唤醒只留
+>    一个待跑，`dispose` 清定时器。
+>
+> 契约锁 1 例（`tests/desktop-update.test.ts` 19 → 20）：后台失败不许走 reportFailure、
+> 唤醒补查必须有延迟常量与定时器清理；`isNetworkFailure` 补上这条真机错误串。
+
 > 2026-10-17 晚 补：**v0.4.8 / v0.4.9 装完起不来 —— 发布包漏打运行时依赖**（用户实装复现）。
 >
 > **现象**：安装 v0.4.9 后一启动就弹 Electron 主进程错误框：

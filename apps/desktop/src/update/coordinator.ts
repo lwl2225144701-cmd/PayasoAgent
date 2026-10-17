@@ -29,6 +29,12 @@ const MAX_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const CHECK_JITTER_RATIO = 0.2;
 /** 启动后首次检查延迟：别跟后端启动、首屏加载抢资源。 */
 const FIRST_CHECK_DELAY_MS = 20 * 1000;
+/**
+ * 唤醒后补查的延迟。真机证据（v0.4.10）：合盖唤醒瞬间 macOS 的网络 I/O 还挂着，
+ * electron-updater 直接报 `net::ERR_NETWORK_IO_SUSPENDED` —— 立刻查必失败，
+ * 等几秒让网络回来再查才有意义。
+ */
+const RESUME_CHECK_DELAY_MS = 5_000;
 /** 查"有没有在跑的任务"的超时（DSH 同款 10s）：查不出来就放弃本次安装。 */
 const TASKS_TIMEOUT_MS = 10_000;
 
@@ -81,6 +87,7 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
   const log = options.log ?? ((message: string) => console.log(`[updates] ${message}`));
   let timer: NodeJS.Timeout | null = null;
   let firstTimer: NodeJS.Timeout | null = null;
+  let resumeTimer: NodeJS.Timeout | null = null;
   let failures = 0;
   let disposed = false;
   /** 单飞：检查只允许一条在飞，重复调用 join 同一条（DSH 同款）。 */
@@ -250,7 +257,11 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
         await download(version);
       } catch (error) {
         failures += 1;
-        await reportFailure('check', error);
+        // 后台检查失败**不弹窗**：用户没点任何东西，网络抖动 / 合盖唤醒都会失败，
+        // 每次都弹「检查更新失败」纯属骚扰（v0.4.10 真机反馈：唤醒后弹
+        // net::ERR_NETWORK_IO_SUSPENDED）。只有菜单手点的检查才需要给用户回话。
+        if (interactive) await reportFailure('check', error);
+        else log(`check failed (auto, 退避后重试): ${errorText(error)}`);
       } finally {
         checking = null;
       }
@@ -300,7 +311,15 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
         focusHandler = () => void runCheck(false);
         win.on('focus', focusHandler);
       }
-      resumeHandler = () => void runCheck(false);
+      resumeHandler = () => {
+        // 唤醒瞬间查必失败（网络 I/O 还挂着）→ 推迟几秒，且只留一个待跑
+        if (resumeTimer) clearTimeout(resumeTimer);
+        resumeTimer = setTimeout(() => {
+          resumeTimer = null;
+          void runCheck(false);
+        }, RESUME_CHECK_DELAY_MS);
+        resumeTimer.unref?.();
+      };
       powerMonitor.on('resume', resumeHandler);
     },
 
@@ -308,8 +327,10 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
       disposed = true;
       if (timer) clearTimeout(timer);
       if (firstTimer) clearTimeout(firstTimer);
+      if (resumeTimer) clearTimeout(resumeTimer);
       timer = null;
       firstTimer = null;
+      resumeTimer = null;
       if (focusHandler) parent()?.off('focus', focusHandler);
       if (resumeHandler) powerMonitor.off('resume', resumeHandler);
       focusHandler = null;

@@ -109,6 +109,8 @@ test('isNetworkFailure：认网络类错误串，不冤枉别的', () => {
   assert.equal(isNetworkFailure('net::ERR_INTERNET_DISCONNECTED'), true);
   assert.equal(isNetworkFailure('getaddrinfo ENOTFOUND api.github.com'), true);
   assert.equal(isNetworkFailure('connect ETIMEDOUT 140.82.112.5:443'), true);
+  // 真机现场（v0.4.10）：合盖唤醒瞬间 macOS 挂起网络 I/O，updater 报这个
+  assert.equal(isNetworkFailure('net::ERR_NETWORK_IO_SUSPENDED'), true);
   assert.equal(isNetworkFailure('Error: sha512 mismatch'), false);
 });
 
@@ -200,6 +202,28 @@ test('main.ts：后端桥接现成端点 —— GET /runs + 优雅关停，后�
   assert.match(src, /updates\.startAutoCheck\(\)/);
   // 已经停过后端时退出别再 preventDefault（否则会拖住 quitAndInstall 的替换时机）
   assert.match(src, /if \(quitting \|\| backend === null\) return;/);
+});
+
+test('coordinator：后台检查失败不弹窗 + 唤醒补查要推迟', () => {
+  const src = shellSource(path.join('src', 'update', 'coordinator.ts'));
+  // 真机事故（v0.4.10，用户截图）：合盖唤醒后的自动检查必失败
+  // （net::ERR_NETWORK_IO_SUSPENDED），旧代码在 catch 里无条件 reportFailure →
+  // 用户什么都没点，却弹「检查更新失败：网络不可用」。后台检查必须只记日志。
+  assert.match(
+    src,
+    /if \(interactive\) await reportFailure\('check', error\);/,
+    'interactive 之外的失败不许走 reportFailure（那是弹窗）',
+  );
+  assert.match(src, /else log\(`check failed \(auto, 退避后重试\)/, '后台失败只留日志');
+  // 唤醒瞬间网络 I/O 还挂着：必须推迟几秒再查，否则每次都撞同一个错
+  assert.match(src, /const RESUME_CHECK_DELAY_MS = 5_000;/, '唤醒补查延迟常量');
+  assert.match(src, /resumeTimer = setTimeout\(\(\) => \{/, '唤醒后走延迟定时器');
+  assert.match(src, /if \(resumeTimer\) clearTimeout\(resumeTimer\)/, '重复唤醒只留一个待跑');
+  assert.match(
+    src,
+    /if \(resumeTimer\) clearTimeout\(resumeTimer\);\n\s+timer = null;/,
+    'dispose 要清掉唤醒定时器',
+  );
 });
 
 // ── 打包与 CI 契约（feed 没了 = 永远查不到更新）──────────────────────────
