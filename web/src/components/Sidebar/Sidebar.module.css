@@ -66,13 +66,6 @@
   background: var(--bg-hover);
 }
 
-/* 收起态：按钮排在红绿灯下面（红绿灯 16..68 占满顶部一行），窄栏 64 正好放得下 */
-.collapsed .collapseBtn {
-  top: calc(var(--sidebar-chrome-height, 0px) + 10px);
-  left: 16px;
-  right: auto;
-}
-
 .logoImage {
   width: 32px;
   height: 32px;

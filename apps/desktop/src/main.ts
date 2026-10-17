@@ -327,9 +327,11 @@ function createWindow(): void {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
       // 数值来历（别乱改）：trafficLightPosition = {x:16,y:18}，macOS 按钮 12px，
       // 中心 y = 24 → 28px 按钮的 top = 24 - 14 = 10（与红绿灯**同基线**）。
-      // 收起态：栏宽回落到页面默认 64，按钮改排到红绿灯**下面**（页面按本变量算 top）。
+      // 收起态（参考 DSH 真机截图）：展开按钮仍在红绿灯那一行、它们在 80..108，
+      // 所以栏宽 120（红绿灯到 68 + 12px 间隔 + 28 按钮 + 右边距 12）；页面把
+      // 收起态的底色/分割线/高光全去掉，视觉上只剩红绿灯 + 按钮，像"没有侧栏"。
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-height: 58px; } [data-sidebar-toggle] { top: 10px; }',
+        ':root { --sidebar-chrome-height: 58px; --sidebar-collapsed-width: 120px; } [data-sidebar-toggle] { top: 10px; }',
       );
     });
   } else {

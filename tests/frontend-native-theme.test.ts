@@ -336,7 +336,7 @@ test('页面：品牌行在 chrome 行下面；收起后只剩展开按钮', () 
   );
   assert.ok(
     /width: var\(--sidebar-collapsed-width, 64px\)/.test(css),
-    '收起宽度回退 64px（真·收起：只剩左上角控件）',
+    '收起宽度走壳注入（mac 120：红绿灯 + 同一行的展开按钮；浏览器回退 64）',
   );
   assert.ok(/\.collapsed \.brandRow \{\s*display: none;/.test(css), '收起后品牌行隐藏');
   // 真机反馈：「收起来的时候，这个分割线可以去掉吗」+「真的收起来的感觉」：
@@ -344,12 +344,11 @@ test('页面：品牌行在 chrome 行下面；收起后只剩展开按钮', () 
   assert.ok(/\.collapsed \{[^}]*background: none;/.test(css), '收起后不再有面板底色');
   assert.ok(/\.collapsed \{[^}]*border-right-color: transparent;/.test(css), '收起后不画右分割线');
   assert.ok(/\.collapsed \{[^}]*box-shadow: none;/.test(css), '收起后去掉 inset 高光内线');
-  // 收起后按钮排到红绿灯下面（红绿灯占 16..68，窄栏 64 放不下同一行）
+  // 收起态参考 DSH 真机截图：展开按钮仍在红绿灯那一行（右 12 → 80..108），
+  // 不许再单独改按钮位置（否则会掉到红绿灯下面）
   assert.ok(
-    /\.collapsed \.collapseBtn \{[^}]*top: calc\(var\(--sidebar-chrome-height, 0px\) \+ 10px\)/.test(
-      css,
-    ),
-    '收起后展开按钮排在红绿灯下面',
+    !/\.collapsed \.collapseBtn \{/.test(css),
+    '收起态不应单独改按钮位置（要留在 chrome 行）',
   );
   const jsx = fs.readFileSync(
     path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
