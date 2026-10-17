@@ -66,10 +66,13 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 >
 > 修法（侧栏头部拆两段）：
 > - **chrome 行**：高度 = 壳注入的 `--sidebar-chrome-height: 58px`，里面只有绝对定位的
->   折叠按钮（`[data-sidebar-toggle] { top: 15px }`，壳注入 → 与红绿灯同一基线，58/2-14）；
+>   折叠按钮（`[data-sidebar-toggle] { top: 10px }`：红绿灯 `trafficLightPosition`
+>   y=18 + 12px 按钮 → 中心 y=24，28px 按钮的 top = 24-14 = 10，**不是 58/2-14**）；
 > - **品牌行**：🦌 Payaso 在下面（`padding-top: var(--sidebar-chrome-height)`）；
-> - 收起态：品牌行隐藏，栏宽 `--sidebar-collapsed-width: 112px`（红绿灯 16..70 +
->   28px 按钮 + 右边距），展开按钮仍在红绿灯右边；
+> - 收起态：品牌行隐藏，栏宽 `--sidebar-collapsed-width: 120px` —— 红绿灯占
+>   16..68，按钮 28 宽 + 右边距 12 → 按钮落在 80..108，与红绿灯之间留 12px 间隔
+>   （真机反馈：「没对齐、间隔没调整好」= 旧值 112/15 让按钮比红绿灯低 5px、且
+>   距绿点只剩 4px）；
 > - 浏览器形态没有注入 → chrome 行高 0、品牌行贴顶、按钮落在品牌行右上角。
 >
 > 验证：契约锁同步改成新布局（frontend-native-theme 17 例全绿）；headless Chrome 用与
