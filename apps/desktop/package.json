@@ -11,10 +11,11 @@
     "setup": "node scripts/fetch-node.mjs && node scripts/make-icon.mjs && node scripts/stage-backend.mjs",
     "build": "tsc -p .",
     "dev": "npm run build && electron .",
-    "dist:mac": "npm run build && electron-builder --mac --dir --publish never",
-    "dist:dmg": "npm run build && electron-builder --mac dmg zip --publish never",
-    "dist:win": "npm run build && electron-builder --win nsis zip --publish never",
-    "typecheck": "tsc -p . --noEmit"
+    "dist:mac": "npm run build && electron-builder --mac --dir --publish never && node scripts/verify-package.mjs",
+    "dist:dmg": "npm run build && electron-builder --mac dmg zip --publish never && node scripts/verify-package.mjs --require-feed",
+    "dist:win": "npm run build && electron-builder --win nsis zip --publish never && node scripts/verify-package.mjs --require-feed",
+    "typecheck": "tsc -p . --noEmit",
+    "verify:package": "node scripts/verify-package.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

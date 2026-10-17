@@ -58,6 +58,48 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-17 晚 补：**v0.4.8 / v0.4.9 装完起不来 —— 发布包漏打运行时依赖**（用户实装复现）。
+>
+> **现象**：安装 v0.4.9 后一启动就弹 Electron 主进程错误框：
+> `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'electron-updater' imported from`
+> `/Applications/PayasoAgent.app/Contents/Resources/app.asar/dist/update/coordinator.js`，
+> 点「好」壳直接退出。
+>
+> **根因**（我引入的；v0.4.8 起就有）：`electron-builder.yml` 的 `files:` 里有一条
+> `- "!node_modules/**"`。`files` 里的 `!` 模式会被 electron-builder 当作**生产依赖也
+> 一并排除**的规则交给 node_modules 复制器（`app-builder-lib/out/fileMatcher.js`
+> `getNodeModuleFileMatcher` 只收 exclude；devDependencies 本来就不会进包），于是
+> `electron-updater` 及其 15 个依赖（fs-extra / builder-util-runtime / js-yaml / semver…）
+> 全被排除。实测坏包 `app.asar`：**6 个条目、0 个 node_modules**；而 `main.js` 静态
+> `import` 了协调器 → 模块加载期就抛，连窗口都到不了。**v0.4.8 同配置、同样坏**，
+> 只是之前没人在真机上装过。
+>
+> **修法**（两道防线，铁律：**打包成功 ≠ 能启动**）：
+> 1. 删掉那条排除（`files` 只留 `dist/**/*` + `!**/*.map`）—— 包内实测 **16 个依赖**，
+>    `app.asar` 从 0.04 MB → 1.15 MB；
+> 2. 新增 `apps/desktop/scripts/verify-package.mjs`：**按产物体检**而不是按配置猜 ——
+>    ① `dist/` 每个文件都在 asar 里；② `dist/` 里所有裸 import（含 `electron-updater`）
+>    在 asar 的 `node_modules` 里真实存在；③ `--require-feed` 时 `app-update.yml` 必须在
+>    且 provider 是 github。三个打包入口（`dist:mac` / `dist:dmg` / `dist:win`）都串上它，
+>    dmg/win 带 `--require-feed` —— **CI 两个平台在打包后就卡，坏包既不会上传也不会发 Release**。
+>
+> **验证证据（本地实测，非推测）**：
+> - 修好的包：`verify-package.mjs` 通过（16 个依赖，含 electron-updater）；
+> - 用户装的坏包：同一脚本对着 `/Applications/PayasoAgent.app` 跑，**精确报红**
+>   「asar 里缺少依赖 electron-updater（被 dist/update/coordinator.js 引用）」；
+> - 用 Electron 自己的二进制在 asar 内解析：
+>   `createRequire('…/app.asar/dist/main.js').resolve('electron-updater')` →
+>   命中包内 `node_modules/electron-updater/out/main.js`；
+> - 真跑打包好的 .app（`PORT=4599` 隔离）：主进程走到 Chromium 初始化，
+>   **JS / 模块错误 0 条**（`grep ERR_MODULE_NOT_FOUND` = 0）；再往下被本机沙箱挡住
+>   （Chromium 自带沙箱 `sandbox initialization failed: Operation not permitted`，与包无关）。
+> - 契约锁 2 例（`tests/desktop-update.test.ts` 17 → 19）：**`files` 段不得排除
+>   node_modules**、**每个 dist 入口必须串 verify-package**（并锁 electron-updater 在
+>   `dependencies` 而不是 devDependencies）。
+>
+> **给用户的动作**：v0.4.8 / v0.4.9 无法自更新（壳起不来），只能重新下载安装；
+> 修复版 = `v0.4.10`。坏版本随后从 Releases 清掉（同 v0.4.7 的手法：删 tag）。
+>
 > 2026-10-17 补：**统一发布（原子发布）＋ Windows「打开终端」真机 bug**。
 >
 > **③ 事故与修复（v0.4.9 第一次跑）：两个 job 3~4 秒就失败**，run 总时长 12s，

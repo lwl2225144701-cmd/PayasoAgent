@@ -15,12 +15,18 @@ directories:
   output: release
   buildResources: build
 
-# 只放壳自己的编译产物（main.js + preload.cjs + sourcemap）
+# 放壳自己的编译产物（main.js + preload.cjs）+ 生产依赖。
 # preload.cjs 是渲染进程唯一的能力桥（原生目录选择），必须在 asar 里。
+#
+# ⚠️ 千万别在这里写 `!node_modules/**`：`files` 里的 `!...` 会被 electron-builder
+# 当成「连生产依赖一起排除」的规则（fileMatcher.js getNodeModuleFileMatcher 只收
+# exclude 模式；devDependencies 本来就不可能进包，无需手动排）。v0.4.8 / v0.4.9
+# 就是踩了这个坑：electron-updater 及其 15 个依赖全被排掉，用户装完一启动
+# main.js 静态 import 直接抛 ERR_MODULE_NOT_FOUND，整个壳起不来。
+# 打包后用 scripts/verify-package.mjs 兜底（CI 两个平台都会跑）。
 files:
   - dist/**/*
   - "!**/*.map"
-  - "!node_modules/**"
 
 extraResources:
   # 后端整体（scripts/stage-backend.mjs 生成：dist/ + web/dist/ + 生产 node_modules/）

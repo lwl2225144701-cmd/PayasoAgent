@@ -220,6 +220,61 @@ test('electron-builder：GitHub provider + updaterCacheDirName', () => {
   assert.ok(!/^publish: null$/m.test(yml), '旧的 publish: null 必须清掉');
 });
 
+// ── 打包产物自检：运行时依赖必须真的进包（v0.4.8 / v0.4.9 装完起不来）────────
+//
+// 真事故（2026-10-17 用户实装复现）：electron-builder.yml 的 files 里写了
+// `!node_modules/**`。`files` 里的 `!` 模式会被 electron-builder 当成「连生产依赖
+// 一起排除」的规则（fileMatcher.js getNodeModuleFileMatcher 只收 exclude），
+// 而 devDependencies 本来就不会进包。结果 electron-updater 及其 15 个依赖全被排掉，
+// main.js 静态 import 抛 ERR_MODULE_NOT_FOUND —— 打包成功、上传成功、用户一启动整个壳崩。
+// 现在两道锁：配置层不排 node_modules + 打包后 verify-package.mjs 按产物实测。
+
+test('打包配置：files 不得排除 node_modules（会把生产依赖连坐排掉）', () => {
+  const yml = shellSource('electron-builder.yml');
+  const lines = yml.split('\n');
+  const start = lines.findIndex((line) => line.trim() === 'files:');
+  assert.ok(start >= 0, 'electron-builder.yml 里找不到 files: 段');
+  const patterns: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const match = /^\s+-\s+(.+)$/.exec(line);
+    if (!match) break;
+    patterns.push(match[1].trim().replace(/^['"]|['"]$/g, ''));
+  }
+  assert.ok(patterns.length > 0, 'files: 段解析为空');
+  const excludes = patterns.filter((p) => p.startsWith('!') && p.includes('node_modules'));
+  assert.deepEqual(
+    excludes,
+    [],
+    `files 里不能排除 node_modules（会把 electron-updater 这类生产依赖一起排掉）: ${excludes.join(', ')}`,
+  );
+});
+
+test('打包脚本：每个 dist 入口都要跑 verify-package 产物自检', () => {
+  const pkg = JSON.parse(shellSource('package.json')) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    scripts?: Record<string, string>;
+  };
+  // electron-updater 是运行时依赖：必须在 dependencies（devDependencies 不进包）
+  assert.ok(pkg.dependencies?.['electron-updater'], 'electron-updater 必须在 dependencies');
+  assert.equal(
+    pkg.devDependencies?.['electron-updater'],
+    undefined,
+    'electron-updater 不能在 devDependencies',
+  );
+
+  const scripts = pkg.scripts ?? {};
+  assert.equal(scripts['verify:package'], 'node scripts/verify-package.mjs');
+  assert.ok(
+    fs.existsSync(path.join('apps', 'desktop', 'scripts', 'verify-package.mjs')),
+    'scripts/verify-package.mjs 不存在',
+  );
+  assert.match(String(scripts['dist:mac']), /verify-package\.mjs/);
+  // dmg / win 会出 feed：自检要把 app-update.yml 也一起卡住
+  assert.match(String(scripts['dist:dmg']), /verify-package\.mjs --require-feed/);
+  assert.match(String(scripts['dist:win']), /verify-package\.mjs --require-feed/);
+});
+
 test('release.yml：每个 job 第一步必须是 checkout（漏了 setup-node 读不到 .nvmrc）', () => {
   const wf = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
   // 真事故：2026-10-17 重组 workflow 时，两个 build job 里那条没有 `- name:` 的
