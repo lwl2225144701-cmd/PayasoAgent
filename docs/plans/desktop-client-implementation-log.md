@@ -60,6 +60,23 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 
 > 2026-10-17 补：**统一发布（原子发布）＋ Windows「打开终端」真机 bug**。
 >
+> **③ 事故与修复（v0.4.9 第一次跑）：两个 job 3~4 秒就失败**，run 总时长 12s，
+> 两个 job 的注解都是
+> `The specified node version file at …/.nvmrc does not exist`。
+> 一度以为是 `.nvmrc` 被删了 —— 不是：远端 `raw.githubusercontent.com/…/v0.4.9/.nvmrc`
+> 返回 200、`HEAD` 树里也在。真因是**我上面 ① 重组 workflow 的副作用**：我用"按
+> 步骤名重建"的方式生成新文件，而两个 build job 的第一条是**没有 `- name:` 的**
+> `- uses: actions/checkout@v4`（`publish` 里那条是我手写的所以留下了）—— 在没有
+> 源码的工作区里 `setup-node` 读 `node-version-file` 自然失败。
+> 修法：把 checkout 补回两个 job（`2018785`），并加两道契约锁（`tests/desktop-update.test.ts`
+> 现在 17 例）：**每个 job 第一步必须是 `actions/checkout`**；**建 Release 的动作只
+> 允许出现在 `publish` job，且其 `needs` 必须同时依赖两个平台**。
+> 处理方式：`v0.4.9` tag 重新指向修复提交（`git push origin --delete v0.4.9` +
+> `git tag -f v0.4.9 2018785` + 推）重新触发流水线；此时 v0.4.9 尚无任何 Release，
+> 所以不存在需要清理的残留。
+> 教训：**workflow 这种"没有类型检查的关键脚本"，改完必须用能识别无 name 步骤的
+> 方式核对**（这次就是靠"每 job 首步必须 checkout"的套件锁把它钉住）。
+>
 > **① 统一发布**（用户要求：Windows 与 macOS 必须同一版本的完整发布，不接受
 > "只有 Windows"的半成品 —— v0.4.7 就是这么来的）。`.github/workflows/release.yml`
 > 重组为三个 job：
