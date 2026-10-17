@@ -58,6 +58,41 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 产物现状（2026-10-16，**v0.4.8 已发布**）：tag `v0.4.8` → `b16604d`，**六件齐全
+> 且 feed 在 Release 里**（`curl -sIL`）：mac `arm64.dmg` 210.4 MiB（220579607 B）
+> + `arm64-mac.zip` 216.3 MiB（226847447 B）；Windows `setup.exe` 172.5 MiB
+> （180881230 B）+ `x64.zip` 234.6 MiB（246028604 B）；**`latest-mac.yml` 517 B +
+> `latest.yml` 351 B**。cask 自动 bump 到 0.4.8（bot 提交 `54a371a`），sha256
+> `ca4aa55bbd50…cf4`（与 DMG 一致）→ mac job 连 cask 步骤都跑完了。
+>
+> feed 内容（真产物，非推测）：
+> ```yaml
+> # latest-mac.yml（mac：zip 与 dmg 两条都在，path 指 zip —— 更新走 zip）
+> version: 0.4.8
+> files: [ {url: PayasoAgent-0.4.8-arm64-mac.zip, sha512, size: 226847447},
+>          {url: PayasoAgent-0.4.8-arm64.dmg,      sha512, size: 220579607} ]
+> path: PayasoAgent-0.4.8-arm64-mac.zip
+> # latest.yml（Windows：NSIS 安装器；无 blockMapSize 属正常 —— 那是 web 安装器字段，
+> # 缺它只是退化成整包下载）
+> version: 0.4.8
+> files: [ {url: PayasoAgent-0.4.8-setup.exe, sha512, size: 180881230} ]
+> path: PayasoAgent-0.4.8-setup.exe
+> ```
+>
+> 与 v0.4.7 的关系：**v0.4.7 是半成品**（见下），本版是它的修复重发。
+>
+> 产物现状（2026-10-16，**v0.4.7 半成品：只有 Windows**）：tag `v0.4.7` → `b0e87c7`。
+> Windows 侧完好且**带 feed**：`setup.exe` 172.5 MiB（180880879 B）+ `x64.zip`
+> 234.6 MiB（246028613 B）+ `latest.yml` 351 B；**mac 侧一小时后仍无任何资产**，
+> cask 因此停在 0.4.6（brew 没被指向坏版本，这点是设计使然：cask 步骤在 mac job 里、
+> 排在门禁之后）。判断：mac job 挂在**打包阶段**（DMG 目标；本机复现过那个 DMG
+> 步骤失败：`hdiutil: create failed - 操作不被允许`，本机沙箱不给 hdiutil，CI 上是
+> 同类依赖的抖动），而我把 feed 门禁放在「上传前」，于是"打包挂了"被放大成"一个
+> 资产都没有"。读不到 CI 日志（GitHub API 对本出口 IP 限流 403、机器上无 `gh`；
+> main 上 `ci.yml` 是 passing，故 tsc/biome/test:all 不是原因）。处置：门禁挪到发布
+> 之后 + 目录名 glob + 失败打印现场（`b16604d`）。**这个只含 Windows 的 release
+> 留不留等用户决定。**
+
 > ### 期 3 落地：检查更新 / 自更新（2026-10-16，v0.4.7）
 >
 > 方案见 [`auto-update-调研报告.md`](./auto-update-调研报告.md) §5；**链路 A 全做，
@@ -98,11 +133,12 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > **不是根级属性**（schema 直接拒），且即使放进 publish 也会被忽略 ——
 > appInfo 从包名派生（`@payaso/desktop` → `@payasodesktop-updater`）。已删配置 + 注释。
 >
-> 验证节奏（重要）：**自更新要两个版本才验得完** —— v0.4.7 自带 updater 与 feed，
-> 装它之后再发 v0.4.8，v0.4.7 才会弹"发现新版本"。v0.4.7 自己查只会得到"已是最新版"。
-> 真机验收点：菜单「检查更新…」→ 无更新提示 / 有更新 → 下载（任务栏进度）→
-> 安装确认（有任务时警告并列出会打断什么）→ 重启后版本号变化；未公证的 mac 包
-> 首次安装仍需"右键 → 打开"。
+> 验证节奏（重要）：**自更新要两个版本才验得完** —— v0.4.7 / v0.4.8 都自带 updater
+> 与 feed，装 0.4.7 再等 0.4.8 出来才看得到"发现新版本"（0.4.7 自己查只会说"已是最新版"）。
+> CI 侧已验完（v0.4.8 的六件产物 + 两个 feed 都在 Release 里，内容核对过：见下面
+> 产物现状）。**剩下的只有真机**：菜单「检查更新…」→ 无更新提示 / 有更新 → 下载
+> （任务栏进度）→ 安装确认（有任务时警告并列出会打断什么）→ 重启后版本号变化；
+> 未公证的 mac 包首次安装仍需"右键 → 打开"。
 >
 > 已知取舍：更新 UI 用原生对话框（DSH 是独立 HTML 窗口 + 强制更新全屏窗）；没有
 > 遥测/journal；`update-tasks: lock` 准入锁未做（确认到停后端只有几百毫秒）；
