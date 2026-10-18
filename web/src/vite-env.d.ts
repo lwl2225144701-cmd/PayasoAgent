@@ -21,6 +21,10 @@ interface PayasoDesktopBridge {
    * `dsh-desktop:native-theme-set` 做同一件事）。
    */
   setNativeTheme: (mode: 'light' | 'dark' | 'system', resolved: 'light' | 'dark') => void;
+  /** 订阅自更新状态（有新版本 / 下载中）；返回取消订阅。 */
+  onUpdateStatus: (listener: (status: unknown) => void) => () => void;
+  /** 点侧边栏「新版本」→ 让壳开始下载（安装确认仍走原生对话框）。 */
+  startUpdateDownload: () => void;
 }
 
 interface Window {

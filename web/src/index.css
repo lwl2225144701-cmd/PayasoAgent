@@ -32,9 +32,10 @@
   --font-size-xl: 22px;
   --font-size-xxl: 26px;
 
-  /* Layout */
-  --sidebar-width: 248px;
-  --topbar-height: 58px;
+  /* Layout —— 侧栏宽对齐 DSH 真机（量过：参考图侧栏右缘 278.25 CSS px）。
+     开关按钮挂在侧栏右端（right:12），栏宽不变按钮就落不到 DSH 那个位置。 */
+  --sidebar-width: 278px;
+  --topbar-height: 50px;
   --content-width: 820px;
 }
 

@@ -16,6 +16,31 @@
 
 ## 0. 当前进展（截至 2026-10-08）
 
+> **2026-10-18 补：更新安装无反馈修复（用户已确认推送与发包，版本 v0.4.16）**。
+> 已确认临时签名无法跨版本通过 Squirrel 校验，旧代码也遗漏安装器异步错误的后端恢复。
+> 本地补齐就绪状态、失败恢复、手动检查反馈，以及临时签名 Mac 的手动更新包入口。
+> 证据和验证范围见 [故障排查记录](desktop-update-故障排查-20261018.md)。
+
+> **2026-10-18 修订：顶行对齐与四处面板开关统一（已随 v0.4.15 发布）**。
+>
+> 本段取代下方 v0.4.14～v0.4.16 对顶行尺寸的旧计算，历史记录保留供追溯。
+> 真机 Electron 的 2x 截图里，原生红绿灯直径为 28px，即 14 CSS px；旧记录按 12px
+> 计算位置，导致原生按钮与页面中心线仍有偏差。参考客户端顶行约 50 CSS px，现统一：
+>
+> - 顶行 50px、中心 y=25；原生按钮 y=50/2−7=18；壳注入行高变量，页面据此居中，
+>   移除壳里与页面竞争的按钮 top 覆盖规则。
+> - 主区与预览头部固定同高，分隔线改内阴影，避免边框占高造成约 1px 的中心/底边偏差。
+> - 左侧展开/收起、右侧打开/关闭共用 `PanelToggleButton`：点击区域 28×28、SVG 17×17，
+>   实际字形约 14×14；补齐之前遗漏的 PreviewDock 关闭入口，预览全屏按钮同步尺寸。
+> - 收起态移除边框本体，布局实测宽度为 0；预览覆盖整窗时标题让开红绿灯，并可拖动窗口。
+>   Windows 的预览头部同步接入窗口按钮让位规则（本次未做 Windows 真机验证）。
+>
+> 本地验证：隔离数据目录、4600 端口，无模型调用；真实 Electron 检查展开/收起、预览
+> 打开/关闭及全屏/还原，并保存截图。浏览器实测四个入口点击区域和 SVG 大小一致，
+> 中心均为 y=25，主区/预览头部均高 50；另检查 1000px 窗口及 900px 覆盖临界点。
+> 130 个确定性套件全绿（串行 90.8s），根工程与 desktop 类型检查通过，前端生产构建
+> 通过，Biome 0 error（原有 warnings 保留）。修复提交 `bcd36a5` 已随 v0.4.15 发布。
+
 **一句话**：**全链路收官** —— GUI 真机验证通过、退出零残留、DMG 发版链路自 v0.2.2 起稳定
 出包（定制安装窗 + ad-hoc 签名）；剩下的是锦上添花（见 ②、③）。
 
@@ -58,6 +83,391 @@ NSIS + zip **已落地**，见 §10）、Linux、下载门面页
 open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 ```
 
+> 2026-10-18 凌晨 再补：**v0.4.15 —— 左上角改成 DSH 参考排法：折叠按钮在红绿灯那一行，品牌行在它下面**。
+>
+> 真机反馈（用户发 DSH 截图「参考 这样的设计」）：v0.4.14 把品牌和折叠按钮都排进了
+> 红绿灯那一行，但参考图里那一行**只有**折叠/展开按钮，品牌（wordmark）是在红绿灯
+> **下面**单独一行。
+>
+> 修法（侧栏头部拆两段）：
+> - **chrome 行**：高度 = 壳注入的 `--sidebar-chrome-height: 58px`，里面只有绝对定位的
+>   折叠按钮（`[data-sidebar-toggle] { top: 10px }`：红绿灯 `trafficLightPosition`
+>   y=18 + 12px 按钮 → 中心 y=24，28px 按钮的 top = 24-14 = 10，**不是 58/2-14**）；
+> - **品牌行**：🦌 Payaso 在下面（`padding-top: var(--sidebar-chrome-height)`）；
+> - 收起态：品牌行隐藏，栏宽 `--sidebar-collapsed-width: 120px` —— 红绿灯占
+>   16..68，按钮 28 宽 + 右边距 12 → 按钮落在 80..108，与红绿灯之间留 12px 间隔
+>   （真机反馈：「没对齐、间隔没调整好」= 旧值 112/15 让按钮比红绿灯低 5px、且
+>   距绿点只剩 4px）；
+> - 浏览器形态没有注入 → chrome 行高 0、品牌行贴顶、按钮落在品牌行右上角。
+>
+> 验证：契约锁同步改成新布局（frontend-native-theme 17 例全绿）；headless Chrome 用与
+> 真实位置一致的假红绿灯渲染了**展开 / 收起 / 右侧面板打开**三张截图核对。
+>
+> 2026-10-18 凌晨 再补：**v0.4.16 —— 开关按钮位置 / 图标大小对齐 DSH 真机（第六轮）**。
+>
+> 真机反馈（用户同时发 DSH 展开态截图 + 我们的展开态截图）：「参照第一张图，调整我们
+> 当前项目的展开按钮的位置和两个展开按钮的图标大小」。
+>
+> 逐像素量测（2x，CSS = px/2）：
+> - DSH：侧栏右缘 **278.25**、开关字形 x **245..258.5**（离右缘 20）、左图标 **14×14**、
+>   右图标 **13×13**、标题 **307**；
+> - 我们（改前）：侧栏 248、字形 x 213.5..228、左 15×14、右 12×11、标题 291.5。
+> - **按钮差 30px 的根因是侧栏宽度**（两边按钮都是「离侧栏右缘 20px」），不是按钮自身
+>   偏移 —— 所以要把侧栏宽对齐过去，而不是把按钮拽到侧栏外面。
+>
+> 改动：
+> 1. `--sidebar-width: 248 → 278`（DSH 量到 278.25）→ 按钮 `right: 12` 不变，字形落到
+>    **244..257.5**（DSH 245..258.5，差 1px）；侧栏右缘 277.5（DSH 278.25）；
+> 2. 两个面板图标改**正方形外框**（`rect 18×16 → 18×18`，与 lucide panel-left/right 一致）
+>    并统一 `size 17` → 字形外框 = 17×20/24 ≈ **14×14**（改前左 15×14、右 12×11，一大一小）；
+> 3. 顶栏左内边距 `clamp(22px,3.4vw,48px) → clamp(22px,2.2vw,32px)` → 标题落在
+>    「侧栏右缘 + 28」（DSH 307）；
+> 4. **真 bug（用户截图里按钮比红绿灯中线高 6px 的根因）**：壳注入的
+>    `[data-sidebar-toggle]{top:15px}` 在真机没赢过页面的 `.collapseBtn{top:10px}` ——
+>    `insertCSS` 的样式表排在页面样式表**前面**时，同特异度（0,1,0）后者胜。加
+>    `!important`，并用「注入表放页面表前面」的无头渲染复核：两种级联顺序下按钮中心
+>    都在 28.25~28.75（绿灯中心 28.5）—— 同一条线。
+>
+> 顺手修：`icons.tsx` FolderIcon 的单节点 fragment 触发 biome `noUselessFragments`
+> （全仓唯一 error，`biome check .` 在此之前是 exit 1）。
+>
+> 验证：biome 0 / tsc 0 / desktop typecheck 0 / **130 套件全绿**；2x 无头渲染量测 ——
+> 展开态开关字形 244..257.5（14×14）、右侧开关 1243..1256.5（14×14）、收起态顶栏开关
+> 88..101.5（14×14），三者都与红绿灯中线同线。收起态仍是上一轮形态（侧栏宽 0 + 顶栏
+> 横跨整窗），按钮位置没动。
+>
+> **追加（同晚真机三轮反馈，最终形态）**：
+> ① 「收起来的时候，这个分割线可以去掉吗」→ 收起态去掉 `border-right` 与 inset 高光；
+> ② 「就是那种真的收起来的感觉」→ 收起态**无底色**（`background: none`，连
+> `backdrop-filter` 一起去掉），跟主内容连成一片 —— 视觉上看不出侧栏面板；
+> ③ 「额不对，你看 deepseek harness 这里」（DSH 收起态真机截图）→ 展开按钮**留在
+> 红绿灯那一行**（红绿灯 16..68，按钮右 12 → 80..108，留 12px 间隔），不许掉到红绿灯
+> 下面；收起栏宽 mac 注入 120（刚好放下红绿灯 + 同一行按钮），浏览器回退 64。
+> 几何量测（2x 渲染逐像素）：按钮图标 85.5..100、中心 y=23.75 ≈ 红绿灯中心 24；
+> 收起态**没有竖向边界线**，rail 与主内容背景色完全一致（16,20,27）。
+> 没照抄 DSH 的一点：DSH 收起态顶栏还有个 ⊕（新建任务）—— 我们的「新建任务」是
+> 侧栏里的大按钮，收起后不可用；需要的话再加一个图标按钮。
+
+> **追加（同晚第五轮反馈）**：「还是没做好」+ DSH 收起态真机截图 → 收起**不该是一块
+> 透明窄栏**，而是「侧栏整条消失、顶栏横跨整个窗口」：
+> - 侧栏收起 = `width: 0`（原来的 120px 透明窄栏删掉）；
+> - 展开按钮移交顶栏：`ShellBar` 新增 `leading` 插槽（收起时 App 把按钮塞进去），
+>   `collapsed` 时顶栏 `padding-left: calc(var(--sidebar-lights-inset) + 8px)`
+>   → 红绿灯 16..68 之后 80..108 是按钮，标题跟在后面；
+> - 顶栏的玻璃底/底边线从 x=0 一直铺到窗口右边（之前 0..120 那段没有玻璃 → 一条
+>   暗色的竖缝，看起来"没做好"）。
+> 2x 量测：顶栏左右背景色完全一致（16,20,27），x=0 起无竖向接缝；红绿灯中心 28.77、
+> 顶栏展开按钮中心 28.25（同一条线）。
+>
+> **追加（同晚第四轮反馈）**：「从左上角绿色圆圈的中间画一条线过去，刚好平分右边
+> 那些按钮」→ 红绿灯原来在 `trafficLightPosition y=18`（中心 24），比顶栏内容中线
+> （58/2 = 29）低 5px。改法：红绿灯下移 `y: 23`（中心 = 23+6 = 29），展开按钮 top
+> 跟着回到 15（29-14）。2x 逐像素复核：红绿灯中心 28.77 / 右上角按钮中心 28.25 /
+> 展开按钮中心 28.75 —— 同一条水平线（误差 <1px 是抗锯齿）。
+
+> 2026-10-18 凌晨 补：**v0.4.14 —— 顶栏按参考图对齐（红绿灯 / 折叠按钮 / 标题 / 右侧控件同一行）**。
+>
+> **真机反馈**（用户截图 + 参考图）：「这里没调整呢。参考这种设计」。
+>
+> 根因：侧栏头部靠**壳注入的 `padding-top: 40px`** 整条往下让开红绿灯 —— 于是头部
+> （logo + 折叠按钮）比红绿灯低 40px，和右上角那组控件不在一条线上；收起后只剩一个
+> logo（展开按钮不明显），左上角显得突兀。
+>
+> 修法（壳注入两个 CSS 变量，页面按它们排；**头部与主内容顶栏同高 58px**）：
+> - `--sidebar-chrome-inset: 72px`：头部左侧给红绿灯让位 → 红绿灯 / 折叠按钮 / 标题 /
+>   右侧控件落在同一基线；
+> - `--sidebar-collapsed-width: 104px`：收起态栏宽要放得下红绿灯 + 展开按钮；收起后
+>   显示明确的「展开侧栏」图标，不再只剩 logo；
+> - 浏览器里没有注入 → 走 `16px` / `64px` 默认值（无红绿灯，布局照旧）。
+>
+> **验证**：契约锁 2 例（frontend-native-theme 15 → 17）；headless Chrome 用**与真实
+> 位置一致**的假红绿灯（left 16 / top 18 / 12px 圆点，间距 21px）渲染了展开 + 收起
+> 两张截图核对（截图在 `.payaso/logs/layout-topbar-*.png`）。
+>
+> 已知代价：新壳配**旧页面**（版本不匹配那种边界）时旧页面没有新的顶部内边距，
+> logo 会贴到红绿灯上 —— 启动时的资源版本比对会弹提示，正常版本内不受影响。
+>
+> **CI flake 复盘（v0.4.14 两次发布跑都挂，才定位到）**：run #28 挂在
+> `shell-execution` 的「scratch 用完即删」（after=0 < before=1），run #29 换成了
+> `shell-executor` 的「真实 darwin 元数据」（`sandbox policy path does not exist:
+> /private/tmp/payaso-shell/s-…`）。**同一个类**：`test:all` 6 路并发跑套件，而大家
+> 共享同一个受管 scratch 根（`/private/tmp/payaso-shell`），一个套件的
+> 创建/chmod（回退链测试把主根 chmod 0500 再还原）/清理会扰动另一个套件的断言。
+> 处理：① 那条计数断言改成「跑完必须为空」+ 2s 容忍（不再拿 before 当基线）；
+> ② **CI 里 `PAYASO_TEST_CONCURRENCY=1` 串行跑**确定性套件（本地仍并发，跑一次
+> 21s；CI 宁慢勿红）。本地启动客户端自验（用户要求先本地看再发包）：
+> `npm run build:server && npm run build:web && PORT=4600 npm run desktop`
+> （先退出已安装的客户端，避免单实例锁；4600 避开被占用的 4500）。
+
+> 2026-10-17 夜半 补：**v0.4.13 —— 更新弹窗改成「静默亮条目」+ 条目挪到设置右边**。
+>
+> **真机反馈（用户截图，当前 v0.4.10）**：「这个弹窗不用这么频繁，搞得就是强制别人更新一下。
+> 检测到有新版本之后，设置右边显示新版本下载就好。」
+>
+> 根因：v0.4.12 之前「发现新版本 0.4.12（当前 0.4.10）」是 `dialog.showMessageBox`
+> 弹的，而自动检查在 **窗口 focus / 唤醒 / 定时器** 每次都触发 → 只要没装，每次 focus
+> 都重弹一次，观感就是逼人更新。
+>
+> 修法（两处）：
+> 1. **去掉「发现新版本」对话框**：检查命中新版本时只 `pendingVersion = version` +
+>    `emitStatus(available)`，等用户点侧边栏条目（`downloadNow`）才下载；
+>    「已是最新版」仍只在菜单手点检查时提示，安装确认（下载完成后问是否重启）保留一次。
+> 2. **条目位置按用户要求**：侧边栏底部「设置」同一行的**右侧**（设置位置不动），
+>    有新版本时显示 `⬇ 新版本`，下载中显示 `⬇ 42%`（百分比只出现一次）。
+>
+> 验证：契约锁 1 例（desktop-update 26 → 27：源码里不许再出现「发现新版本」文案、
+> `download(version)` 只允许出现在 `downloadNow` 里）；headless Chrome + mock 桥把
+> 两种状态渲染成截图核对；130 套件全绿、tsc/biome 干净。
+>
+> 注意（给还在 0.4.10/0.4.11 的机器）：旧版本的弹窗逻辑改不了，装 0.4.13 这次仍会
+> 弹一次（含可能弹一次「后端意外退出」，v0.4.12 已修）；装完之后才是静默流程。
+>
+> **v0.4.13 产物现状（2026-10-17 夜半，run #27，6m36s，两平台都成功）**：tag
+> `v0.4.13` → `b2670b0`；七件资产齐全，feed 均 `version: 0.4.13`（mac zip
+> 227110988 B / dmg 220886805 B；Windows setup.exe 181081970 B）；cask 自动 bump
+> （bot 提交 `33c9ba4`，sha256 `627a04d2f23f…6d9a8db6`）。
+>
+> **发布产物本体复检（Range 抠包，没下 200MB）**：`app.asar` 1214772 B / 211 条目 /
+> 16 依赖（含 electron-updater）；`coordinator.js` **已无「发现新版本」文案**、
+> 有 `pendingVersion`/`downloadNow`；`main.js`/`preload.cjs` 的 ipc 桥都在；再把页面包
+> `app/web/dist/assets/index-Cea-aoj-.js`（558083 B）抠出来确认「新版本」「正在下载」
+> 文案与 `shell.update.*` key 都在 —— 发出去的壳和页面都是 v0.4.13 版。
+>
+> 已知未做：顶栏「红绿灯行」的重排（用户发的参考图那一块）还没动 —— 需要用户先确认
+> 具体要哪种（只对齐折叠按钮 / 折叠按钮挪到红绿灯同一行 / 连窗口材质一起）。
+
+> 2026-10-17 深夜 补：**v0.4.12 —— 装更新时的误报弹窗 + 下载进度可见**（两条真机反馈）。
+>
+> **现象 1（误报）**：自更新装完后弹「PayasoAgent 后端意外退出 / code=0 signal=null」。
+> 根因：安装交接先 `stopBackend()`（后端收到 SIGTERM 优雅退出 → code 0 signal null），
+> 而 exit 处理器只看 `quitting` / `ownsBackend` —— 装更新时 `quitting` 还是 false，
+> 于是把**我们自己发起的关停**当成崩溃。修法：加 `stoppingIntentionally` 标记
+> （`stopBackend()` 置位、`startBackend()` 复位），exit 处理器跳过它；真崩溃仍然报。
+>
+> **现象 2（看不到进度）**：「点检查更新，下载的时候整个界面没有一个地方能看到下载进度」。
+> 修法：**页内**在侧边栏「设置」上方加一条更新条目（不是额外窗口）——
+> - 发现新版本：`⬇ 新版本 v0.4.12`（可点，点了开始下载）；
+> - 下载中：`⬇ 正在下载 v0.4.12 … 42%` + 底部细进度条（百分比按 download-progress 实时更新）；
+> - 链路：coordinator `onStatus` → `main.ts` `webContents.send('payaso:updateStatus')`
+>   → preload 桥 `onUpdateStatus` → `web/src/update-status.ts` 归一化（非法值退化成 idle，
+>   百分比夹紧）→ `UpdateStatusRow` 渲染；页面刷新后 `did-finish-load` 补发最后一条状态。
+> - 浏览器里没有桥 → 条目永不出现；老壳没有新方法 → 同样安静降级（桥方法全可选）。
+> - Dock / 任务栏进度条保留作兜底（条目所在的侧边栏折叠时也还有地方看）。
+> - 「发现新版本」的原生提示框**保留**（用户已知的行为不动），条目是常驻的第二入口：
+>   点了「稍后」之后仍可从侧边栏再下。
+>
+> 验证：契约锁 3 例（desktop-update 23 → 26：状态构造与夹紧、`isUpdateStatus`、页面侧
+> 归一化、coordinator 三个推送点、ipc 通道与 preload 对齐、侧边栏条目与 i18n key）；
+> **headless Chrome + mock 桥把 available / downloading 两种状态都渲染成截图核对过**
+> （不是猜样式）；本地打包自检 asar 211 条目 / 16 依赖通过；130 套件全绿、tsc/biome 干净。
+>
+> **v0.4.12 产物现状（2026-10-17 深夜，run #26，6m56s，两平台都成功）**：tag `v0.4.12`
+> → `6ed9028`；七件资产齐全，feed 均 `version: 0.4.12`（mac zip 227111128 B / dmg
+> 220887005 B）；cask 自动 bump（bot 提交 `e4e3f98`，sha256 `7af1b0ddbcab…20ec4b`）。
+>
+> **发布产物本体复检（HTTP Range，没下 200MB）**：从 Release 的 mac zip 里抠出
+> `app.asar`（1214994 B / **211 条目** / 16 依赖含 electron-updater）逐个核：
+> `coordinator.js` 有 `availableStatus/downloadingStatus/downloadNow`、`main.js` 有
+> `payaso:updateStatus` / `payaso:updateDownload` / `stoppingIntentionally`、
+> `preload.cjs` 两个桥方法都在；再把 extraResources 里的页面包
+> `app/web/dist/assets/index-D4Q89OFu.js`（558479 B）抠出来 —— 「新版本 v」「正在下载 v」
+> 文案与 `shell.update.downloading` key 都在。**发出去的壳和页面都是 v0.4.12 版**。
+>
+> 已知小限制（未挡发布）：页面**刷新**的那一瞬间，主进程在 `did-finish-load` 发的最后一条
+> 状态可能早于 React 订阅（`ipcRenderer.on` 未注册就丢了），表现为「available 条目刷一下
+> 消失」，下次检查/窗口 focus 会补回来。下版改成 preload 里缓存最后一条、订阅时补发。
+
+> 2026-10-17 夜 补：**v0.4.11 —— 后台检查更新失败不该弹窗**（v0.4.10 真机截图）。
+>
+> **现象**：用户装好 v0.4.10 正常用（顺带证明「装完起不来」已修），但合盖唤醒后弹了一个
+> 原生对话框：「检查更新失败：网络不可用 / `net::ERR_NETWORK_IO_SUSPENDED`」。
+>
+> **是不是我们弹的？是。** 链路：`powerMonitor.on('resume')` / 窗口 focus / 定时器都会
+> 触发**后台**检查（`runCheck(false)`）→ 唤醒瞬间 macOS 挂起网络 I/O → electron-updater
+> 抛 `net::ERR_NETWORK_IO_SUSPENDED` → 旧代码 `catch` 里**无条件** `reportFailure`
+> （内部就是 `dialog.showMessageBox`）→ 用户什么都没点却被弹窗。
+>
+> **修法（两处）**：
+> 1. `runCheck` 的 catch 分叉：`interactive`（菜单手点）才 `reportFailure`；后台只
+>    `log(...)` 并走原有指数退避重试 —— **后台失败永远不打扰用户**；
+> 2. 唤醒补查推迟 `RESUME_CHECK_DELAY_MS = 5_000`（唤醒瞬间查必失败），重复唤醒只留
+>    一个待跑，`dispose` 清定时器。
+>
+> 契约锁 1 例（`tests/desktop-update.test.ts` 19 → 20）：后台失败不许走 reportFailure、
+> 唤醒补查必须有延迟常量与定时器清理；`isNetworkFailure` 补上这条真机错误串。
+>
+> **v0.4.11 产物现状（2026-10-17 夜，run #25，6m28s，两平台都成功）**：tag
+> `v0.4.11` → `383b860`；七件资产齐全，feed 均 `version: 0.4.11`（mac zip
+> 227108063 B / dmg 220887640 B）；cask 自动 bump（bot 提交 `7e21b39`，
+> sha256 `fb3339254543…05621d`）。
+>
+> **发布包本体复检（这次没下 200MB）**：用 HTTP Range 从 Release 的 mac zip 里
+> 直接抠 `app.asar`（zip 是 store 不压缩 → 只取中央目录 + 目标条目）→ 按 asar 格式
+> 取出 `dist/update/coordinator.js`（12609 B）→ 三条都在：`RESUME_CHECK_DELAY_MS =
+> 5_000`、`check failed (auto`、`if (interactive) await reportFailure('check', error)`；
+> asar 仍是 210 条目 / 16 依赖（含 electron-updater）。**发出去的就是修复版代码**。
+>
+> **2026-10-18 更正**：ad-hoc 签名的跨版本安装校验已实测失败；当时的回滚只捕获同步
+> 异常，不能覆盖安装器异步错误。当前本地修复将这类 Mac 构建改为打开更新包手动替换，
+> 正式签名原生安装补齐异步失败恢复，详见 `desktop-update-故障排查-20261018.md`。
+
+> 2026-10-17 晚 补：**v0.4.8 / v0.4.9 装完起不来 —— 发布包漏打运行时依赖**（用户实装复现）。
+>
+> **现象**：安装 v0.4.9 后一启动就弹 Electron 主进程错误框：
+> `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'electron-updater' imported from`
+> `/Applications/PayasoAgent.app/Contents/Resources/app.asar/dist/update/coordinator.js`，
+> 点「好」壳直接退出。
+>
+> **根因**（我引入的；v0.4.8 起就有）：`electron-builder.yml` 的 `files:` 里有一条
+> `- "!node_modules/**"`。`files` 里的 `!` 模式会被 electron-builder 当作**生产依赖也
+> 一并排除**的规则交给 node_modules 复制器（`app-builder-lib/out/fileMatcher.js`
+> `getNodeModuleFileMatcher` 只收 exclude；devDependencies 本来就不会进包），于是
+> `electron-updater` 及其 15 个依赖（fs-extra / builder-util-runtime / js-yaml / semver…）
+> 全被排除。实测坏包 `app.asar`：**6 个条目、0 个 node_modules**；而 `main.js` 静态
+> `import` 了协调器 → 模块加载期就抛，连窗口都到不了。**v0.4.8 同配置、同样坏**，
+> 只是之前没人在真机上装过。
+>
+> **修法**（两道防线，铁律：**打包成功 ≠ 能启动**）：
+> 1. 删掉那条排除（`files` 只留 `dist/**/*` + `!**/*.map`）—— 包内实测 **16 个依赖**，
+>    `app.asar` 从 0.04 MB → 1.15 MB；
+> 2. 新增 `apps/desktop/scripts/verify-package.mjs`：**按产物体检**而不是按配置猜 ——
+>    ① `dist/` 每个文件都在 asar 里；② `dist/` 里所有裸 import（含 `electron-updater`）
+>    在 asar 的 `node_modules` 里真实存在；③ `--require-feed` 时 `app-update.yml` 必须在
+>    且 provider 是 github。三个打包入口（`dist:mac` / `dist:dmg` / `dist:win`）都串上它，
+>    dmg/win 带 `--require-feed` —— **CI 两个平台在打包后就卡，坏包既不会上传也不会发 Release**。
+>
+> **验证证据（本地实测，非推测）**：
+> - 修好的包：`verify-package.mjs` 通过（16 个依赖，含 electron-updater）；
+> - 用户装的坏包：同一脚本对着 `/Applications/PayasoAgent.app` 跑，**精确报红**
+>   「asar 里缺少依赖 electron-updater（被 dist/update/coordinator.js 引用）」；
+> - 用 Electron 自己的二进制在 asar 内解析：
+>   `createRequire('…/app.asar/dist/main.js').resolve('electron-updater')` →
+>   命中包内 `node_modules/electron-updater/out/main.js`；
+> - 真跑打包好的 .app（`PORT=4599` 隔离）：主进程走到 Chromium 初始化，
+>   **JS / 模块错误 0 条**（`grep ERR_MODULE_NOT_FOUND` = 0）；再往下被本机沙箱挡住
+>   （Chromium 自带沙箱 `sandbox initialization failed: Operation not permitted`，与包无关）。
+> - 契约锁 2 例（`tests/desktop-update.test.ts` 17 → 19）：**`files` 段不得排除
+>   node_modules**、**每个 dist 入口必须串 verify-package**（并锁 electron-updater 在
+>   `dependencies` 而不是 devDependencies）。
+>
+> **给用户的动作**：v0.4.8 / v0.4.9 无法自更新（壳起不来），只能重新下载安装；
+> 修复版 = `v0.4.10`。坏版本已从 Releases 清掉（同 v0.4.7 的手法：删 tag）。
+>
+> **v0.4.10 产物现状（2026-10-17 晚，run #24，6m23s，两平台都成功）**：
+> `git ls-remote` tag `v0.4.10` → `864b5d0`（在 main 上）；七件资产齐全（`curl -sIL`
+> 逐个验过）：mac `arm64.dmg` 220886941 B + `arm64-mac.zip` 227107663 B（blockmap
+> 236874 B）；Windows `setup.exe` 181078781 B + `x64.zip`；两个 feed 都是
+> `version: 0.4.10`。cask 自动 bump（bot 提交 `1ef3134`，sha256
+> `3c1818ac6ef5…fcf3bed783`）。
+>
+> **发布产物本体复检**（关键是这条 —— 不是只看"文件在不在"）：把 Release 里的 mac
+> zip 实下来（227107663 B，与 feed 的 size 一致）→ 解出 `Contents/Resources/app.asar`
+> （**1206610 B / 210 个条目**）→ `node scripts/verify-package.mjs --app …/PayasoAgent.app
+> --require-feed` → **通过**：16 个依赖含 electron-updater、`app-update.yml`
+> provider=github。Windows 侧同款门禁在 CI 里跑（`dist:win` 自带 `--require-feed`），
+> job 成功即已过 —— 两个平台都拿到了"发出去的包能加载依赖"的实证。
+>
+> 清坏版本复核：`git ls-remote --tags` 只剩 `v0.4.10`；`/releases/tag/v0.4.8`、
+> `/releases/tag/v0.4.9` 均 **404**；`v0.4.10` 页面与 DMG 仍 200。
+>
+> 2026-10-17 补：**统一发布（原子发布）＋ Windows「打开终端」真机 bug**。
+>
+> **③ 事故与修复（v0.4.9 第一次跑）：两个 job 3~4 秒就失败**，run 总时长 12s，
+> 两个 job 的注解都是
+> `The specified node version file at …/.nvmrc does not exist`。
+> 一度以为是 `.nvmrc` 被删了 —— 不是：远端 `raw.githubusercontent.com/…/v0.4.9/.nvmrc`
+> 返回 200、`HEAD` 树里也在。真因是**我上面 ① 重组 workflow 的副作用**：我用"按
+> 步骤名重建"的方式生成新文件，而两个 build job 的第一条是**没有 `- name:` 的**
+> `- uses: actions/checkout@v4`（`publish` 里那条是我手写的所以留下了）—— 在没有
+> 源码的工作区里 `setup-node` 读 `node-version-file` 自然失败。
+> 修法：把 checkout 补回两个 job（`2018785`），并加两道契约锁（`tests/desktop-update.test.ts`
+> 现在 17 例）：**每个 job 第一步必须是 `actions/checkout`**；**建 Release 的动作只
+> 允许出现在 `publish` job，且其 `needs` 必须同时依赖两个平台**。
+> 处理方式：`v0.4.9` tag 重新指向修复提交（`git push origin --delete v0.4.9` +
+> `git tag -f v0.4.9 2018785` + 推）重新触发流水线；此时 v0.4.9 尚无任何 Release，
+> 所以不存在需要清理的残留。
+> 教训：**workflow 这种"没有类型检查的关键脚本"，改完必须用能识别无 name 步骤的
+> 方式核对**（这次就是靠"每 job 首步必须 checkout"的套件锁把它钉住）。
+>
+> **① 统一发布 → 当天撤回，改回"各自发布"**（用户决策，2026-10-17 晚）：原子发布
+> 的第一版（`publish` job `needs` 两个平台）确实能挡住"只有 Windows 的半成品"，
+> 但实测代价太高——v0.4.9 跑了两次都没出 Release（第一次我漏了 checkout 3 秒挂；
+> 第二次 6m40s 失败，且**成功那个平台的资产也一并被扣住看不见**），发布节奏被
+> 拖死。用户明确："何在一起这么难发布，那就分开"。
+> **现状 = 回滚到 v0.4.8 那个已验证的版本**（`git checkout f4e2c18 -- .github/workflows/release.yml`，
+> 与该版本逐字节一致）：两个 job **各自发布自己的平台资产**，互不依赖、互不阻塞；
+> 重试 = Actions 里 "Re-run failed jobs"。保留的改进：每平台自己的 feed 门禁
+> （解包目录用 glob）、`latest*.yml` 进上传清单、发布/tag 触发条件。
+> 明确接受的代价：**可能再次出现只含单平台的 release**（v0.4.7 那种）—— 分开走的
+> 必然结果，靠"重跑失败的那一半"收尾。
+> 契约锁（`tests/desktop-update.test.ts` 17 例）相应改成：**每个 job 第一步必须是
+> `actions/checkout`**（v0.4.9 首败的真因）、**每个 job 自己发、只发本平台文件、
+> 只认本平台 feed、不含跨平台 download-artifact**（分开走的定义）。
+>
+> **原始方案（未采用）**：Windows 与 macOS 同一版本的完整发布，不接受
+> "只有 Windows"的半成品 —— v0.4.7 就是这么来的）。`.github/workflows/release.yml`
+> 曾计划重组为三个 job（已撤回，保留作记录）：
+> - `build-macos-dmg` / `build-windows`：只**产出 artifact**（feed 门禁移回上传
+>   **之前**：这一版坏了连 artifact 都不产出），各自产出 `outputs.version`；
+> - `publish`：`needs: [build-macos-dmg, build-windows]` → 下载两边 artifact →
+>   **Verify unified asset set**（两个安装包 + 两个 feed 都在，且 `latest-mac.yml`
+>   / `latest.yml` 的 `version` 都等于 tag 版本）→ 建 Release → bump cask。
+>   任一平台失败 → 这个 job 根本不跑 → **不存在半成品 Release**，cask 也不会指向
+>   缺平台的版本；cask 的 `sed -i` 也从 BSD 写法改成 GNU（新 job 跑在 ubuntu）。
+>
+> **② Windows「打开终端」真机 bug**：点开工作区/目录的"终端"后弹出一个黑窗口加
+> 一行 `[出现错误 2147942405 (0x80070005) (启动"D:\Iragent"时)]`。根因：catalog 把
+> Windows 终端解析成 `wt.exe`，而启动代码是 `spawn(exe, [target], {cwd: target})`
+> → 实际执行 `wt.exe D:\Iragent`，**Windows Terminal 把裸路径当成"要启动的程序"**
+> 于是报 E_ACCESSDENIED。修法（`src/host/open-in-app/invocation.ts`，纯函数）：
+> `wt.exe` → `['-d', dir]`；`cmd.exe` → 不带参（落点由 cwd 决定）；其余应用参数仍
+> 是目标本身。顺带修掉一个隐患：原来文件目标会把 **cwd 设成文件路径**（不是目录，
+> 进程起不来）→ 现在 cwd 一律取"目录目标本身 / 文件目标的父目录"。
+> 套件 14 例锁死这些推导（含真机那条 `wt.exe` 不许收到裸目录路径）；写测试时还
+> 暴露了实现里的平台依赖：用宿主默认的 `path.basename` 解析 `D:\...` 在 macOS 上
+> 认不出来 → 改为按目标平台选 `path.win32`/`path.posix`（否则"能跑但测不了"）。
+
+> 产物现状（2026-10-16，**v0.4.8 已发布**）：tag `v0.4.8` → `b16604d`，**六件齐全
+> 且 feed 在 Release 里**（`curl -sIL`）：mac `arm64.dmg` 210.4 MiB（220579607 B）
+> + `arm64-mac.zip` 216.3 MiB（226847447 B）；Windows `setup.exe` 172.5 MiB
+> （180881230 B）+ `x64.zip` 234.6 MiB（246028604 B）；**`latest-mac.yml` 517 B +
+> `latest.yml` 351 B**。cask 自动 bump 到 0.4.8（bot 提交 `54a371a`），sha256
+> `ca4aa55bbd50…cf4`（与 DMG 一致）→ mac job 连 cask 步骤都跑完了。
+>
+> feed 内容（真产物，非推测）：
+> ```yaml
+> # latest-mac.yml（mac：zip 与 dmg 两条都在，path 指 zip —— 更新走 zip）
+> version: 0.4.8
+> files: [ {url: PayasoAgent-0.4.8-arm64-mac.zip, sha512, size: 226847447},
+>          {url: PayasoAgent-0.4.8-arm64.dmg,      sha512, size: 220579607} ]
+> path: PayasoAgent-0.4.8-arm64-mac.zip
+> # latest.yml（Windows：NSIS 安装器；无 blockMapSize 属正常 —— 那是 web 安装器字段，
+> # 缺它只是退化成整包下载）
+> version: 0.4.8
+> files: [ {url: PayasoAgent-0.4.8-setup.exe, sha512, size: 180881230} ]
+> path: PayasoAgent-0.4.8-setup.exe
+> ```
+>
+> 与 v0.4.7 的关系：**v0.4.7 是半成品**（见下），本版是它的修复重发。
+>
+> 产物现状（2026-10-16，**v0.4.7 半成品：只有 Windows**）：tag `v0.4.7` → `b0e87c7`。
+> Windows 侧完好且**带 feed**：`setup.exe` 172.5 MiB（180880879 B）+ `x64.zip`
+> 234.6 MiB（246028613 B）+ `latest.yml` 351 B；**mac 侧一小时后仍无任何资产**，
+> cask 因此停在 0.4.6（brew 没被指向坏版本，这点是设计使然：cask 步骤在 mac job 里、
+> 排在门禁之后）。判断：mac job 挂在**打包阶段**（DMG 目标；本机复现过那个 DMG
+> 步骤失败：`hdiutil: create failed - 操作不被允许`，本机沙箱不给 hdiutil，CI 上是
+> 同类依赖的抖动），而我把 feed 门禁放在「上传前」，于是"打包挂了"被放大成"一个
+> 资产都没有"。读不到 CI 日志（GitHub API 对本出口 IP 限流 403、机器上无 `gh`；
+> main 上 `ci.yml` 是 passing，故 tsc/biome/test:all 不是原因）。处置：门禁挪到发布
+> 之后 + 目录名 glob + 失败打印现场（`b16604d`）。
+>
+> **已按用户要求删除**（"不要分开发"）：`git push origin --delete v0.4.7`（本仓库
+> 的既定手法，不需要 token）→ 复核结果：`/releases/tag/v0.4.7` **404**、
+> `setup.exe` / `x64.zip` / `latest.yml` 三个资产全 **404**、`releases.atom` 里
+> 不再列 0.4.7；历史链接里可能还残留 `expanded_assets/v0.4.7` 这个片段的缓存
+> （200），但里面的资产已经拿不到。并已改成**原子发布**（见上面 2026-10-17 那段），
+> 从机制上不再产生这种半成品。
+
 > ### 期 3 落地：检查更新 / 自更新（2026-10-16，v0.4.7）
 >
 > 方案见 [`auto-update-调研报告.md`](./auto-update-调研报告.md) §5；**链路 A 全做，
@@ -98,15 +508,17 @@ open https://github.com/lwl2225144701-cmd/PayasoAgent/releases
 > **不是根级属性**（schema 直接拒），且即使放进 publish 也会被忽略 ——
 > appInfo 从包名派生（`@payaso/desktop` → `@payasodesktop-updater`）。已删配置 + 注释。
 >
-> 验证节奏（重要）：**自更新要两个版本才验得完** —— v0.4.7 自带 updater 与 feed，
-> 装它之后再发 v0.4.8，v0.4.7 才会弹"发现新版本"。v0.4.7 自己查只会得到"已是最新版"。
-> 真机验收点：菜单「检查更新…」→ 无更新提示 / 有更新 → 下载（任务栏进度）→
-> 安装确认（有任务时警告并列出会打断什么）→ 重启后版本号变化；未公证的 mac 包
-> 首次安装仍需"右键 → 打开"。
+> 验证节奏（重要）：**自更新要两个版本才验得完** —— v0.4.7 / v0.4.8 都自带 updater
+> 与 feed，装 0.4.7 再等 0.4.8 出来才看得到"发现新版本"（0.4.7 自己查只会说"已是最新版"）。
+> CI 侧已验完（v0.4.8 的六件产物 + 两个 feed 都在 Release 里，内容核对过：见下面
+> 产物现状）。**剩下的只有真机**：菜单「检查更新…」→ 无更新提示 / 有更新 → 下载
+> （任务栏进度）→ 安装确认（有任务时警告并列出会打断什么）→ 重启后版本号变化；
+> 未公证的 mac 包首次安装仍需"右键 → 打开"。
 >
 > 已知取舍：更新 UI 用原生对话框（DSH 是独立 HTML 窗口 + 强制更新全屏窗）；没有
 > 遥测/journal；`update-tasks: lock` 准入锁未做（确认到停后端只有几百毫秒）；
-> 未签名包的自更新在 macOS 上依赖 Squirrel 替换 .app（DSH nightly 同款做法）。
+> **2026-10-18 更正**：本项目临时签名包不能跨版本通过 Squirrel 的签名身份校验，不能
+> 沿用上述自动替换假设。当前本地修复对此使用手动替换路径，正式签名构建保留原生自动更新。
 
 > 产物现状（2026-10-16，**v0.4.6 已发布**）：tag `v0.4.6` → `a086d82`（窗口按钮
 > 让位改由壳注入，见下），四件套实测：mac `arm64.dmg` 210.4 MiB（220585425 B）

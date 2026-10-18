@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  windows-updater:
+    runs-on: windows-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install updater test dependencies
+        run: |
+          npm ci
+          npm ci --prefix apps/desktop
+      - name: Desktop type check
+        run: npm run typecheck --prefix apps/desktop
+      - name: Windows updater and process regression
+        run: npx tsx tests/desktop-update.test.ts
+
   build-and-test:
     # macOS runner：shell 沙箱（sandbox-exec）与 Keychain 相关套件均为 darwin 能力；
     # 沙箱不可用的环境下 shell 用例按 fail-closed 预期走 DENIED 分支。
@@ -28,13 +47,23 @@ jobs:
       - name: Install web dependencies
         run: cd web && npm ci
 
+      - name: Install desktop test dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci --prefix apps/desktop
+
       - name: Type check
         run: npx tsc --noEmit
 
       - name: Lint & format check (Biome)
         run: npx biome check .
 
+      # 套件并发时共享 /private/tmp/payaso-shell（managed scratch 根）：v0.4.14 的
+      # 两次发布跑里 flake 从 shell-execution 换到 shell-executor（scratch 目录被
+      # 并发套件扰动/计数竞态）——CI 里串行跑，宁慢勿红；本地默认仍并发。
       - name: Deterministic test suites (no LLM)
+        env:
+          PAYASO_TEST_CONCURRENCY: '1'
         run: npm run test:all
 
       - name: Host integration tests (requires LLM credentials)

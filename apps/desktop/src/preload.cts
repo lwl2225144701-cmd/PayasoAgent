@@ -31,4 +31,23 @@ contextBridge.exposeInMainWorld('payasoDesktop', {
   setNativeTheme: (mode: 'light' | 'dark' | 'system', resolved: 'light' | 'dark'): void => {
     ipcRenderer.send('payaso:nativeThemeSet', mode, resolved);
   },
+  /**
+   * 订阅自更新状态，并在监听器就绪后请求当前快照，避免刷新时漏掉状态。
+   *
+   * 页面侧用它渲染侧边栏「设置」上方的条目（真机反馈：下载 227MB 期间界面没有
+   * 任何反馈）。返回取消订阅函数；浏览器里没有这个桥，页面必须容忍。
+   */
+  onUpdateStatus: (listener: (status: unknown) => void): (() => void) => {
+    const channel = 'payaso:updateStatus';
+    const handler = (_event: Electron.IpcRendererEvent, status: unknown): void => listener(status);
+    ipcRenderer.on(channel, handler);
+    ipcRenderer.send('payaso:updateStatusRequest');
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+  /** 点侧边栏「新版本」→ 让壳开始下载（安装确认仍走原生对话框）。 */
+  startUpdateDownload: (): void => {
+    ipcRenderer.send('payaso:updateDownload');
+  },
 });

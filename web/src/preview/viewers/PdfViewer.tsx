@@ -129,7 +129,9 @@ export default function PdfViewer({ path, name, runId }: ViewerProps) {
     const measure = () => {
       const cs = getComputedStyle(container);
       const padX = parseFloat(cs.paddingLeft || '0') + parseFloat(cs.paddingRight || '0');
-      setAvailWidth(Math.max(0, container.clientWidth - padX));
+      // 收起面板时 display:none 的测量值为 0，不能据此清空分页布局和阅读位置。
+      const measured = container.clientWidth - padX;
+      if (measured > 0) setAvailWidth(measured);
     };
     measure();
     const observer = new ResizeObserver(measure);

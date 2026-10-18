@@ -306,6 +306,124 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
   assert.ok(!/shellPlatform/.test(mainTsx), '页面不该再依赖 data-shell-platform');
 });
 
+// ── 窗口左上角：收起 = 宽 0、顶栏横跨全窗（对齐 DSH 真机）────────────────────
+//
+// 四轮真机反馈收敛出来的形态：
+//   ① 红绿灯那一行只放折叠/展开按钮，品牌（🦌 Payaso）在红绿灯**下面**一行；
+//   ② 收起 = 侧栏宽 **0**（不是一块透明窄栏）：顶栏横跨整个窗口，红绿灯和展开按钮
+//      都在顶栏那一行 —— DSH 收起态就是这样；
+//   ③ 红绿灯中心要和顶栏内容中线同一条线（绿点中心画线平分右上角按钮）。
+
+test('壳：注入 chrome 行高 / 红绿灯让位 / 折叠按钮基线；红绿灯对齐顶栏中线', () => {
+  const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
+  assert.ok(
+    /--sidebar-chrome-height: \$\{WINDOW_CHROME_HEIGHT\}px/.test(main),
+    '注入的行高与原生窗口按钮共用 WINDOW_CHROME_HEIGHT',
+  );
+  assert.ok(
+    /--sidebar-lights-inset: 76px/.test(main),
+    '收起态顶栏左侧要给真机红绿灯完整让位（x=16..76）',
+  );
+  assert.ok(
+    /trafficLightPosition: \{ x: 16, y: WINDOW_CHROME_HEIGHT \/ 2 - 7 \}/.test(main),
+    '原生按钮直径 14 CSS px，中心必须是顶栏高度的一半',
+  );
+  assert.ok(
+    !/\[data-sidebar-toggle\] \{ top:/.test(main),
+    '壳不再用另一条 top 规则与页面竞争按钮位置',
+  );
+  assert.ok(
+    !/aside \{ box-sizing: border-box; padding-top: 40px; \}/.test(main),
+    '旧的整条 padding-top 让位不能再出现',
+  );
+});
+
+test('页面：展开态品牌行在 chrome 行下面；收起态侧栏宽 0、按钮移到顶栏', () => {
+  const css = fs.readFileSync(
+    path.join('web', 'src', 'components', 'Sidebar', 'Sidebar.module.css'),
+    'utf8',
+  );
+  assert.ok(
+    /padding-top: var\(--sidebar-chrome-height, 0px\)/.test(css),
+    '品牌行靠 chrome 行高下移（浏览器里 0 → 贴顶）',
+  );
+  // 真·收起：整条侧栏宽 0（不是一块窄栏），面板感彻底消失
+  assert.ok(/\.collapsed \{[^}]*width: 0;/.test(css), '收起态侧栏宽 0');
+  assert.ok(/\.collapsed \{[^}]*background: none;/.test(css), '收起后不再有面板底色');
+  assert.ok(/\.collapsed \{[^}]*border-right: none;/.test(css), '收起后移除边框，不留 1px 占位');
+  assert.ok(/\.collapsed \{[^}]*box-shadow: none;/.test(css), '收起后去掉 inset 高光内线');
+
+  // 收起后展开按钮由顶栏提供：ShellBar 支持 leading + collapsed（左侧让开红绿灯）
+  const shellBar = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'index.tsx'),
+    'utf8',
+  );
+  assert.ok(/leading\?: ReactNode;/.test(shellBar), 'ShellBar 要有 leading 插槽');
+  assert.ok(/\{leading\}/.test(shellBar), 'ShellBar 要真的渲染 leading');
+  const shellCss = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
+    'utf8',
+  );
+  assert.ok(
+    /\.barCollapsed \{[^}]*padding-left: calc\(var\(--sidebar-lights-inset, 12px\) \+ 8px\)/.test(
+      shellCss,
+    ),
+    '收起态顶栏左侧要按壳注入的 inset 让位',
+  );
+  // App 负责把展开按钮塞进顶栏（收起时侧栏已经没了）
+  const app = fs.readFileSync(path.join('web', 'src', 'App.tsx'), 'utf8');
+  assert.ok(/collapsed=\{sidebarCollapsed\}/.test(app), 'ShellBar 要收到 collapsed');
+  assert.ok(/data-sidebar-toggle/.test(app), '收起态展开按钮由 App 渲染进顶栏');
+});
+
+// ④ 开关按钮的位置 / 图标大小对齐 DSH 真机（用户参考图逐像素量过）：
+//    侧栏右缘 278.25、按钮图标 x 245..258.5（离右缘 20）、左图标 14×14、右图标 13×13。
+test('DSH 对齐：侧栏宽 278，四个面板开关入口共用按钮与正方形图标', () => {
+  const indexCss = fs.readFileSync(path.join('web', 'src', 'index.css'), 'utf8');
+  assert.ok(
+    /--sidebar-width: 278px;/.test(indexCss),
+    '侧栏宽对齐 DSH（量到 278.25）：按钮 right:12 才能落到 x≈245..259',
+  );
+
+  // 两个面板图标都改正方形外框（旧的 18×16 是扁的），外框 = size×20/24
+  const icons = fs.readFileSync(path.join('web', 'src', 'components', 'icons.tsx'), 'utf8');
+  const left = icons.slice(icons.indexOf('export function PanelLeftIcon'));
+  const right = icons.slice(icons.indexOf('export function PanelRightIcon'));
+  for (const [name, block] of [
+    ['PanelLeftIcon', left],
+    ['PanelRightIcon', right],
+  ] as const) {
+    assert.ok(
+      /<rect x="3" y="3" width="18" height="18" rx="3" \/>/.test(block),
+      `${name} 要正方形外框（DSH 两个图标都是正方形）`,
+    );
+  }
+  assert.ok(/<path d="M9 3v18" \/>/.test(left), 'PanelLeftIcon 的分割线在 1/3 处');
+  assert.ok(/<path d="M15 3v18" \/>/.test(right), 'PanelRightIcon 的分割线在 2/3 处');
+
+  // 回归遗漏的 PreviewDock 入口：不能只改面板关闭时的 Launcher。
+  for (const file of [
+    'components/Sidebar/index.tsx',
+    'App.tsx',
+    'preview/Launcher.tsx',
+    'preview/PreviewDock/index.tsx',
+  ]) {
+    const source = fs.readFileSync(path.join('web', 'src', file), 'utf8');
+    assert.ok(/<PanelToggleButton\b/.test(source), `${file} 必须共用面板开关`);
+    assert.ok(!/<Panel(?:Left|Right)Icon\b/.test(source), `${file} 不得自行设定图标尺寸`);
+  }
+
+  // 标题起点 = 侧栏右缘 + 28（DSH 量到 278+28=306）
+  const shellCss = fs.readFileSync(
+    path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
+    'utf8',
+  );
+  assert.ok(
+    /padding: 0 14px 0 clamp\(22px, 2\.2vw, 32px\);/.test(shellCss),
+    '顶栏左内边距按 2.2vw（1279 宽 = 28）→ 标题落在侧栏右缘 +28',
+  );
+});
+
 async function main(): Promise<void> {
   let passed = 0;
   let failed = 0;

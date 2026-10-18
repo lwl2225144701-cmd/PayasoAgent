@@ -78,6 +78,29 @@ async function shell(
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 在**隔离的受管 scratch 根**下跑一段。
+ *
+ * 为什么需要：`test:all` 是 6 路并发跑套件，而两个检查会动共享根
+ * （`/private/tmp/payaso-shell`）—— "用完即删"那条数根内目录数量，并发的其它套件
+ * 增删一个目录就会让它红。共享根下这天生会互相干扰，也会打搅正在
+ * 用 shell 的其它套件（2026-10-17 CI 上 shell-execution 间歇性 exit=1，本地单跑
+ * 却 10/10 通过 —— 并发干扰是首要嫌疑）。把根换成一次性临时目录后，断言一字未改，
+ * 但不再有跨套件耦合。
+ */
+async function withIsolatedScratchRoot<T>(fn: () => T | Promise<T>): Promise<T> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-shell-iso-'));
+  const saved = process.env.PAYASO_SHELL_SCRATCH_ROOT;
+  process.env.PAYASO_SHELL_SCRATCH_ROOT = root;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.PAYASO_SHELL_SCRATCH_ROOT;
+    else process.env.PAYASO_SHELL_SCRATCH_ROOT = saved;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 // 环境门（v1.10）：这批检查依赖两个假设——
 //   a) 能创建受管 scratch 根；
 //   b) os.tmpdir() 是独立于受管 scratch 的外部位置（若干断言用它当"外部"样本）。
@@ -357,13 +380,29 @@ if (process.platform !== 'darwin') {
     );
   });
 
-  await check('scratch 用完即删：调用结束后受管根内不残留目录', async () => {
-    const root = shellScratchRoot({});
-    const before = fs.existsSync(root) ? fs.readdirSync(root).length : 0;
-    await shell('echo ok', 'workspace-write', readOnlyRoot);
-    const after = fs.existsSync(root) ? fs.readdirSync(root).length : 0;
-    assert.equal(after, before, `scratch 残留: ${fs.readdirSync(root).join(',')}`);
-  });
+  await check('scratch 用完即删：调用结束后受管根内不残留目录', () =>
+    withIsolatedScratchRoot(async () => {
+      // 只认这个隔离根（mkdtemp 新建，正常是空的）。CI 上出现过一次
+      // before=1 / after=0 的反向残留（某个后台清理抢先清掉树），本地复现不了；
+      // 所以判定不再拿 before 当基线，而是"跑完之后根内必须为空"，并给 2s 容忍
+      // 异步清理。起点先清干净，保证判定的起点是确定的。
+      const root = shellScratchRoot({});
+      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      for (const name of fs.readdirSync(root)) {
+        fs.rmSync(path.join(root, name), { recursive: true, force: true });
+      }
+      await shell('echo ok', 'workspace-write', readOnlyRoot);
+      const deadline = Date.now() + 2_000;
+      for (;;) {
+        const residue = fs.existsSync(root) ? fs.readdirSync(root) : [];
+        if (residue.length === 0) return;
+        if (Date.now() > deadline) {
+          assert.deepEqual(residue, [], `scratch 残留: ${residue.join(',')}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }),
+  );
 
   await check('timeoutMs 被接受并生效：sleep 3 在 1s 超时下返回 [shell-timeout]', async () => {
     const out = await shell('sleep 3', 'workspace-write', readOnlyRoot, { timeoutMs: 1_000 });

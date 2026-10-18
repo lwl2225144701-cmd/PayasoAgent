@@ -20,21 +20,37 @@
 }
 
 .collapsed {
-  width: 64px;
+  /* 真·收起（对齐 DSH 真机）：**宽 0**，整条侧栏消失；顶栏横跨整个窗口，
+     红绿灯 / 展开按钮都在顶栏那一行，跟主内容连成一片。 */
+  width: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right: none;
+  box-shadow: none;
 }
 
-.logoRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: var(--topbar-height);
-  padding: 13px 15px 10px 17px;
+.headerArea {
+  position: relative;
+  /* macOS：红绿灯那一行的高度（壳注入 --sidebar-chrome-height）；
+     浏览器里没有注入 → 0，品牌行直接贴顶 */
+  padding-top: var(--sidebar-chrome-height, 0px);
 }
 
-.brand {
+.brandRow {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 右侧给折叠按钮留位（浏览器形态下按钮绝对定位在右上角） */
+  padding: 6px 52px 10px 16px;
+}
+
+/* macOS 用壳注入的 chrome 行高居中；浏览器沿用品牌行右上角的位置。
+   按钮本身的尺寸由 PanelToggleButton 统一，壳不再注入另一条 top 覆盖它。 */
+.collapseBtn {
+  position: absolute;
+  top: calc((var(--sidebar-chrome-height, var(--topbar-height)) - 28px) / 2);
+  right: 12px;
 }
 
 .logoImage {
@@ -55,9 +71,9 @@
   letter-spacing: -0.025em;
 }
 
-.collapsed .logoRow {
-  justify-content: center;
-  padding: 13px 0;
+/* 收起后侧栏内容隐藏，展开按钮由顶栏提供。 */
+.collapsed .brandRow {
+  display: none;
 }
 
 .collapsed .newTaskWrap,
@@ -71,20 +87,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.collapsedLogoBtn {
-  width: 40px;
-  height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  transition: background 0.12s ease;
-}
-
-.collapsedLogoBtn:hover {
-  background: var(--bg-hover);
 }
 
 .newTaskWrap {
@@ -125,11 +127,14 @@
   border-top: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent);
   padding: 10px 12px 12px;
   display: flex;
-  justify-content: stretch;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .settingsBtn {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 9px;

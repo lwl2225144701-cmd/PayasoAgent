@@ -1,0 +1,25 @@
+.button {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.button > svg {
+  flex: 0 0 auto;
+}

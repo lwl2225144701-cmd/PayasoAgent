@@ -29,6 +29,7 @@ import {
 } from './api';
 import { matchModelByQuery, matchPermissionMode } from './commands/builtin-commands';
 import { InputBar } from './components/InputBar';
+import { PanelToggleButton } from './components/PanelToggleButton';
 import { SettingsModal } from './components/SettingsModal';
 import { ShellBar } from './components/ShellBar';
 import { Sidebar } from './components/Sidebar';
@@ -112,6 +113,11 @@ export default function App() {
   const [, setFiles] = useState<FileEntry[]>([]);
   // 预览停靠面板开关（workspace 级：无会话时也可用）
   const [previewOpen, setPreviewOpen] = useState(false);
+  // 第一次打开后保留组件：收起只是隐藏，标签、目录与阅读位置不能随之销毁。
+  const [previewWasOpened, setPreviewWasOpened] = useState(false);
+  useEffect(() => {
+    if (previewOpen) setPreviewWasOpened(true);
+  }, [previewOpen]);
   // 标签状态提升到 App：面板内 FileTree 与 Timeline（工具参数/附件）写同一组标签。
   // openPreview 的依赖只取 hook 里那个稳定的 useCallback（`open`）——若依赖整个
   // previewTabs 对象，它每次渲染都是新引用，会让 Timeline 的 memo 完全失效。
@@ -140,6 +146,10 @@ export default function App() {
   }
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const toggleSidebarCollapsed = useCallback(() => {
+    sidebarUserOverrideRef.current = true;
+    setSidebarCollapsed((value) => !value);
+  }, []);
   const sidebarUserOverrideRef = useRef(false);
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   const [openingWorkspace, setOpeningWorkspace] = useState(false);
@@ -995,10 +1005,7 @@ export default function App() {
           onRenameSession={handleRenameSession}
           onArchiveSession={handleArchiveSession}
           collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => {
-            sidebarUserOverrideRef.current = true;
-            setSidebarCollapsed((value) => !value);
-          }}
+          onToggleCollapsed={toggleSidebarCollapsed}
           workspace={workspace}
           openingWorkspace={openingWorkspace}
           onOpenWorkspace={handleOpenWorkspace}
@@ -1016,6 +1023,20 @@ export default function App() {
             onResume={handleResumeRun}
             resuming={resumingRun}
             planMode={planMode}
+            collapsed={sidebarCollapsed}
+            // 收起侧栏后侧栏宽 0，展开按钮必须由顶栏提供（红绿灯那一行的右端）
+            leading={
+              sidebarCollapsed ? (
+                <PanelToggleButton
+                  side="left"
+                  className={styles.sidebarToggleLead}
+                  data-sidebar-toggle
+                  title={t('shell.sidebar.expand')}
+                  aria-label={t('shell.sidebar.expand')}
+                  onClick={toggleSidebarCollapsed}
+                />
+              ) : null
+            }
             actions={
               <PreviewLauncher
                 open={previewOpen}
@@ -1138,8 +1159,9 @@ export default function App() {
           )}
         </div>
 
-        {previewOpen && (
+        {(previewOpen || previewWasOpened) && (
           <PreviewDock
+            visible={previewOpen}
             tabsApi={previewTabs}
             onClose={() => setPreviewOpen(false)}
             onToast={showToast}

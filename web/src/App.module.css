@@ -73,6 +73,11 @@
   z-index: 1;
 }
 
+/* 收起侧栏时顶栏里的「展开侧栏」按钮（红绿灯那一行右端，位置由顶栏 padding 控制） */
+.sidebarToggleLead {
+  margin-right: 10px;
+}
+
 /* The session uses the same canvas as the landing page. Keep the document
    flow and composer glass translucent so the decorative mark can remain
    visible without becoming a competing panel. */

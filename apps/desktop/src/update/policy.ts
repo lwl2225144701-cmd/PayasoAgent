@@ -79,7 +79,7 @@ export function nextCheckDelay(options: CheckScheduleOptions): number {
 
 /** 网络类失败的识别（node/Chromium 的错误串）。 */
 const NETWORK_FAILURE =
-  /ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|net::/i;
+  /ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|fetch failed|net::/i;
 
 export function isNetworkFailure(message: string): boolean {
   return NETWORK_FAILURE.test(message);
@@ -92,10 +92,10 @@ export type UpdateOperation = 'check' | 'download' | 'install';
  * 文案区分"网络问题"与"安装失败"—— 用户的下一步动作完全不同。
  */
 export function describeUpdateFailure(operation: UpdateOperation, message: string): string {
+  if (operation === 'install') return '安装更新未完成，更新包已保留';
   if (isNetworkFailure(message)) {
     return operation === 'download' ? '下载更新失败：网络不可用' : '检查更新失败：网络不可用';
   }
   if (operation === 'download') return '下载更新失败';
-  if (operation === 'install') return '安装更新失败';
   return '检查更新失败';
 }

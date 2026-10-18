@@ -7,24 +7,6 @@
   gap: 6px;
 }
 
-.panelBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.panelBtn:hover {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--border-color) 28%, transparent);
-}
-
 .pill {
   display: inline-flex;
   align-items: stretch;

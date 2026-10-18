@@ -52,7 +52,12 @@ jobs:
       - name: Lint & format check (Biome)
         run: npx biome check .
 
+      # 套件并发时共享 /private/tmp/payaso-shell（managed scratch 根）：v0.4.14 的
+      # 两次发布跑里 flake 从 shell-execution 换到 shell-executor（scratch 目录被
+      # 并发套件扰动/计数竞态）——CI 里串行跑，宁慢勿红；本地默认仍并发。
       - name: Deterministic test suites (no LLM)
+        env:
+          PAYASO_TEST_CONCURRENCY: '1'
         run: npm run test:all
 
       - name: Resolve release version
@@ -171,7 +176,7 @@ jobs:
           fi
 
   # Windows 线：NSIS 安装器 + zip 便携包。质量门禁在 mac job（shell 沙箱套件是
-  # darwin 能力），本 job 只出包。先未签名发布（SmartScreen 可"更多信息 → 仍要
+  # darwin 能力），本 job 另跑 Windows 更新与进程回归，再出包。先未签名发布（SmartScreen 可"更多信息 → 仍要
   # 运行"跳过，能用）；SignPath（开源免费）签名后续接，见手账 §10。
   build-windows:
     runs-on: windows-latest
@@ -195,6 +200,9 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Windows updater and process regression
+        run: npx tsx tests/desktop-update.test.ts
 
       - name: Resolve release version
         id: version

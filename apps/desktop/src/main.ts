@@ -15,12 +15,14 @@
 // 关键约束：后端从 process.cwd() 下找 web/dist（见 src/host/routes.ts 的 STATIC_ROOT），
 // 所以 cwd 必须是「app 根」（含 web/dist 的那层），不能随便选。
 
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { stopManagedBackend } from './backend-process.js';
 import { createUpdateCoordinator, type UpdateCoordinator } from './update/coordinator.js';
+import { IDLE_UPDATE_STATUS, type UpdateStatus } from './update/status.js';
 import { activeTasks } from './update/tasks.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -55,8 +57,6 @@ const PORT = Number(process.env.PORT ?? 4500);
 const BACKEND_URL = `http://127.0.0.1:${PORT}`;
 
 const READY_TIMEOUT_MS = 30_000;
-const SIGTERM_GRACE_MS = 10_000;
-const SIGKILL_GRACE_MS = 5_000;
 const STDERR_TAIL_BYTES = 65_536;
 
 let backend: ChildProcess | null = null;
@@ -66,8 +66,22 @@ let ownsBackend = false;
 let mainWindow: BrowserWindow | null = null;
 let stderrTail = '';
 let quitting = false;
+/**
+ * 是不是我们自己发起的关停（退出或"装更新前优雅停后端"）。
+ *
+ * 真事故（v0.4.11 → v0.4.12，用户截图）：点「下载 → 安装」后，安装交接会先
+ * `stopBackend()`（后端收到 SIGTERM 优雅退出 → code=0 signal=null），而旧代码的
+ * exit 处理器只看 `quitting` / `ownsBackend` —— 安装时 `quitting` 还是 false，
+ * 于是把这次**主动关停**当成崩溃，弹「PayasoAgent 后端意外退出」再 app.quit()。
+ */
+let stoppingIntentionally = false;
 /** 自更新协调器（开发版不启用；门禁见 update/coordinator.ts）。 */
 let updates: UpdateCoordinator | null = null;
+/**
+ * 最近一次的更新状态：页面重新加载后要补发（did-finish-load 时 send 一次），
+ * 否则刷新一次页面侧边栏条目就消失了。
+ */
+let lastUpdateStatus: UpdateStatus = IDLE_UPDATE_STATUS;
 
 /** 就绪探针：用真实存在的只读端点，而不是"TCP 通了就算"（端口可能被别的进程占着）。 */
 async function backendResponds(): Promise<boolean> {
@@ -87,15 +101,28 @@ async function backendResponds(): Promise<boolean> {
  * 后端零改动。
  */
 async function listActiveTasks(): Promise<{ runId: string; task: string }[]> {
-  const res = await fetch(`${BACKEND_URL}/runs`, { signal: AbortSignal.timeout(5_000) });
+  const res = await fetch(`${BACKEND_URL}/runs`, { signal: AbortSignal.timeout(5_000) }).catch(
+    (error: unknown) => {
+      throw new Error(
+        `无法连接本地任务服务（${BACKEND_URL}）。更新包已保留，请重新打开客户端后重试安装。`,
+        { cause: error },
+      );
+    },
+  );
   if (!res.ok) throw new Error(`GET /runs 返回 ${res.status}`);
   return activeTasks(await res.json());
 }
 
-async function waitForReady(): Promise<void> {
+async function waitForReady(startupFailure: () => Error | null): Promise<void> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
-    if (await backendResponds()) return;
+    const failure = startupFailure();
+    if (failure) throw failure;
+    if (await backendResponds()) {
+      const lateFailure = startupFailure();
+      if (lateFailure) throw lateFailure;
+      return;
+    }
     if (Date.now() > deadline) {
       throw new Error(
         `后端 ${READY_TIMEOUT_MS}ms 内未就绪（${BACKEND_URL}）。\n\n最近的后端日志：\n${stderrTail.slice(-4_000)}`,
@@ -109,20 +136,37 @@ async function startBackend(): Promise<void> {
   if (!existsSync(backendEntry)) {
     throw new Error(`后端编译产物不存在：${backendEntry}\n请先执行 npm run build:server`);
   }
-  backend = spawn(backendCommand.command, [backendEntry], {
+  // 新进程：上一轮的"主动关停"标记作废，之后的异常退出照常要报
+  stoppingIntentionally = false;
+  const child = spawn(backendCommand.command, [backendEntry], {
     cwd: appRoot,
     env: { ...process.env, ...backendCommand.env, PORT: String(PORT) },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
+  backend = child;
+  let startupError: Error | null = null;
+  let startupComplete = false;
+  child.on('error', (error) => {
+    startupError = error;
+    stderrTail = `${stderrTail}\n后端进程错误：${error.message}`.slice(-STDERR_TAIL_BYTES);
+    if (child.pid === undefined && backend === child) backend = null;
+  });
 
-  backend.stderr?.on('data', (chunk: Buffer) => {
+  child.stderr?.on('data', (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
   });
 
-  backend.on('exit', (code, signal) => {
+  child.on('exit', (code, signal) => {
+    if (backend !== child) return;
     backend = null;
-    // 主动退出 / 外部实例都不算崩溃
-    if (quitting || !ownsBackend) return;
+    // 主动退出 / 外部实例 / 我们自己发起的关停（退出或装更新前的优雅停）都不算崩溃
+    if (quitting || stoppingIntentionally || !ownsBackend) return;
+    if (!startupComplete) {
+      startupError = new Error(
+        `后端启动期间退出：code=${code} signal=${signal}\n${stderrTail.slice(-4_000)}`,
+      );
+      return;
+    }
     dialog.showErrorBox(
       'PayasoAgent 后端意外退出',
       `code=${code} signal=${signal}\n\n最近的后端日志：\n${stderrTail.slice(-4_000)}`,
@@ -130,7 +174,8 @@ async function startBackend(): Promise<void> {
     app.quit();
   });
 
-  await waitForReady();
+  await waitForReady(() => startupError);
+  startupComplete = true;
 }
 
 /**
@@ -140,36 +185,15 @@ async function startBackend(): Promise<void> {
 async function stopBackend(): Promise<void> {
   const child = backend;
   if (!child || !ownsBackend) return;
-  backend = null;
-  if (child.exitCode !== null || child.signalCode !== null) return; // 已经退了
-
-  const done = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-  const settlesWithin = (ms: number) =>
-    Promise.race([
-      done.then(() => true),
-      new Promise<boolean>((r) => setTimeout(() => r(false), ms)),
-    ]);
-
-  if (process.platform === 'win32') {
-    // Windows 没有信号语义：child.kill() 即 TerminateProcess，只掐直接进程、
-    // 留孙进程（后端会 spawn 用户项目的 shell 工具）。用 taskkill /T 树杀，
-    // 连子孙一起收 —— 等价于 POSIX 的 SIGTERM→SIGKILL 兜底（代价是没有优雅
-    // 排水窗口，靠后端 SQLite WAL 抗崩溃截断，见实施手账 §10）。
-    try {
-      execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    } catch {
-      // 进程可能已自行退出（taskkill 对不存在的 PID 返回非 0）
-    }
-    if (!(await settlesWithin(SIGKILL_GRACE_MS))) {
-      throw new Error('后端进程树在 taskkill /T 之后仍未退出，可能留下僵尸进程');
-    }
-    return;
-  }
-
-  child.kill('SIGTERM');
-  if (!(await settlesWithin(SIGTERM_GRACE_MS))) child.kill('SIGKILL');
-  if (!(await settlesWithin(SIGKILL_GRACE_MS))) {
-    throw new Error('后端进程在 SIGKILL 之后仍未退出，可能留下僵尸进程');
+  // 这次退出是我们自己发起的：exit 处理器别弹「后端意外退出」
+  stoppingIntentionally = true;
+  try {
+    // Windows taskkill 异步执行并限时；确认退出前不清空引用。
+    await stopManagedBackend(child);
+    if (backend === child) backend = null;
+  } catch (error) {
+    stoppingIntentionally = false;
+    throw error;
   }
 }
 
@@ -177,7 +201,7 @@ async function stopBackend(): Promise<void> {
  * 顶部条高度（px），必须与前端 `--topbar-height` 一致（web/src/index.css）。
  * Windows 上它是窗口按钮叠加层（WCO）的高度，按钮就叠在顶栏这一条里。
  */
-const WINDOW_CHROME_HEIGHT = 58;
+const WINDOW_CHROME_HEIGHT = 50;
 
 /**
  * Windows：给窗口按钮让位的注入脚本 —— 用 WCO API 量出按钮区宽度写进
@@ -193,12 +217,15 @@ const WCO_RESERVE_SCRIPT = `(() => {
 })();`;
 
 /**
- * Windows：顶栏（`[data-window-drag]`，侧栏那个在 aside 里不会命中）右侧留出
- * 窗口按钮的宽度。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
+ * Windows：主区顶栏与预览头部右侧留出窗口按钮的宽度。预览打开/全屏后它位于
+ * 窗口最右侧，也必须让位。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
  */
 const WCO_RESERVE_CSS = `
   #root > :first-child > :not(aside) > [data-window-drag] {
     box-sizing: border-box;
+    padding-right: calc(var(--wco-reserve, 138px) + 14px);
+  }
+  #root [data-preview-header] {
     padding-right: calc(var(--wco-reserve, 138px) + 14px);
   }
 `;
@@ -242,7 +269,11 @@ function createWindow(): void {
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
-          trafficLightPosition: { x: 16, y: 18 },
+          // 红绿灯**竖直位置按顶栏内容中线对齐**（真机反馈：从绿色圆圈中间画一条线
+          // 过去，要刚好平分右上角那些按钮）。真机 2x 截图量到原生按钮直径
+          // 28px = 14 CSS px，不能按旧记录里的 12px 计算。
+          // 顶栏 50 高 → 中心 25；原生按钮 top = 25 - 7 = 18（DSH 同款）。
+          trafficLightPosition: { x: 16, y: WINDOW_CHROME_HEIGHT / 2 - 7 },
         }
       : {}),
     // Windows：不要系统标题栏 —— 它的颜色是 DWM 画的，应用侧**没有开关**
@@ -296,14 +327,19 @@ function createWindow(): void {
     });
   }
 
-  // macOS 专属：标题栏藏掉之后，前端侧栏顶部必须给红绿灯让位（它们浮在左上角）。
-  // 选择器避开 CSS Modules 的哈希类名，直接认语义标签 aside；侧栏自身是
-  // height:100vh + 全局 border-box，加 padding 只压缩内容高度、不会撑出窗口。
+  // macOS 专属：红绿灯浮在窗口左上角、**不占布局**，参考 DSH 的排法（用户给的
+  // 参考图）：红绿灯那一行只放折叠按钮，品牌行在它下面。壳把两个变量注入给页面：
+  //   --sidebar-chrome-height    红绿灯那一行的高度（品牌行据此下移）
+  //   --sidebar-lights-inset     收起态顶栏左侧给红绿灯让位的宽度（原生按钮到 x=76）
+  // 页面 CSS 全部走 var(--x, 默认值)：浏览器里没有注入 → 无红绿灯形态；
+  // 选择器用 data 属性，避开 CSS Modules 哈希类名。
   if (process.platform === 'darwin') {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
+      // 只注入窗口几何变量；按钮 top 由页面按 chrome 行高计算，避免两份定位规则
+      // 竞争。三颗原生按钮真机范围 x=16..76，右侧再留 8px 给展开按钮。
       void win.webContents.insertCSS(
-        '#root > :first-child > aside { box-sizing: border-box; padding-top: 40px; }',
+        `:root { --sidebar-chrome-height: ${WINDOW_CHROME_HEIGHT}px; --sidebar-lights-inset: 76px; }`,
       );
     });
   } else {
@@ -319,6 +355,8 @@ function createWindow(): void {
   win.webContents.on('did-finish-load', () => {
     void win.webContents.executeJavaScript(THEME_WATCH_SCRIPT, true).catch(() => undefined);
     void warnIfBackendMismatch(win);
+    // 页面刷新后补发：侧边栏的更新条目不能因为刷新就丢了
+    win.webContents.send('payaso:updateStatus', lastUpdateStatus);
   });
 
   win.on('closed', () => {
@@ -411,6 +449,32 @@ function registerDirectoryPicker(): void {
  * 我们照抄这个单向同步，只认自己的主窗口（同 `registerDirectoryPicker`
  * 的归属校验），值域兜底，非法值直接丢。
  */
+/**
+ * 把更新状态推给页面（侧边栏「设置」上方的条目）。
+ * 页面还没加载好时只记账，`did-finish-load` 会把最后一条补发过去。
+ */
+function pushUpdateStatus(status: UpdateStatus): void {
+  lastUpdateStatus = status;
+  const win = mainWindow;
+  if (win && !win.isDestroyed()) win.webContents.send('payaso:updateStatus', status);
+}
+
+/**
+ * 页面 → 壳：侧边栏「新版本」条目被点了 → 开始下载。
+ * 发送者校验与原生主题那条同款：只认主窗口，不给别的 webContents 开闸。
+ * 下载完成后的安装确认仍然走原生对话框（含"有任务在跑"的检查）。
+ */
+function registerUpdateBridge(): void {
+  ipcMain.on('payaso:updateStatusRequest', (event): void => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    event.sender.send('payaso:updateStatus', lastUpdateStatus);
+  });
+  ipcMain.on('payaso:updateDownload', (event): void => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    void updates?.downloadNow();
+  });
+}
+
 function registerNativeTheme(): void {
   ipcMain.on('payaso:nativeThemeSet', (event, source: unknown, resolved: unknown): void => {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
@@ -491,6 +555,7 @@ async function warnIfBackendMismatch(win: BrowserWindow): Promise<void> {
 async function boot(): Promise<void> {
   buildMenu();
   registerDirectoryPicker();
+  registerUpdateBridge();
   registerNativeTheme();
   // 端口已被占用（用户自己起过 npm run host）→ 复用已有后端，退出时也不要杀它
   if (await backendResponds()) {
@@ -507,10 +572,13 @@ async function boot(): Promise<void> {
   updates = createUpdateCoordinator({
     currentVersion: app.getVersion(),
     window: () => mainWindow,
+    onStatus: pushUpdateStatus,
     backend: {
       listActiveTasks,
       stop: stopBackend,
-      start: startBackend,
+      start: async () => {
+        if (ownsBackend && !(await backendResponds())) await startBackend();
+      },
     },
   });
   updates.startAutoCheck();

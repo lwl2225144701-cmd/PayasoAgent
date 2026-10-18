@@ -19,12 +19,13 @@ interface RunsPayload {
 
 /**
  * 数出"在跑"的任务，并给出它们的任务描述（确认框里要告诉用户会打断什么）。
- * 数据形状不对时返回空（宁可漏判成"没任务"，也不要因为解析失败卡住更新流程 ——
- * 真正要拦住的场景是用户主动在跑任务，那种情况形状一定是对的）。
+ * 数据形状不对时拒绝安装，不能把无法确认当成没有任务。
  */
 export function activeTasks(payload: unknown): { runId: string; task: string }[] {
   const runs = (payload as RunsPayload | null)?.runs;
-  if (!Array.isArray(runs)) return [];
+  if (!Array.isArray(runs) || runs.some((run) => typeof run?.status !== 'string')) {
+    throw new Error('本地任务状态响应异常，已保留更新包，请稍后重试安装');
+  }
   return runs
     .filter((run) => typeof run?.status === 'string' && ACTIVE_RUN_STATUSES.includes(run.status))
     .map((run) => ({ runId: run.runId ?? '', task: run.task ?? '' }));
