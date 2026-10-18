@@ -73,6 +73,104 @@ test('RunStore CRUD persists status/result/workspace across reopen', () => {
   reopened.close();
 });
 
+test('stopReason/deliveryOutcome persist across reopen and finalizeRun', () => {
+  const dbPath = path.join(root, 'stop-reason.db');
+  const store = new SqliteRunStore(dbPath);
+  const run = storedRun('stop-run');
+  store.createRun(run);
+  // 终态原子落库：stopped + budget_exhausted + partial + 停止说明
+  const seq = store.finalizeRun(
+    {
+      ...run,
+      status: 'stopped',
+      stopReason: 'budget_exhausted',
+      deliveryOutcome: 'partial',
+      result: '执行预算已耗尽',
+    },
+    {
+      type: 'run_stopped',
+      runId: run.runId,
+      timestamp: '2026-10-18T12:00:00.000Z',
+      stopReason: 'budget_exhausted',
+      deliveryOutcome: 'partial',
+    },
+  );
+  assert.ok(seq > 0);
+  const stored = store.getRun(run.runId);
+  assert.equal(stored?.status, 'stopped');
+  assert.equal(stored?.stopReason, 'budget_exhausted');
+  assert.equal(stored?.deliveryOutcome, 'partial');
+  assert.equal(stored?.result, '执行预算已耗尽');
+  // 终态事件同样携带（SSE 客户端据此分别展示）
+  const events = store.listEvents(run.runId);
+  const stopped = events.find((e) => e.event.type === 'run_stopped');
+  assert.ok(stopped, 'run_stopped 终态事件已落库');
+  const stoppedPayload = stopped.event as { stopReason?: string; deliveryOutcome?: string };
+  assert.equal(stoppedPayload.stopReason, 'budget_exhausted');
+  assert.equal(stoppedPayload.deliveryOutcome, 'partial');
+  store.close();
+
+  const reopened = new SqliteRunStore(dbPath);
+  const restored = reopened.getRun(run.runId);
+  assert.equal(restored?.stopReason, 'budget_exhausted', '重启后停止原因一致');
+  assert.equal(restored?.deliveryOutcome, 'partial', '重启后交付结果一致');
+  reopened.close();
+});
+
+test('legacy database without stop columns migrates (old records → 缺省)', () => {
+  const dbPath = path.join(root, 'legacy-stop.db');
+  // 旧 schema：没有 stop_reason / delivery_outcome 列
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE sessions (
+      session_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      workspace_root TEXT NOT NULL,
+      workspace_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
+    );
+    CREATE TABLE runs (
+      run_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      turn_index INTEGER NOT NULL,
+      task TEXT NOT NULL,
+      status TEXT NOT NULL,
+      workspace_root TEXT NOT NULL,
+      workspace_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      deleted_at TEXT,
+      model TEXT,
+      provider_id TEXT,
+      base_url TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+    );
+    INSERT INTO sessions VALUES ('s1', 't', '${canonicalWorkspace}', 'workspace-A', '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z', NULL);
+    INSERT INTO runs VALUES ('legacy-stop-run', 's1', 1, 'task', 'completed', '${canonicalWorkspace}', 'workspace-A', '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z', 'done', NULL, NULL, NULL, NULL, NULL);
+  `);
+  db.close();
+
+  const migrated = new SqliteRunStore(dbPath);
+  const run = migrated.getRun('legacy-stop-run');
+  assert.ok(run, '旧记录可读');
+  assert.equal(run?.status, 'completed');
+  assert.equal(run?.stopReason, undefined, '旧记录无停止原因（缺省，不推断）');
+  assert.equal(run?.deliveryOutcome, undefined, '旧记录无交付结果（缺省，不推断）');
+  // 迁移后可写新列
+  migrated.updateRun({
+    ...(run as StoredRun),
+    status: 'stopped',
+    stopReason: 'user_cancelled',
+    deliveryOutcome: 'unknown',
+  });
+  assert.equal(migrated.getRun('legacy-stop-run')?.stopReason, 'user_cancelled');
+  migrated.close();
+});
+
 test('legacy Run-only database is migrated one Run per Session', () => {
   const dbPath = path.join(root, 'legacy.db');
   const legacy = new DatabaseSync(dbPath);

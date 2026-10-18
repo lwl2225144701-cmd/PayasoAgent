@@ -20,6 +20,9 @@ const RUN_SCALAR_KEYS: Record<Exclude<keyof HostRun, 'workspace'>, true> = {
   providerId: true,
   model: true,
   permissionMode: true,
+  // v2.6：停止原因与交付结果变化必须触发重渲（终态语义展示依赖它们）。
+  stopReason: true,
+  deliveryOutcome: true,
 };
 
 function sameRunView(a: HostRun, b: HostRun): boolean {

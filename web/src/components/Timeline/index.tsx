@@ -284,6 +284,8 @@ export const Timeline = memo(function Timeline({
               status={run.status}
               finishedAt={finalTimestamp}
               runId={run.runId}
+              stopReason={run.stopReason}
+              deliveryOutcome={run.deliveryOutcome}
               onOpenPreview={onOpenPreview}
             />
 

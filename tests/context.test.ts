@@ -276,7 +276,11 @@ await test('Harness incrementally summarizes old complete turns and restores sum
         previousSummary: request.previousSummary,
         messages: structuredClone(request.messages),
       });
-      return `Goal: keep context\nProgress: compacted batch ${requests.length}`;
+      return {
+        summary: `Goal: keep context\nProgress: compacted batch ${requests.length}`,
+        outputTokens: 0,
+        modelCalls: 1,
+      };
     },
   };
   const harness = new DefaultContextHarness({

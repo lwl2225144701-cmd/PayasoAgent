@@ -284,6 +284,20 @@ export function renderExecutionBudgetReminder(
   return `\n\n${headline}\n${lines.join('\n')}\n${guidance}\nThis notice does not change any permission or user constraint.`;
 }
 
+/**
+ * 剩余预算行（周期性目标审查等场合引用）。未配置上限的桶不出现；
+ * 预算关闭时返回空数组——调用方据此整段省略，不虚构"无限"。
+ */
+export function renderExecutionBudgetRemaining(
+  state: ExecutionBudgetState,
+  policy: ExecutionBudgetPolicy,
+): string[] {
+  return executionBudgetRatios(state, policy).map(({ bucket, used, max }) => {
+    const remaining = Math.max(0, max - used);
+    return `${BUCKET_LABEL[bucket]}: ${remaining} remaining (used ${used} / ${max})`;
+  });
+}
+
 /** 解析环境配置。`off` 显式关闭；未配置任何上限时视为关闭（默认行为不变）。 */
 export function resolveExecutionBudgetPolicy(
   env: Record<string, string | undefined> = process.env,

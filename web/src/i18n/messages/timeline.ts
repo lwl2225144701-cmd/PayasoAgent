@@ -18,6 +18,34 @@ export const timelineMessages = {
   'timeline.execution.statusInterrupted': { 'zh-CN': '已中断', 'en-US': 'Interrupted' },
   'timeline.execution.statusDone': { 'zh-CN': '本轮结束', 'en-US': 'Run finished' },
 
+  // v2.6 停止原因与交付结果（与运行状态正交：执行是否结束 ≠ 目标完成了多少）
+  'timeline.execution.stopReason.budget_exhausted': {
+    'zh-CN': '执行预算耗尽',
+    'en-US': 'Execution budget exhausted',
+  },
+  'timeline.execution.stopReason.policy_denied': {
+    'zh-CN': '策略拒绝',
+    'en-US': 'Policy denied',
+  },
+  'timeline.execution.stopReason.tool_unavailable': {
+    'zh-CN': '依赖工具不可用',
+    'en-US': 'Required tool unavailable',
+  },
+  'timeline.execution.stopReason.outcome_uncertain': {
+    'zh-CN': '结果不确定',
+    'en-US': 'Outcome uncertain',
+  },
+  'timeline.execution.stopReason.user_cancelled': {
+    'zh-CN': '用户主动停止',
+    'en-US': 'Stopped by user',
+  },
+  'timeline.execution.delivery.delivered': { 'zh-CN': '已交付', 'en-US': 'Delivered' },
+  'timeline.execution.delivery.partial': { 'zh-CN': '部分完成', 'en-US': 'Partially completed' },
+  'timeline.execution.delivery.blocked': { 'zh-CN': '受阻未完成', 'en-US': 'Blocked' },
+  'timeline.execution.delivery.unknown': { 'zh-CN': '完成度未知', 'en-US': 'Completion unknown' },
+  'timeline.execution.stopReasonLabel': { 'zh-CN': '停止原因', 'en-US': 'Stop reason' },
+  'timeline.execution.deliveryLabel': { 'zh-CN': '目标完成度', 'en-US': 'Goal completion' },
+
   // 执行面板：摘要行（操作数 / 用时 / 失败数）
   'timeline.execution.toolCount': {
     'zh-CN': '已执行 {count} 个操作',

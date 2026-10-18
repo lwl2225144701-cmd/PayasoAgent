@@ -332,6 +332,8 @@ export function connectSSE(
     'progress_reminder',
     'repeat_call_reminder',
     'budget_decision',
+    'goal_review_reminder',
+    'tool_execution_skipped',
     'empty_turn_recovered',
     'finalization_guard',
     'side_effect_skip',

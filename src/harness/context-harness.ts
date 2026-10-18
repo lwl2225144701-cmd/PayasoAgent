@@ -23,15 +23,25 @@ import {
   advanceExecutionBudget,
   type ExecutionBudgetBucket,
   type ExecutionBudgetDecision,
+  type ExecutionBudgetLevel,
   type ExecutionBudgetPolicy,
   type ExecutionBudgetState,
   type ExecutionBudgetUsage,
   executionBudgetBucketsFor,
   normalizeExecutionBudgetState,
+  renderExecutionBudgetRemaining,
   renderExecutionBudgetReminder,
   resolveExecutionBudgetPolicy,
 } from './execution-policy.js';
 import { type FinalReviewInput, reviewFinalAnswer } from './final-review.js';
+import {
+  advanceGoalReview,
+  type GoalReviewPolicy,
+  type GoalReviewReminder,
+  normalizeGoalReviewState,
+  renderGoalReviewReminder,
+  resolveGoalReviewPolicy,
+} from './goal-review.js';
 import { InstructionComposer } from './instruction-composer.js';
 import {
   buildBaseSegments,
@@ -133,6 +143,18 @@ export interface PreparedModelTurn {
   /** 计划投影注入 system 消耗的估算 token（有界，见 planViewText）。 */
   planTokens: number;
   compaction?: ContextCompactionResult;
+  /**
+   * v2.6：prepareTurn 期间（压缩摘要等 Harness 自持的模型调用）新跨过的预算档位。
+   * 全部模型请求统一计量——Runtime 据此发事件并落 checkpoint，与主循环的
+   * observeExecution 走同一条决策通路。
+   */
+  budgetDecisions?: ExecutionBudgetDecision[];
+}
+
+/** 一个已完成工具回合的观察结果（progress 与 goal review 各自独立触发）。 */
+export interface ToolTurnObservations {
+  progress?: ProgressReminder;
+  goalReview?: GoalReviewReminder;
 }
 
 export interface AgentContextHarness {
@@ -152,7 +174,8 @@ export interface AgentContextHarness {
   restoreState(state: ContextHarnessState | undefined): void;
   snapshotState(): ContextHarnessState;
   // 只观察已结束的工具回合；触发后返回审计数据，由 Runtime 发事件并保存。
-  observeToolTurn?(turn: ToolTurnProgress): ProgressReminder | undefined;
+  // v2.6：同时驱动周期性目标审查（按全部工具回合），两类提醒独立返回。
+  observeToolTurn?(turn: ToolTurnProgress): ToolTurnObservations | undefined;
   // v2.6 执行不收敛治理：一次工具调用的**统一**观察口径。覆盖 process-manager 的
   // 全部出口（成功/失败/拒绝/回放/不确定/参数无效），因此 Harness 的计数是完整
   // 的——Runtime 不能只挑便利的出口上报。返回跨过新阈值的提醒（Runtime 发事件）。
@@ -160,6 +183,9 @@ export interface AgentContextHarness {
   // v2.6 执行不收敛治理：累计一次模型调用的机械用量（调用次数 / 输出 token /
   // 活动时长），返回分级决策。exhausted 由 Runtime 转成优雅停止，其余只提醒。
   observeExecution?(usage: ExecutionBudgetUsage): ExecutionBudgetDecision | undefined;
+  // v2.6：当前预算档位（粘滞、单调不降）。Runtime 在模型调用前与每个工具执行前
+  // 做准入检查；exhausted 即停止新工作，只保留预留的收尾生成。
+  executionBudgetLevel?(): ExecutionBudgetLevel;
   // 模型成功响应后才消费待发送提醒；请求失败/取消时保留，供恢复后继续投影。
   acknowledgeProgressReminder?(): boolean;
   // v2.6：消费全部待投递提醒（重复调用 + 执行预算）。与 progress 的 acknowledge 同
@@ -230,7 +256,12 @@ export class DefaultContextHarness implements AgentContextHarness {
   private readonly repeatCallPolicy: RepeatCallPolicy | undefined;
   // v2.6 执行不收敛治理：机械预算（undefined = 关闭）。默认无上限（保持旧行为）。
   private readonly executionBudgetPolicy: ExecutionBudgetPolicy | false;
+  // v2.6 周期性目标审查（undefined = 关闭）。按全部工具回合计数，默认开启。
+  private readonly goalReviewPolicy: GoalReviewPolicy | undefined;
   private state = createContextHarnessState();
+  // v2.6：prepareTurn 期间（压缩摘要）产生的预算决策，随 prepareTurn 结果交回
+  // Runtime 发事件；transient，不落 checkpoint。
+  private prepareBudgetDecisions: ExecutionBudgetDecision[] = [];
 
   constructor(options: {
     permissionMode: PermissionMode;
@@ -248,6 +279,7 @@ export class DefaultContextHarness implements AgentContextHarness {
     compaction?: CompactionPolicy;
     repeatCall?: RepeatCallPolicy | false;
     executionBudget?: ExecutionBudgetPolicy | false;
+    goalReview?: GoalReviewPolicy | false;
   }) {
     this.projectionPolicy = options.projection ?? resolveProjectionPolicy();
     this.compactionPolicy = options.compaction ?? resolveCompactionPolicy();
@@ -283,6 +315,9 @@ export class DefaultContextHarness implements AgentContextHarness {
       options.progressReminder === false || process.env.PAYASO_PROGRESS_REMINDER === 'off'
         ? undefined
         : { ...DEFAULT_PROGRESS_REMINDER_POLICY, ...options.progressReminder };
+    // v2.6 周期性目标审查：显式关闭优先；未指定按环境解析（默认开启）。
+    const resolvedGoalReview = options.goalReview ?? resolveGoalReviewPolicy();
+    this.goalReviewPolicy = resolvedGoalReview === false ? undefined : resolvedGoalReview;
     if (
       this.progressReminderPolicy &&
       (!Number.isSafeInteger(this.progressReminderPolicy.minReadOnlyTurns) ||
@@ -491,15 +526,42 @@ export class DefaultContextHarness implements AgentContextHarness {
     this.state = normalizeContextHarnessState(state);
   }
 
-  observeToolTurn(turn: ToolTurnProgress): ProgressReminder | undefined {
-    if (!this.progressReminderPolicy) return undefined;
-    const previous = normalizeProgressReminderState(this.state.progressReminder);
-    const next = advanceProgressReminder(previous, turn, this.progressReminderPolicy);
-    this.state.progressReminder = next;
-    if (previous.reminder !== 'pending' && next.reminder === 'pending') {
-      return { readOnlyTurns: next.readOnlyTurns, readOnlyMs: next.readOnlyMs };
+  observeToolTurn(turn: ToolTurnProgress): ToolTurnObservations | undefined {
+    let progress: ProgressReminder | undefined;
+    let goalReview: GoalReviewReminder | undefined;
+    if (this.progressReminderPolicy) {
+      const previous = normalizeProgressReminderState(this.state.progressReminder);
+      const next = advanceProgressReminder(previous, turn, this.progressReminderPolicy);
+      this.state.progressReminder = next;
+      if (previous.reminder !== 'pending' && next.reminder === 'pending') {
+        progress = { readOnlyTurns: next.readOnlyTurns, readOnlyMs: next.readOnlyMs };
+      }
     }
-    return undefined;
+    // v2.6 周期性目标审查：按全部已完成工具回合计数（读/写/失败/中性都算），
+    // 覆盖「换参数、换命令调查同一问题」这类参数摘要识别不了的反复调查。
+    if (this.goalReviewPolicy) {
+      const previous = normalizeGoalReviewState(this.state.goalReview);
+      const advanced = advanceGoalReview(previous, turn, this.goalReviewPolicy);
+      this.state.goalReview = advanced.state;
+      if (advanced.reminder) {
+        goalReview = advanced.reminder;
+        this.state.pending = this.withPending({
+          goalReview: {
+            toolTurns: advanced.reminder.toolTurns,
+            activeMs: advanced.reminder.activeMs,
+            goal: (turn.goal ?? '').slice(0, 500),
+            ...(turn.recentResult === undefined
+              ? {}
+              : { recentResult: turn.recentResult.slice(0, 240) }),
+          },
+        });
+      }
+    }
+    if (progress === undefined && goalReview === undefined) return undefined;
+    return {
+      ...(progress === undefined ? {} : { progress }),
+      ...(goalReview === undefined ? {} : { goalReview }),
+    };
   }
 
   acknowledgeProgressReminder(): boolean {
@@ -534,9 +596,25 @@ export class DefaultContextHarness implements AgentContextHarness {
    */
   observeExecution(usage: ExecutionBudgetUsage): ExecutionBudgetDecision | undefined {
     if (!this.executionBudgetPolicy) return undefined;
+    return this.advanceBudget(usage, false);
+  }
+
+  /**
+   * 预算累计的唯一入口（observeExecution 与 Harness 自持的摘要调用共用）。
+   * collect=true 时把决策暂存到 prepareBudgetDecisions，由 prepareTurn 交回
+   * Runtime 发事件——压缩发生在 prepareTurn 内部，Runtime 看不见这次调用。
+   */
+  private advanceBudget(
+    usage: ExecutionBudgetUsage,
+    collect: boolean,
+  ): ExecutionBudgetDecision | undefined {
+    if (!this.executionBudgetPolicy) return undefined;
     const previous = normalizeExecutionBudgetState(this.state.executionBudget);
     const decision = advanceExecutionBudget(previous, usage, this.executionBudgetPolicy);
     this.state.executionBudget = decision.state;
+    if (collect && decision.buckets.length > 0) {
+      this.prepareBudgetDecisions.push(decision);
+    }
     // 只在本轮**新**跨阈值时排队提醒。level 是粘滞档位（跨过就一直保持），
     // 若按 level 判断，warn 之后的每一轮都会重复注入同一段提醒——那本身就是
     // 一种"执行不收敛"。buckets 为空 = 本轮没有新变化，不打扰。
@@ -554,8 +632,22 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   acknowledgeConvergenceReminders(): boolean {
     if (!this.state.pending) return false;
+    // 目标审查的 delivered 标记随 acknowledge 落定：resume 后不重复投递同一周期。
+    if (this.state.pending.goalReview && this.state.goalReview?.review === 'pending') {
+      this.state.goalReview = { ...this.state.goalReview, review: 'delivered' };
+    }
     this.state.pending = undefined;
     return true;
+  }
+
+  /** 当前预算档位（粘滞）。Runtime 准入检查专用；未启用预算时恒为 none。 */
+  executionBudgetLevel(): ExecutionBudgetLevel {
+    if (!this.executionBudgetPolicy) return 'none';
+    const state = normalizeExecutionBudgetState(this.state.executionBudget);
+    if (state.exhausted.length > 0) return 'exhausted';
+    if (Object.values(state.converged).some(Boolean)) return 'converge';
+    if (Object.values(state.warned).some(Boolean)) return 'warn';
+    return 'none';
   }
 
   /**
@@ -588,7 +680,32 @@ export class DefaultContextHarness implements AgentContextHarness {
         ),
       );
     }
+    if (pending.goalReview) {
+      // 剩余预算按当前真实用量重算（预算关闭时为空数组，文案整段省略）。
+      const budgetLines = this.executionBudgetPolicy
+        ? renderExecutionBudgetRemaining(
+            normalizeExecutionBudgetState(this.state.executionBudget),
+            this.executionBudgetPolicy,
+          )
+        : [];
+      texts.push(
+        renderGoalReviewReminder({
+          goal: pending.goalReview.goal,
+          toolTurns: pending.goalReview.toolTurns,
+          activeMs: pending.goalReview.activeMs,
+          ...(pending.goalReview.recentResult === undefined
+            ? {}
+            : { recentResult: pending.goalReview.recentResult }),
+          budgetLines,
+        }),
+      );
+    }
     return texts;
+  }
+
+  /** prepareTurn 期间的预算累计（压缩摘要）：决策暂存，随 prepareTurn 返回。 */
+  private advanceBudgetForPrepare(usage: ExecutionBudgetUsage): void {
+    this.advanceBudget(usage, true);
   }
 
   /** 合并待投递提醒（不丢另一类；同类型直接覆盖为最新一次）。 */
@@ -755,6 +872,8 @@ export class DefaultContextHarness implements AgentContextHarness {
     tools: ToolSchema[],
     signal?: AbortSignal,
   ): Promise<PreparedModelTurn> {
+    // 收集本次 prepareTurn 期间（压缩摘要）产生的预算决策，随结果交回 Runtime。
+    this.prepareBudgetDecisions = [];
     // v1.10：scratchpad 视图只承载"进度/防重复"信号（不含工具结果——那些在
     // transcript 里，压缩时由摘要承载）。预算从 10%/8K 收紧到 3%/2K 作为兜底。
     const maxScratchpadTokens = Math.max(
@@ -844,6 +963,9 @@ export class DefaultContextHarness implements AgentContextHarness {
       scratchpadTruncated: boundedScratchpad.truncated || scratchpadText !== boundedScratchpad.text,
       planTokens: estimateTextTokens(planText),
       compaction,
+      ...(this.prepareBudgetDecisions.length > 0
+        ? { budgetDecisions: this.prepareBudgetDecisions }
+        : {}),
     };
   }
 
@@ -895,7 +1017,7 @@ export class DefaultContextHarness implements AgentContextHarness {
     );
     try {
       const cacheAligned = removedMessages[0]?.role !== 'tool' && removedMessages.length > 0;
-      const nextSummary = await this.summarizer.summarize({
+      const summary = await this.summarizer.summarize({
         previousSummary: this.state.conversationSummary,
         messages: removedMessages,
         maxSummaryTokens,
@@ -903,6 +1025,13 @@ export class DefaultContextHarness implements AgentContextHarness {
         // P2-E：复现上一请求的真前缀（system + tools + 被压缩区域）。
         prefix: cacheAligned ? { system: this.systemPromptText(), tools } : undefined,
       });
+      // 全部模型请求统一计量：摘要调用计入执行预算（含内部重试与真实输出 token）。
+      this.advanceBudgetForPrepare({
+        modelCalls: summary.modelCalls,
+        outputTokens: summary.outputTokens,
+        activeMs: 0,
+      });
+      const nextSummary = summary.summary;
       if (!nextSummary.trim()) return null;
       const summaryText = this.truncateToTokens(nextSummary.trim(), maxSummaryTokens);
       const summaryTokens = estimateTextTokens(summaryText);

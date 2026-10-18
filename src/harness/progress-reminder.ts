@@ -13,6 +13,13 @@ export const DEFAULT_PROGRESS_REMINDER_POLICY: Readonly<ProgressReminderPolicy> 
 export interface ToolTurnProgress {
   activity: 'read' | 'neutral' | 'other';
   durationMs: number;
+  /**
+   * v2.6 周期性目标审查：原始用户目标（Run.task，由 Runtime 每回合原样传入）。
+   * 模型可以更新计划，但计划不能替换用户目标——审查文案只认这里的目标。
+   */
+  goal?: string;
+  /** v2.6 周期性目标审查：近期工具结果的有界摘要（Runtime 截断后传入）。 */
+  recentResult?: string;
 }
 
 export interface ProgressReminderState {

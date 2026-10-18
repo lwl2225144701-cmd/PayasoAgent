@@ -96,6 +96,9 @@ const disabled = new DefaultContextHarness({
   permissionMode: 'read-only',
   modelConfig: MODEL,
   progressReminder: false,
+  // v2.6：目标审查默认开启，单独关 progress 时它仍会触发——这里测的是
+  // progress 开关本身，两个策略都关掉才是"无任何回合提醒"的基线。
+  goalReview: false,
 });
 disabled.restoreState(pending);
 assert.equal(disabled.observeToolTurn({ activity: 'read', durationMs: 999_999 }), undefined);
@@ -121,9 +124,9 @@ const partial = harness();
 partial.observeToolTurn({ activity: 'read', durationMs: 15_000 });
 const restoredPartial = harness();
 restoredPartial.restoreState(partial.snapshotState());
+// v2.6：observeToolTurn 返回 ToolTurnObservations（progress 与 goalReview 独立）
 assert.deepEqual(restoredPartial.observeToolTurn({ activity: 'read', durationMs: 10_000 }), {
-  readOnlyTurns: 2,
-  readOnlyMs: 25_000,
+  progress: { readOnlyTurns: 2, readOnlyMs: 25_000 },
 });
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-progress-'));

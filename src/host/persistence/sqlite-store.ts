@@ -15,10 +15,12 @@ import type {
   DeletedWorkspaceView,
   ModelProviderView,
   RunStore,
+  StoredDeliveryOutcome,
   StoredEvent,
   StoredRun,
   StoredRunStatus,
   StoredSession,
+  StoredStopReason,
   UpdateModelProviderInput,
 } from './store.js';
 
@@ -40,6 +42,8 @@ interface RunRow {
   model: string | null;
   provider_id: string | null;
   base_url: string | null;
+  stop_reason?: string | null;
+  delivery_outcome?: string | null;
 }
 
 interface SessionRow {
@@ -81,6 +85,12 @@ function mapRun(row: RunRow): StoredRun {
   if (row.model !== null) run.model = row.model;
   if (row.provider_id !== null) run.providerId = row.provider_id;
   if (row.base_url !== null) run.baseUrl = row.base_url;
+  if (row.stop_reason !== null && row.stop_reason !== undefined) {
+    run.stopReason = row.stop_reason as StoredStopReason;
+  }
+  if (row.delivery_outcome !== null && row.delivery_outcome !== undefined) {
+    run.deliveryOutcome = row.delivery_outcome as StoredDeliveryOutcome;
+  }
   return run;
 }
 
@@ -177,6 +187,8 @@ export class SqliteRunStore implements RunStore {
             model TEXT,
             provider_id TEXT,
             base_url TEXT,
+            stop_reason TEXT,
+            delivery_outcome TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id),
             UNIQUE (session_id, turn_index)
           );
@@ -287,6 +299,13 @@ export class SqliteRunStore implements RunStore {
     if (!names.has('base_url')) {
       this.db.exec('ALTER TABLE runs ADD COLUMN base_url TEXT');
     }
+    // v2.6：停止原因与交付结果（可空列；旧库 ALTER 追加，历史记录缺省 unknown）
+    if (!names.has('stop_reason')) {
+      this.db.exec('ALTER TABLE runs ADD COLUMN stop_reason TEXT');
+    }
+    if (!names.has('delivery_outcome')) {
+      this.db.exec('ALTER TABLE runs ADD COLUMN delivery_outcome TEXT');
+    }
     const rows = this.db
       .prepare(
         "SELECT run_id, task, workspace_root, workspace_name, created_at, updated_at FROM runs WHERE session_id IS NULL OR session_id = ''",
@@ -349,16 +368,20 @@ export class SqliteRunStore implements RunStore {
         model TEXT,
         provider_id TEXT,
         base_url TEXT,
+        stop_reason TEXT,
+        delivery_outcome TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(session_id),
         UNIQUE (session_id, turn_index)
       );
       INSERT INTO runs_new (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url,
+        stop_reason, delivery_outcome
       )
       SELECT
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        'workspace-write', created_at, updated_at, result, error, deleted_at, model, provider_id, base_url
+        'workspace-write', created_at, updated_at, result, error, deleted_at, model, provider_id, base_url,
+        NULL, NULL
       FROM runs;
       DROP TABLE runs;
       ALTER TABLE runs_new RENAME TO runs;
@@ -587,8 +610,9 @@ export class SqliteRunStore implements RunStore {
       .prepare(`
       INSERT INTO runs (
         run_id, session_id, turn_index, task, status, workspace_root, workspace_name,
-        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url, constraints_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        permission_mode, created_at, updated_at, result, error, deleted_at, model, provider_id, base_url, constraints_json,
+        stop_reason, delivery_outcome
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         run.runId,
@@ -608,6 +632,8 @@ export class SqliteRunStore implements RunStore {
         nullable(run.providerId),
         nullable(run.baseUrl),
         run.constraints ? JSON.stringify(run.constraints) : null,
+        nullable(run.stopReason),
+        nullable(run.deliveryOutcome),
       );
   }
 
@@ -617,7 +643,8 @@ export class SqliteRunStore implements RunStore {
       UPDATE runs SET
         session_id = ?, turn_index = ?, task = ?, status = ?, workspace_root = ?, workspace_name = ?,
         permission_mode = ?, created_at = ?, updated_at = ?, result = ?, error = ?, deleted_at = ?,
-        model = ?, provider_id = ?, base_url = ?, constraints_json = ?
+        model = ?, provider_id = ?, base_url = ?, constraints_json = ?,
+        stop_reason = ?, delivery_outcome = ?
       WHERE run_id = ?
     `)
       .run(
@@ -637,6 +664,8 @@ export class SqliteRunStore implements RunStore {
         nullable(run.providerId),
         nullable(run.baseUrl),
         run.constraints ? JSON.stringify(run.constraints) : null,
+        nullable(run.stopReason),
+        nullable(run.deliveryOutcome),
         run.runId,
       );
     if (result.changes !== 1) throw new Error(`Run not found: ${run.runId}`);

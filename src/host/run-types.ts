@@ -5,7 +5,11 @@
 // 「对外投影形状」有唯一 owner。
 
 import type { PermissionMode } from '../permission-mode.js';
-import type { StoredRunStatus } from './persistence/store.js';
+import type {
+  StoredDeliveryOutcome,
+  StoredRunStatus,
+  StoredStopReason,
+} from './persistence/store.js';
 
 export type { CreateRunAttachmentInput } from './attachments/types.js';
 
@@ -32,6 +36,10 @@ export interface HostRun {
   baseUrl?: string;
   permissionMode: PermissionMode;
   constraints?: import('../task-constraints.js').TaskConstraints;
+  /** v2.6：稳定停止原因（终态；进行中的 Run 缺省）。界面据此与"用户主动停止"区分。 */
+  stopReason?: StoredStopReason;
+  /** v2.6：交付结果（与 status 正交；旧记录缺省时按 unknown 展示）。 */
+  deliveryOutcome?: StoredDeliveryOutcome;
 }
 
 export interface HostSession {

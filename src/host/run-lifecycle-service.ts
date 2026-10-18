@@ -26,7 +26,7 @@ import {
   storedPermissionMode,
 } from '../permission-mode.js';
 import { checkpointPath, loadCheckpoint } from '../persistence/file-checkpoint-store.js';
-import { AgentStopRequestedError, runAgent } from '../runtime/agent.js';
+import { type AgentStopReason, AgentStopRequestedError, runAgent } from '../runtime/agent.js';
 import { createWorkspace, getRunWorkspaceRoot } from '../sandbox/sandbox-manager.js';
 import { isAbortError } from '../util/abort.js';
 import type { ApprovalCoordinator } from './approval-coordinator.js';
@@ -37,12 +37,15 @@ import type { ModelService } from './model-service.js';
 import {
   isTerminalRunStatus,
   type RunStore,
+  type StoredDeliveryOutcome,
   type StoredRun,
   type StoredSession,
+  type StoredStopReason,
   type TerminalRunStatus,
 } from './persistence/store.js';
 import { expandPromptCommand, scanPromptCommands } from './prompt-command.js';
 import type { HostAttachment, HostEvent, StreamingEvent } from './run-events.js';
+import { deriveDeliveryOutcome, toStoredStopReason } from './run-stop-reason.js';
 import type { CreateRunAttachmentInput } from './run-types.js';
 import { type CleanupError, type HostRun, isCancellable } from './run-types.js';
 import { publicActiveView, publicStoredView, sessionTitle } from './run-views.js';
@@ -92,6 +95,14 @@ export interface RunLifecycleServiceDeps {
   approvals: ApprovalCoordinator;
   toolchain: ToolchainPreparationCoordinator;
   events: EventStreamService;
+}
+
+/** Run 事件里是否出现过预算耗尽判定（completed 但中途耗尽 → 交付降级 partial）。 */
+function hasBudgetExhaustedEvent(run: InternalRun): boolean {
+  return run.events.some(
+    (event) =>
+      event.type === 'budget_decision' && (event as { level?: string }).level === 'exhausted',
+  );
 }
 
 export class RunLifecycleService {
@@ -375,23 +386,54 @@ export class RunLifecycleService {
   private finalizeRun(
     run: InternalRun,
     status: TerminalRunStatus,
-    extra?: { result?: string; error?: string },
+    extra?: {
+      result?: string;
+      error?: string;
+      /** v2.6：稳定停止原因（Runtime AgentStopReasonCode → Host 持久化码）。 */
+      stopReason?: StoredStopReason;
+      /** v2.6：交付结果（缺省时按 status + stopReason 机械派生）。 */
+      deliveryOutcome?: StoredDeliveryOutcome;
+    },
   ): boolean {
     if (isTerminalRunStatus(run.status)) return false;
     const timestamp = new Date().toISOString();
+    const stopReason = extra?.stopReason;
+    const deliveryOutcome = extra?.deliveryOutcome ?? deriveDeliveryOutcome(status, stopReason);
     // 终态映射（业务语义归 RunLifecycleService；Store 只负责原子持久化）
     const terminalEvent: HostEvent =
       status === 'completed'
-        ? { type: 'run_completed', runId: run.runId, timestamp, result: extra?.result }
+        ? {
+            type: 'run_completed',
+            runId: run.runId,
+            timestamp,
+            result: extra?.result,
+            ...(stopReason === undefined ? {} : { stopReason }),
+            deliveryOutcome,
+          }
         : status === 'failed'
-          ? { type: 'run_failed', runId: run.runId, timestamp, error: extra?.error }
-          : { type: 'run_stopped', runId: run.runId, timestamp };
+          ? {
+              type: 'run_failed',
+              runId: run.runId,
+              timestamp,
+              error: extra?.error,
+              ...(stopReason === undefined ? {} : { stopReason }),
+              deliveryOutcome,
+            }
+          : {
+              type: 'run_stopped',
+              runId: run.runId,
+              timestamp,
+              ...(stopReason === undefined ? {} : { stopReason }),
+              deliveryOutcome,
+            };
     const persisted: StoredRun = {
       ...this.toStoredRun(run),
       status,
       updatedAt: timestamp,
       ...(status === 'completed' ? { result: extra?.result, error: undefined } : {}),
       ...(status === 'failed' ? { error: extra?.error } : {}),
+      ...(stopReason === undefined ? {} : { stopReason }),
+      deliveryOutcome,
     };
 
     let seq: number;
@@ -422,9 +464,14 @@ export class RunLifecycleService {
     return true;
   }
 
-  private finish(run: InternalRun): void {
-    // stopped 的进入边：running（同步 stop 竞态 / 占位 Run）或 stopping（取消完成路径）
-    this.finalizeRun(run, 'stopped');
+  private finish(run: InternalRun, stop?: AgentStopReason): void {
+    // stopped 的进入边：running（同步 stop 竞态 / 占位 Run）或 stopping（取消完成路径）。
+    // v2.6：Runtime 的 AgentStopRequestedError 携带稳定停止原因（如预算耗尽），
+    // Host 据此落 stopReason + 派生 deliveryOutcome，绝不让预算停止显示为成功。
+    this.finalizeRun(run, 'stopped', {
+      ...(stop?.code === undefined ? {} : { stopReason: toStoredStopReason(stop.code) }),
+      ...(stop?.notice === undefined ? {} : { result: stop.notice }),
+    });
   }
 
   private failRun(run: InternalRun, message: string): void {
@@ -855,11 +902,16 @@ export class RunLifecycleService {
         const delivered = run.constraints?.evidence
           ? renderEvidence(run.workspaceRoot, run.constraints.evidence, result)
           : result;
-        this.finalizeRun(run, 'completed', { result: delivered });
+        // v2.6：预算中途耗尽的 Run 即使给出了回答，交付结果也是 partial——
+        // "执行已结束"与"目标已完成"必须分开陈述，不能显示为任务成功。
+        this.finalizeRun(run, 'completed', {
+          result: delivered,
+          ...(hasBudgetExhaustedEvent(run) ? { stopReason: 'budget_exhausted' as const } : {}),
+        });
       } catch (err) {
         flushDelta();
         if (err instanceof AgentStopRequestedError) {
-          this.finish(run);
+          this.finish(run, err.stop);
           return;
         }
         // 用户主动取消（signal 已 abort）→ stopped，绝不算 failed；

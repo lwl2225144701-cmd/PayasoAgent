@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatDurationMs } from '../../format';
 import { useI18n } from '../../i18n';
-import type { HostRunStatus } from '../../types';
+import type { HostRunStatus, RunDeliveryOutcome, RunStopReason } from '../../types';
 import { AlertIcon, CheckIcon, ChevronRightIcon, ScissorsIcon, ThinkIcon } from '../icons';
 import type { ModelWaitState } from './context-gauge';
 import { ThinkBlock } from './ThinkBlock';
@@ -23,6 +23,8 @@ export function ExecutionPanel({
   status,
   finishedAt,
   runId,
+  stopReason,
+  deliveryOutcome,
   onOpenPreview,
 }: {
   groups: ToolStepGroup[];
@@ -34,6 +36,10 @@ export function ExecutionPanel({
   status: HostRunStatus;
   finishedAt: string;
   runId: string;
+  /** v2.6：稳定停止原因（终态；预算耗尽与用户主动停止必须分开陈述）。 */
+  stopReason?: RunStopReason;
+  /** v2.6：交付结果（与 status 正交）。 */
+  deliveryOutcome?: RunDeliveryOutcome;
   /** M4：工具行的"在预览面板中打开"入口（缺省不显示）。 */
   onOpenPreview?: (path: string, name: string, runId: string) => void;
 }) {
@@ -113,6 +119,13 @@ export function ExecutionPanel({
           : status === 'interrupted'
             ? t('timeline.execution.statusInterrupted')
             : t('timeline.execution.statusDone');
+  // v2.6 终态语义：停止原因与交付结果分别陈述——"执行已结束"不等于"目标已完成"，
+  // 预算耗尽更不是用户主动停止。进行中的 Run 两者都缺省，不显示这一行。
+  const terminal = !running && status !== 'stopping';
+  const stopReasonLabel =
+    terminal && stopReason ? t(`timeline.execution.stopReason.${stopReason}`) : undefined;
+  const deliveryLabel =
+    terminal && deliveryOutcome ? t(`timeline.execution.delivery.${deliveryOutcome}`) : undefined;
 
   useEffect(() => {
     if (!running && wasRunning.current) setOpen(false);
@@ -187,6 +200,18 @@ export function ExecutionPanel({
             <span className={styles.executionFailed}>
               {' · '}
               {t('timeline.execution.failedCount', { count: failedCount })}
+            </span>
+          )}
+          {stopReasonLabel && (
+            <span className={styles.executionFailed}>
+              {' · '}
+              {t('timeline.execution.stopReasonLabel')}: {stopReasonLabel}
+            </span>
+          )}
+          {deliveryLabel && (
+            <span className={styles.executionMeta}>
+              {' · '}
+              {t('timeline.execution.deliveryLabel')}: {deliveryLabel}
             </span>
           )}
         </span>

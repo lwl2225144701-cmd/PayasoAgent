@@ -26,14 +26,64 @@ import { invokeToolCall } from './tool-invocation/process-manager.js';
 import type { TraceEvent } from './trace.js';
 import { decideEmptyTurn, decideIncompleteTurn } from './turn-policy.js';
 
+/** 耗尽后注入的收尾指令（一次性；携带确定的事实，不代模型下结论）。 */
+const BUDGET_WRAP_UP_INSTRUCTION =
+  '[Execution budget exhausted] The configured execution budget for this run is spent. ' +
+  'Do not start any new investigation or tool work. Deliver the final answer now, based only on ' +
+  'what is already established: state plainly which parts of the original goal are done, which are ' +
+  'not, and why. If nothing was accomplished, say so explicitly.';
+/** 工具被预算准入拦下时回传给模型的说明（工具未执行，无副作用）。 */
+const BUDGET_TOOL_BLOCKED_MESSAGE =
+  'EXECUTION_BUDGET_EXHAUSTED: this tool call was not executed (execution budget spent, no new tool work). ' +
+  'Deliver the final answer now based on established results; state what is done and what is not.';
+
 // Harness may request a graceful stop after the current tool turn. This is
 // intentionally distinct from an execution error: Host turns it into the
 // normal stopped terminal state and can preserve the checkpoint for resume.
+
+/**
+ * 稳定停止原因码（Host 持久化与界面展示的唯一身份，禁止用自然语言充当）。
+ * - budget_exhausted：执行预算耗尽，新工作已停止（交付结果必为 partial）；
+ * - policy_denied：策略/审批拒绝导致无法继续；
+ * - tool_unavailable：依赖工具不可用且未获准备；
+ * - outcome_uncertain：副作用结果不确定，无法安全继续；
+ * - user_cancelled：用户主动停止（Runtime 侧 abort 路径，Host 亦可自行判定）。
+ */
+export type AgentStopReasonCode =
+  | 'budget_exhausted'
+  | 'policy_denied'
+  | 'tool_unavailable'
+  | 'outcome_uncertain'
+  | 'user_cancelled';
+
+export interface AgentStopReason {
+  code: AgentStopReasonCode;
+  /** 面向用户的确定停止说明（Host 落库为 Run 结果，不替代模型答复）。 */
+  notice?: string;
+}
+
 export class AgentStopRequestedError extends Error {
-  constructor(message = 'Agent turn stopped by Harness policy') {
+  constructor(
+    readonly stop?: AgentStopReason,
+    message = 'Agent turn stopped by Harness policy',
+  ) {
     super(message);
     this.name = 'AgentStopRequestedError';
   }
+}
+
+/** 近期工具结果的有界摘要（周期性目标审查用；只取最后一条 tool 消息）。 */
+function lastToolResultDigest(messages: ChatMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== 'tool') continue;
+    const text =
+      typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+    const flat = text.replace(/\s+/g, ' ').trim();
+    if (!flat) return undefined;
+    return flat.length > 240 ? `${flat.slice(0, 239)}…` : flat;
+  }
+  return undefined;
 }
 
 // v1.8 空回合不变量：模型既没有工具调用也没有可见内容时，Runtime 绝不把它当成
@@ -206,10 +256,26 @@ export async function runAgent(
     // 请求发出后整轮失败的随 Run 终止，不再入账（失败即终态，无后续预算决策）。
     let budgetMarkAt = performance.now();
     let budgetModelCalls = 0;
+    // v2.6 阶段二强制收尾：耗尽后注入一次收尾指令，只保留预留的收尾生成；
+    // 模型若连续两轮仍发起工具调用（忽略收尾指令），Runtime 优雅停止。
+    let wrapUpInjected = false;
+    let wrapUpIgnoredTurns = 0;
+    const MAX_WRAP_UP_IGNORED_TURNS = 2;
     for (let i = startIter; ; i++) {
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
       throwIfAborted(opts.signal);
+      // v2.6 预算准入（阶段二）：耗尽即停止新工作。注入一次收尾指令后仍允许
+      // 本轮生成（预留的小额收尾预算）；模型持续输出由独立累计时限
+      // （maxActiveMs）在准入边界约束，单请求内的停滞由 idle 看门狗负责。
+      if ((contextHarness.executionBudgetLevel?.() ?? 'none') === 'exhausted') {
+        if (!wrapUpInjected) {
+          wrapUpInjected = true;
+          messages.push({ role: 'user', content: BUDGET_WRAP_UP_INSTRUCTION });
+          save();
+          observer.log('[预算] 执行预算耗尽，注入收尾指令，停止新工具工作');
+        }
+      }
       const turnStartedAt = performance.now();
       // v2.3 后台任务完成通知：迭代边界注入（本轮 LLM 调用即看到）。
       // 注意：计数只在"模型做出真实进展（执行工具调用）"时重置——绝不能在这里
@@ -225,6 +291,23 @@ export async function runAgent(
       // system / permission / Scratchpad 和历史预算全部由 Harness 决定。
       const schemas = getSchemas();
       const ctx = await contextHarness.prepareTurn(messages, scratchpad, schemas, opts.signal);
+      // v2.6：压缩摘要发生在 prepareTurn 内部（Harness 自持的模型调用）——
+      // 全部模型请求统一计量，这里的跨阈决策与主循环的 observeExecution 同路：
+      // 发事件、随本轮 checkpoint 落盘。
+      for (const decision of ctx.budgetDecisions ?? []) {
+        const decisionLevel = decision.level;
+        if (decision.buckets.length > 0 && decisionLevel !== 'none') {
+          emit({
+            type: 'budget_decision',
+            level: decisionLevel,
+            buckets: decision.buckets,
+            modelCalls: decision.state.usage.modelCalls,
+            outputTokens: decision.state.usage.outputTokens,
+            activeMs: decision.state.usage.activeMs,
+          });
+          save();
+        }
+      }
       emit({
         type: 'context_trim',
         beforeMessages: ctx.usage.beforeMessages,
@@ -491,20 +574,44 @@ export async function runAgent(
                 iteration: i + 1,
                 messageCount: reviewMessages.length,
               });
+              // 最终审查也是模型请求：计入执行预算（含内部重试与真实输出 token）。
+              let reviewModelCalls = 0;
+              const reviewMarkAt = performance.now();
               const reviewed = await chat(
                 reviewMessages,
                 [],
                 undefined,
                 opts.modelConfig,
                 opts.signal,
-                (attempt) =>
+                (attempt) => {
+                  reviewModelCalls += 1;
                   emit({
                     type: 'llm_request_sent',
                     iteration: i + 1,
                     attempt,
                     requestBodyBytes: JSON.stringify(reviewMessages).length,
-                  }),
+                  });
+                },
               );
+              const reviewDecision = contextHarness.observeExecution?.({
+                modelCalls: reviewModelCalls,
+                outputTokens: reviewed.usage?.outputTokens ?? 0,
+                activeMs: performance.now() - reviewMarkAt,
+              });
+              if (reviewDecision && reviewDecision.buckets.length > 0) {
+                const reviewLevel = reviewDecision.level;
+                if (reviewLevel !== 'none') {
+                  emit({
+                    type: 'budget_decision',
+                    level: reviewLevel,
+                    buckets: reviewDecision.buckets,
+                    modelCalls: reviewDecision.state.usage.modelCalls,
+                    outputTokens: reviewDecision.state.usage.outputTokens,
+                    activeMs: reviewDecision.state.usage.activeMs,
+                  });
+                  save();
+                }
+              }
               emit({
                 type: 'llm_call',
                 purpose: 'final_review',
@@ -567,10 +674,27 @@ export async function runAgent(
       let otherCalls = 0;
 
       // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
+      // v2.6 预算准入（阶段二）：耗尽后不执行任何新工具——模型即使忽略收尾
+      // 提醒也无法继续消耗。工具未执行、无副作用，回传确定说明。
+      const budgetExhausted = (contextHarness.executionBudgetLevel?.() ?? 'none') === 'exhausted';
+      if (budgetExhausted) wrapUpIgnoredTurns += 1;
       for (const call of assistantMsg.tool_calls) {
         // True cancellation：工具间检查 —— 前一个工具返回后用户 Stop，
         // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
         throwIfAborted(opts.signal);
+        if (budgetExhausted) {
+          emit({
+            type: 'tool_execution_skipped',
+            tool: call.function.name,
+            reason: 'budget_exhausted',
+          });
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: BUDGET_TOOL_BLOCKED_MESSAGE,
+          });
+          continue;
+        }
         // 一次工具调用的完整生命周期（parse → 审批 → 执行 → 校验 → 重试 →
         // 恢复）由 ToolInvocationProcessManager 负责；返回即该 call 处理完毕。
         const outcome = await invokeToolCall(
@@ -612,12 +736,38 @@ export async function runAgent(
         }
       }
 
+      // v2.6 阶段二：耗尽后模型仍连续发起工具调用（收尾指令被无视两轮）——
+      // 停止不再产生新工作，由 Host 落 stopped + stopReason=budget_exhausted
+      // 并保存现场；最终说明由 Host 给出（模型未正常收尾）。
+      if (wrapUpIgnoredTurns >= MAX_WRAP_UP_IGNORED_TURNS) {
+        throw new AgentStopRequestedError({
+          code: 'budget_exhausted',
+          notice:
+            '执行预算已耗尽，且模型在收尾指令后仍连续发起工具调用，Runtime 已停止新工作。' +
+            '以上为已建立的证据与部分结果；未完成部分因预算耗尽未能继续。',
+        });
+      }
+
       if (contextHarness.observeToolTurn) {
-        const reminder = contextHarness.observeToolTurn({
+        // v2.6 周期性目标审查需要原始目标与近期结果：目标取 Run.task（模型改写
+        // 计划不构成目标变更），近期结果取最后一条 tool 消息的有界摘要。
+        const observations = contextHarness.observeToolTurn({
           activity: otherCalls > 0 ? 'other' : readCalls > 0 ? 'read' : 'neutral',
           durationMs: performance.now() - turnStartedAt,
+          goal: state.task,
+          recentResult: lastToolResultDigest(messages),
         });
-        if (reminder) emit({ type: 'progress_reminder', iteration: i + 1, ...reminder });
+        if (observations?.progress) {
+          emit({ type: 'progress_reminder', iteration: i + 1, ...observations.progress });
+        }
+        if (observations?.goalReview) {
+          emit({
+            type: 'goal_review_reminder',
+            iteration: i + 1,
+            toolTurns: observations.goalReview.toolTurns,
+            activeMs: observations.goalReview.activeMs,
+          });
+        }
         // 工具本身的 checkpoint 在回合统计之前；此处保存回合计数与 pending 状态。
         save();
       }

@@ -257,6 +257,24 @@ export type TraceEvent =
       activeMs: number;
     }
   | {
+      // v2.6 周期性目标审查：按全部已完成工具回合触发（覆盖换参数/换命令的
+      // 反复调查）。只提醒、不阻断；合法长任务说明未解决问题后可继续。
+      type: 'goal_review_reminder';
+      step: number;
+      timestamp: string;
+      toolTurns: number; // 本周期累计的工具回合数
+      activeMs: number; // 本周期累计的活动毫秒
+    }
+  | {
+      // v2.6 预算准入（阶段二）：执行预算耗尽，工具调用未执行即被拦下。
+      // 无副作用；模型收到确定说明并被要求立即交付最终答复。
+      type: 'tool_execution_skipped';
+      step: number;
+      timestamp: string;
+      tool: string;
+      reason: 'budget_exhausted';
+    }
+  | {
       type: 'scratchpad_update';
       step: number;
       timestamp: string;
@@ -478,6 +496,19 @@ export type TraceEventInput =
       modelCalls: number;
       outputTokens: number;
       activeMs: number;
+    }
+  | {
+      // v2.6 周期性目标审查（Harness 只提示，不阻断）。
+      type: 'goal_review_reminder';
+      iteration: number;
+      toolTurns: number;
+      activeMs: number;
+    }
+  | {
+      // v2.6 预算准入拦截（阶段二）：工具未执行。
+      type: 'tool_execution_skipped';
+      tool: string;
+      reason: 'budget_exhausted';
     }
   | {
       type: 'scratchpad_update';

@@ -2,6 +2,16 @@ import type { PermissionMode } from '../../permission-mode.js';
 import type { ProviderModelInfo } from '../provider-url.js';
 import type { HostEvent } from '../run-events.js';
 import type {
+  RunTerminalStatus,
+  StoredDeliveryOutcome,
+  StoredStopReason,
+} from '../run-stop-reason.js';
+
+// 词汇再导出：停止原因/交付结果的 owner 是 run-stop-reason.ts，store 只转发，
+// 让既有导入方（sqlite-store / run-lifecycle-service / run-types）无需改动。
+export type { StoredDeliveryOutcome, StoredStopReason } from '../run-stop-reason.js';
+
+import type {
   BuiltinRemoteCatalogEntry,
   CreateModelProviderInput,
   DefaultModelSelection,
@@ -19,8 +29,10 @@ export type StoredRunStatus =
   | 'stopped'
   | 'interrupted';
 
-// 终态（v1.6 Atomic Run Finalization）：终态状态 + 对应终态事件必须原子持久化
-export type TerminalRunStatus = 'completed' | 'failed' | 'stopped';
+// 终态（v1.6 Atomic Run Finalization）：终态状态 + 对应终态事件必须原子持久化。
+// 词汇 owner 是 run-stop-reason.ts（与 stopReason/deliveryOutcome 同源），
+// 这里只做别名——store 与 run-events 不再互相 import 类型（导入环见该文件头）。
+export type TerminalRunStatus = RunTerminalStatus;
 
 export function isTerminalRunStatus(status: StoredRunStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'stopped';
@@ -56,6 +68,10 @@ export interface StoredRun {
   model?: string;
   providerId?: string;
   baseUrl?: string;
+  /** v2.6：稳定停止原因（仅终态有意义；进行中的 Run 不写）。 */
+  stopReason?: StoredStopReason;
+  /** v2.6：交付结果（与 status 正交；旧记录/未知 → unknown）。 */
+  deliveryOutcome?: StoredDeliveryOutcome;
 }
 
 export interface StoredEvent {

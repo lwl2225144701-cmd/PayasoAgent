@@ -51,7 +51,11 @@ try {
     summarizer: {
       summarize: async () => {
         summaryCalls++;
-        return 'Goal: preserve the long session\nProgress: earlier turns compacted';
+        return {
+          summary: 'Goal: preserve the long session\nProgress: earlier turns compacted',
+          outputTokens: 0,
+          modelCalls: 1,
+        };
       },
     },
   });

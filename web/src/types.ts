@@ -11,6 +11,17 @@ export type HostRunStatus =
   | 'interrupted';
 export type PermissionMode = 'read-only' | 'workspace-write' | 'full-access';
 
+/** v2.6 稳定停止原因（与后端 StoredStopReason 对齐）。 */
+export type RunStopReason =
+  | 'budget_exhausted'
+  | 'policy_denied'
+  | 'tool_unavailable'
+  | 'outcome_uncertain'
+  | 'user_cancelled';
+
+/** v2.6 交付结果（与 run.status 正交：执行是否结束 ≠ 目标完成了多少）。 */
+export type RunDeliveryOutcome = 'delivered' | 'partial' | 'blocked' | 'unknown';
+
 /** Shell 隔离能力（GET /runtime/capabilities 的 shellIsolation 字段，诚实分级）：
  *  partial 必须对 UI 可见——Windows ACL 为部分写入隔离，读与网络不受限。 */
 export interface ShellIsolationCapabilities {
@@ -35,6 +46,10 @@ export interface HostRun {
   providerId?: string;
   model?: string;
   permissionMode: PermissionMode;
+  /** v2.6：稳定停止原因（终态；与"用户主动停止"区分——预算耗尽不是用户取消）。 */
+  stopReason?: RunStopReason;
+  /** v2.6：交付结果（预算耗尽 → partial，绝不显示为任务成功）。 */
+  deliveryOutcome?: RunDeliveryOutcome;
 }
 
 export interface HostSession {
@@ -397,6 +412,20 @@ export interface BudgetDecisionEvent extends TraceEventBase {
   activeMs: number;
 }
 
+// v2.6 周期性目标审查：按全部已完成工具回合触发（覆盖换参数/换命令的反复调查）。
+export interface GoalReviewReminderEvent extends TraceEventBase {
+  type: 'goal_review_reminder';
+  toolTurns: number;
+  activeMs: number;
+}
+
+// v2.6 预算准入（阶段二）：执行预算耗尽，工具调用未执行即被拦下（无副作用）。
+export interface ToolExecutionSkippedEvent extends TraceEventBase {
+  type: 'tool_execution_skipped';
+  tool: string;
+  reason: 'budget_exhausted';
+}
+
 // Finalization guard：非空但明显未完成的文本回合，按 Harness 策略恢复或失败。
 export interface FinalizationGuardEvent extends TraceEventBase {
   type: 'finalization_guard';
@@ -522,6 +551,9 @@ export interface RunCompletedEvent {
   runId: string;
   timestamp: string;
   result?: string;
+  /** v2.6：预算耗尽后完成 → budget_exhausted（交付降级 partial）。 */
+  stopReason?: RunStopReason;
+  deliveryOutcome?: RunDeliveryOutcome;
 }
 
 export interface RunFailedEvent {
@@ -529,12 +561,17 @@ export interface RunFailedEvent {
   runId: string;
   timestamp: string;
   error?: string;
+  stopReason?: RunStopReason;
+  deliveryOutcome?: RunDeliveryOutcome;
 }
 
 export interface RunStoppedEvent {
   type: 'run_stopped';
   runId: string;
   timestamp: string;
+  /** v2.6：停止原因（用户主动停止缺省；预算/策略/工具不可用有码）。 */
+  stopReason?: RunStopReason;
+  deliveryOutcome?: RunDeliveryOutcome;
 }
 
 export interface RunInterruptedEvent {
@@ -571,6 +608,8 @@ export type TraceEvent =
   | ProgressReminderEvent
   | RepeatCallReminderEvent
   | BudgetDecisionEvent
+  | GoalReviewReminderEvent
+  | ToolExecutionSkippedEvent
   | FinalizationGuardEvent
   | SideEffectSkipEvent
   | SideEffectUncertainEvent

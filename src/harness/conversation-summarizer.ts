@@ -20,8 +20,16 @@ export interface ConversationSummaryRequest {
   prefix?: ConversationSummaryPrefix;
 }
 
+export interface ConversationSummaryResult {
+  summary: string;
+  /** 摘要请求的真实输出 token（usage 缺失时 0，不估算）。 */
+  outputTokens: number;
+  /** 摘要请求发出的 Provider 请求数（含内部重试）——预算统一计量用。 */
+  modelCalls: number;
+}
+
 export interface ConversationSummarizer {
-  summarize(request: ConversationSummaryRequest): Promise<string>;
+  summarize(request: ConversationSummaryRequest): Promise<ConversationSummaryResult>;
 }
 
 export interface SummaryConversation {
@@ -115,9 +123,18 @@ export function buildSummaryConversation(request: ConversationSummaryRequest): S
 export class LlmConversationSummarizer implements ConversationSummarizer {
   constructor(private readonly modelConfig?: ModelConfig) {}
 
-  async summarize(request: ConversationSummaryRequest): Promise<string> {
+  async summarize(request: ConversationSummaryRequest): Promise<ConversationSummaryResult> {
     const { messages, tools } = buildSummaryConversation(request);
-    const result = await chat(messages, tools, undefined, this.modelConfig, request.signal);
-    return stripThink(result.content);
+    // 摘要也是模型请求：按真实 Provider 请求计数（含内部重试），输出 token 取
+    // 真实 usage（缺失记 0，不估算）——执行预算必须覆盖全部模型调用。
+    let modelCalls = 0;
+    const result = await chat(messages, tools, undefined, this.modelConfig, request.signal, () => {
+      modelCalls += 1;
+    });
+    return {
+      summary: stripThink(result.content),
+      outputTokens: result.usage?.outputTokens ?? 0,
+      modelCalls,
+    };
   }
 }

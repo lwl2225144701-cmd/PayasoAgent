@@ -27,6 +27,8 @@ export function publicActiveView(run: HostRun): HostRun {
     baseUrl: run.baseUrl,
     constraints: run.constraints,
     permissionMode: run.permissionMode,
+    ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
+    ...(run.deliveryOutcome === undefined ? {} : { deliveryOutcome: run.deliveryOutcome }),
   };
 }
 
@@ -47,6 +49,8 @@ export function publicStoredView(run: StoredRun): HostRun {
     baseUrl: run.baseUrl,
     constraints: run.constraints,
     permissionMode: storedPermissionMode(run.permissionMode),
+    ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
+    ...(run.deliveryOutcome === undefined ? {} : { deliveryOutcome: run.deliveryOutcome }),
   };
 }
 

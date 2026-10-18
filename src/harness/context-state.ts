@@ -3,6 +3,7 @@ import {
   type ExecutionBudgetState,
   normalizeExecutionBudgetState,
 } from './execution-policy.js';
+import { type GoalReviewState, normalizeGoalReviewState } from './goal-review.js';
 import { createPlan, normalizePlan, type Plan } from './plan.js';
 import { normalizeProgressReminderState, type ProgressReminderState } from './progress-reminder.js';
 import {
@@ -24,6 +25,9 @@ export interface ContextHarnessState {
   // 持久化——resume 后计数延续，新 Run（继承会话历史）重置。旧 checkpoint 缺省。
   repeatCall?: RepeatCallState;
   executionBudget?: ExecutionBudgetState;
+  // v2.6 周期性目标审查：按全部已完成工具回合计数（覆盖换参数/换命令的
+  // 语义等价反复调查）。resume 延续，新 Run 重置；旧 checkpoint 缺省。
+  goalReview?: GoalReviewState;
   // 已触发但尚未随模型视图投递的提醒。与 progressReminder 的 pending 同语义：
   // 保留是为了 resume 后不丢；模型成功响应后由 Runtime 调 acknowledge 清除。
   pending?: ContextHarnessPendingReminders;
@@ -33,6 +37,7 @@ export interface ContextHarnessState {
 export interface ContextHarnessPendingReminders {
   repeatCall?: RepeatCallReminder;
   budget?: { level: 'warn' | 'converge'; buckets: ExecutionBudgetBucket[] };
+  goalReview?: { toolTurns: number; activeMs: number; goal: string; recentResult?: string };
 }
 
 export function createContextHarnessState(): ContextHarnessState {
@@ -53,7 +58,16 @@ function normalizePendingReminders(value: unknown): ContextHarnessPendingReminde
   const budgetLevel =
     budget?.level === 'warn' || budget?.level === 'converge' ? budget.level : undefined;
   const budgetBuckets = budget?.buckets;
-  if (repeatCall === undefined && budgetLevel === undefined) return undefined;
+  const goalReview = candidate.goalReview;
+  const goalReviewToolTurns =
+    typeof goalReview?.toolTurns === 'number' && Number.isSafeInteger(goalReview.toolTurns)
+      ? goalReview.toolTurns
+      : 0;
+  const hasGoalReview =
+    goalReview !== undefined &&
+    typeof goalReview === 'object' &&
+    (typeof goalReview.goal === 'string' || goalReviewToolTurns > 0);
+  if (repeatCall === undefined && budgetLevel === undefined && !hasGoalReview) return undefined;
   return {
     ...(repeatCall === undefined ? {} : { repeatCall }),
     ...(budgetLevel === undefined
@@ -70,6 +84,21 @@ function normalizePendingReminders(value: unknown): ContextHarnessPendingReminde
               : [],
           },
         }),
+    ...(hasGoalReview && goalReview
+      ? {
+          goalReview: {
+            toolTurns: goalReviewToolTurns,
+            activeMs:
+              typeof goalReview.activeMs === 'number' && Number.isSafeInteger(goalReview.activeMs)
+                ? goalReview.activeMs
+                : 0,
+            goal: typeof goalReview.goal === 'string' ? goalReview.goal.slice(0, 500) : '',
+            ...(typeof goalReview.recentResult === 'string'
+              ? { recentResult: goalReview.recentResult.slice(0, 240) }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -97,6 +126,9 @@ export function normalizeContextHarnessState(
     ...(value.executionBudget === undefined
       ? {}
       : { executionBudget: normalizeExecutionBudgetState(value.executionBudget) }),
+    ...(value.goalReview === undefined
+      ? {}
+      : { goalReview: normalizeGoalReviewState(value.goalReview) }),
     ...(value.pending === undefined ? {} : { pending: normalizePendingReminders(value.pending) }),
   };
 }

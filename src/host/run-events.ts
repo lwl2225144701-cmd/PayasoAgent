@@ -8,6 +8,7 @@ import type {
   ToolchainPreparationPhase,
   ToolchainPreparationStatus,
 } from '../sandbox/toolchain-preparation.js';
+import type { StoredDeliveryOutcome, StoredStopReason } from './run-stop-reason.js';
 
 // 用户随消息发送的附件（落盘后的引用：工作区相对路径，可走 files 端点预览）。
 // path 指向上传文件；文档原件为 binary，extraction 单独引用可读正文。
@@ -28,6 +29,8 @@ export interface HostAttachment {
 }
 
 // Host 生命周期事件
+// v2.6：终态事件携带 stopReason / deliveryOutcome —— 运行状态（是否结束）与
+// 交付语义（目标完成了多少）是两个问题，SSE 客户端据此分别展示。
 export type LifecycleEvent =
   | {
       type: 'run_started';
@@ -37,9 +40,33 @@ export type LifecycleEvent =
       attachments?: HostAttachment[];
     }
   | { type: 'run_stopping'; runId: string; timestamp: string }
-  | { type: 'run_completed'; runId: string; timestamp: string; result?: string }
-  | { type: 'run_failed'; runId: string; timestamp: string; error?: string }
-  | { type: 'run_stopped'; runId: string; timestamp: string }
+  | {
+      type: 'run_completed';
+      runId: string;
+      timestamp: string;
+      result?: string;
+      /** 稳定停止原因（正常完成为缺省；预算耗尽后完成 → budget_exhausted）。 */
+      stopReason?: StoredStopReason;
+      /** 交付结果（正常完成 → delivered；预算耗尽后完成 → partial）。 */
+      deliveryOutcome?: StoredDeliveryOutcome;
+    }
+  | {
+      type: 'run_failed';
+      runId: string;
+      timestamp: string;
+      error?: string;
+      stopReason?: StoredStopReason;
+      deliveryOutcome?: StoredDeliveryOutcome;
+    }
+  | {
+      type: 'run_stopped';
+      runId: string;
+      timestamp: string;
+      /** 停止原因（用户主动停止缺省；预算/策略/工具不可用停止有码）。 */
+      stopReason?: StoredStopReason;
+      /** 交付结果（预算耗尽 → partial；用户主动停止 → unknown）。 */
+      deliveryOutcome?: StoredDeliveryOutcome;
+    }
   | { type: 'run_interrupted'; runId: string; timestamp: string; error: string };
 
 // v2.0.1 JIT Approval：网络访问批准请求（推给前端让用户裁决）

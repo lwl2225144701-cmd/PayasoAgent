@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAgentExecutionContext } from '../src/bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
+import { resolveModelContextConfig } from '../src/harness/model-context.js';
 import type { ChatMessage } from '../src/llm/llm.js';
 import { AgentStopRequestedError, runAgent } from '../src/runtime/agent.js';
 import type { CheckpointSnapshot } from '../src/runtime/checkpoint-port.js';
@@ -164,6 +165,13 @@ const budgetHarness = () =>
     modelConfig: MODEL,
     // maxModelCalls=4：第 3 次响应跨 70% 预警线，第 4 次到 100% 耗尽。
     executionBudget: { maxModelCalls: 4, warnRatio: 0.7, convergeRatio: 0.9 },
+  });
+const goalReviewHarness = () =>
+  new DefaultContextHarness({
+    permissionMode: 'workspace-write',
+    modelConfig: MODEL,
+    // 3 个工具回合一审；时间阈值放到极大，隔离变量。
+    goalReview: { everyTurns: 3, everyMs: 10_000_000 },
   });
 
 try {
@@ -342,6 +350,155 @@ try {
     );
     assert.equal(hasBudgetWarning(requests[3]), true, '重试轮的累计同样驱动预警投递');
     assert.equal(run.snapshots.at(-1)?.harnessState?.executionBudget?.usage?.modelCalls, 4);
+  }
+
+  // ---- 6c. 周期性目标审查：交替调用不同工具也触发（换参数绕不过）----
+  {
+    const run = options('goal-review', goalReviewHarness());
+    script([
+      read(),
+      toolMessage(call({ mode: 'other' })),
+      read(),
+      toolMessage(call({ mode: 'other' })),
+      done,
+    ]);
+    assert.equal(await runAgent('交替调用不同工具的调查', undefined, run), 'done');
+    // 第 3 个已完成工具回合触发 → 注入第 4 轮请求的 [Context]
+    assert.match(contextText(requests[3]), /\[Periodic goal review\]/);
+    assert.match(contextText(requests[3]), /Original user goal: 交替调用不同工具的调查/);
+    const reviews = run.events.filter((e) => e.type === 'goal_review_reminder');
+    assert.equal(reviews.length, 1, '每周期只触发一次');
+    assert.equal(reviews[0].toolTurns, 3);
+    // 只提醒不阻断：正常调研走到终态答案
+    assert.equal(run.events.filter((e) => e.type === 'tool_execution_skipped').length, 0);
+  }
+
+  // ---- 6d. 目标审查可关闭 ----
+  {
+    const disabled = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      goalReview: false,
+    });
+    const run = options('goal-review-off', disabled);
+    script([read(), read(), read(), read(), done]);
+    assert.equal(await runAgent('关闭审查的调查', undefined, run), 'done');
+    assert.equal(run.events.filter((e) => e.type === 'goal_review_reminder').length, 0);
+  }
+
+  // ---- 6e. 预算强制收尾：模型无视收尾指令继续调工具 → 准入拦下并优雅停止 ----
+  {
+    const run = options('budget-enforce', budgetHarness());
+    script([read(), read(), read(), read(), read(), read(), done]);
+    const err = await runAgent('忽略收尾继续调用', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(err instanceof AgentStopRequestedError, '耗尽且收尾被无视 → 优雅停止');
+    assert.equal(err.stop?.code, 'budget_exhausted');
+    assert.ok(err.stop?.notice && err.stop.notice.length > 0, 'Host 可落库的确定停止说明');
+    const skipped = run.events.filter((e) => e.type === 'tool_execution_skipped');
+    assert.equal(skipped.length, 2, '两轮工具调用被预算准入拦下');
+    // 工具未执行：耗尽当轮的工具即被拦下，tool_call 事件只有前 3 次
+    assert.equal(run.events.filter((e) => e.type === 'tool_call').length, 3);
+    // 收尾指令注入过（第 5 轮请求可见）
+    assert.ok(
+      requests[4]?.some((m) => String(m.content).includes('[Execution budget exhausted]')),
+      '耗尽后注入一次性收尾指令',
+    );
+  }
+
+  // ---- 6f. 预算耗尽但模型配合收尾 → 正常完成（预留收尾生成生效）----
+  {
+    const run = options('budget-wrapup-ok', budgetHarness());
+    script([read(), read(), read(), read(), done]);
+    assert.equal(await runAgent('配合收尾', undefined, run), 'done');
+    assert.ok(
+      requests[4]?.some((m) => String(m.content).includes('[Execution budget exhausted]')),
+      '耗尽后仍允许一次收尾生成',
+    );
+    // 耗尽当轮（第 4 次响应）已发起的工具调用同样被拦下；模型第 5 轮配合收尾
+    assert.equal(run.events.filter((e) => e.type === 'tool_execution_skipped').length, 1);
+    const decisions = run.events.filter((e) => e.type === 'budget_decision');
+    assert.deepEqual(
+      decisions.map((e) => e.level),
+      ['warn', 'exhausted'],
+    );
+  }
+
+  // ---- 6g. resume 后预算不清零（累计值从 checkpoint 延续）----
+  {
+    const stopHarness = budgetHarness();
+    const stopping = options('budget-resume', stopHarness);
+    Object.assign(stopHarness, {
+      shouldStopAfterTurn: ({ iteration }: { iteration: number }) => iteration === 3,
+    });
+    script([read(), read(), read()]);
+    await assert.rejects(
+      runAgent('跑到预算边缘后停止', undefined, stopping),
+      AgentStopRequestedError,
+    );
+    assert.equal(stopping.snapshots.at(-1)?.harnessState?.executionBudget?.usage?.modelCalls, 3);
+
+    const resumed = options('budget-resume', budgetHarness());
+    script([read(), done]);
+    assert.equal(await runAgent('恢复后继续', stopping.snapshots.at(-1), resumed), 'done');
+    // resume 后第 1 次响应即 4/4 耗尽：累计值延续，没有清零
+    const decisions = resumed.events.filter((e) => e.type === 'budget_decision');
+    assert.deepEqual(
+      decisions.map((e) => e.level),
+      ['exhausted'],
+    );
+    assert.equal(resumed.snapshots.at(-1)?.harnessState?.executionBudget?.usage?.modelCalls, 5);
+  }
+
+  // ---- 6h. 压缩摘要的模型调用也计入预算（Harness 自持请求统一计量）----
+  {
+    let summarizeCalls = 0;
+    const harness = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      modelContext: resolveModelContextConfig({
+        model: 'compact-test',
+        contextWindowTokens: 600,
+        maxOutputTokens: 200,
+        safetyTokens: 100,
+      }),
+      executionBudget: { maxModelCalls: 3, warnRatio: 0.7, convergeRatio: 0.9 },
+      summarizer: {
+        summarize: async () => {
+          summarizeCalls++;
+          // 3 次模型调用：3/3 直接跨到 exhausted，决策必须回传
+          return { summary: 's', outputTokens: 7, modelCalls: 3 };
+        },
+      },
+    });
+    // 构造一个必然触发压缩的 transcript：system + 大量历史轮。
+    const transcript: ChatMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'x'.repeat(400) },
+      { role: 'assistant', content: 'y'.repeat(400) },
+      { role: 'user', content: 'z'.repeat(400) },
+    ];
+    const padView = {
+      task: 't',
+      completedSteps: [],
+      failedSteps: [],
+      invalidSteps: [],
+      nextStep: null,
+      lastResult: '',
+    };
+    const prepared = await harness.prepareTurn(transcript, padView, []);
+    assert.ok(summarizeCalls > 0, '确实走了压缩摘要');
+    assert.ok(prepared.compaction, '压缩发生');
+    // 摘要的 3 次模型调用计入预算：3/3 → exhausted 决策随 prepareTurn 回传
+    assert.ok(
+      prepared.budgetDecisions && prepared.budgetDecisions.length > 0,
+      '预算决策回传 Runtime',
+    );
+    assert.equal(prepared.budgetDecisions?.[0]?.level, 'exhausted');
+    assert.equal(prepared.budgetDecisions?.[0]?.state.usage.modelCalls, 3);
+    assert.equal(harness.executionBudgetLevel(), 'exhausted');
   }
 
   // ---- 7. 预算默认关闭：不配置上限时行为与引入前一致 ----
