@@ -53,6 +53,8 @@ const SUITES: { name: string; file: string }[] = [
   // v2.6 阶段二：周期性目标审查 / 停止原因与交付结果映射（纯函数）
   { name: 'goal-review', file: 'tests/goal-review.test.ts' },
   { name: 'run-stop-reason', file: 'tests/run-stop-reason.test.ts' },
+  // v2.6 覆盖范围验证：历史 Run 回放（离线 fixture）+ 正常长任务零误报
+  { name: 'historical-replay', file: 'tests/historical-replay.test.ts' },
   { name: 'host-timeout', file: 'tests/host-timeout.test.ts' },
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
   { name: 'filesystem-tools', file: 'tests/filesystem-tools.test.ts' },

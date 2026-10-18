@@ -159,6 +159,16 @@ DSH 的扩展点分层值得借鉴。Payaso 可沿用现有 Harness 接口，Run
 - **S7 DSH 阻塞与收尾边界** —— deepseek-harness `packages/goal/tool-goal/src/index.ts` 第 305 至 329 行；`src/wrapup.ts` 第 17 至 39 行；`packages/goal/goal/README.md` 第 157 至 161 行。
 - **S8 DSH 策略拒绝与重试** —— deepseek-harness `packages/sandbox/sandbox/src/escalation.ts` 第 71 至 96 行；`docs/agent-lifecycle.md` 第 85 行，压缩恢复只在 replacement generation 前进后重试。
 
+### 回放与覆盖验证（2026-10-18）
+
+对本报告复盘 Run `ae568d19` 的离线回放（43 次工具调用 / 29 次模型调用 / 2 次失败，fixture 见 `tests/fixtures/historical-run-ae568d19.json`，一次性提取自事件表、之后完全离线）：
+
+- **repeat-call 零误报**：该 Run 最长连续相同调用仅 1 次，回放全程 0 次提醒——与治理报告的同参回放结论一致，新统计不在真实 Run 上误报；
+- **goal-review 能兜住**：默认阈值（10 回合）下回放触发 **4 次**周期审查——旧的只读 8 回合/120 秒与同参数重复机制对该 Run 全部脱靶（28 次 shell 调用把只读连续性反复重置、参数各不相同），只有按全部工具回合的周期审查能覆盖；
+- **预算机械边界**：`maxModelCalls=20` 时第 14 次（70%）预警、第 18 次（90%）收敛、第 20 次耗尽——这个 15 分 38 秒的 Run 会在模型调用 20 次时被停止并要求交付，而不是跑到调用方耐心耗尽；`maxOutputTokens=50000` 同样在输出维度兜底（该 Run 累计 60824 token）。
+
+正常长任务覆盖（`tests/historical-replay.test.ts` B 组）：15 回合不同文件/命令/合法轮询的合成任务，repeat-call 0 提醒、goal-review 第 10 回合触发 1 次且不阻断、预算默认关闭时零事件。回放与覆盖验证为确定性测试，随 `npm run test:all` 运行。
+
 ### 证据和设计边界
 
 重复规则回放只模拟规范化和计数，没有启动 DSH，也没有证明这些策略的实际任务成功率。单个 Run 支持定位本次问题，不能据此确定所有模型和任务的全局预算。测试隔离、目标验收与事实核查需要各自的验证证据。
