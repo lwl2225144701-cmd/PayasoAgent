@@ -316,19 +316,21 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
 
 test('壳：注入 chrome 行高 / 红绿灯让位 / 折叠按钮基线；红绿灯对齐顶栏中线', () => {
   const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
-  assert.ok(/--sidebar-chrome-height: 58px/.test(main), '要注入红绿灯那一行的高度');
   assert.ok(
-    /--sidebar-lights-inset: 72px/.test(main),
-    '收起态顶栏左侧要给红绿灯让位（红绿灯 16..68 + 4px）',
+    /--sidebar-chrome-height: \$\{WINDOW_CHROME_HEIGHT\}px/.test(main),
+    '注入的行高与原生窗口按钮共用 WINDOW_CHROME_HEIGHT',
   );
   assert.ok(
-    /trafficLightPosition: \{ x: 16, y: 23 \}/.test(main),
-    '红绿灯下移到顶栏中线（中心 y=29）',
+    /--sidebar-lights-inset: 76px/.test(main),
+    '收起态顶栏左侧要给真机红绿灯完整让位（x=16..76）',
   );
   assert.ok(
-    /\[data-sidebar-toggle\] \{ top: 15px !important; \}/.test(main),
-    '展开态折叠按钮要跟红绿灯同一基线（红绿灯中心 y=29 - 按钮半高 14 = 15）；' +
-      '!important 不能省：注入表排在页面表前面时，同特异度会输给 .collapseBtn{top:10px}',
+    /trafficLightPosition: \{ x: 16, y: WINDOW_CHROME_HEIGHT \/ 2 - 7 \}/.test(main),
+    '原生按钮直径 14 CSS px，中心必须是顶栏高度的一半',
+  );
+  assert.ok(
+    !/\[data-sidebar-toggle\] \{ top:/.test(main),
+    '壳不再用另一条 top 规则与页面竞争按钮位置',
   );
   assert.ok(
     !/aside \{ box-sizing: border-box; padding-top: 40px; \}/.test(main),
@@ -348,7 +350,7 @@ test('页面：展开态品牌行在 chrome 行下面；收起态侧栏宽 0、�
   // 真·收起：整条侧栏宽 0（不是一块窄栏），面板感彻底消失
   assert.ok(/\.collapsed \{[^}]*width: 0;/.test(css), '收起态侧栏宽 0');
   assert.ok(/\.collapsed \{[^}]*background: none;/.test(css), '收起后不再有面板底色');
-  assert.ok(/\.collapsed \{[^}]*border-right-color: transparent;/.test(css), '收起后不画右分割线');
+  assert.ok(/\.collapsed \{[^}]*border-right: none;/.test(css), '收起后移除边框，不留 1px 占位');
   assert.ok(/\.collapsed \{[^}]*box-shadow: none;/.test(css), '收起后去掉 inset 高光内线');
 
   // 收起后展开按钮由顶栏提供：ShellBar 支持 leading + collapsed（左侧让开红绿灯）
@@ -376,7 +378,7 @@ test('页面：展开态品牌行在 chrome 行下面；收起态侧栏宽 0、�
 
 // ④ 开关按钮的位置 / 图标大小对齐 DSH 真机（用户参考图逐像素量过）：
 //    侧栏右缘 278.25、按钮图标 x 245..258.5（离右缘 20）、左图标 14×14、右图标 13×13。
-test('DSH 对齐：侧栏宽 278 + 开关按钮落在 x≈245、两个面板图标同尺寸正方形', () => {
+test('DSH 对齐：侧栏宽 278，四个面板开关入口共用按钮与正方形图标', () => {
   const indexCss = fs.readFileSync(path.join('web', 'src', 'index.css'), 'utf8');
   assert.ok(
     /--sidebar-width: 278px;/.test(indexCss),
@@ -399,16 +401,17 @@ test('DSH 对齐：侧栏宽 278 + 开关按钮落在 x≈245、两个面板图�
   assert.ok(/<path d="M9 3v18" \/>/.test(left), 'PanelLeftIcon 的分割线在 1/3 处');
   assert.ok(/<path d="M15 3v18" \/>/.test(right), 'PanelRightIcon 的分割线在 2/3 处');
 
-  // 顶栏上这两个按钮同款同尺寸：17×20/24 ≈ 14.2 CSS px ≈ DSH 的 14×14
-  const sidebar = fs.readFileSync(
-    path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
-    'utf8',
-  );
-  assert.ok(/<PanelLeftIcon size=\{17\} \/>/.test(sidebar), '侧栏折叠按钮图标 17');
-  const app = fs.readFileSync(path.join('web', 'src', 'App.tsx'), 'utf8');
-  assert.ok(/<PanelLeftIcon size=\{17\} \/>/.test(app), '顶栏展开按钮图标 17（同左）');
-  const launcher = fs.readFileSync(path.join('web', 'src', 'preview', 'Launcher.tsx'), 'utf8');
-  assert.ok(/<PanelRightIcon size=\{17\} \/>/.test(launcher), '右侧预览开关图标 17（同左）');
+  // 回归遗漏的 PreviewDock 入口：不能只改面板关闭时的 Launcher。
+  for (const file of [
+    'components/Sidebar/index.tsx',
+    'App.tsx',
+    'preview/Launcher.tsx',
+    'preview/PreviewDock/index.tsx',
+  ]) {
+    const source = fs.readFileSync(path.join('web', 'src', file), 'utf8');
+    assert.ok(/<PanelToggleButton\b/.test(source), `${file} 必须共用面板开关`);
+    assert.ok(!/<Panel(?:Left|Right)Icon\b/.test(source), `${file} 不得自行设定图标尺寸`);
+  }
 
   // 标题起点 = 侧栏右缘 + 28（DSH 量到 278+28=306）
   const shellCss = fs.readFileSync(
@@ -416,7 +419,7 @@ test('DSH 对齐：侧栏宽 278 + 开关按钮落在 x≈245、两个面板图�
     'utf8',
   );
   assert.ok(
-    /padding: 11px 14px 11px clamp\(22px, 2\.2vw, 32px\);/.test(shellCss),
+    /padding: 0 14px 0 clamp\(22px, 2\.2vw, 32px\);/.test(shellCss),
     '顶栏左内边距按 2.2vw（1279 宽 = 28）→ 标题落在侧栏右缘 +28',
   );
 });

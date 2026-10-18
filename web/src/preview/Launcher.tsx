@@ -3,7 +3,8 @@
 // ⌄ 段：应用菜单（OpenInAppMenu，Host 探测的已装列表，真图标由 /open-in-app/icon/<id> 提供）；
 // 侧栏 glyph：开/关右侧预览面板（与 ⌘P 同一动作）。
 import { useRef, useState } from 'react';
-import { ChevronDownIcon, FileIcon, PanelRightIcon } from '../components/icons';
+import { ChevronDownIcon, FileIcon } from '../components/icons';
+import { PanelToggleButton } from '../components/PanelToggleButton';
 import { useI18n } from '../i18n';
 import { useOpenInApps } from './hooks/useOpenInApps';
 import styles from './Launcher.module.css';
@@ -90,17 +91,12 @@ export default function PreviewLauncher({ open, onToggle, runId, onToast }: Prev
       </div>
       {/* 侧栏开关：面板关闭时显示（打开后 dock 头部自带关闭 glyph，不再重复） */}
       {!open && (
-        <button
-          type="button"
-          className={styles.panelBtn}
+        <PanelToggleButton
+          side="right"
           onClick={onToggle}
           title={t('preview.dock.open')}
           aria-label={t('preview.dock.open')}
-        >
-          {/* 和左侧栏开关同款同尺寸：DSH 量到右侧图标 13×13、左侧 14×14，
-              这里统一成 14×14（正方形外框 + size 17），避免一高一低 */}
-          <PanelRightIcon size={17} />
-        </button>
+        />
       )}
       <OpenInAppMenu
         open={menuOpen}

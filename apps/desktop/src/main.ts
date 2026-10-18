@@ -196,7 +196,7 @@ async function stopBackend(): Promise<void> {
  * 顶部条高度（px），必须与前端 `--topbar-height` 一致（web/src/index.css）。
  * Windows 上它是窗口按钮叠加层（WCO）的高度，按钮就叠在顶栏这一条里。
  */
-const WINDOW_CHROME_HEIGHT = 58;
+const WINDOW_CHROME_HEIGHT = 50;
 
 /**
  * Windows：给窗口按钮让位的注入脚本 —— 用 WCO API 量出按钮区宽度写进
@@ -212,12 +212,15 @@ const WCO_RESERVE_SCRIPT = `(() => {
 })();`;
 
 /**
- * Windows：顶栏（`[data-window-drag]`，侧栏那个在 aside 里不会命中）右侧留出
- * 窗口按钮的宽度。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
+ * Windows：主区顶栏与预览头部右侧留出窗口按钮的宽度。预览打开/全屏后它位于
+ * 窗口最右侧，也必须让位。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
  */
 const WCO_RESERVE_CSS = `
   #root > :first-child > :not(aside) > [data-window-drag] {
     box-sizing: border-box;
+    padding-right: calc(var(--wco-reserve, 138px) + 14px);
+  }
+  #root [data-preview-header] {
     padding-right: calc(var(--wco-reserve, 138px) + 14px);
   }
 `;
@@ -262,9 +265,10 @@ function createWindow(): void {
       ? {
           titleBarStyle: 'hiddenInset' as const,
           // 红绿灯**竖直位置按顶栏内容中线对齐**（真机反馈：从绿色圆圈中间画一条线
-          // 过去，要刚好平分右上角那些按钮）：顶栏 58 高、内容居中 → 中线 y=29；
-          // 按钮 12px → y = 29 - 6 = 23。
-          trafficLightPosition: { x: 16, y: 23 },
+          // 过去，要刚好平分右上角那些按钮）。真机 2x 截图量到原生按钮直径
+          // 28px = 14 CSS px，不能按旧记录里的 12px 计算。
+          // 顶栏 50 高 → 中心 25；原生按钮 top = 25 - 7 = 18（DSH 同款）。
+          trafficLightPosition: { x: 16, y: WINDOW_CHROME_HEIGHT / 2 - 7 },
         }
       : {}),
     // Windows：不要系统标题栏 —— 它的颜色是 DWM 画的，应用侧**没有开关**
@@ -319,26 +323,18 @@ function createWindow(): void {
   }
 
   // macOS 专属：红绿灯浮在窗口左上角、**不占布局**，参考 DSH 的排法（用户给的
-  // 参考图）：红绿灯那一行只放折叠按钮，品牌行在它下面。壳把三件事注入给页面：
+  // 参考图）：红绿灯那一行只放折叠按钮，品牌行在它下面。壳把两个变量注入给页面：
   //   --sidebar-chrome-height    红绿灯那一行的高度（品牌行据此下移）
-  //   --sidebar-lights-inset     收起态顶栏左侧给红绿灯让位的宽度（16..68 + 4px）
-  //   [data-sidebar-toggle]      折叠按钮的 top（跟红绿灯同一基线）
+  //   --sidebar-lights-inset     收起态顶栏左侧给红绿灯让位的宽度（原生按钮到 x=76）
   // 页面 CSS 全部走 var(--x, 默认值)：浏览器里没有注入 → 无红绿灯形态；
   // 选择器用 data 属性，避开 CSS Modules 哈希类名。
   if (process.platform === 'darwin') {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent'); // 兜底：别让页面/宿主改出 "xxx - localhost" 之类的标题
-      // 数值来历（别乱改）：
-      // - trafficLightPosition = {x:16,y:23} → 红绿灯中心 y = 29 = 顶栏内容中线（58/2），
-      //   「从绿点中心画一条线」正好平分右上角按钮；
-      // - 展开态折叠按钮（侧栏里）left/top 由页面给，这里只纠正 top=15（29-14）；
-      // - 收起态侧栏宽 0、顶栏横跨整窗：--sidebar-lights-inset 是顶栏左侧要给红绿灯
-      //   让开的宽度（红绿灯 16..68 + 4px），页面据此算 padding-left。
-      // !important 不能省：insertCSS 注入的样式表排在页面样式表**前面**时，同特异度的
-      // `[data-sidebar-toggle]` 会输给页面里的 `.collapseBtn{top:10px}`（真机实测：
-      // 按钮比红绿灯中线高 5px）。壳的窗口几何必须赢，所以这里显式加权。
+      // 只注入窗口几何变量；按钮 top 由页面按 chrome 行高计算，避免两份定位规则
+      // 竞争。三颗原生按钮真机范围 x=16..76，右侧再留 8px 给展开按钮。
       void win.webContents.insertCSS(
-        ':root { --sidebar-chrome-height: 58px; --sidebar-lights-inset: 72px; } [data-sidebar-toggle] { top: 15px !important; }',
+        `:root { --sidebar-chrome-height: ${WINDOW_CHROME_HEIGHT}px; --sidebar-lights-inset: 76px; }`,
       );
     });
   } else {

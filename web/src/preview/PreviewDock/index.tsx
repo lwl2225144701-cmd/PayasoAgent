@@ -12,10 +12,10 @@ import {
   CompassIcon,
   ExpandIcon,
   FolderIcon,
-  PanelRightIcon,
   PlusIcon,
   ShrinkIcon,
 } from '../../components/icons';
+import { PanelToggleButton } from '../../components/PanelToggleButton';
 import { useI18n } from '../../i18n';
 import { isMacPlatform, PREVIEW_HOME_ACTIONS, shortcutLabel } from '../dock-home';
 import {
@@ -48,6 +48,8 @@ function loadWidth(): number {
 }
 
 export interface PreviewDockProps {
+  /** 收起面板只隐藏；组件继续持有标签和各视图的浏览状态。 */
+  visible: boolean;
   /** M4 起标签状态由 App 持有（Timeline 点文件要往同一个标签集合里塞）。 */
   tabsApi: PreviewTabs;
   onClose: () => void;
@@ -60,6 +62,7 @@ export interface PreviewDockProps {
 }
 
 export default function PreviewDock({
+  visible,
   tabsApi,
   onClose,
   onRequestWorkspace,
@@ -156,11 +159,17 @@ export default function PreviewDock({
   // —— 变更流：外部写入 / agent 写入 → 预览自动刷新（版本失效即重载）——
   const [reloadNonce, setReloadNonce] = useState<Record<string, number>>({});
   const [treeSignal, setTreeSignal] = useState(0);
+  const treeScopeRef = useRef(runId);
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   useEffect(() => {
+    const scopeChanged = treeScopeRef.current !== runId;
+    treeScopeRef.current = runId;
     // 面板关着不订阅；runId 变化（切会话）→ 重建订阅
-    if (!open) return;
+    if (!visible) return;
+    // 隐藏期间停止监听；重开时刷新当前目录，不重置目录/筛选/滚动状态。
+    // 切换作用域由 useFileTree 加载新根目录，不能又用旧目录发刷新请求抢占它。
+    if (!scopeChanged) setTreeSignal((n) => n + 1);
     const query = runId ? `?runId=${encodeURIComponent(runId)}` : '';
     const source = new EventSource(`/preview/changes${query}`);
     source.onmessage = (event) => {
@@ -189,7 +198,7 @@ export default function PreviewDock({
       source.close();
     };
     return () => source.close();
-  }, [open, runId]);
+  }, [visible, runId]);
 
   // 以下 handler 直接读当前 render 的 dockTabs（事件闭包），不做函数式更新——
   // 状态迁移里要同步决定 activeKind，拆成两段 setState 反而难追。
@@ -221,6 +230,7 @@ export default function PreviewDock({
 
   return (
     <aside
+      hidden={!visible}
       className={`${styles.dock} ${fullscreen ? styles.dockFullscreen : ''}`}
       style={{ '--dock-width': `${width}px` } as React.CSSProperties}
       aria-label={t('preview.dock.title')}
@@ -239,7 +249,7 @@ export default function PreviewDock({
         aria-valuemax={MAX_WIDTH}
         tabIndex={0}
       />
-      <header className={styles.header}>
+      <header className={styles.header} data-window-drag data-preview-header>
         <div className={styles.tabStrip} role="tablist">
           {/* 空态"开始"入口：不是标签（无激活胶囊、无 ×）；点首页卡片才产生第一个真标签 */}
           {dockTabs.tabs.length === 0 && (
@@ -346,17 +356,14 @@ export default function PreviewDock({
             aria-label={fullscreen ? t('preview.dock.restore') : t('preview.dock.fullscreen')}
             aria-pressed={fullscreen}
           >
-            {fullscreen ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
+            {fullscreen ? <ShrinkIcon size={17} /> : <ExpandIcon size={17} />}
           </button>
-          <button
-            type="button"
-            className={styles.iconBtn}
+          <PanelToggleButton
+            side="right"
             onClick={onClose}
             title={t('preview.dock.close')}
             aria-label={t('preview.dock.close')}
-          >
-            <PanelRightIcon size={15} />
-          </button>
+          />
         </div>
       </header>
 
@@ -401,28 +408,27 @@ export default function PreviewDock({
               />
             </Suspense>
           </div>
-        ) : (
-          dockTabs.tabs
-            .filter((tab) => tab.kind === 'browser')
-            .map((tab) => {
-              // 所有"文件"标签保持挂载（各自的浏览位置/过滤词不丢），非激活的仅隐藏。
-              const paneActive = activeKind === 'browser' && dockTabs.activeId === tab.id;
-              return (
-                <div
-                  key={tab.id}
-                  className={`${styles.browserPane} ${paneActive ? '' : styles.paneHidden}`}
-                  aria-hidden={!paneActive}
-                >
-                  <FileTree
-                    onOpenFile={open}
-                    onRequestWorkspace={onRequestWorkspace}
-                    runId={runId}
-                    refreshSignal={treeSignal}
-                  />
-                </div>
-              );
-            })
-        )}
+        ) : null}
+        {dockTabs.tabs
+          .filter((tab) => tab.kind === 'browser')
+          .map((tab) => {
+            // 所有"文件"标签保持挂载（各自的浏览位置/过滤词不丢），非激活的仅隐藏。
+            const paneActive = activeKind === 'browser' && dockTabs.activeId === tab.id;
+            return (
+              <div
+                key={tab.id}
+                className={`${styles.browserPane} ${paneActive ? '' : styles.paneHidden}`}
+                aria-hidden={!paneActive}
+              >
+                <FileTree
+                  onOpenFile={open}
+                  onRequestWorkspace={onRequestWorkspace}
+                  runId={runId}
+                  refreshSignal={treeSignal}
+                />
+              </div>
+            );
+          })}
       </div>
     </aside>
   );

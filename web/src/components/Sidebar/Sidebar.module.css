@@ -26,7 +26,7 @@
   background: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-right-color: transparent;
+  border-right: none;
   box-shadow: none;
 }
 
@@ -45,25 +45,12 @@
   padding: 6px 52px 10px 16px;
 }
 
-/* 折叠/展开按钮：绝对定位在「红绿灯那一行」的右端（浏览器形态下就是品牌行右上角）。
-   macOS 上壳再注入 top: 15px，跟红绿灯同一基线。 */
+/* macOS 用壳注入的 chrome 行高居中；浏览器沿用品牌行右上角的位置。
+   按钮本身的尺寸由 PanelToggleButton 统一，壳不再注入另一条 top 覆盖它。 */
 .collapseBtn {
   position: absolute;
-  /* 展开态：chrome 行右端（mac 下与红绿灯同一基线，红绿灯中心 y=24 - 14 = 10） */
-  top: 10px;
+  top: calc((var(--sidebar-chrome-height, var(--topbar-height)) - 28px) / 2);
   right: 12px;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9px;
-  color: var(--text-secondary);
-  transition: background 0.12s ease;
-}
-
-.collapseBtn:hover {
-  background: var(--bg-hover);
 }
 
 .logoImage {
@@ -84,7 +71,7 @@
   letter-spacing: -0.025em;
 }
 
-/* 收起后品牌行隐藏，只剩红绿灯那一行的展开按钮（参考设计同款） */
+/* 收起后侧栏内容隐藏，展开按钮由顶栏提供。 */
 .collapsed .brandRow {
   display: none;
 }

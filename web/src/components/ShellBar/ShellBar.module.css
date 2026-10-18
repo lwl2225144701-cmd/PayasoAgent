@@ -3,13 +3,15 @@
   align-items: center;
   justify-content: space-between;
   min-height: var(--topbar-height);
+  height: var(--topbar-height);
+  max-height: var(--topbar-height);
   /* 右侧贴边更紧：预览入口（胶囊 + 侧栏开关）挂在右上角，DSH 同款贴角观感。
      左侧内边距：DSH 量到「侧栏右缘 278 + 28px」= 标题 x≈306，故 2.2vw（1279 宽
      时正好 28）；clamp 上下界 22/32，避免超宽超窄窗口跑偏。 */
-  padding: 11px 14px 11px clamp(22px, 2.2vw, 32px);
+  padding: 0 14px 0 clamp(22px, 2.2vw, 32px);
   background: var(--color-header-glass);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--color-brand) 5%, transparent);
+  /* 内阴影画分隔线，不占内容高度；所有按钮中心固定在顶栏高度的一半。 */
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border-color) 62%, transparent);
   backdrop-filter: blur(20px) saturate(125%);
   -webkit-backdrop-filter: blur(20px) saturate(125%);
   flex-shrink: 0;
@@ -21,12 +23,12 @@
   height: var(--topbar-height);
   padding: 0 14px;
   background: var(--color-header-glass);
-  border-bottom-color: transparent;
+  box-shadow: none;
   backdrop-filter: blur(18px);
 }
 
 /* 收起侧栏：顶栏横跨整个窗口，左侧要让开 macOS 红绿灯 + 放「展开侧栏」按钮。
-   壳注入 --sidebar-lights-inset（红绿灯 16..68 + 4px）；浏览器里回退 12px。 */
+   壳注入 --sidebar-lights-inset（原生红绿灯到 x=76）；浏览器里回退 12px。 */
 .barCollapsed {
   padding-left: calc(var(--sidebar-lights-inset, 12px) + 8px);
 }
@@ -55,7 +57,6 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex-wrap: wrap;
   justify-content: flex-end;
 }
 

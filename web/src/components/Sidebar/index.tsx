@@ -1,6 +1,7 @@
 import { useI18n } from '../../i18n';
 import type { HostSession, WorkspaceView } from '../../types';
-import { PanelLeftIcon, PlusIcon, SettingsIcon } from '../icons';
+import { PlusIcon, SettingsIcon } from '../icons';
+import { PanelToggleButton } from '../PanelToggleButton';
 import { UpdateStatusRow } from '../UpdateStatus';
 import { WorkspaceSection } from '../WorkspaceSection';
 import styles from './Sidebar.module.css';
@@ -59,18 +60,14 @@ export function Sidebar({
         {/* 展开态：折叠按钮挂在这里（红绿灯那一行右端）。收起后侧栏宽 0，
             展开按钮由顶栏（ShellBar 的 leading）提供 —— 见 App.tsx。 */}
         {!collapsed && (
-          <button
+          <PanelToggleButton
+            side="left"
             className={styles.collapseBtn}
-            type="button"
             data-sidebar-toggle
             title={t('shell.sidebar.collapse')}
             aria-label={t('shell.sidebar.collapse')}
             onClick={onToggleCollapsed}
-          >
-            {/* 尺寸来历：DSH 量到的字形外框 14×14 CSS px。正方形外框 +
-                strokeWidth 2/24 → 外框 = size×20/24 = 14 → size 17 */}
-            <PanelLeftIcon size={17} />
-          </button>
+          />
         )}
       </div>
 

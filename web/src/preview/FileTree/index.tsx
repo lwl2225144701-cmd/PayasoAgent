@@ -146,8 +146,9 @@ export default function FileTree({
         </label>
       </div>
 
-      <div className={styles.list}>
-        {loading && <div className={styles.hint}>{t('preview.tree.loading')}</div>}
+      {/* 同目录刷新时保留列表 DOM 与滚动位置；真正切换目录才换一个列表。 */}
+      <div key={currentPath} className={styles.list} aria-busy={loading}>
+        {loading && !listing && <div className={styles.hint}>{t('preview.tree.loading')}</div>}
         {!loading && errorCode && (
           <div className={styles.hint}>
             {t(errorTextKey(errorCode) as 'preview.tree.error.generic')}
@@ -161,8 +162,7 @@ export default function FileTree({
         {!loading && !errorCode && entries.length === 0 && (
           <div className={styles.hint}>{t('preview.tree.empty')}</div>
         )}
-        {!loading &&
-          !errorCode &&
+        {!errorCode &&
           entries.map((entry) => (
             <button
               type="button"
