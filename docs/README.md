@@ -50,6 +50,7 @@ docs/
 │   ├── desktop-client-plan.md
 │   ├── desktop-client-electron-plan.md
 │   ├── desktop-client-implementation-log.md
+│   ├── desktop-update-故障排查-20261018.md
 │   ├── builtin-model-catalog-refresh.md
 │   ├── preview-gui-调研报告.md / preview-module-plan.md
 │   ├── auto-update-调研报告.md        # DSH 自更新三条链路的逆向结论（期 3 依据）

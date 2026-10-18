@@ -5,12 +5,19 @@
 // 新版本和下载百分比」，所以壳把状态推给页面，由页面渲染侧边栏条目
 // （`web/src/update-status.ts` 是页面侧的同构定义 + 桥封装）。
 //
-// 三条相：
+// 页面可见阶段：
 //   idle        没有可用更新（条目隐藏）
 //   available   发现新版本，等用户点（条目显示「新版本 vX.Y.Z」）
 //   downloading 正在下载（条目显示百分比 + 进度条）
+//   checking / ready / installing 检查、已下载可安装、准备安装
 
-export type UpdatePhase = 'idle' | 'available' | 'downloading';
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'installing';
 
 export interface UpdateStatus {
   phase: UpdatePhase;
@@ -18,6 +25,8 @@ export interface UpdateStatus {
   version: string;
   /** 下载百分比 0..100（非下载阶段为 0）。 */
   percent: number;
+  /** 临时签名的 Mac 构建需要打开已下载的更新包手动替换。 */
+  manual?: boolean;
 }
 
 export const IDLE_UPDATE_STATUS: UpdateStatus = { phase: 'idle', version: '', percent: 0 };
@@ -38,6 +47,10 @@ export function downloadingStatus(version: string, percent: number): UpdateStatu
   return { phase: 'downloading', version, percent: clampPercent(percent) };
 }
 
+export function readyStatus(version: string, manual = false): UpdateStatus {
+  return { phase: 'ready', version, percent: 100, manual };
+}
+
 /**
  * 校验跨进程传来的状态（ipc 那头是 unknown）。
  * 壳侧发、页面侧也有一份同样的校验（两边 tsconfig 各自独立，共享类型不现实）。
@@ -47,8 +60,11 @@ export function isUpdateStatus(value: unknown): value is UpdateStatus {
   const candidate = value as Partial<UpdateStatus>;
   if (
     candidate.phase !== 'idle' &&
+    candidate.phase !== 'checking' &&
     candidate.phase !== 'available' &&
-    candidate.phase !== 'downloading'
+    candidate.phase !== 'downloading' &&
+    candidate.phase !== 'ready' &&
+    candidate.phase !== 'installing'
   ) {
     return false;
   }

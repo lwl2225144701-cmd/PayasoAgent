@@ -229,8 +229,10 @@ idle ──check──▶ available ──用户点下载──▶ downloading �
 
 ### 5.3 已知坑（DSH 源码里核实过的）
 
-- macOS 未公证也能 Squirrel 替换 `.app`（DSH nightly 就是这么发的），但首次安装的
-  Gatekeeper 问题依旧，分发说明要写"右键→打开"。
+- macOS 的公证和跨版本签名身份必须分开判断。2026-10-18 本机复核发现，本项目
+  ad-hoc 签名的 designated requirement 绑定当前构建 cdhash，不能跨版本通过 Squirrel
+  校验；不能据「未公证可运行」推断「临时签名可自动替换」。当前此类构建走手动更新包
+  安装，稳定签名身份的构建才走原生自动替换，详见 `desktop-update-故障排查-20261018.md`。
 - zip 与 `.blockmap` 必须同时上传且同名（CI 已满足）；差 blockmap 会退化为整包下载。
 - 更新成功后 app 自动重启（`quitAndInstall(isSilent=true, isForceRunAfter=true)`），
   后端由壳重新拉起——本仓库 `boot()` 已覆盖该路径。

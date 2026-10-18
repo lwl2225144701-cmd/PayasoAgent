@@ -8,7 +8,13 @@
 // 这里再写一份最小结构是因为 `tests/` 按根 tsconfig 检查本文件时看不到 web 的
 // 全局声明；方法全可选 —— 老壳里没有这两个方法，新页面配老壳不能抛异常。
 
-export type UpdatePhase = 'idle' | 'available' | 'downloading';
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'installing';
 
 export interface UpdateStatus {
   phase: UpdatePhase;
@@ -16,6 +22,7 @@ export interface UpdateStatus {
   version: string;
   /** 下载百分比 0..100。 */
   percent: number;
+  manual?: boolean;
 }
 
 export const IDLE_UPDATE_STATUS: UpdateStatus = { phase: 'idle', version: '', percent: 0 };
@@ -41,13 +48,24 @@ function clampPercent(percent: number): number {
 export function normalizeUpdateStatus(value: unknown): UpdateStatus {
   if (typeof value !== 'object' || value === null) return IDLE_UPDATE_STATUS;
   const candidate = value as Partial<UpdateStatus>;
-  if (candidate.phase !== 'available' && candidate.phase !== 'downloading') {
+  if (
+    candidate.phase !== 'checking' &&
+    candidate.phase !== 'available' &&
+    candidate.phase !== 'downloading' &&
+    candidate.phase !== 'ready' &&
+    candidate.phase !== 'installing'
+  ) {
     return IDLE_UPDATE_STATUS;
   }
   const version = typeof candidate.version === 'string' ? candidate.version : '';
-  if (version === '') return IDLE_UPDATE_STATUS;
+  if (version === '' && candidate.phase !== 'checking') return IDLE_UPDATE_STATUS;
   const percent = typeof candidate.percent === 'number' ? clampPercent(candidate.percent) : 0;
-  return { phase: candidate.phase, version, percent };
+  return {
+    phase: candidate.phase,
+    version,
+    percent,
+    ...(candidate.phase === 'ready' ? { manual: candidate.manual === true } : {}),
+  };
 }
 
 /**

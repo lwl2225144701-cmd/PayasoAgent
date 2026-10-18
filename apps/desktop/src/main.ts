@@ -15,11 +15,12 @@
 // 关键约束：后端从 process.cwd() 下找 web/dist（见 src/host/routes.ts 的 STATIC_ROOT），
 // 所以 cwd 必须是「app 根」（含 web/dist 的那层），不能随便选。
 
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { stopManagedBackend } from './backend-process.js';
 import { createUpdateCoordinator, type UpdateCoordinator } from './update/coordinator.js';
 import { IDLE_UPDATE_STATUS, type UpdateStatus } from './update/status.js';
 import { activeTasks } from './update/tasks.js';
@@ -56,8 +57,6 @@ const PORT = Number(process.env.PORT ?? 4500);
 const BACKEND_URL = `http://127.0.0.1:${PORT}`;
 
 const READY_TIMEOUT_MS = 30_000;
-const SIGTERM_GRACE_MS = 10_000;
-const SIGKILL_GRACE_MS = 5_000;
 const STDERR_TAIL_BYTES = 65_536;
 
 let backend: ChildProcess | null = null;
@@ -102,15 +101,28 @@ async function backendResponds(): Promise<boolean> {
  * 后端零改动。
  */
 async function listActiveTasks(): Promise<{ runId: string; task: string }[]> {
-  const res = await fetch(`${BACKEND_URL}/runs`, { signal: AbortSignal.timeout(5_000) });
+  const res = await fetch(`${BACKEND_URL}/runs`, { signal: AbortSignal.timeout(5_000) }).catch(
+    (error: unknown) => {
+      throw new Error(
+        `无法连接本地任务服务（${BACKEND_URL}）。更新包已保留，请重新打开客户端后重试安装。`,
+        { cause: error },
+      );
+    },
+  );
   if (!res.ok) throw new Error(`GET /runs 返回 ${res.status}`);
   return activeTasks(await res.json());
 }
 
-async function waitForReady(): Promise<void> {
+async function waitForReady(startupFailure: () => Error | null): Promise<void> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
-    if (await backendResponds()) return;
+    const failure = startupFailure();
+    if (failure) throw failure;
+    if (await backendResponds()) {
+      const lateFailure = startupFailure();
+      if (lateFailure) throw lateFailure;
+      return;
+    }
     if (Date.now() > deadline) {
       throw new Error(
         `后端 ${READY_TIMEOUT_MS}ms 内未就绪（${BACKEND_URL}）。\n\n最近的后端日志：\n${stderrTail.slice(-4_000)}`,
@@ -126,20 +138,35 @@ async function startBackend(): Promise<void> {
   }
   // 新进程：上一轮的"主动关停"标记作废，之后的异常退出照常要报
   stoppingIntentionally = false;
-  backend = spawn(backendCommand.command, [backendEntry], {
+  const child = spawn(backendCommand.command, [backendEntry], {
     cwd: appRoot,
     env: { ...process.env, ...backendCommand.env, PORT: String(PORT) },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
+  backend = child;
+  let startupError: Error | null = null;
+  let startupComplete = false;
+  child.on('error', (error) => {
+    startupError = error;
+    stderrTail = `${stderrTail}\n后端进程错误：${error.message}`.slice(-STDERR_TAIL_BYTES);
+    if (child.pid === undefined && backend === child) backend = null;
+  });
 
-  backend.stderr?.on('data', (chunk: Buffer) => {
+  child.stderr?.on('data', (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString('utf8')).slice(-STDERR_TAIL_BYTES);
   });
 
-  backend.on('exit', (code, signal) => {
+  child.on('exit', (code, signal) => {
+    if (backend !== child) return;
     backend = null;
     // 主动退出 / 外部实例 / 我们自己发起的关停（退出或装更新前的优雅停）都不算崩溃
     if (quitting || stoppingIntentionally || !ownsBackend) return;
+    if (!startupComplete) {
+      startupError = new Error(
+        `后端启动期间退出：code=${code} signal=${signal}\n${stderrTail.slice(-4_000)}`,
+      );
+      return;
+    }
     dialog.showErrorBox(
       'PayasoAgent 后端意外退出',
       `code=${code} signal=${signal}\n\n最近的后端日志：\n${stderrTail.slice(-4_000)}`,
@@ -147,7 +174,8 @@ async function startBackend(): Promise<void> {
     app.quit();
   });
 
-  await waitForReady();
+  await waitForReady(() => startupError);
+  startupComplete = true;
 }
 
 /**
@@ -159,36 +187,13 @@ async function stopBackend(): Promise<void> {
   if (!child || !ownsBackend) return;
   // 这次退出是我们自己发起的：exit 处理器别弹「后端意外退出」
   stoppingIntentionally = true;
-  backend = null;
-  if (child.exitCode !== null || child.signalCode !== null) return; // 已经退了
-
-  const done = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-  const settlesWithin = (ms: number) =>
-    Promise.race([
-      done.then(() => true),
-      new Promise<boolean>((r) => setTimeout(() => r(false), ms)),
-    ]);
-
-  if (process.platform === 'win32') {
-    // Windows 没有信号语义：child.kill() 即 TerminateProcess，只掐直接进程、
-    // 留孙进程（后端会 spawn 用户项目的 shell 工具）。用 taskkill /T 树杀，
-    // 连子孙一起收 —— 等价于 POSIX 的 SIGTERM→SIGKILL 兜底（代价是没有优雅
-    // 排水窗口，靠后端 SQLite WAL 抗崩溃截断，见实施手账 §10）。
-    try {
-      execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    } catch {
-      // 进程可能已自行退出（taskkill 对不存在的 PID 返回非 0）
-    }
-    if (!(await settlesWithin(SIGKILL_GRACE_MS))) {
-      throw new Error('后端进程树在 taskkill /T 之后仍未退出，可能留下僵尸进程');
-    }
-    return;
-  }
-
-  child.kill('SIGTERM');
-  if (!(await settlesWithin(SIGTERM_GRACE_MS))) child.kill('SIGKILL');
-  if (!(await settlesWithin(SIGKILL_GRACE_MS))) {
-    throw new Error('后端进程在 SIGKILL 之后仍未退出，可能留下僵尸进程');
+  try {
+    // Windows taskkill 异步执行并限时；确认退出前不清空引用。
+    await stopManagedBackend(child);
+    if (backend === child) backend = null;
+  } catch (error) {
+    stoppingIntentionally = false;
+    throw error;
   }
 }
 
@@ -460,6 +465,10 @@ function pushUpdateStatus(status: UpdateStatus): void {
  * 下载完成后的安装确认仍然走原生对话框（含"有任务在跑"的检查）。
  */
 function registerUpdateBridge(): void {
+  ipcMain.on('payaso:updateStatusRequest', (event): void => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    event.sender.send('payaso:updateStatus', lastUpdateStatus);
+  });
   ipcMain.on('payaso:updateDownload', (event): void => {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
     void updates?.downloadNow();
@@ -567,7 +576,9 @@ async function boot(): Promise<void> {
     backend: {
       listActiveTasks,
       stop: stopBackend,
-      start: startBackend,
+      start: async () => {
+        if (ownsBackend && !(await backendResponds())) await startBackend();
+      },
     },
   });
   updates.startAutoCheck();

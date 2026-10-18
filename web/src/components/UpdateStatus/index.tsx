@@ -1,4 +1,4 @@
-// 侧边栏底部「设置」同一行右侧的更新条目：发现新版本 / 下载中才出现。
+// 侧边栏底部「设置」同一行右侧的更新条目：检查、下载、已下载和安装进度。
 //
 // 数据来自桌面壳（preload 桥 → ipc）：
 //   - available   → 「⬇ 新版本」+ 点击开始下载（tooltip 带版本号）
@@ -25,20 +25,39 @@ export function UpdateStatusRow() {
   useEffect(() => subscribeUpdateStatus(setStatus), []);
 
   if (status.phase === 'idle') return null;
-  const downloading = status.phase === 'downloading';
-  const hint = downloading
-    ? t('shell.update.downloadingHint', { version: status.version })
-    : t('shell.update.availableHint', { version: status.version });
-  const label = downloading ? `${status.percent}%` : t('shell.update.available');
+  const busy = ['checking', 'downloading', 'installing'].includes(status.phase);
+  const hint =
+    status.phase === 'downloading'
+      ? t('shell.update.downloadingHint', { version: status.version })
+      : status.phase === 'ready'
+        ? t(status.manual ? 'shell.update.manualHint' : 'shell.update.readyHint', {
+            version: status.version,
+          })
+        : status.phase === 'checking'
+          ? t('shell.update.checking')
+          : status.phase === 'installing'
+            ? t('shell.update.installing')
+            : t('shell.update.availableHint', { version: status.version });
+  const label =
+    status.phase === 'downloading'
+      ? `${status.percent}%`
+      : status.phase === 'ready'
+        ? t(status.manual ? 'shell.update.openPackage' : 'shell.update.install')
+        : status.phase === 'checking'
+          ? t('shell.update.checking')
+          : status.phase === 'installing'
+            ? t('shell.update.installing')
+            : t('shell.update.available');
 
   return (
     <button
-      className={`${styles.row} ${downloading ? styles.downloading : ''}`}
+      className={`${styles.row} ${busy ? styles.downloading : ''}`}
       type="button"
-      disabled={downloading}
+      disabled={busy}
       title={hint}
       aria-label={hint}
-      onClick={downloading ? undefined : startUpdateDownload}
+      onClick={busy ? undefined : startUpdateDownload}
+      aria-live="polite"
     >
       <DownloadIcon size={15} />
       <span className={styles.label}>{label}</span>
