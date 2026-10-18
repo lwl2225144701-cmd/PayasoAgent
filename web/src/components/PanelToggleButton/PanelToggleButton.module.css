@@ -9,6 +9,8 @@
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   cursor: pointer;
   transition:
     background 0.12s ease,

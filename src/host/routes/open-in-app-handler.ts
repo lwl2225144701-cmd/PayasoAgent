@@ -15,14 +15,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { buildLaunchInvocation } from '../open-in-app/invocation.js';
-import { filterAppsForTarget } from '../open-in-app/openable.js';
+import { filterAppsForTarget, orderAppsForDisplay } from '../open-in-app/openable.js';
 import { queryFileAssociations } from '../open-in-app/os-assoc.js';
-import {
-  type ResolvedApp,
-  reresolveEntry,
-  resolveEntryById,
-  resolveInstalledApps,
-} from '../open-in-app/resolver.js';
+import { reresolveEntry, resolveEntryById, resolveInstalledApps } from '../open-in-app/resolver.js';
+import { extractWinIconPng } from '../open-in-app/win-icon.js';
 import { normalizeRelPath, resolveChecked } from '../preview/preview-service.js';
 import { PreviewError } from '../preview/types.js';
 import type { RunManager } from '../run-manager.js';
@@ -83,7 +79,11 @@ export async function handleOpenInApp(
       }
     }
 
-    const apps = filterAppsForTarget(resolveInstalledApps(), target).map((app) => ({
+    const apps = orderAppsForDisplay(
+      filterAppsForTarget(resolveInstalledApps(), target),
+      process.platform,
+      target === null,
+    ).map((app) => ({
       id: app.id,
       label: app.label,
       opens: app.opens,
@@ -95,7 +95,11 @@ export async function handleOpenInApp(
   if (s.length === 3 && s[1] === 'icon' && method === 'GET') {
     const id = s[2];
     const app = resolveEntryById(id) ?? reresolveEntry(id);
-    const png = app?.bundlePath ? extractIconPng(id, app.bundlePath) : null;
+    const png = app?.bundlePath
+      ? extractIconPng(id, app.bundlePath)
+      : app?.executablePath
+        ? extractWinIconPng(id, app.executablePath)
+        : null;
     if (!png) return notFound(res);
     res.writeHead(200, {
       'Content-Type': 'image/png',
@@ -230,14 +234,20 @@ async function launch(
   }
   if (app.executablePath) {
     const targetIsDirectory = isDirectory(target);
-    const { args, cwd } = buildLaunchInvocation({
+    const invocation = buildLaunchInvocation({
       appId: app.id ?? '',
       executablePath: app.executablePath,
       target,
       platform: process.platform,
       targetIsDirectory,
     });
-    await observe(spawn(app.executablePath, args, { cwd, env: scrubbedEnv() }));
+    await observe(
+      spawn(app.executablePath, invocation.args, {
+        cwd: invocation.cwd,
+        env: scrubbedEnv(),
+      }),
+      { ignoreExitCode: invocation.ignoreExitCode },
+    );
     return;
   }
   if (process.platform === 'darwin') throw new Error('该应用未提供可执行定位方式');
@@ -259,7 +269,10 @@ function isDirectory(target: string): boolean {
 }
 
 /** detached + scrubbed 环境 + 早期失败观察窗：窗口内 error/非零退出 → 失败。 */
-function observe(child: ReturnType<typeof spawn>): Promise<void> {
+function observe(
+  child: ReturnType<typeof spawn>,
+  options?: { ignoreExitCode?: boolean },
+): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const settle = (err?: Error) => {
@@ -269,6 +282,10 @@ function observe(child: ReturnType<typeof spawn>): Promise<void> {
     };
     child.on('error', (err) => settle(err instanceof Error ? err : new Error(String(err))));
     child.on('exit', (code) => {
+      if (options?.ignoreExitCode) {
+        settle();
+        return;
+      }
       if (code !== 0) settle(new Error(`启动失败（exit ${code}）`));
     });
     setTimeout(() => {

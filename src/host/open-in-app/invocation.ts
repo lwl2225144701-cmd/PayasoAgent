@@ -19,6 +19,10 @@ export interface LaunchInvocation {
   args: string[];
   /** 进程工作目录（必须是目录）。 */
   cwd: string;
+  /**
+   * explorer.exe 打开成功也经常立刻以非 0 退出，不能把这个退出码当成启动失败。
+   */
+  ignoreExitCode?: boolean;
 }
 
 export interface InvocationInput {
@@ -46,6 +50,8 @@ export function buildLaunchInvocation(input: InvocationInput): LaunchInvocation 
     if (appId === 'terminal' && exe === 'wt.exe') return { args: ['-d', cwd], cwd };
     // cmd.exe：不带参数就是开一个交互 shell，落点由 cwd 决定。
     if (appId === 'terminal' && exe === 'cmd.exe') return { args: [], cwd };
+    // 资源管理器：参数就是要打开的路径。退出码不可靠，见 ignoreExitCode。
+    if (exe === 'explorer.exe') return { args: [target], cwd, ignoreExitCode: true };
   }
   return { args: [target], cwd };
 }

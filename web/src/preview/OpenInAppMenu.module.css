@@ -37,23 +37,32 @@
   background: color-mix(in srgb, var(--accent-blue-bg) 55%, transparent);
 }
 
-/* app 图标（Host 从 .app 提取的 PNG）与回退字形芯片 */
-.appIcon {
-  width: 26px;
-  height: 26px;
+/* 真图标直接摆在行首（参考菜单没有底色芯片）；拿不到图标才用字形芯片。 */
+.iconSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  border-radius: 7px;
-  object-fit: cover;
+}
+
+.appIcon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  object-fit: contain;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  border-radius: 7px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--border-color) 55%, transparent);
   color: var(--text-secondary);
 }

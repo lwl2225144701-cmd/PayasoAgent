@@ -82,3 +82,24 @@ export function filterAppsForTarget(
     (app) => app.opens.includes('any') || (kind !== null && app.opens.includes(kind)),
   );
 }
+
+/**
+ * Windows 目录菜单的展示顺序，对齐桌面端参考：
+ * 文件资源管理器、Cursor、VS Code、PyCharm，其余已装应用保持原相对顺序排在后面。
+ * 文件目标和非 Windows 不改顺序。
+ */
+const WINDOWS_FOLDER_FIRST = ['explorer', 'cursor', 'vscode', 'pycharm'];
+
+export function orderAppsForDisplay<T extends { id: string }>(
+  apps: readonly T[],
+  platform: NodeJS.Platform,
+  folderTarget: boolean,
+): T[] {
+  if (platform !== 'win32' || !folderTarget) return [...apps];
+  const rank = new Map(WINDOWS_FOLDER_FIRST.map((id, index) => [id, index]));
+  const tail = WINDOWS_FOLDER_FIRST.length;
+  return apps
+    .map((app, index) => ({ app, index, rank: rank.get(app.id) ?? tail }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((item) => item.app);
+}

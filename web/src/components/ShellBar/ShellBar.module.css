@@ -8,7 +8,7 @@
   /* 右侧贴边更紧：预览入口（胶囊 + 侧栏开关）挂在右上角，DSH 同款贴角观感。
      左侧内边距：DSH 量到「侧栏右缘 278 + 28px」= 标题 x≈306，故 2.2vw（1279 宽
      时正好 28）；clamp 上下界 22/32，避免超宽超窄窗口跑偏。 */
-  padding: 0 14px 0 clamp(22px, 2.2vw, 32px);
+  padding: 0 calc(var(--wco-reserve, 0px) + 14px) 0 clamp(22px, 2.2vw, 32px);
   background: var(--color-header-glass);
   /* 内阴影画分隔线，不占内容高度；所有按钮中心固定在顶栏高度的一半。 */
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border-color) 62%, transparent);
@@ -16,12 +16,16 @@
   -webkit-backdrop-filter: blur(20px) saturate(125%);
   flex-shrink: 0;
   min-width: 0;
-  overflow: hidden;
+  /* 不要在这层写 overflow:hidden。Windows 上拖拽面（-webkit-app-region: drag）
+     包住 overflow:hidden 时，里面的按钮即使用 no-drag 也收不到点击，表现就是
+     右上角胶囊和侧栏开关点了没反应。标题截断放在 .taskTitle 上。 */
 }
 
 .landingBar {
   height: var(--topbar-height);
-  padding: 0 14px;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 14px;
   background: var(--color-header-glass);
   box-shadow: none;
   backdrop-filter: blur(18px);
@@ -38,6 +42,22 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  align-self: stretch;
+}
+
+/* 顶栏中间的空白才是拖拽面。右侧按钮不放进 drag，Windows 才能点到。 */
+.dragSpacer {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 8px;
+}
+
+.noDrag {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .taskTitle {
@@ -58,6 +78,13 @@
   gap: 6px;
   min-width: 0;
   justify-content: flex-end;
+  align-self: stretch;
+  /* 整块退出窗口拖拽。只给内部 button 设 no-drag 不够：Windows 要求这块区域
+     本身不是 drag 的后代，否则胶囊（文件夹图标 / 箭头）点击会被当成拖窗口。 */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  position: relative;
+  z-index: 2;
 }
 
 .planTag {

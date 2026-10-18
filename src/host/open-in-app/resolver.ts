@@ -13,6 +13,7 @@ import {
   type LocateSpec,
   type OpenableKind,
 } from './catalog.js';
+import { locateWinGui } from './win-locate.js';
 
 export interface ResolvedApp {
   id: string;
@@ -92,6 +93,12 @@ function probeSpec(entry: AppCatalogEntry, spec: LocateSpec): ResolvedApp | null
     case 'win-path': {
       const exe = path.join(os.homedir(), ...spec.rel.split('/'));
       return isFile(exe)
+        ? { id: entry.id, label: entry.label, opens: entry.opens, executablePath: exe }
+        : null;
+    }
+    case 'win-gui': {
+      const exe = locateWinGui(spec);
+      return exe
         ? { id: entry.id, label: entry.label, opens: entry.opens, executablePath: exe }
         : null;
     }

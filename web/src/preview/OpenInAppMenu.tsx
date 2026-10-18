@@ -112,9 +112,13 @@ export default function OpenInAppMenu({
             className={`${styles.menuItem} ${app.id === effectiveSelectedId ? styles.menuItemActive : ''}`}
             onClick={() => openWith(app.id)}
           >
-            <span className={styles.chip}>
+            <span className={iconUrl ? styles.iconSlot : styles.chip}>
               {iconUrl === null ? (
-                <FileIcon size={15} />
+                app.id === 'explorer' || app.id === 'finder' ? (
+                  <FolderIcon size={16} />
+                ) : (
+                  <FileIcon size={15} />
+                )
               ) : (
                 <img
                   className={styles.appIcon}

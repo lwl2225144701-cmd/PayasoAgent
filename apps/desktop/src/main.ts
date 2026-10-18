@@ -221,7 +221,7 @@ const WCO_RESERVE_SCRIPT = `(() => {
  * 窗口最右侧，也必须让位。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
  */
 const WCO_RESERVE_CSS = `
-  #root > :first-child > :not(aside) > [data-window-drag] {
+  #root > :first-child > :not(aside) > [data-shell-bar] {
     box-sizing: border-box;
     padding-right: calc(var(--wco-reserve, 138px) + 14px);
   }
@@ -318,8 +318,9 @@ function createWindow(): void {
   // **壳的窗口几何**，跟 macOS 红绿灯那条同理，所以由壳注入，不靠页面 CSS：
   // 页面版本一旦和壳不匹配（旧 web/dist），页面里那条规则就没了，胶囊/图标会被
   // 按钮硬切掉（真机截图："运行中被挡住了"）。
-  // 选择器认 `[data-window-drag]`（顶栏的稳定标记；侧栏那个同类标记在 aside 里，
-  // 不会误伤），宽度由注入脚本用 WCO API 算出来，算不出来兜底 138px（46×3）。
+  // 选择器认 `[data-shell-bar]`（顶栏的稳定标记，本身不再是拖拽面——拖拽面
+  // 只铺空白处，否则 Windows 上右上角按钮点不到）。宽度由注入脚本用 WCO API
+  // 算出来，算不出来兜底 138px（46×3）。
   if (process.platform === 'win32') {
     win.webContents.on('dom-ready', () => {
       void win.webContents.insertCSS(WCO_RESERVE_CSS).catch(() => undefined);

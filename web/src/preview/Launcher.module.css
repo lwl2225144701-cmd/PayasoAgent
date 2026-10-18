@@ -5,6 +5,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .pill {

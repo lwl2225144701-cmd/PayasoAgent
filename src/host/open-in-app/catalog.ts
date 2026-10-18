@@ -8,6 +8,9 @@
 //   ~/Applications 里找 <name>（names 为候选序，命中即止）
 // - path：可执行文件名，在 PATH 各目录下探测（X_OK）
 // - win-path：相对用户目录的固定相对路径（%USERPROFILE% 下），存在即装
+// - win-gui：Windows 上证明「这个 GUI 装过」——App Paths、PATH 上的 exe、
+//   PATH 上的 .cmd 垫片（Cursor / VS Code 的 CLI 会指向真正的 exe）、常见安装目录、
+//   有限深度搜索、开始菜单快捷方式。自定义盘符（D:\cursor 这种）靠后三条，不靠写死路径。
 // - win-registry：reg.exe query <key>（Uninstall 键存在即装）
 // - desktop-entry：XDG 数据目录 applications/ 下存在 <name>.desktop
 
@@ -15,6 +18,22 @@ export type LocateSpec =
   | { kind: 'app-bundle'; names: string[] }
   | { kind: 'path'; names: string[] }
   | { kind: 'win-path'; rel: string }
+  | {
+      kind: 'win-gui';
+      /** 真正的 GUI 可执行文件名（App Paths + PATH）。 */
+      exeNames: string[];
+      /** CLI 垫片文件名。读脚本里的 `"%~dp0..\..\app.exe"`，不把 .cmd 本身当启动目标。 */
+      shimNames?: string[];
+      /** 相对「用户 Programs / Program Files / Program Files (x86)」的固定路径。 */
+      relPaths?: string[];
+      /**
+       * 有限深度搜索根。可用 %LOCALAPPDATA% / %ProgramFiles% / %ProgramFiles(x86)% 前缀，
+       * 避免把整个用户目录扫一遍。
+       */
+      searchRoots?: string[];
+      /** 开始菜单 .lnk 显示名（精确，或「前缀 + 空格」）。 */
+      shortcutHints?: string[];
+    }
   | { kind: 'win-registry'; key: string }
   | { kind: 'desktop-entry'; names: string[] };
 
@@ -54,6 +73,12 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
     darwin: { kind: 'app-bundle', names: ['Finder.app'] },
   },
   {
+    id: 'explorer',
+    label: '文件资源管理器',
+    opens: ['any'],
+    win32: { kind: 'win-gui', exeNames: ['explorer.exe'] },
+  },
+  {
     id: 'terminal',
     label: '终端',
     opens: ['folder'],
@@ -86,7 +111,13 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
     label: 'VS Code',
     opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Visual Studio Code.app'] },
-    win32: { kind: 'win-path', rel: 'AppData/Local/Programs/VS Code/Code.exe' },
+    win32: {
+      kind: 'win-gui',
+      exeNames: ['Code.exe'],
+      shimNames: ['code.cmd', 'code.bat'],
+      relPaths: ['Microsoft VS Code/Code.exe', 'VS Code/Code.exe'],
+      shortcutHints: ['Visual Studio Code'],
+    },
     linux: { kind: 'desktop-entry', names: ['code.desktop'] },
   },
   {
@@ -94,7 +125,13 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
     label: 'Cursor',
     opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['Cursor.app'] },
-    win32: { kind: 'win-path', rel: 'AppData/Local/Programs/cursor/Cursor.exe' },
+    win32: {
+      kind: 'win-gui',
+      exeNames: ['Cursor.exe'],
+      shimNames: ['cursor.cmd', 'cursor.bat'],
+      relPaths: ['cursor/Cursor.exe', 'Cursor/Cursor.exe'],
+      shortcutHints: ['Cursor'],
+    },
     linux: { kind: 'desktop-entry', names: ['cursor.desktop', 'cursor-url-handler.desktop'] },
   },
   {
@@ -140,6 +177,17 @@ export const APP_CATALOG: readonly AppCatalogEntry[] = [
     label: 'PyCharm',
     opens: ['text', 'folder'],
     darwin: { kind: 'app-bundle', names: ['PyCharm.app', 'PyCharm Professional.app'] },
+    win32: {
+      kind: 'win-gui',
+      exeNames: ['pycharm64.exe'],
+      shimNames: ['pycharm.cmd', 'pycharm.bat'],
+      searchRoots: [
+        '%LOCALAPPDATA%/JetBrains/Toolbox/apps/PyCharm',
+        '%ProgramFiles%/JetBrains',
+        '%ProgramFiles(x86)%/JetBrains',
+      ],
+      shortcutHints: ['PyCharm'],
+    },
     linux: {
       kind: 'desktop-entry',
       names: ['jetbrains-pycharm.desktop', 'jetbrains-pycharm-ce.desktop'],

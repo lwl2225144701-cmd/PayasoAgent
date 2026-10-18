@@ -8,9 +8,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { APP_CATALOG } from '../src/host/open-in-app/catalog.js';
 import { buildLaunchInvocation } from '../src/host/open-in-app/invocation.js';
-import { filterAppsForTarget, openableKindForPath } from '../src/host/open-in-app/openable.js';
+import {
+  filterAppsForTarget,
+  openableKindForPath,
+  orderAppsForDisplay,
+} from '../src/host/open-in-app/openable.js';
 import { queryFileAssociations } from '../src/host/open-in-app/os-assoc.js';
+import {
+  guiExeFromShim,
+  parseRegSz,
+  parseShortcutDump,
+} from '../src/host/open-in-app/win-locate.js';
 import { createHostServer, RunManager } from '../src/host/server.js';
 import { setWorkspace } from '../src/host/workspace.js';
 
@@ -123,6 +133,117 @@ test('buildLaunchInvocation：目录目标 cwd 用它自己，文件目标用父
     targetIsDirectory: false,
   });
   assert.equal(fallback.cwd, '/Users/x/ws');
+});
+
+test('buildLaunchInvocation：explorer.exe 打开路径，且不把退出码当失败', () => {
+  assert.deepEqual(
+    buildLaunchInvocation({
+      appId: 'explorer',
+      executablePath: 'C:\\Windows\\explorer.exe',
+      target: 'D:\\Iragent',
+      platform: 'win32',
+      targetIsDirectory: true,
+    }),
+    { args: ['D:\\Iragent'], cwd: 'D:\\Iragent', ignoreExitCode: true },
+  );
+});
+
+test('guiExeFromShim：Cursor / VS Code 垫片解析到 GUI exe，不认垫片里的别的 exe', () => {
+  const cursorCmd = '"%~dp0..\\..\\..\\Cursor.exe" "%~dp0..\\out\\cli.js" %*\r\n';
+  assert.equal(
+    guiExeFromShim(cursorCmd, 'D:\\cursor\\cursor\\resources\\app\\bin', ['Cursor.exe']),
+    'D:\\cursor\\cursor\\Cursor.exe',
+  );
+  const codeCmd = '"%~dp0..\\Code.exe" "%~dp0..\\resources\\app\\out\\cli.js" %*\r\n';
+  assert.equal(
+    guiExeFromShim(codeCmd, 'D:\\mccode\\Microsoft VS Code\\bin', ['Code.exe']),
+    'D:\\mccode\\Microsoft VS Code\\Code.exe',
+  );
+  // 绝对路径
+  assert.equal(
+    guiExeFromShim('"D:\\apps\\Cursor.exe" %*\r\n', 'C:\\nowhere', ['Cursor.exe']),
+    'D:\\apps\\Cursor.exe',
+  );
+  // 垫片里先出现别的 exe 时，只认名单
+  assert.equal(
+    guiExeFromShim(
+      '"%~dp0node.exe" "%~dp0..\\..\\..\\Cursor.exe"\r\n',
+      'D:\\cursor\\cursor\\resources\\app\\bin',
+      ['Cursor.exe'],
+    ),
+    'D:\\cursor\\cursor\\Cursor.exe',
+  );
+  assert.equal(guiExeFromShim('echo hello\r\n', 'D:\\bin'), null);
+});
+
+test('parseRegSz：英文 (Default) 与中文 (默认) 都能取出路径', () => {
+  assert.equal(
+    parseRegSz(
+      'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe\r\n    (Default)    REG_SZ    D:\\mccode\\Microsoft VS Code\\Code.exe\r\n',
+    ),
+    'D:\\mccode\\Microsoft VS Code\\Code.exe',
+  );
+  assert.equal(
+    parseRegSz('    (默认)    REG_SZ    C:\\Program Files\\Microsoft VS Code\\Code.exe\r\n'),
+    'C:\\Program Files\\Microsoft VS Code\\Code.exe',
+  );
+  assert.equal(
+    parseRegSz('ERROR: The system was unable to find the specified registry key.\r\n'),
+    null,
+  );
+});
+
+test('parseShortcutDump：单对象和数组都认，空输出为空列表', () => {
+  assert.deepEqual(parseShortcutDump(''), []);
+  assert.deepEqual(parseShortcutDump('not json'), []);
+  assert.deepEqual(parseShortcutDump('{"name":"Cursor","target":"D:\\\\cursor\\\\Cursor.exe"}'), [
+    { name: 'Cursor', target: 'D:\\cursor\\Cursor.exe' },
+  ]);
+  assert.deepEqual(
+    parseShortcutDump(
+      '[{"name":"PyCharm 2026.1","target":"D:\\\\Pcharm\\\\pycharm64.exe"},{"name":"","target":"x"}]',
+    ),
+    [{ name: 'PyCharm 2026.1', target: 'D:\\Pcharm\\pycharm64.exe' }],
+  );
+});
+
+test('Windows 目录菜单顺序：文件资源管理器、Cursor、VS Code、PyCharm，终端靠后', () => {
+  const installed = [
+    { id: 'terminal', label: '终端', opens: ['folder' as const] },
+    { id: 'explorer', label: '文件资源管理器', opens: ['any' as const] },
+    { id: 'pycharm', label: 'PyCharm', opens: ['text' as const, 'folder' as const] },
+    { id: 'vscode', label: 'VS Code', opens: ['text' as const, 'folder' as const] },
+    { id: 'cursor', label: 'Cursor', opens: ['text' as const, 'folder' as const] },
+    { id: 'chrome', label: 'Chrome', opens: ['pdf' as const, 'image' as const, 'text' as const] },
+  ];
+  assert.deepEqual(
+    orderAppsForDisplay(filterAppsForTarget(installed, null), 'win32', true).map(
+      (app) => app.label,
+    ),
+    ['文件资源管理器', 'Cursor', 'VS Code', 'PyCharm', '终端'],
+  );
+  // 非 Windows、以及文件目标，保持原顺序
+  assert.deepEqual(
+    orderAppsForDisplay(filterAppsForTarget(installed, null), 'darwin', true).map((app) => app.id),
+    ['terminal', 'explorer', 'pycharm', 'vscode', 'cursor'],
+  );
+  assert.deepEqual(
+    orderAppsForDisplay(filterAppsForTarget(installed, 'a.ts'), 'win32', false).map(
+      (app) => app.id,
+    ),
+    ['explorer', 'pycharm', 'vscode', 'cursor', 'chrome'],
+  );
+});
+
+test('catalog：Windows 目录入口是文件资源管理器 + 编辑器，不靠一条写死的用户目录', () => {
+  const byId = new Map(APP_CATALOG.map((entry) => [entry.id, entry]));
+  const explorer = byId.get('explorer');
+  assert.equal(explorer?.label, '文件资源管理器');
+  assert.deepEqual(explorer?.opens, ['any']);
+  assert.equal(explorer?.win32?.kind, 'win-gui');
+  for (const id of ['cursor', 'vscode', 'pycharm'] as const) {
+    assert.equal(byId.get(id)?.win32?.kind, 'win-gui', id);
+  }
 });
 
 // ---- 目标类别判定（纯函数）----

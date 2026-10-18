@@ -67,17 +67,18 @@ export function ShellBar({
 
   return (
     <div
-      data-window-drag
+      data-shell-bar
       className={`${styles.bar} ${run ? '' : styles.landingBar} ${collapsed ? styles.barCollapsed : ''}`}
     >
-      <div className={styles.left}>
-        {leading}
+      {leading ? <div className={styles.noDrag}>{leading}</div> : null}
+      <div className={styles.left} data-window-drag>
         {displayTitle && (
           <span className={styles.taskTitle} title={displayTitle}>
             {displayTitle}
           </span>
         )}
       </div>
+      <div className={styles.dragSpacer} data-window-drag />
 
       <div className={styles.right}>
         {planMode && (
