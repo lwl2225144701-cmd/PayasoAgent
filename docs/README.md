@@ -54,6 +54,7 @@ docs/
 │   ├── builtin-model-catalog-refresh.md
 │   ├── preview-gui-调研报告.md / preview-module-plan.md
 │   ├── auto-update-调研报告.md        # DSH 自更新三条链路的逆向结论（期 3 依据）
+│   ├── execution-convergence-governance-plan.md  # 执行不收敛治理方案（2026-10-18，拟议未实施）
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI
