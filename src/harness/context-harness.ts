@@ -10,6 +10,7 @@ import {
 } from './compaction-policy.js';
 import { ContextManager, type ContextUsage } from './context-manager.js';
 import {
+  type ContextHarnessPendingReminders,
   type ContextHarnessState,
   createContextHarnessState,
   normalizeContextHarnessState,
@@ -18,6 +19,18 @@ import {
   type ConversationSummarizer,
   LlmConversationSummarizer,
 } from './conversation-summarizer.js';
+import {
+  advanceExecutionBudget,
+  type ExecutionBudgetBucket,
+  type ExecutionBudgetDecision,
+  type ExecutionBudgetPolicy,
+  type ExecutionBudgetState,
+  type ExecutionBudgetUsage,
+  executionBudgetBucketsFor,
+  normalizeExecutionBudgetState,
+  renderExecutionBudgetReminder,
+  resolveExecutionBudgetPolicy,
+} from './execution-policy.js';
 import { type FinalReviewInput, reviewFinalAnswer } from './final-review.js';
 import { InstructionComposer } from './instruction-composer.js';
 import {
@@ -49,6 +62,16 @@ import {
   renderProgressReminder,
   type ToolTurnProgress,
 } from './progress-reminder.js';
+import {
+  advanceRepeatCall,
+  DEFAULT_REPEAT_CALL_POLICY,
+  normalizeRepeatCallState,
+  type RepeatCallPolicy,
+  type RepeatCallReminder,
+  renderRepeatCallReminder,
+  resolveRepeatCallPolicy,
+  type ToolInvocationObservation,
+} from './repeat-call-policy.js';
 import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
 import {
   type ProjectionPolicy,
@@ -130,8 +153,20 @@ export interface AgentContextHarness {
   snapshotState(): ContextHarnessState;
   // 只观察已结束的工具回合；触发后返回审计数据，由 Runtime 发事件并保存。
   observeToolTurn?(turn: ToolTurnProgress): ProgressReminder | undefined;
+  // v2.6 执行不收敛治理：一次工具调用的**统一**观察口径。覆盖 process-manager 的
+  // 全部出口（成功/失败/拒绝/回放/不确定/参数无效），因此 Harness 的计数是完整
+  // 的——Runtime 不能只挑便利的出口上报。返回跨过新阈值的提醒（Runtime 发事件）。
+  observeToolInvocation?(observation: ToolInvocationObservation): RepeatCallReminder | undefined;
+  // v2.6 执行不收敛治理：累计一次模型调用的机械用量（调用次数 / 输出 token /
+  // 活动时长），返回分级决策。exhausted 由 Runtime 转成优雅停止，其余只提醒。
+  observeExecution?(usage: ExecutionBudgetUsage): ExecutionBudgetDecision | undefined;
   // 模型成功响应后才消费待发送提醒；请求失败/取消时保留，供恢复后继续投影。
   acknowledgeProgressReminder?(): boolean;
+  // v2.6：消费全部待投递提醒（重复调用 + 执行预算）。与 progress 的 acknowledge 同
+  // 时序：只在模型真的响应了之后，避免失败请求把提醒白白吃掉。
+  acknowledgeConvergenceReminders?(): boolean;
+  // v2.6：待投递提醒的注入文本（prepareTurn 拼进 [Context]）。空数组 = 无待投递。
+  pendingReminderTexts?(): string[];
   // v2.2 Plan：Harness 持有的任务清单写入口。Runtime 只负责把返回的 changed 变成
   // `plan_update` 事件（Harness 不碰 trace）；fake Harness 不实现也不影响编译，
   // 此时 updatePlan 工具 fail-closed 报错。
@@ -191,6 +226,10 @@ export class DefaultContextHarness implements AgentContextHarness {
   private readonly projectionPolicy: ProjectionPolicy;
   // P2-D 压缩阈值策略：触发线 = min(窗口比例, 独立成本上限)，保留量留出带宽。
   private readonly compactionPolicy: CompactionPolicy;
+  // v2.6 执行不收敛治理：重复调用观察（undefined = 关闭）。只提醒、不阻断。
+  private readonly repeatCallPolicy: RepeatCallPolicy | undefined;
+  // v2.6 执行不收敛治理：机械预算（undefined = 关闭）。默认无上限（保持旧行为）。
+  private readonly executionBudgetPolicy: ExecutionBudgetPolicy | false;
   private state = createContextHarnessState();
 
   constructor(options: {
@@ -207,9 +246,39 @@ export class DefaultContextHarness implements AgentContextHarness {
     progressReminder?: ProgressReminderPolicy | false;
     projection?: ProjectionPolicy;
     compaction?: CompactionPolicy;
+    repeatCall?: RepeatCallPolicy | false;
+    executionBudget?: ExecutionBudgetPolicy | false;
   }) {
     this.projectionPolicy = options.projection ?? resolveProjectionPolicy();
     this.compactionPolicy = options.compaction ?? resolveCompactionPolicy();
+    // 显式关闭（off / false）优先于任何默认值；未指定时按环境解析（默认开启）。
+    const resolvedRepeatCall = options.repeatCall ?? resolveRepeatCallPolicy();
+    this.repeatCallPolicy =
+      resolvedRepeatCall === false ? undefined : (resolvedRepeatCall ?? DEFAULT_REPEAT_CALL_POLICY);
+    if (
+      this.repeatCallPolicy &&
+      !(
+        Number.isSafeInteger(this.repeatCallPolicy.warnAt) &&
+        this.repeatCallPolicy.warnAt >= 1 &&
+        Number.isSafeInteger(this.repeatCallPolicy.escalateAt) &&
+        this.repeatCallPolicy.escalateAt >= 1 &&
+        Number.isSafeInteger(this.repeatCallPolicy.blockAt) &&
+        this.repeatCallPolicy.blockAt >= 1 &&
+        this.repeatCallPolicy.warnAt <= this.repeatCallPolicy.escalateAt &&
+        this.repeatCallPolicy.escalateAt <= this.repeatCallPolicy.blockAt
+      )
+    )
+      throw new Error('Invalid repeat call policy');
+    this.executionBudgetPolicy = options.executionBudget ?? resolveExecutionBudgetPolicy();
+    if (
+      this.executionBudgetPolicy &&
+      !(
+        this.executionBudgetPolicy.warnRatio > 0 &&
+        this.executionBudgetPolicy.warnRatio <= this.executionBudgetPolicy.convergeRatio &&
+        this.executionBudgetPolicy.convergeRatio < 1
+      )
+    )
+      throw new Error('Invalid execution budget policy');
     this.progressReminderPolicy =
       options.progressReminder === false || process.env.PAYASO_PROGRESS_REMINDER === 'off'
         ? undefined
@@ -440,6 +509,94 @@ export class DefaultContextHarness implements AgentContextHarness {
     return true;
   }
 
+  // ---- v2.6 执行不收敛治理：Harness 只累计与投递提醒，阻断由 Runtime 决定 ----
+
+  /**
+   * 统一观察一次工具调用的处置（Runtime 在 process-manager 的每个出口上报）。
+   * 返回跨过新阈值的提醒；Harness 同时把它挂进 pending，等模型真的响应后再消费。
+   */
+  observeToolInvocation(observation: ToolInvocationObservation): RepeatCallReminder | undefined {
+    if (!this.repeatCallPolicy) return undefined;
+    const previous = normalizeRepeatCallState(this.state.repeatCall);
+    const { state: next, reminder } = advanceRepeatCall(
+      previous,
+      observation,
+      this.repeatCallPolicy,
+    );
+    this.state.repeatCall = next;
+    if (reminder) this.state.pending = this.withPending({ repeatCall: reminder });
+    return reminder;
+  }
+
+  /**
+   * 累计一次模型调用的机械用量并分级。exhausted 不在这里阻断——Runtime 依此转成
+   * 优雅停止（AgentStopRequestedError），checkpoint 与语义保持完整。
+   */
+  observeExecution(usage: ExecutionBudgetUsage): ExecutionBudgetDecision | undefined {
+    if (!this.executionBudgetPolicy) return undefined;
+    const previous = normalizeExecutionBudgetState(this.state.executionBudget);
+    const decision = advanceExecutionBudget(previous, usage, this.executionBudgetPolicy);
+    this.state.executionBudget = decision.state;
+    // 只在本轮**新**跨阈值时排队提醒。level 是粘滞档位（跨过就一直保持），
+    // 若按 level 判断，warn 之后的每一轮都会重复注入同一段提醒——那本身就是
+    // 一种"执行不收敛"。buckets 为空 = 本轮没有新变化，不打扰。
+    // exhausted 不投提醒：继续要求模型交付只会让它再多花一轮，与预算目的相反。
+    // 显式收窄 level：buckets 非空即意味着跨过某档（不可能还是 none），但 TS 无法
+    // 从 buckets.length 推出这一点，写成显式判别让类型与语义同时成立。
+    const budgetLevel = decision.level;
+    if (decision.buckets.length > 0 && (budgetLevel === 'warn' || budgetLevel === 'converge')) {
+      this.state.pending = this.withPending({
+        budget: { level: budgetLevel, buckets: decision.buckets },
+      });
+    }
+    return decision;
+  }
+
+  acknowledgeConvergenceReminders(): boolean {
+    if (!this.state.pending) return false;
+    this.state.pending = undefined;
+    return true;
+  }
+
+  /**
+   * 待投递提醒的注入文本（prepareTurn → [Context] 末尾）。
+   * 桶名缺失时按当前实际用量重算，保证渲染的一定是真实比例。
+   */
+  pendingReminderTexts(): string[] {
+    const pending = this.state.pending as ContextHarnessPendingReminders | undefined;
+    if (!pending) return [];
+    const texts: string[] = [];
+    if (pending.repeatCall) texts.push(renderRepeatCallReminder(pending.repeatCall));
+    if (pending.budget && this.executionBudgetPolicy) {
+      const budgetState: ExecutionBudgetState = normalizeExecutionBudgetState(
+        this.state.executionBudget,
+      );
+      const buckets: ExecutionBudgetBucket[] =
+        pending.budget.buckets.length > 0
+          ? pending.budget.buckets
+          : executionBudgetBucketsFor(
+              budgetState,
+              this.executionBudgetPolicy,
+              pending.budget.level,
+            );
+      texts.push(
+        renderExecutionBudgetReminder(
+          budgetState,
+          this.executionBudgetPolicy,
+          pending.budget.level,
+          buckets,
+        ),
+      );
+    }
+    return texts;
+  }
+
+  /** 合并待投递提醒（不丢另一类；同类型直接覆盖为最新一次）。 */
+  private withPending(patch: ContextHarnessPendingReminders): ContextHarnessPendingReminders {
+    const current = this.state.pending as ContextHarnessPendingReminders | undefined;
+    return { ...current, ...patch };
+  }
+
   // v2.2 Plan：计划状态与语义都在 Harness（见 plan.ts）。这里只做"改状态 + 回文本"，
   // 不发事件、不落盘——那是 Runtime 的职责（changed → plan_update → checkpoint）。
   planPort(): PlanPort {
@@ -581,7 +738,11 @@ export class DefaultContextHarness implements AgentContextHarness {
     const reminderText = this.progressReminderPolicy
       ? renderProgressReminder(this.state.progressReminder)
       : '';
-    const parts = [planText, scratchpadText, summaryText, reminderText]
+    // v2.6 执行不收敛治理：重复调用提醒与预算预警/收敛审查。Harness 只在这里
+    // 生成文本素材；Runtime 负责发事件、在模型成功响应后消费（acknowledgeConvergence
+    // Reminders）。提醒一律只投影模型视图，不改 canonical transcript、不阻断工具。
+    const convergenceTexts = this.pendingReminderTexts();
+    const parts = [planText, scratchpadText, summaryText, reminderText, ...convergenceTexts]
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
     if (parts.length === 0) return null;

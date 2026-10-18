@@ -14,11 +14,21 @@
 // the safe direction: retrying a side effect is worse than not retrying a
 // transient failure. New knowledge is added by appending a rule, not by editing
 // the classifier core.
+//
+// v2.6 — a fourth kind, `uncertain`:
+// A failure that matches no rule proves neither determinism nor transience.
+// Reporting it as `permanent` made the Runtime tell the model, with full
+// confidence, "this is a deterministic failure, do not retry" — while the truth
+// was "the Runtime does not know whether the side effect already happened".
+// `uncertain` keeps `retryable: false` (still no automatic retry: the safe
+// direction is unchanged) but carries honest semantics, so failure recovery
+// asks the model to verify the real state before deciding instead of forbidding
+// a retry.
 
 import { NetworkDeniedError, RequiredRuntimeToolUnavailableError } from '../tools/tools.js';
 import { isAbortError } from '../util/abort.js';
 
-export type ToolErrorKind = 'transient' | 'permanent' | 'abort' | 'policy';
+export type ToolErrorKind = 'transient' | 'permanent' | 'abort' | 'policy' | 'uncertain';
 
 export interface ToolErrorClassification {
   kind: ToolErrorKind;
@@ -156,7 +166,9 @@ function errorMessage(error: unknown): string {
 
 /**
  * Classify one tool execution failure.
- * Unclassified failures are treated as permanent (retryable: false).
+ * Unclassified failures are `uncertain` with `retryable: false` — never retried
+ * automatically, and never described to the model as deterministic (see the
+ * v2.6 note at the top of this module).
  */
 export function classifyToolError(error: unknown): ToolErrorClassification {
   const code = errnoCode(error);
@@ -166,9 +178,9 @@ export function classifyToolError(error: unknown): ToolErrorClassification {
     if (classification) return classification;
   }
   return {
-    kind: 'permanent',
+    kind: 'uncertain',
     retryable: false,
-    reason: 'unclassified failure; not retried by default',
+    reason: 'unclassified failure; not retried by default and outcome not confirmed',
     ...(code === undefined ? {} : { code }),
   };
 }

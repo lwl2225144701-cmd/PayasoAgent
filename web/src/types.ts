@@ -377,6 +377,26 @@ export interface ProgressReminderEvent extends TraceEventBase {
   readOnlyMs: number;
 }
 
+// v2.6 重复调用观察：Harness 只提示不阻断（合法轮询/等待仍被允许）。
+export interface RepeatCallReminderEvent extends TraceEventBase {
+  type: 'repeat_call_reminder';
+  tool: string;
+  count: number; // 连续相同调用的次数（含本次）
+  level: number; // 分级 1/2/3（对应 warn/escalate/block 阈值）
+  attempts: number; // 本次调用内部执行尝试次数（0 = 未执行；与 count 分工）
+  preview: string; // 脱敏后有界的参数预览（与注入模型的文本、checkpoint 同源）
+}
+
+// v2.6 执行预算分级（阶段一观察模式，不阻断）。usage 为累计真实值。
+export interface BudgetDecisionEvent extends TraceEventBase {
+  type: 'budget_decision';
+  level: 'warn' | 'converge' | 'exhausted';
+  buckets: Array<'modelCalls' | 'outputTokens' | 'activeMs'>;
+  modelCalls: number;
+  outputTokens: number;
+  activeMs: number;
+}
+
 // Finalization guard：非空但明显未完成的文本回合，按 Harness 策略恢复或失败。
 export interface FinalizationGuardEvent extends TraceEventBase {
   type: 'finalization_guard';
@@ -549,6 +569,8 @@ export type TraceEvent =
   | RecoveryDecisionEvent
   | EmptyTurnRecoveredEvent
   | ProgressReminderEvent
+  | RepeatCallReminderEvent
+  | BudgetDecisionEvent
   | FinalizationGuardEvent
   | SideEffectSkipEvent
   | SideEffectUncertainEvent

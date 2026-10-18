@@ -198,6 +198,14 @@ export async function runAgent(
     // No fixed iteration cap: a turn continues while the model keeps
     // producing tool calls. Cancellation, tool safety, and the optional
     // Harness stop policy are the termination mechanisms.
+    // v2.6 执行预算（Harness 持有）：活动时长用单调标记做增量累计，避免
+    // 「每迭代重算 start→now」漏掉工具执行时间。恢复场景由 Harness 从
+    // checkpoint 累计值继续，新 Run 从零开始。
+    // 模型调用数按**真实 Provider 请求**计（onRequestSent 每次 HTTP 尝试 +1，
+    // 含 chat() 内部重试）——按成功响应计会漏算重试，违背「含每次重试」的口径。
+    // 请求发出后整轮失败的随 Run 终止，不再入账（失败即终态，无后续预算决策）。
+    let budgetMarkAt = performance.now();
+    let budgetModelCalls = 0;
     for (let i = startIter; ; i++) {
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
@@ -299,6 +307,8 @@ export async function runAgent(
         // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
         // 拆成「Host 侧整理」与「Provider 首包/网络」两段。
         (attempt) => {
+          // 每次真实 HTTP 请求（含 chat() 内部重试）都计入模型调用预算。
+          budgetModelCalls += 1;
           emit({
             type: 'llm_request_sent',
             iteration: i + 1,
@@ -315,7 +325,45 @@ export async function runAgent(
       messages.push(assistantHistoryMessage);
       // 成功响应后消费提醒；随本轮原有的工具/终态 checkpoint 保存。
       // 若响应尚未持久化即崩溃，恢复时 pending 提醒和该请求一起重新投影。
+      // 顺序不可换：acknowledge 消费的是「本轮 prepareTurn 已注入模型视图」的提醒，
+      // 必须发生在 observeExecution 入队新提醒**之前**——否则本轮刚跨阈的预算提醒
+      // 会在入队后立刻被清空，模型永远收不到（v2.6 接线事故，集成测试锁定）。
       contextHarness.acknowledgeProgressReminder?.();
+      contextHarness.acknowledgeConvergenceReminders?.();
+      // v2.6 执行预算累计（阶段一观察模式）：累计本轮流式请求发出的全部模型
+      // 调用（含内部重试）+ 真实输出 token + 自上一标记以来的活动时长（含本迭代
+      // 内的工具执行）。Harness 只分级与排队提醒，不拦截；exhausted 转优雅停止
+      // 是阶段二的事。
+      if (contextHarness.observeExecution) {
+        const now = performance.now();
+        const budgetDecision = contextHarness.observeExecution({
+          modelCalls: budgetModelCalls,
+          // usage 缺失时记 0：宁可少算也不把估算写成真实消耗。
+          outputTokens: requestUsage?.outputTokens ?? 0,
+          activeMs: now - budgetMarkAt,
+        });
+        budgetMarkAt = now;
+        budgetModelCalls = 0; // 已入账，下一轮重新计数
+        // 只在本轮新跨阈值时发事件并落 checkpoint。level 是粘滞档位，跨过 warn 后
+        // 会一直保持；若按 level 判断，事件和 checkpoint 会在后续每一轮重复产生。
+        // undefined = 该 Harness 未启用预算策略（SDK 注入了旧实现）：跳过，行为不变。
+        if (budgetDecision && budgetDecision.buckets.length > 0) {
+          // 显式收窄：buckets 非空即已跨过某档，但 TS 无法从数组长度推出 level 的取值。
+          const budgetLevel = budgetDecision.level;
+          if (budgetLevel !== 'none') {
+            emit({
+              type: 'budget_decision',
+              level: budgetLevel,
+              buckets: budgetDecision.buckets,
+              modelCalls: budgetDecision.state.usage.modelCalls,
+              outputTokens: budgetDecision.state.usage.outputTokens,
+              activeMs: budgetDecision.state.usage.activeMs,
+            });
+            // 预算档位随原有 checkpoint 保存：恢复后累计值与档位延续（不重跑已耗尽的预算）。
+            save();
+          }
+        }
+      }
       // 记录本次真实用量，供下一轮 context_usage 的 pressureTokens 锚点使用。
       if (requestUsage !== undefined) lastRequestUsage = requestUsage;
 

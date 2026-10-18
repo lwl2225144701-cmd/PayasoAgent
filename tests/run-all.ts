@@ -45,6 +45,11 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'tool-invocation-state-machine', file: 'tests/tool-invocation-state-machine.test.ts' },
   { name: 'runtime-loop', file: 'tests/runtime-loop.test.ts' },
   { name: 'progress-reminder', file: 'tests/progress-reminder.test.ts' },
+  // v2.6 执行不收敛治理（Harness 纯策略：重复调用观察 / 机械预算分级）
+  { name: 'repeat-call-policy', file: 'tests/repeat-call-policy.test.ts' },
+  { name: 'execution-policy', file: 'tests/execution-policy.test.ts' },
+  // v2.6 同机制 Loop 级集成：提醒必须到达模型视图（接线时序回归）
+  { name: 'convergence-reminder', file: 'tests/convergence-reminder.test.ts' },
   { name: 'host-timeout', file: 'tests/host-timeout.test.ts' },
   { name: 'tool-contract', file: 'tests/tool-contract.test.ts' },
   { name: 'filesystem-tools', file: 'tests/filesystem-tools.test.ts' },

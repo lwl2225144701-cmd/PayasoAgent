@@ -10,6 +10,7 @@
 // agent.ts；本模块不拥有可变状态（State/Scratchpad/Messages 均为引用传入）。
 
 import type { AgentContextHarness } from '../../harness/context-harness.js';
+import type { ToolInvocationDisposition } from '../../harness/repeat-call-policy.js';
 import type { ChatMessage } from '../../llm/llm.js';
 import { getNetworkMode } from '../../network-mode.js';
 import type { ToolchainPreparationPort } from '../../sandbox/toolchain-preparation.js';
@@ -161,12 +162,41 @@ export async function invokeToolCall(
   } = ctx;
   const toolName = call.function.name;
 
+  // v2.6 统一调用观察：本函数有 9 条出口（成功/失败/拒绝/回放/不确定/参数无效/
+  // 防死循环阻断/工具超时），历史上它们互不感知，Harness 因此永远看不到全貌——模型换个写法
+  // 就能绕过"同参数被禁"。现在每个出口都经过这里上报一次（一次 LLM tool_call =
+  // 一次观察，内部自动重试不重复计数，只通过 attempts 单独记录尝试次数），由
+  // Harness 决定是否提醒。
+  // 分层：Runtime 只报事实（工具名 + 参数 + 处置 + 尝试次数），提醒文案与阈值全在 Harness。
+  const observeDisposition = (disposition: ToolInvocationDisposition, attempts = 0): void => {
+    const reminder = contextHarness.observeToolInvocation?.({
+      tool: toolName,
+      // 未通过 parse/校验的调用用原始串做身份：同一个坏调用反复出现也要能计数。
+      args: parsed.ok ? parsed.args : { raw: call.function.arguments },
+      disposition,
+      attempts,
+    });
+    if (reminder) {
+      emit({
+        type: 'repeat_call_reminder',
+        tool: toolName,
+        count: reminder.count,
+        level: reminder.level,
+        attempts: reminder.attempts,
+        // 脱敏后有界的参数预览随事件落盘：审计可重建「哪一次重复」，
+        // 与注入模型的文本、checkpoint 状态是同一份处理结果。
+        preview: reminder.preview,
+      });
+    }
+  };
+
   // v1.6 Tool Call Pipeline ①②：Parse + Validate。
   // malformed / 非 object 的 arguments 是可恢复 invocation error：
   // 工具绝不执行、side-effect 绝不创建，结构化错误回传模型修正。
   const parsed = parseToolArguments(call.function.arguments);
   if (!parsed.ok) {
     lifecycle.transition('invalid');
+    observeDisposition('invalid');
     pushToolCallError(call.id, toolName, parsed.error);
     return;
   }
@@ -178,6 +208,7 @@ export async function invokeToolCall(
   const toolDef = getTool(toolName);
   if (!toolDef) {
     lifecycle.transition('invalid');
+    observeDisposition('invalid');
     pushToolCallError(call.id, toolName, toolNotFoundError(toolName));
     return;
   }
@@ -189,6 +220,7 @@ export async function invokeToolCall(
   const argumentCheck = validateToolArguments(toolDef.parameters, args);
   if (!argumentCheck.ok) {
     lifecycle.transition('invalid');
+    observeDisposition('invalid');
     pushToolCallError(
       call.id,
       toolName,
@@ -214,6 +246,7 @@ export async function invokeToolCall(
     });
     if (!approved) {
       lifecycle.transition('denied');
+      observeDisposition('denied');
       const deniedMsg =
         `Tool "${toolName}" requires network access but approval was not granted (network.mode=ask). ` +
         `Ask the user to approve this network call or switch network mode to "on".`;
@@ -269,6 +302,7 @@ export async function invokeToolCall(
     const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext, effect);
     if (disposition.kind === 'replay') {
       lifecycle.transition('replayed');
+      observeDisposition('replayed');
       observer.log(
         `[Side-Effect Skip] ${toolName} 操作已成功执行过（同一 canonical operation key），回放结果，不重复执行副作用`,
       );
@@ -283,10 +317,12 @@ export async function invokeToolCall(
     }
     if (disposition.kind === 'uncertain') {
       lifecycle.transition('uncertain');
+      observeDisposition('uncertain');
       const uncertainMsg =
         `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, toolContext)}）` +
         `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
-        `请勿再次使用相同参数调用；请修正参数、换其他方法或向用户说明。`;
+        `请勿再次使用相同参数调用。请先读取真实状态确认该操作是否已生效：未生效才可修正参数后重试或改用其他方法，` +
+        `已生效则直接继续后续步骤；不要假设它没有发生。`;
       observer.log(`[Side-Effect Uncertain] ${uncertainMsg}`);
       emit({
         type: 'side_effect_uncertain',
@@ -301,6 +337,9 @@ export async function invokeToolCall(
   // 防死循环：相同 tool + 相同参数已失败超过重试次数 → 禁止再次调用
   if (isBlocked(scratchpad, toolName, input, MAX_RETRY)) {
     lifecycle.transition('blocked');
+    // 按「denied」上报：同参数被禁是 Runtime 策略拒绝，工具未执行。
+    // 用 denied 而非 denied 之外的取值，保证同一坏调用反复撞上 isBlocked 也计入重复计数。
+    observeDisposition('denied');
     const blockMsg = `工具 ${toolName} 参数 "${input}" 已产生无效结果或失败超过重试次数，禁止再次调用相同参数。请修正参数、换其他方法或向用户说明原因。`;
     observer.log(`[Blocked] ${blockMsg}`);
 
@@ -493,6 +532,8 @@ export async function invokeToolCall(
         // Checkpoint: 结果无效时保存
         save();
         lifecycle.transition('invalid_result');
+        // invalid_result ≠ invalid：工具真执行过，副作用可能已发生，审计口径必须分开。
+        observeDisposition('invalid_result', attempt);
         return; // 工具本身未抛错，无需重试
       }
 
@@ -528,6 +569,7 @@ export async function invokeToolCall(
       });
       // Checkpoint: 工具成功后保存
       save();
+      observeDisposition('executed', attempt);
       lifecycle.transition('succeeded');
       return { tool: toolDef.name, effect }; // 成功，跳出重试
     } catch (err) {
@@ -539,6 +581,7 @@ export async function invokeToolCall(
       // - 将明确错误返回 LLM，由其决定换方法或请用户开启网络
       if (err instanceof NetworkDeniedError) {
         lifecycle.transition('denied');
+        observeDisposition('denied', attempt);
         const deniedMsg = err.message;
         observer.log(`[Network Denied] ${toolName}: ${deniedMsg}`);
         // 审计（拒绝也进 Trace；网络字段清晰标识被拦）
@@ -596,6 +639,9 @@ export async function invokeToolCall(
         });
         observeState('summary');
         save();
+        // 超时是独立出口，必须上报：否则模型连续发起超时调用永远不进重复计数。
+        // non_idempotent 超时时副作用是否已发生未知 → uncertain（与 lifecycle 一致）。
+        observeDisposition(effect === 'non_idempotent' ? 'uncertain' : 'failed', attempt);
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -603,6 +649,9 @@ export async function invokeToolCall(
         });
         return; // 本 call 处理完毕（不重试），外层循环继续 → LLM 重新决策
       }
+      // 注意：此处**不**上报处置——最终归属（failed / uncertain）要等下面的
+      // abort 检查与 willRetry 判定：用户取消不是工具失败，non_idempotent 失败
+      // 的副作用状态未知，两者都不能记成 plain failed。
 
       let msg = (err as Error).message;
       observer.log(`[Tool 错误] ${toolName}: ${msg}`);
@@ -692,11 +741,33 @@ export async function invokeToolCall(
 
       if (!willRetry) {
         lifecycle.transition(effect === 'non_idempotent' ? 'uncertain' : 'failed');
-        // 失败恢复：将错误（含"为什么不再重试"）作为消息返回 LLM，由其决策
+        // 统一调用观察的终点：一次 tool_call 只在这里上报一次最终处置。
+        // 副作用不确定（non_idempotent 失败，或错误无法可靠分类）→ uncertain，
+        // 与 lifecycle / 恢复文案同口径；其余为 failed。attempts 携带内部
+        // 自动重试的执行次数（重试不放大重复计数）。
+        observeDisposition(
+          effect === 'non_idempotent' || classification.kind === 'uncertain'
+            ? 'uncertain'
+            : 'failed',
+          attempt,
+        );
+        // 失败恢复：将错误（含"为什么不再重试"）作为消息返回 LLM，由其决策。
+        // v2.6 按分类类型给不同指引。此前所有非瞬时失败共用一句"换其他方法"：
+        // 对策略拒绝这是诱导模型绕过策略，对 uncertain 这是掩盖"副作用未知"。
         const exhaustedByRetries = attempt > effectiveRetries;
         const failureNote = exhaustedByRetries
           ? `重试 ${effectiveRetries} 次仍失败`
-          : `该错误为确定性失败（${classification.reason}），未重试`;
+          : classification.kind === 'uncertain'
+            ? `该错误无法可靠分类（${classification.reason}），Runtime 未自动重试，且无法确认副作用是否已发生`
+            : classification.kind === 'policy'
+              ? `该调用被策略拒绝（${classification.reason}），未重试`
+              : `该错误为确定性失败（${classification.reason}），未重试`;
+        const guidance =
+          classification.kind === 'policy'
+            ? `该调用被策略拒绝，重试或更换参数都不能改变策略。请改用合规的其他方法，或向用户说明需要调整权限与配置。`
+            : classification.kind === 'uncertain'
+              ? `请先核对真实状态（文件是否已写入、命令是否已生效）再决定下一步，不要假设它一定没有发生；确认未生效后才可修正参数重试或换其他方法。`
+              : `禁止再次使用相同参数调用；请修正参数、换其他方法，或向用户说明失败原因。`;
         observer.log(`[恢复] 工具 ${toolName} ${failureNote}，将错误返回 LLM 由其决策`);
         updateState(state, {
           failedToolCalls: state.failedToolCalls + 1,
@@ -704,12 +775,12 @@ export async function invokeToolCall(
         emit({
           type: 'recovery_decision',
           tool: toolName,
-          decision: `工具 ${toolName} ${failureNote}，已将错误返回 LLM，由其决定：修正参数重新调用 / 换其他方法 / 直接向用户说明失败原因`,
+          decision: `工具 ${toolName} ${failureNote}，已将错误返回 LLM，由其决策：${guidance}`,
         });
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: `工具 ${toolName} 参数 "${input}" 执行失败（${failureNote}）：${msg}。禁止再次使用相同参数调用，请修正参数或换其他方法。`,
+          content: `工具 ${toolName} 参数 "${input}" 执行失败（${failureNote}）：${msg}。${guidance}`,
         });
         return; // 跳出重试，外层循环继续 → LLM 重新决策
       }

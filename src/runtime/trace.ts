@@ -207,6 +207,18 @@ export type TraceEvent =
       key: string; // canonical operation key（operationIdentity）
     }
   | {
+      // v2.6 重复调用观察：同一身份（工具 + 规范化参数）连续调用跨过 Harness 阈值。
+      // 只观察、不阻断：合法轮询/等待是允许的，Runtime 不做任何拦截决策。
+      type: 'repeat_call_reminder';
+      step: number;
+      timestamp: string;
+      tool: string; // 工具名称
+      count: number; // 连续相同调用的次数（含本次）
+      level: number; // 分级 1/2/3（对应 warn/escalate/block 阈值）
+      attempts: number; // 本次调用内部执行尝试次数（0 = 未执行；与 count 分工）
+      preview: string; // 脱敏后有界的参数预览（与注入模型的文本、checkpoint 同源）
+    }
+  | {
       type: 'tool_output_truncated';
       step: number;
       timestamp: string;
@@ -230,6 +242,19 @@ export type TraceEvent =
       timestamp: string;
       platform: 'macos' | 'windows';
       reason: 'workspace_policy';
+    }
+  | {
+      // v2.6 执行预算：Harness 累计模型调用数 / 输出 token / 活动时长后分级（观测模式）。
+      // 只留痕，不阻断：模型持续输出时 idle timeout 正常续期，累计预算仍持续消耗。
+      // buckets 列出本次跨过阈值的维度；usage 为累计值（真实用量，非估算）。
+      type: 'budget_decision';
+      step: number;
+      timestamp: string;
+      level: 'warn' | 'converge' | 'exhausted';
+      buckets: Array<'modelCalls' | 'outputTokens' | 'activeMs'>;
+      modelCalls: number;
+      outputTokens: number;
+      activeMs: number;
     }
   | {
       type: 'scratchpad_update';
@@ -420,6 +445,15 @@ export type TraceEventInput =
       key: string;
     }
   | {
+      // v2.6 重复调用观察：Harness 只提示，不阻断（合法轮询/等待仍被允许）。
+      type: 'repeat_call_reminder';
+      tool: string;
+      count: number;
+      level: number;
+      attempts: number;
+      preview: string;
+    }
+  | {
       type: 'tool_output_truncated';
       tool: string;
       originalBytes: number;
@@ -435,6 +469,15 @@ export type TraceEventInput =
       type: 'shell_sandbox_denied';
       platform: 'macos' | 'windows';
       reason: 'workspace_policy';
+    }
+  | {
+      // v2.6 执行预算分级（阶段一观察模式，不阻断）。usage 为累计真实值。
+      type: 'budget_decision';
+      level: 'warn' | 'converge' | 'exhausted';
+      buckets: Array<'modelCalls' | 'outputTokens' | 'activeMs'>;
+      modelCalls: number;
+      outputTokens: number;
+      activeMs: number;
     }
   | {
       type: 'scratchpad_update';
