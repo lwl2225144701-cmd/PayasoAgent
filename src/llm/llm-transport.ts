@@ -137,18 +137,20 @@ export async function piFetch(
 
   if (message.reasoning_content) push({ reasoning_content: message.reasoning_content });
   if (message.content) push({ content: message.content });
-  for (const call of message.tool_calls ?? []) {
+  // index 必须是同批内的位置（0,1,2…）：SSE 消费端按 index 归集工具调用，
+  // 全部写成 0 会把同批多个调用合并成一个（WIRE-01：JSON 兼容响应丢工具）。
+  (message.tool_calls ?? []).forEach((call, position) => {
     push({
       tool_calls: [
         {
-          index: 0,
+          index: position,
           id: call.id,
           type: 'function',
           function: { name: call.function.name, arguments: call.function.arguments },
         },
       ],
     });
-  }
+  });
   const finishReason = message.tool_calls?.length ? 'tool_calls' : 'stop';
   chunks.push(
     `data: ${JSON.stringify({

@@ -311,6 +311,19 @@ export class DefaultContextHarness implements AgentContextHarness {
       throw new Error('Invalid repeat call policy');
     // 启用即完备：env 解析与 SDK 注入两条路径都补全缺失维度——
     // "启用但某维度无上限"是静默空转策略（提醒照发、永不拦截），正是治理缺口。
+    if (options.executionBudget !== false && options.executionBudget !== undefined) {
+      // SDK 注入的显式上限必须本身合法：complete 只补默认值，不洗白非法值
+      // （0 / 负数 / NaN / Infinity 会静默取消该维度约束——CFG-04）。
+      for (const key of ['maxModelCalls', 'maxOutputTokens', 'maxActiveMs'] as const) {
+        const value = options.executionBudget[key];
+        if (value === undefined) continue;
+        if (!Number.isFinite(value) || !Number.isSafeInteger(value) || value <= 0) {
+          throw new Error(
+            `Invalid execution budget: ${key} must be a finite positive integer, got ${String(value)}`,
+          );
+        }
+      }
+    }
     this.executionBudgetPolicy =
       options.executionBudget === false
         ? false

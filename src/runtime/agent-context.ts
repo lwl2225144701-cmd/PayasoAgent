@@ -133,10 +133,20 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
       toolchain,
     });
   // 摘要/计划跨 Run 延续，调查提醒只属于本 Run；resume 则保留提醒计数和投递状态。
+  // v2.6：执行预算/重复调用/目标审查同样是"每 Run 独立"——新 Run 继承会话历史
+  // 时必须重置，否则上一 Run 耗尽的预算会让新任务一启动就处于 exhausted
+  // （ISOLATION-01：新用户任务被旧预算锁死）。resume（继续本 Run）不受影响。
   contextHarness.restoreState(
     resume
       ? resume.harnessState
-      : opts.previousHarnessState && { ...opts.previousHarnessState, progressReminder: undefined },
+      : opts.previousHarnessState && {
+          ...opts.previousHarnessState,
+          progressReminder: undefined,
+          repeatCall: undefined,
+          executionBudget: undefined,
+          goalReview: undefined,
+          pending: undefined,
+        },
   );
   // v2.2 Plan：计划状态由 Harness 持有（随 harnessState 进 checkpoint）。Runtime 只把
   // 写入口装饰成"语义 → plan_update 事件"：Harness 不碰 trace，工具只见文本。

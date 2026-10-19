@@ -894,8 +894,9 @@ export class RunLifecycleService {
         });
         flushDelta();
         // stop() 之后 agent 才正常 resolve 的竞态：用户意图是停止 → stopped
+        // v2.6：显式记录 user_cancelled——停止原因与预算耗尽/执行失败分开陈述。
         if (run.cancelled || abortController.signal.aborted) {
-          this.finish(run);
+          this.finish(run, { code: 'user_cancelled' });
           return;
         }
         // v1.6：completed 终态原子落盘（status + run_completed 同一事务）
@@ -917,7 +918,7 @@ export class RunLifecycleService {
         // 用户主动取消（signal 已 abort）→ stopped，绝不算 failed；
         // 其余 AbortError（非本 Run 的 signal）仍按失败处理。
         if (run.cancelled || (abortController.signal.aborted && isAbortError(err))) {
-          this.finish(run);
+          this.finish(run, { code: 'user_cancelled' });
           return;
         }
         this.failRun(run, (err as Error).message);

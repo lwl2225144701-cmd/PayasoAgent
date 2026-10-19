@@ -50,6 +50,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'execution-policy', file: 'tests/execution-policy.test.ts' },
   // v2.6 同机制 Loop 级集成：提醒必须到达模型视图（接线时序回归）
   { name: 'convergence-reminder', file: 'tests/convergence-reminder.test.ts' },
+  // 功能验收：预算、中止、记账、恢复与 Host 终态串联检查；失败也完整汇总。
+  { name: 'governance-acceptance', file: 'tests/governance-acceptance.test.ts' },
   // v2.6 阶段二：周期性目标审查 / 停止原因与交付结果映射（纯函数）
   { name: 'goal-review', file: 'tests/goal-review.test.ts' },
   { name: 'run-stop-reason', file: 'tests/run-stop-reason.test.ts' },

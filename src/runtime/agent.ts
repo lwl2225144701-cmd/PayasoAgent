@@ -930,7 +930,10 @@ export async function runAgent(
     // v2.6：失败 / 取消 / 预算中止路径都要入账——未计入的模型调用与活动时长随
     // 终态 checkpoint 落盘。否则"全部模型请求统一计量"在失败路径上漏账：
     // 主请求抛出前的 attempts（含内部重试）与此前累计的活动时长就此消失。
-    if (budgetModelCalls > 0 && contextHarness.observeExecution) {
+    // 注意：不再要求 budgetModelCalls > 0——工具执行阶段（两次 observeExecution
+    // 之间）的 attempts 恒为 0，但那段墙钟时间真实发生过。先前置条件导致工具阶段
+    // 的耗时在失败/取消/预算中止路径上整体丢失（checkpoint 只存模型耗时）。
+    if (contextHarness.observeExecution) {
       contextHarness.observeExecution({
         modelCalls: budgetModelCalls,
         outputTokens: 0,
@@ -943,6 +946,9 @@ export async function runAgent(
     // Host 保存现场并以 budget_exhausted 说明——模型未产出可用响应，
     // 绝不按 failed 计，也绝不冒充 completed。
     if (budgetAborted) {
+      // 先落盘再抛出：耗尽状态（usage + 档位）必须进 checkpoint，否则恢复后
+      // 预算从零开始，超限停止形同虚设（RESUME-02 类缺陷）。
+      save();
       throw new AgentStopRequestedError({
         code: 'budget_exhausted',
         notice:
