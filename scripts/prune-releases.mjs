@@ -61,14 +61,17 @@ function parseArgs(argv) {
     } else if (arg === '--include-non-release-tags') {
       opts.includeNonReleaseTags = true;
     } else if (arg === '--keep') {
-      opts.keep = Number(argv[(i += 1)]);
+      i += 1;
+      opts.keep = Number(argv[i]);
     } else if (arg === '--repo') {
-      opts.repo = argv[(i += 1)];
+      i += 1;
+      opts.repo = argv[i];
     } else {
       fail(`未知参数：${arg}\n\n${USAGE}`);
     }
   }
-  if (!Number.isInteger(opts.keep) || opts.keep < 1) fail(`--keep 必须是正整数，收到：${opts.keep}`);
+  if (!Number.isInteger(opts.keep) || opts.keep < 1)
+    fail(`--keep 必须是正整数，收到：${opts.keep}`);
   return opts;
 }
 
@@ -114,7 +117,9 @@ async function api(method, path, { token, body } = {}) {
   if (remaining === '0' && res.status === 403) {
     const reset = Number(res.headers.get('x-ratelimit-reset') ?? 0) * 1000;
     const waitMs = Math.max(0, reset - Date.now()) + 2000;
-    throw new Error(`GitHub API 配额用尽，${Math.round(waitMs / 1000)}s 后重置（认证请求是 5000 次/小时）`);
+    throw new Error(
+      `GitHub API 配额用尽，${Math.round(waitMs / 1000)}s 后重置（认证请求是 5000 次/小时）`,
+    );
   }
   const text = await res.text();
   let json = null;
@@ -134,7 +139,11 @@ async function api(method, path, { token, body } = {}) {
 async function listAll(path, token) {
   const out = [];
   for (let page = 1; page <= 20; page += 1) {
-    const { body } = await api('GET', `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, { token });
+    const { body } = await api(
+      'GET',
+      `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`,
+      { token },
+    );
     if (!Array.isArray(body) || body.length === 0) break;
     out.push(...body);
     if (body.length < 100) break;
@@ -182,18 +191,21 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
   if (!opts.dryRun && !token) {
-    fail('真正删除必须提供 GITHUB_TOKEN（或 GH_TOKEN）：\n  GITHUB_TOKEN=ghp_xxx node scripts/prune-releases.mjs --yes\n不带 token 先跑一次 dry-run 看计划。');
+    fail(
+      '真正删除必须提供 GITHUB_TOKEN（或 GH_TOKEN）：\n  GITHUB_TOKEN=ghp_xxx node scripts/prune-releases.mjs --yes\n不带 token 先跑一次 dry-run 看计划。',
+    );
   }
   if (!token) {
     console.log('⚠ 未提供 token：匿名盘点只能看到「已发布」Release，草稿 Release 不在清单里。');
   }
 
   const releases = await listAll(`/repos/${opts.repo}/releases`, token);
-  if (releases.length === 0) fail(`仓库 ${opts.repo} 一个 Release 都没读到，检查 --repo 与 token。`);
+  if (releases.length === 0)
+    fail(`仓库 ${opts.repo} 一个 Release 都没读到，检查 --repo 与 token。`);
   const remoteTags = await listAll(`/repos/${opts.repo}/tags`, token);
 
   const latest = await api('GET', `/repos/${opts.repo}/releases/latest`, { token });
-  const latestTag = latest.status === 200 ? latest.body?.tag_name ?? null : null;
+  const latestTag = latest.status === 200 ? (latest.body?.tag_name ?? null) : null;
   const pinned = caskTag();
 
   const sorted = [...releases].sort((a, b) => compareTagDesc(a.tag_name, b.tag_name));
@@ -222,8 +234,12 @@ async function main() {
     };
   });
 
-  console.log(`\n仓库：${opts.repo}（共 ${releases.length} 个 Release、${remoteTags.length} 个 tag）`);
-  console.log(`保留 ${opts.keep} 个最新版本${latestTag ? ` + latest(${latestTag})` : ''}${pinned ? ` + cask(${pinned})` : ''}`);
+  console.log(
+    `\n仓库：${opts.repo}（共 ${releases.length} 个 Release、${remoteTags.length} 个 tag）`,
+  );
+  console.log(
+    `保留 ${opts.keep} 个最新版本${latestTag ? ` + latest(${latestTag})` : ''}${pinned ? ` + cask(${pinned})` : ''}`,
+  );
   console.log(`\n${'版本'.padEnd(width)}  类型    资产   体积      动作`);
   for (const row of rows) {
     console.log(
@@ -231,7 +247,10 @@ async function main() {
     );
   }
 
-  const doomedBytes = doomed.reduce((sum, r) => sum + (r.assets ?? []).reduce((s, a) => s + (a.size ?? 0), 0), 0);
+  const doomedBytes = doomed.reduce(
+    (sum, r) => sum + (r.assets ?? []).reduce((s, a) => s + (a.size ?? 0), 0),
+    0,
+  );
   console.log(
     `\n计划：删除 ${doomed.length} 个 Release（释放约 ${gib(doomedBytes)}）` +
       `${orphanTags.length > 0 ? `；另有 ${orphanTags.length} 个无 Release 的 tag：${orphanTags.join(' ')}` : ''}`,
@@ -257,11 +276,15 @@ async function main() {
     const commit = localTagCommit(release.tag_name);
     if (commit && !isAncestorOf(commit, DEFAULT_BRANCH) && !opts.force) {
       failures += 1;
-      console.error(`✗ 跳过 tag ${release.tag_name}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上（--force 可强删）`);
+      console.error(
+        `✗ 跳过 tag ${release.tag_name}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上（--force 可强删）`,
+      );
       continue;
     }
     try {
-      const res = await api('DELETE', `/repos/${opts.repo}/git/refs/tags/${release.tag_name}`, { token });
+      const res = await api('DELETE', `/repos/${opts.repo}/git/refs/tags/${release.tag_name}`, {
+        token,
+      });
       if (res.status === 404) {
         console.log(`· tag ${release.tag_name} 远端不存在（草稿 Release 本来就没 tag），跳过`);
       } else {
@@ -286,7 +309,9 @@ async function main() {
       const commit = localTagCommit(tag);
       if (commit && !isAncestorOf(commit, DEFAULT_BRANCH) && !opts.force) {
         failures += 1;
-        console.error(`✗ 跳过 tag ${tag}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上`);
+        console.error(
+          `✗ 跳过 tag ${tag}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上`,
+        );
         continue;
       }
       try {
@@ -303,7 +328,9 @@ async function main() {
     console.error(`\n完成，但有 ${failures} 处失败，请逐条重试。`);
     process.exit(1);
   }
-  console.log(`\n完成：剩 ${keepTags.size} 个版本（${[...keepTags].sort(compareTagDesc).join(' ')}）。`);
+  console.log(
+    `\n完成：剩 ${keepTags.size} 个版本（${[...keepTags].sort(compareTagDesc).join(' ')}）。`,
+  );
   console.log('本机同步：git fetch --prune-tags origin（或 --prune-local 已代劳）。');
 }
 

@@ -19,10 +19,10 @@ import {
   done,
   GovernanceFixture,
   MODEL,
+  type Outcome,
   tools,
   turn,
   WRITE_PROBE,
-  type Outcome,
 } from './helpers/governance-acceptance.js';
 
 const fixture = new GovernanceFixture();
@@ -273,7 +273,8 @@ try {
     assert.ok(transport.chunks >= 3, '不是只拖慢首包，必须持续收到片段');
     assert.equal(transport.abortedStreams, 1);
     assert.ok(outcome.elapsedMs < 4000, '不得等到测试兜底的 8 秒取消');
-    assert.ok(budgetFacts(run, outcome)?.usage.activeMs! >= 900);
+    const cancelBudget = budgetFacts(run, outcome);
+    assert.ok(cancelBudget && cancelBudget.usage.activeMs >= 900);
     assert.ok(budgetFacts(run)?.exhausted.includes('activeMs'));
   });
   await check('RESUME-01', '模型超限后的恢复只收尾，不再执行新工具', async () => {
@@ -329,7 +330,10 @@ try {
   await check('SUMMARY-02', '摘要超限退出后，断点保存耗尽时间和档位', async () => {
     const { run, outcome } = await stoppedSummary();
     const budget = budgetFacts(run, outcome);
-    assert.ok(budget?.usage.activeMs! >= 900, '摘要已耗尽 900ms，checkpoint 必须保存该消耗');
+    assert.ok(
+      budget && budget.usage.activeMs >= 900,
+      '摘要已耗尽 900ms，checkpoint 必须保存该消耗',
+    );
     assert.ok(budget?.exhausted.includes('activeMs'));
   });
   await check('TOOL-01', '同批前一工具完成、在途工具中止、后续工具不启动', async () => {
@@ -344,7 +348,7 @@ try {
     const { run, outcome } = await stoppedToolBatch();
     const budget = budgetFacts(run, outcome);
     assert.ok(
-      budget?.usage.activeMs! >= 1000,
+      budget && budget.usage.activeMs >= 1000,
       '工具已经耗尽 1000ms，checkpoint 不能只保存模型耗时',
     );
     assert.ok(budget?.exhausted.includes('activeMs'));
@@ -380,7 +384,7 @@ try {
     }
     assert.equal((outcome.error as Error)?.name, 'AbortError');
     const budget = budgetFacts(run, outcome);
-    assert.ok(budget?.usage.activeMs! >= 300, '用户取消也不能丢掉工具阶段的耗时');
+    assert.ok(budget && budget.usage.activeMs >= 300, '用户取消也不能丢掉工具阶段的耗时');
     assert.deepEqual(budget?.exhausted, []);
   });
   await check('NORMAL-01', '正常长任务完成，周期审查只提醒且目标保持可见', async () => {
