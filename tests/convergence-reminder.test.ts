@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAgentExecutionContext } from '../src/bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
+import { LlmConversationSummarizer } from '../src/harness/conversation-summarizer.js';
 import { resolveModelContextConfig } from '../src/harness/model-context.js';
 import type { ChatMessage, ModelConfig } from '../src/llm/llm.js';
 import { AgentStopRequestedError, runAgent } from '../src/runtime/agent.js';
@@ -65,6 +66,27 @@ register({
       ctx.signal?.addEventListener('abort', () =>
         reject(ctx.signal?.reason ?? new Error('aborted')),
       );
+    }),
+});
+
+// 慢工具：700ms 后返回；监听 signal——被预算看门狗中止时立刻 reject
+// （不监听 signal 的工具，abort 传不进去，批次边界测试就失去意义）。
+let slowRuns = 0;
+register({
+  name: 'convergence-slow',
+  description: 'slow probe (700ms, abortable)',
+  effect: 'idempotent',
+  parameters: { type: 'object', properties: {} },
+  execute: (_args, ctx) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        slowRuns += 1;
+        resolve('slow-ok');
+      }, 700);
+      ctx.signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(ctx.signal?.reason ?? new Error('aborted'));
+      });
     }),
 });
 
@@ -667,14 +689,158 @@ try {
     assert.equal(harness.executionBudgetLevel(), 'exhausted');
   }
 
-  // ---- 7. 预算默认关闭：不配置上限时行为与引入前一致 ----
+  // ---- 6n. 摘要请求接预算信号：持续长输出能被中止，且失败也计量 ----
   {
-    const run = options('budget-off', repeatHarness());
+    const harness = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      modelContext: resolveModelContextConfig({
+        model: 'compact-abort',
+        contextWindowTokens: 600,
+        maxOutputTokens: 200,
+        safetyTokens: 100,
+      }),
+      // maxModelCalls=1：摘要的一次尝试就足以越过耗尽线
+      executionBudget: { maxModelCalls: 1, warnRatio: 0.7, convergeRatio: 0.9 },
+      summarizer: new LlmConversationSummarizer(MODEL),
+    });
+    // mock：2.5s 后才返回**合法**摘要——若信号没传到摘要请求，压缩会成功；
+    // 只有摘要请求真的被中止，结果才是 null。两者可区分，不是恒真断言。
+    globalThis.fetch = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      const chunks = [
+        {
+          choices: [
+            {
+              index: 0,
+              delta: { role: 'assistant', content: 'Summary: compacted' },
+              finish_reason: null,
+            },
+          ],
+        },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      ];
+      return new Response(
+        `${chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('')}data: [DONE]\n\n`,
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }) as typeof fetch;
+    // 模拟 Runtime 的预算看门狗：300ms 处中止（压缩请求 2.5s 才返回）。
+    const controller = new AbortController();
+    const abortTimer = setTimeout(
+      () => controller.abort(new DOMException('Aborted', 'AbortError')),
+      300,
+    );
+    const transcript: ChatMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'x'.repeat(400) },
+      { role: 'assistant', content: 'y'.repeat(400) },
+      { role: 'user', content: 'z'.repeat(400) },
+    ];
+    let result: unknown;
+    try {
+      result = await harness.compactConversation(transcript, [], 100, controller.signal);
+    } finally {
+      clearTimeout(abortTimer);
+    }
+    assert.equal(result, null, '摘要请求被预算信号中止 → fail-soft 返回 null（不改状态）');
+    // 失败也计量：这一次尝试计入预算（1/1 → exhausted）
+    assert.equal(harness.executionBudgetLevel(), 'exhausted', '摘要尝试入账');
+    assert.equal(
+      harness.snapshotState().executionBudget?.usage.modelCalls,
+      1,
+      'attempts 落进 harness 状态',
+    );
+  }
+
+  // ---- 6o. 一批工具跨过累计上限后不再执行后续工具（时间维度）----
+  {
+    slowRuns = 0;
+    const run = options('budget-tool-batch', timeBudgetHarness(1_000));
+    // 同一响应里两个慢工具（各 700ms）：tool1 完成；tool2 在途被看门狗
+    // 中止（累计 1000ms 越限）——批次在此停止，tool2 永远产不出结果。
+    script([toolMessage(callTool('convergence-slow', {}), callTool('convergence-slow', {})), done]);
+    const err = await runAgent('一批两个慢工具', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(err instanceof AgentStopRequestedError, '批次跨过累计上限 → 停止');
+    assert.equal(err.stop?.code, 'budget_exhausted');
+    assert.equal(slowRuns, 1, '第二个工具未执行完（在途被中止，无结果）');
+    assert.equal(run.events.filter((e) => e.type === 'error').length, 0);
+  }
+
+  // ---- 6p. 一批工具跨过上限后不再执行后续工具（档位维度：逐个跳过）----
+  {
+    const run = options('budget-tool-skip2', budgetHarness());
+    // 第 4 次响应（同批两个工具）恰好耗尽 maxModelCalls=4：该批两个工具
+    // 都被准入拦下——逐个判定，不是"批首查一次放行全部"。
+    script([read(), read(), read(), toolMessage(call(), call()), done]);
+    assert.equal(await runAgent('耗尽批次里的两个工具', undefined, run), 'done');
+    const skipped = run.events.filter((e) => e.type === 'tool_execution_skipped');
+    assert.equal(skipped.length, 2, '批次内两个工具都被拦下（逐工具准入判定）');
+  }
+
+  // ---- 7. 预算可显式关闭：off 是"只观察不硬限制"的唯一出口 ----
+  {
+    const disabled = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      executionBudget: false,
+    });
+    const run = options('budget-off', disabled);
     script([read(), read(), read(), done]);
-    assert.equal(await runAgent('无预算配置', undefined, run), 'done');
+    assert.equal(await runAgent('显式关闭预算', undefined, run), 'done');
     assert.equal(run.events.filter((e) => e.type === 'budget_decision').length, 0);
     assert.ok(requests.every((m) => !hasBudgetWarning(m)));
     assert.equal(run.snapshots.at(-1)?.harnessState?.executionBudget, undefined);
+  }
+
+  // ---- 7b. 默认入口即带有限预算：不传任何配置也有硬限制 ----
+  {
+    // repeatHarness 不传 executionBudget → resolveExecutionBudgetPolicy() 默认开启，
+    // 三个维度都是有限正数（默认 200 次调用 / 40 万 token / 1 小时）。
+    const run = options('budget-default-on', repeatHarness());
+    script([read(), read(), done]);
+    assert.equal(await runAgent('默认配置的运行', undefined, run), 'done');
+    const budget = run.snapshots.at(-1)?.harnessState?.executionBudget;
+    assert.ok(budget, '默认即有预算状态（不是 undefined）');
+    assert.equal(budget?.usage.modelCalls, 3, '默认策略在真实计量');
+    // 默认上限远高于本测试用量：不误报
+    assert.equal(run.events.filter((e) => e.type === 'budget_decision').length, 0);
+  }
+
+  // ---- 7c. 启用即完备：只给一个上限，其余维度取默认有限值 ----
+  {
+    const previous = process.env.PAYASO_EXECUTION_BUDGET;
+    process.env.PAYASO_EXECUTION_BUDGET = 'on';
+    try {
+      const harness = new DefaultContextHarness({
+        permissionMode: 'workspace-write',
+        modelConfig: { ...MODEL, maxOutputTokens: 4_096 },
+        // 只给模型调用上限——时间与 token 维度必须被默认值补全，
+        // 否则"on 而没有总上限"又会变回静默空转。
+        executionBudget: { maxModelCalls: 3, warnRatio: 0.7, convergeRatio: 0.9 },
+      });
+      const limits = harness.executionBudgetWrapUpLimits?.();
+      assert.equal(limits?.maxOutputTokens, 1_024, '收尾额度有默认值');
+      const run = options('budget-on-partial', harness, { ...MODEL, maxOutputTokens: 4_096 });
+      script([read(), read(), read(), done]);
+      assert.equal(await runAgent('on 且只配一个上限', undefined, run), 'done');
+      // 收尾请求被裁剪到默认 1024（证明启用即完备，不是空转）
+      const maxTokens = requestBodies.map((body) => {
+        try {
+          return (JSON.parse(body) as { max_tokens?: number }).max_tokens;
+        } catch {
+          return undefined;
+        }
+      });
+      assert.equal(maxTokens[3], 1_024, '收尾用默认小额额度');
+      assert.equal(maxTokens[0], 4_096, '普通请求仍用完整上限');
+    } finally {
+      if (previous === undefined) delete process.env.PAYASO_EXECUTION_BUDGET;
+      else process.env.PAYASO_EXECUTION_BUDGET = previous;
+    }
   }
 
   // ---- 8. 显式关闭开关 ----

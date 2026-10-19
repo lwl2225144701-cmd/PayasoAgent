@@ -66,7 +66,10 @@ function deriveModelCallSignal(
   const timer = setInterval(() => {
     if (hardStop()) {
       onHardStop();
-      stop(new Error('execution budget exhausted during model request'));
+      // 标准 AbortError：下游（chat 的 abortError、process-manager 的
+      // isAbortError、工具 deadline）都按 name 识别中止；预算语义由
+      // onHardStop 打的标记区分，不依赖 error 对象本身。
+      stop(new DOMException('Aborted', 'AbortError'));
     }
   }, BUDGET_WATCHDOG_INTERVAL_MS);
   timer.unref?.();
@@ -327,6 +330,27 @@ export async function runAgent(
           observer.log('[预算] 执行预算耗尽，注入收尾指令，停止新工具工作');
         }
       }
+      // v2.6 阶段二：本迭代的预算硬截止判定（prepareTurn 摘要 / 主请求 / 工具
+      // 批次 / 交付检查共用）。两种形态：常规 = 累计活动时长投影
+      // （usage.activeMs + 已进行时间 ≥ maxActiveMs 即中止——持续长输出不等
+      // 响应结束）；收尾 = 独立的 wrapUp 时限（wrapUpStartedAt 起算，总预算
+      // 已耗尽，收尾另有小额，两者不互相侵蚀）。
+      const wrapUpActive = wrapUpInjected;
+      const hardStop = contextHarness.executionBudgetProjection
+        ? () => {
+            if (wrapUpActive) {
+              const wrapUpMaxMs = contextHarness.executionBudgetWrapUpLimits?.()?.maxActiveMs;
+              return (
+                wrapUpMaxMs !== undefined &&
+                wrapUpStartedAt !== undefined &&
+                performance.now() - wrapUpStartedAt >= wrapUpMaxMs
+              );
+            }
+            return (
+              contextHarness.executionBudgetProjection?.(performance.now() - budgetMarkAt) ?? false
+            );
+          }
+        : undefined;
       const turnStartedAt = performance.now();
       // v2.3 后台任务完成通知：迭代边界注入（本轮 LLM 调用即看到）。
       // 注意：计数只在"模型做出真实进展（执行工具调用）"时重置——绝不能在这里
@@ -341,7 +365,19 @@ export async function runAgent(
       // 0. Harness 投影本轮模型视图。完整 transcript 不被裁剪或改写；
       // system / permission / Scratchpad 和历史预算全部由 Harness 决定。
       const schemas = getSchemas();
-      const ctx = await contextHarness.prepareTurn(messages, scratchpad, schemas, opts.signal);
+      // v2.6 阶段二：派生信号覆盖**整个模型活动段**——prepareTurn 内部的压缩
+      // 摘要也是模型请求（同样可能持续长输出），必须与主请求共用同一条预算
+      // 看门狗；此前摘要只接用户取消信号，是覆盖缺口。
+      budgetAborted = false;
+      const modelDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
+        budgetAborted = true;
+      });
+      const ctx = await contextHarness.prepareTurn(
+        messages,
+        scratchpad,
+        schemas,
+        modelDerived.signal,
+      );
       // v2.6：压缩摘要发生在 prepareTurn 内部（Harness 自持的模型调用）——
       // 全部模型请求统一计量，这里的跨阈决策与主循环的 observeExecution 同路：
       // 发事件、随本轮 checkpoint 落盘。
@@ -432,31 +468,6 @@ export async function runAgent(
       // 鉴权头与少量请求参数不计，恒小于真实 body）。补这个字段之前，
       // 「请求体 ≤1.5MB / 图片不再全量 base64」这条验收项没有任何观测点。
       const requestBodyBytes = JSON.stringify([modelMessages, schemas]).length;
-      // v2.6 阶段二：请求进行中的预算硬截止 + 收尾独立额度。
-      // hardStop 两种形态：常规请求 = 累计活动时长投影（usage.activeMs + 本次已
-      // 进行时间 ≥ maxActiveMs 即中止在途请求——持续长输出不能等响应结束才记账）；
-      // 收尾请求 = 独立的 wrapUp 时限（wrapUpStartedAt 起算，总预算已耗尽，
-      // 收尾另有小额，两者不互相侵蚀）。
-      const wrapUpActive = wrapUpInjected;
-      const hardStop = contextHarness.executionBudgetProjection
-        ? () => {
-            if (wrapUpActive) {
-              const wrapUpMaxMs = contextHarness.executionBudgetWrapUpLimits?.()?.maxActiveMs;
-              return (
-                wrapUpMaxMs !== undefined &&
-                wrapUpStartedAt !== undefined &&
-                performance.now() - wrapUpStartedAt >= wrapUpMaxMs
-              );
-            }
-            return (
-              contextHarness.executionBudgetProjection?.(performance.now() - budgetMarkAt) ?? false
-            );
-          }
-        : undefined;
-      budgetAborted = false;
-      const derived = deriveModelCallSignal(opts.signal, hardStop, () => {
-        budgetAborted = true;
-      });
       // 收尾请求使用裁剪后的输出上限：独立小额额度，不用普通请求的完整上限。
       const wrapUpLimits = wrapUpActive
         ? contextHarness.executionBudgetWrapUpLimits?.()
@@ -478,7 +489,7 @@ export async function runAgent(
           schemas,
           contextHarness.reviewFinalAnswer ? undefined : opts.onStreamDelta,
           effectiveModelConfig,
-          derived.signal,
+          modelDerived.signal,
           // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
           // 拆成「Host 侧整理」与「Provider 首包/网络」两段。
           (attempt) => {
@@ -493,7 +504,7 @@ export async function runAgent(
           },
         );
       } finally {
-        derived.dispose();
+        modelDerived.dispose();
       }
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
@@ -789,64 +800,79 @@ export async function runAgent(
       // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
       // v2.6 预算准入（阶段二）：耗尽后不执行任何新工具——模型即使忽略收尾
       // 提醒也无法继续消耗。工具未执行、无副作用，回传确定说明。
-      const budgetExhausted = (contextHarness.executionBudgetLevel?.() ?? 'none') === 'exhausted';
-      if (budgetExhausted) wrapUpIgnoredTurns += 1;
-      for (const call of assistantMsg.tool_calls) {
-        // True cancellation：工具间检查 —— 前一个工具返回后用户 Stop，
-        // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
-        throwIfAborted(opts.signal);
-        if (budgetExhausted) {
-          emit({
-            type: 'tool_execution_skipped',
-            tool: call.function.name,
-            reason: 'budget_exhausted',
-          });
-          messages.push({
-            role: 'tool',
-            tool_call_id: call.id,
-            content: BUDGET_TOOL_BLOCKED_MESSAGE,
-          });
-          continue;
+      // v2.6：整批工具共用一条预算看门狗信号——工具执行不再只接用户取消信号，
+      // 在途工具越过累计时限同样被中途中止（派生信号 → 工具 deadline）；且每个
+      // 工具执行前**重新**判定（此前只在批首判定一次：前一个工具耗尽预算后，
+      // 后续工具仍会执行）。
+      const budgetExhaustedAtBatchStart =
+        (contextHarness.executionBudgetLevel?.() ?? 'none') === 'exhausted';
+      if (budgetExhaustedAtBatchStart) wrapUpIgnoredTurns += 1;
+      const toolDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
+        budgetAborted = true;
+      });
+      try {
+        for (const call of assistantMsg.tool_calls) {
+          // True cancellation：工具间检查 —— 前一个工具返回后用户 Stop，
+          // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
+          throwIfAborted(opts.signal);
+          const budgetExhausted =
+            (contextHarness.executionBudgetLevel?.() ?? 'none') === 'exhausted' ||
+            (contextHarness.executionBudgetProjection?.(performance.now() - budgetMarkAt) ?? false);
+          if (budgetExhausted) {
+            emit({
+              type: 'tool_execution_skipped',
+              tool: call.function.name,
+              reason: 'budget_exhausted',
+            });
+            messages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: BUDGET_TOOL_BLOCKED_MESSAGE,
+            });
+            continue;
+          }
+          // 一次工具调用的完整生命周期（parse → 审批 → 执行 → 校验 → 重试 →
+          // 恢复）由 ToolInvocationProcessManager 负责；返回即该 call 处理完毕。
+          const outcome = await invokeToolCall(
+            {
+              runId,
+              toolContext,
+              messages,
+              state,
+              scratchpad,
+              sideEffectGuard,
+              contextHarness,
+              signal: toolDerived.signal ?? opts.signal,
+              approvalPort: opts.approvalPort,
+              toolchainPreparationPort: opts.toolchainPreparationPort,
+              // v2.4 前台 shell 流式输出：把工具执行期的 stdout/stderr 增量接进同一条
+              // 流式通道（不落 trace）。messageId 取本次工具调用 id，前端据此归行。
+              onToolOutput: opts.onStreamDelta
+                ? (chunk: string) =>
+                    opts.onStreamDelta?.({
+                      messageId: call.id,
+                      type: 'shell_output_delta',
+                      delta: chunk,
+                    })
+                : undefined,
+              emit,
+              save,
+              observer,
+              observeState,
+              observeScratchpad,
+              pushToolCallError,
+            },
+            call,
+          );
+          if (!outcome) otherCalls++;
+          else if (outcome.tool !== 'updatePlan') {
+            // 更新计划是中性动作，不伪装成写入进展。
+            if (outcome.effect === 'read') readCalls++;
+            else otherCalls++;
+          }
         }
-        // 一次工具调用的完整生命周期（parse → 审批 → 执行 → 校验 → 重试 →
-        // 恢复）由 ToolInvocationProcessManager 负责；返回即该 call 处理完毕。
-        const outcome = await invokeToolCall(
-          {
-            runId,
-            toolContext,
-            messages,
-            state,
-            scratchpad,
-            sideEffectGuard,
-            contextHarness,
-            signal: opts.signal,
-            approvalPort: opts.approvalPort,
-            toolchainPreparationPort: opts.toolchainPreparationPort,
-            // v2.4 前台 shell 流式输出：把工具执行期的 stdout/stderr 增量接进同一条
-            // 流式通道（不落 trace）。messageId 取本次工具调用 id，前端据此归行。
-            onToolOutput: opts.onStreamDelta
-              ? (chunk: string) =>
-                  opts.onStreamDelta?.({
-                    messageId: call.id,
-                    type: 'shell_output_delta',
-                    delta: chunk,
-                  })
-              : undefined,
-            emit,
-            save,
-            observer,
-            observeState,
-            observeScratchpad,
-            pushToolCallError,
-          },
-          call,
-        );
-        if (!outcome) otherCalls++;
-        else if (outcome.tool !== 'updatePlan') {
-          // 更新计划是中性动作，不伪装成写入进展。
-          if (outcome.effect === 'read') readCalls++;
-          else otherCalls++;
-        }
+      } finally {
+        toolDerived.dispose();
       }
 
       // v2.6 阶段二：耗尽后模型仍连续发起工具调用（收尾指令被无视两轮）——

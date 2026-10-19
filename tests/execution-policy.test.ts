@@ -13,6 +13,9 @@ import {
   advanceExecutionBudget,
   createExecutionBudgetState,
   DEFAULT_EXECUTION_BUDGET_POLICY,
+  DEFAULT_MAX_ACTIVE_MS,
+  DEFAULT_MAX_MODEL_CALLS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   type ExecutionBudgetPolicy,
   type ExecutionBudgetState,
   type ExecutionBudgetUsage,
@@ -37,7 +40,8 @@ function check(name: string, fn: () => void): void {
   }
 }
 
-const P: ExecutionBudgetPolicy = { maxModelCalls: 10, ...DEFAULT_EXECUTION_BUDGET_POLICY };
+// spread 在前：显式的 maxModelCalls=10 必须覆盖默认值（否则被 200 反覆盖）
+const P: ExecutionBudgetPolicy = { ...DEFAULT_EXECUTION_BUDGET_POLICY, maxModelCalls: 10 };
 const zero = (): ExecutionBudgetUsage => ({ modelCalls: 0, outputTokens: 0, activeMs: 0 });
 const calls = (n: number): ExecutionBudgetUsage => ({ ...zero(), modelCalls: n });
 
@@ -115,10 +119,10 @@ check('同批事实跨多级时只报最高级，buckets 列全部跨阈值维�
 
 check('三个维度独立判定（一个耗尽不等于全部耗尽）', () => {
   const policy: ExecutionBudgetPolicy = {
+    ...DEFAULT_EXECUTION_BUDGET_POLICY,
     maxModelCalls: 10,
     maxOutputTokens: 100,
     maxActiveMs: 1000,
-    ...DEFAULT_EXECUTION_BUDGET_POLICY,
   };
   const d = advanceExecutionBudget(
     createExecutionBudgetState(),
@@ -130,15 +134,18 @@ check('三个维度独立判定（一个耗尽不等于全部耗尽）', () => {
   assert.deepEqual(d.state.exhausted, []);
 });
 
-check('未配置上限的维度不参与判定（默认行为不变）', () => {
+check('未配置上限的维度不参与判定（纯函数语义：无上限即不判定）', () => {
+  // 注意：DEFAULT_EXECUTION_BUDGET_POLICY 现在自带三个有限上限（启用即完备），
+  // "某维度无上限"只可能来自显式构造的策略对象——纯函数层仍须正确跳过。
+  const limitless: ExecutionBudgetPolicy = { warnRatio: 0.7, convergeRatio: 0.9 };
   const d = advanceExecutionBudget(
     createExecutionBudgetState(),
     { modelCalls: 999, outputTokens: 999_999, activeMs: 86_400_000 },
-    { ...DEFAULT_EXECUTION_BUDGET_POLICY },
+    limitless,
   );
   assert.equal(d.level, 'none');
   assert.deepEqual(d.buckets, []);
-  assert.deepEqual(executionBudgetRatios(d.state, DEFAULT_EXECUTION_BUDGET_POLICY), []);
+  assert.deepEqual(executionBudgetRatios(d.state, limitless), []);
 });
 
 // ---- 核心：幂等与稳定性 ----
@@ -201,8 +208,34 @@ check('桶名重算：按当前真实用量，不依赖 touched 标记', () => {
 
 // ---- 核心：env 可调可关 ----
 
-check('env：未配置任何上限 → 关闭（默认行为不变）', () => {
-  assert.equal(resolveExecutionBudgetPolicy({}), false);
+check('env：未配置任何上限 → 默认开启且三个维度都是有限正数', () => {
+  // v2.6 缺口修复："启用但无上限"是静默空转策略（提醒照发、永不拦截）。
+  // 现在不配置任何上限 = 默认开启 + 保守天花板默认值。
+  const p = resolveExecutionBudgetPolicy({});
+  assert.ok(p, '默认开启，不是 false');
+  assert.equal(p && p.maxModelCalls, DEFAULT_MAX_MODEL_CALLS);
+  assert.equal(p && p.maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS);
+  assert.equal(p && p.maxActiveMs, DEFAULT_MAX_ACTIVE_MS);
+  // 有限性不变式：三个维度都必须是有界正数
+  for (const key of ['maxModelCalls', 'maxOutputTokens', 'maxActiveMs'] as const) {
+    const value: number | undefined = p ? p[key] : undefined;
+    assert.equal(
+      typeof value === 'number' && Number.isFinite(value) && value > 0,
+      true,
+      `${key} 必须有限正数`,
+    );
+  }
+});
+
+check('env：on 但只给一个上限 → 其余维度补默认有限值（启用即完备）', () => {
+  const p = resolveExecutionBudgetPolicy({
+    PAYASO_EXECUTION_BUDGET: 'on',
+    PAYASO_MAX_MODEL_CALLS: '10',
+  });
+  assert.ok(p);
+  assert.equal(p && p.maxModelCalls, 10, '显式值优先');
+  assert.equal(p && p.maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS, '未配的维度取默认有限值');
+  assert.equal(p && p.maxActiveMs, DEFAULT_MAX_ACTIVE_MS);
 });
 
 check('env：on 显式开启（即使没给上限）', () => {

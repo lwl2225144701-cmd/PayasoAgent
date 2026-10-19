@@ -36,7 +36,21 @@ export interface ExecutionBudgetPolicy {
   wrapUpMaxActiveMs?: number;
 }
 
+/**
+ * 保守的天花板默认值（启用即生效，可被 env 覆盖）。
+ * 选值依据：治理复盘的失控 Run 是 29 次模型调用 / 60824 token / 15.6 分钟；
+ * 正常长任务回放为 15 回合。200 次调用 / 40 万 token / 1 小时对合法多步任务
+ * 留足余量，同时把"无限执行"变成有界。刻意取天花板而非目标值——预算的作用
+ * 是兜住失控，不是催促收尾。
+ */
+export const DEFAULT_MAX_MODEL_CALLS = 200;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 400_000;
+export const DEFAULT_MAX_ACTIVE_MS = 3_600_000;
+
 export const DEFAULT_EXECUTION_BUDGET_POLICY: Readonly<ExecutionBudgetPolicy> = {
+  maxModelCalls: DEFAULT_MAX_MODEL_CALLS,
+  maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+  maxActiveMs: DEFAULT_MAX_ACTIVE_MS,
   warnRatio: 0.7,
   convergeRatio: 0.9,
   wrapUpMaxOutputTokens: 1_024,
@@ -324,7 +338,35 @@ export function renderExecutionBudgetRemaining(
   });
 }
 
-/** 解析环境配置。`off` 显式关闭；未配置任何上限时视为关闭（默认行为不变）。 */
+/**
+ * 把部分策略补全为「启用即完备」形态：缺失的三个总上限与收尾额度一律取
+ * 保守默认值。resolver（env 入口）与 Harness 构造器（SDK 注入入口）共用——
+ * 两条启用路径都不允许出现"启用但某维度无上限"的空转策略。
+ */
+export function completeExecutionBudgetPolicy(
+  policy: ExecutionBudgetPolicy,
+): ExecutionBudgetPolicy {
+  return {
+    ...policy,
+    maxModelCalls: policy.maxModelCalls ?? DEFAULT_MAX_MODEL_CALLS,
+    maxOutputTokens: policy.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    maxActiveMs: policy.maxActiveMs ?? DEFAULT_MAX_ACTIVE_MS,
+    wrapUpMaxOutputTokens:
+      policy.wrapUpMaxOutputTokens ?? DEFAULT_EXECUTION_BUDGET_POLICY.wrapUpMaxOutputTokens,
+    wrapUpMaxActiveMs:
+      policy.wrapUpMaxActiveMs ?? DEFAULT_EXECUTION_BUDGET_POLICY.wrapUpMaxActiveMs,
+  };
+}
+
+/**
+ * 解析环境配置。不变式：**启用即完备**——除显式 `off` 外，解析结果必然是
+ * 三个维度都带有限正数上限的策略（未显式配置的维度取保守默认值）。
+ *
+ * 为什么不再有"启用但无上限"状态：那是一个静默空转策略——周期提醒照发、
+ * 档位永远是 none、模型忽略提醒后依然可以无限执行（正是复盘出的缺口：
+ * "单独设置 on 也可以没有任何总上限"）。要观察不要硬限制的唯一出口是
+ * `PAYASO_EXECUTION_BUDGET=off`。
+ */
 export function resolveExecutionBudgetPolicy(
   env: Record<string, string | undefined> = process.env,
 ): ExecutionBudgetPolicy | false {
@@ -373,10 +415,13 @@ export function resolveExecutionBudgetPolicy(
   if (policy.warnRatio > policy.convergeRatio) {
     throw new Error('Invalid execution budget ratios: warnRatio must not exceed convergeRatio');
   }
-  const enabled =
-    env.PAYASO_EXECUTION_BUDGET === 'on' ||
-    policy.maxModelCalls !== undefined ||
-    policy.maxOutputTokens !== undefined ||
-    policy.maxActiveMs !== undefined;
-  return enabled ? policy : false;
+  // 不变式断言：启用的策略三个维度必须都是有限正数（默认值已兜底）。
+  // 任一本该被默认值填上的维度缺失 → 配置错误，宁可报错也不静默空转。
+  for (const key of ['maxModelCalls', 'maxOutputTokens', 'maxActiveMs'] as const) {
+    const value = policy[key];
+    if (value === undefined || !Number.isFinite(value) || value <= 0) {
+      throw new Error(`Invalid execution budget: ${key} must be a finite positive integer`);
+    }
+  }
+  return policy;
 }

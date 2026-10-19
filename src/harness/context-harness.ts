@@ -21,6 +21,7 @@ import {
 } from './conversation-summarizer.js';
 import {
   advanceExecutionBudget,
+  completeExecutionBudgetPolicy,
   type ExecutionBudgetBucket,
   type ExecutionBudgetDecision,
   type ExecutionBudgetLevel,
@@ -308,7 +309,14 @@ export class DefaultContextHarness implements AgentContextHarness {
       )
     )
       throw new Error('Invalid repeat call policy');
-    this.executionBudgetPolicy = options.executionBudget ?? resolveExecutionBudgetPolicy();
+    // 启用即完备：env 解析与 SDK 注入两条路径都补全缺失维度——
+    // "启用但某维度无上限"是静默空转策略（提醒照发、永不拦截），正是治理缺口。
+    this.executionBudgetPolicy =
+      options.executionBudget === false
+        ? false
+        : options.executionBudget === undefined
+          ? resolveExecutionBudgetPolicy()
+          : completeExecutionBudgetPolicy(options.executionBudget);
     if (
       this.executionBudgetPolicy &&
       !(
