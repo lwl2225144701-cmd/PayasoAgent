@@ -75,26 +75,48 @@ const main = async (): Promise<void> => {
     }
   });
 
-  await test('Windows ACL Full access 未获无沙箱授权时明确拒绝', async () => {
+  await test('Windows ACL Full access 仍在令牌内，写入按用户权限放行', async () => {
+    if (process.platform !== 'win32') {
+      console.log('  [SKIP] Full access 令牌只在 Windows 上创建');
+      return;
+    }
     const previous = process.env.PAYASO_SHELL_WINDOWS_ACL;
     const uncontained = process.env.PAYASO_SHELL_UNSANDBOXED;
     process.env.PAYASO_SHELL_WINDOWS_ACL = '1';
     delete process.env.PAYASO_SHELL_UNSANDBOXED;
-    const scratch = createShellScratch('full-access-gate');
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-full-outside-'));
+    const outsideFile = path.join(outsideDir, 'wrote.txt');
+    const scratch = createShellScratch('full-access-token');
+    const quoted = outsideFile.replaceAll("'", "''");
     try {
-      await assert.rejects(
-        executeShellCommand({
-          command: 'echo must-not-run',
-          workspaceRoot: TEST_ROOT,
-          permissionMode: 'full-access',
-          scratch,
-          timeoutMs: 5000,
-          platform: 'win32',
-        }),
-        /does not support Full access/,
-      );
+      const result = await executeShellCommand({
+        command: `Set-Content -LiteralPath '${quoted}' -Value 'ok'; Write-Output BYPASS_OK`,
+        workspaceRoot: TEST_ROOT,
+        permissionMode: 'full-access',
+        scratch,
+        timeoutMs: 20000,
+        platform: 'win32',
+      });
+      assert.equal(result.executor, 'windows-acl');
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.match(result.stdout, /BYPASS_OK/);
+      assert.equal(fs.readFileSync(outsideFile, 'utf8').trim(), 'ok');
+      const blocked = path.join(outsideDir, 'blocked.txt');
+      const blockedQuoted = blocked.replaceAll("'", "''");
+      const denied = await executeShellCommand({
+        command: `Set-Content -LiteralPath '${blockedQuoted}' -Value 'no'`,
+        workspaceRoot: TEST_ROOT,
+        permissionMode: 'workspace-write',
+        scratch,
+        timeoutMs: 20000,
+        platform: 'win32',
+      });
+      assert.equal(denied.executor, 'windows-acl');
+      assert.notEqual(denied.exitCode, 0);
+      assert.equal(fs.existsSync(blocked), false);
     } finally {
       scratch.dispose();
+      fs.rmSync(outsideDir, { recursive: true, force: true });
       if (previous === undefined) delete process.env.PAYASO_SHELL_WINDOWS_ACL;
       else process.env.PAYASO_SHELL_WINDOWS_ACL = previous;
       if (uncontained === undefined) delete process.env.PAYASO_SHELL_UNSANDBOXED;

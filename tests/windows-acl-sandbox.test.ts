@@ -46,15 +46,17 @@ const input = {
   workspaceRoot: 'C:\\工作区',
   scratchPath: 'C:\\temp',
 };
-assert.throws(
-  () =>
-    buildWindowsAclRunnerArgv({
-      ...input,
-      permissionMode: 'full-access',
-      invocation: ['powershell.exe', '-Command', 'echo hi'],
-    }),
-  /Full access/,
-);
+const fullArgv = buildWindowsAclRunnerArgv({
+  ...input,
+  permissionMode: 'full-access',
+  invocation: ['powershell.exe', '-Command', 'echo hi'],
+});
+assert.equal(fullArgv[fullArgv.indexOf('--mode') + 1], 'full-access');
+assert.deepEqual(fullArgv.slice(fullArgv.indexOf('--') + 1), [
+  'powershell.exe',
+  '-Command',
+  'echo hi',
+]);
 for (const permissionMode of ['read-only', 'workspace-write'] as const) {
   for (const invocation of [
     // posix 载体：argv 尾段 = [exe, '-c', command]

@@ -28,6 +28,8 @@ runner 以子进程方式运行（Payaso 主进程不加载任何 Win32 FFI）�
 
 **Full access**：ACL 不支持该模式；仅显式设置 `PAYASO_SHELL_UNSANDBOXED=1` 才走已有无沙箱执行路径，否则明确拒绝，不映射为 workspace-write。
 
+> 2026-10-19 修订（见 `docs/plans/windows-full-access-token-plan.md`）：Full access 仍创建 `WRITE_RESTRICTED` 令牌，但 restricting SID 改为当前用户已有身份，因此写入范围与该用户一致。read-only 与 workspace-write 的目录授权不变。`PAYASO_SHELL_UNSANDBOXED` 仍不是这一档的入口。
+
 **清理限制**：正常结束及初始化失败会清理可撤销 scratch 授权。spawn/wait 异常导致子进程状态未知时，不在活进程下撤销授权；runner 退出依靠 Job 关闭回收子进程，Host 随后尝试删除 scratch。强制终止、删除失败仍可能留下 ACL 残留，需真机验证与后续清理机制；不宣称所有故障均已清理。工作区 standing ACE 的产品清理入口尚未实现；依赖公开了 `AclWriteGrant`，不能宣称只能用 `icacls` 撤销。
 
 ## 1. 目标与范围

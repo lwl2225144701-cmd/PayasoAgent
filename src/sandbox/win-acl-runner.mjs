@@ -68,7 +68,9 @@ function parseArgs(raw) {
   }
   if (workspace === undefined) fail('missing --workspace');
   if (scratch === undefined) fail('missing --scratch');
-  if (mode !== 'read-only' && mode !== 'workspace-write') fail(`unknown mode: ${String(mode)}`);
+  if (mode !== 'read-only' && mode !== 'workspace-write' && mode !== 'full-access') {
+    fail(`unknown mode: ${String(mode)}`);
+  }
   const argv = raw.slice(index);
   const command = argv[0];
   if (command === undefined) fail('missing command after --');
@@ -83,10 +85,13 @@ function requireDirectory(label, dir) {
 
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
-  // 两目录先于任何 FFI 加载校验：坏参数在 macOS 等非 win32 环境同样给出
-  // 签名行 + 127（确定性可测），且命令绝不执行。
   requireDirectory('--workspace', parsed.workspace);
   requireDirectory('--scratch', parsed.scratch);
+  if (parsed.mode === 'full-access') {
+    if (process.platform !== 'win32') fail('full-access restricted token is win32-only');
+    const { runFullAccessRestricted } = await import('./win-acl-full-access.mjs');
+    return runFullAccessRestricted(parsed);
+  }
 
   const { assertTempRootOutsideWorkspace } = await import('@deepseek-ai/dsh-sandbox-windows-acl');
   // Payaso 契约保证 scratch 在 workspace 外（受管临时根）；runner 侧防御性复检。

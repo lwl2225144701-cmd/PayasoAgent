@@ -201,15 +201,8 @@ async function executeUncontainedGated(request: ShellExecuteRequest): Promise<Sh
 // 不受限；能力报告必须如实标注，不静默放宽权限语义（方案文档 §3）。
 
 async function executeWindowsAcl(request: ShellExecuteRequest): Promise<ShellExecuteResult> {
-  if (storedPermissionMode(request.permissionMode) === 'full-access') {
-    // 保留既有显式无沙箱授权要求，不把 ACL gate 当成无限制执行许可。
-    if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
-      throw new Error(
-        'Windows ACL does not support Full access. Explicitly enable PAYASO_SHELL_UNSANDBOXED=1 or choose Workspace write.',
-      );
-    }
-    return executeUncontainedGated(request);
-  }
+  // 三种权限都进受限令牌。full-access 不在这里拒绝，也不走无沙箱开关；
+  // runner 会换一份 restricting SID 列表。见 windows-full-access-token-plan.md。
   // 载体必须是原生 PE（runtime==='native'）：MSYS2 bash 与 WSL bash 在
   // WRITE_RESTRICTED 受限令牌下都必然失败，详见 shell-host.ts 文件头。
   // 因此这里刻意走 discoverNativeShellHost（PowerShell → cmd），而不是 discoverShellHost。

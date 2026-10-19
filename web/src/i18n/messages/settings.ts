@@ -56,6 +56,12 @@ export const settingsMessages = {
     'zh-CN': '仅写入受限；读取与网络不受限',
     'en-US': 'Writes only; reads and network are unrestricted',
   },
+  'settings.shellIsolation.fullAccessNote': {
+    'zh-CN':
+      '三种权限都在受限令牌内。Full access 的写入按当前用户权限放行；read-only 与 workspace-write 仍只授权规定目录。',
+    'en-US':
+      "All three modes stay inside the restricted token. Full access writes follow the current user's permissions; read-only and workspace-write still grant only the designated directories.",
+  },
   'settings.shellIsolation.noneNote': {
     'zh-CN': '无系统级沙箱，shell 默认拒绝',
     'en-US': 'No OS-level sandbox; shell is denied by default',

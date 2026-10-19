@@ -50,7 +50,7 @@ export function GeneralSettings({
         />
       </SettingRow>
 
-      <ShellIsolationRow />
+      <ShellIsolationRow permissionMode={permissionMode} />
 
       <SettingRow title={t('settings.general.language')} className={styles.languageRow}>
         <div className={styles.selectWrap}>
@@ -91,7 +91,7 @@ export function GeneralSettings({
  * partial（Windows ACL）必须可见 —— 一句话说清"只隔离写、读与网络不受限"即可，
  * 实现细节（Everyone 对象 / NTFS 硬链接 / 持续性 ACE）属于文档，不进设置页。
  */
-function ShellIsolationRow() {
+function ShellIsolationRow({ permissionMode }: { permissionMode: PermissionMode }) {
   const { t } = useI18n();
   const [info, setInfo] = useState<ShellIsolationCapabilities | null>(null);
 
@@ -123,9 +123,11 @@ function ShellIsolationRow() {
       ? t('settings.shellIsolation.loading')
       : info.enforcement === 'full'
         ? t('settings.shellIsolation.fullNote')
-        : info.enforcement === 'partial'
-          ? t('settings.shellIsolation.partialCaveat')
-          : t('settings.shellIsolation.noneNote');
+        : info.executor === 'windows-acl' && permissionMode === 'full-access'
+          ? t('settings.shellIsolation.fullAccessNote')
+          : info.enforcement === 'partial'
+            ? t('settings.shellIsolation.partialCaveat')
+            : t('settings.shellIsolation.noneNote');
 
   return (
     <SettingRow title={t('settings.shellIsolation.title')} description={description}>
