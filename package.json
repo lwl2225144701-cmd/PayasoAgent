@@ -39,7 +39,8 @@
     "desktop:win": "npm --prefix apps/desktop run dist:win",
     "build:server": "tsc -p tsconfig.build.json && node scripts/copy-runtime.mjs",
     "build": "npm run build:server && npm run build:web && node scripts/generate-notices.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prune:releases": "node scripts/prune-releases.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
