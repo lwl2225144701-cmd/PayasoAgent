@@ -13,6 +13,128 @@
   padding: 0 7px 8px;
 }
 
+/* 标题行 / 搜索条的公共槽位：两层叠在同一格里，谁"在上"由 opacity 决定。
+   grid 里两个单元都写 1/1 —— 这样容器高度恒等于较高的一层，展开/收起时
+   下面列表不会跳动（参考图就是整条原地被替换，不是插入一行）。 */
+.headerSlot {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.headerSlot > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
+/* 标题行（"工作区" + 放大镜 + 文件夹）：展开时淡出并向右让位，收起时回来。
+   pointer-events 跟着切 —— 收起态它已经不可见，不该再吞点击。 */
+.headerBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 0.16s ease,
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.header[data-search-open="true"] .headerBar {
+  opacity: 0;
+  transform: translateX(8px);
+  pointer-events: none;
+}
+
+/* 头部右侧动作组：搜索开关 + 打开/切换工作区，间距与其它图标组一致 */
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 展开后的搜索条：从左侧"长出来"盖住标题行（DSH 交互：点放大镜展开，点 × 收起）。
+   transform-origin 设左侧，配合 scaleX 才是"伸展"而不是"原地放大"；
+   缓动与侧栏宽度动画同一族，视觉上是一套语言。 */
+.searchBar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  height: 32px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  background: var(--color-surface-subtle);
+  opacity: 0;
+  transform: scaleX(0.7);
+  transform-origin: left center;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 0.16s ease,
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 0.12s ease,
+    visibility 0.22s linear;
+}
+
+.header[data-search-open="true"] .searchBar {
+  opacity: 1;
+  transform: scaleX(1);
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.searchBar:focus-within {
+  border-color: var(--accent-blue);
+}
+
+.searchIcon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+
+.searchInput::placeholder {
+  color: var(--text-tertiary);
+}
+
+.searchClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.searchClear:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .label {
   color: var(--text-muted);
   font-size: 10.5px;

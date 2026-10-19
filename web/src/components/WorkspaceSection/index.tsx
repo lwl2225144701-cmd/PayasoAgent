@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
@@ -7,9 +7,19 @@ import { portalRoot } from '../../portal-root';
 import type { HostSession, WorkspaceView } from '../../types';
 import { Collapse } from '../Collapse';
 import { IconButton } from '../IconButton';
-import { ChevronDownIcon, FolderIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from '../icons';
+import {
+  ChevronDownIcon,
+  CloseIcon,
+  FolderIcon,
+  MoreIcon,
+  PencilIcon,
+  PlusIcon,
+  SearchIcon,
+  TrashIcon,
+} from '../icons';
 import { Modal } from '../Modal';
 import { SessionItem } from '../SessionItem';
+import { filterWorkspaceGroupsForSearch, resolveSearchExpansionOverrides } from './task-search';
 import styles from './WorkspaceSection.module.css';
 import { isWorkspaceGroupExpanded, type WorkspaceGroup } from './workspace-expansion';
 
@@ -36,6 +46,11 @@ interface MenuState {
 // 无工作区会话的分组哨兵名：它只参与分组与比较，不是展示文案；
 // 渲染时由 groupLabel 翻成当前语言的「未选择工作区」。
 const NO_WORKSPACE_GROUP = '\u0000no-workspace';
+
+/** 分组名是不是「无工作区」哨兵：分组比较、搜索匹配都按哨兵走，展示时才翻译。 */
+function isFallbackWorkspace(name: string): boolean {
+  return name === NO_WORKSPACE_GROUP;
+}
 
 function groupSessionsByWorkspace(
   sessions: HostSession[],
@@ -179,6 +194,50 @@ export function WorkspaceSection({
     [sessions, workspace],
   );
 
+  // ---- 历史任务搜索：按「工作区名 + 任务标题」过滤分组 ----
+  //
+  // 交互（对齐 DSH）：默认不占地方，点工作区行上的放大镜才展开输入框；再点 × 收起并
+  // 清空。因此这里持有两份状态：
+  //   - searchOpen   —— 输入框是否展开（纯 UI，不影响过滤结果）；
+  //   - searchKeyword—— 关键词（真正参与过滤的那一份）。
+  // 收起 = 关键词一并清空，用户不会看到「框没了但列表还筛着」的割裂状态。
+  //
+  // 数据流：sessions → groupSessionsByWorkspace → 过滤（task-search.ts）。
+  // 会话列表是 App 的单一数据源，重命名 / 归档后它更新，搜索结果随之更新 —— 无需
+  // 额外订阅或本地缓存。搜索不切换当前会话、不动文件预览。
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // 展开时立即聚焦：点一下放大镜就能直接打字，省一次点击
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchKeyword('');
+  }, []);
+
+  // Esc 收起搜索。**不要用 document 级的 useEscapeKey**：本组件里还有删除确认弹窗，
+  // 用户按 Esc 是想关那个弹窗，document 级监听会顺手把关键词一起清掉 —— 那是误伤。
+  // 挂在输入框自己的键盘事件上，只有焦点在搜索框里时才响应。
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') closeSearch();
+  };
+
+  const untitledTitle = t('shell.session.untitled');
+  const { groups: visibleGroups } = useMemo(
+    () =>
+      filterWorkspaceGroupsForSearch(groups, searchKeyword, {
+        // 哨兵分组名是内部标识，展示文案（「未选择工作区」）才是用户会拿来搜索的词
+        groupDisplayName: (name) => (isFallbackWorkspace(name) ? untitledTitle : name),
+        untitledTitle,
+      }),
+    [groups, searchKeyword, untitledTitle],
+  );
+  const searchActive = searchKeyword.trim().length > 0;
+
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -193,18 +252,30 @@ export function WorkspaceSection({
   const [groupOverrides, setGroupOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
   const currentWorkspaceName = workspace?.name ?? NO_WORKSPACE_GROUP;
 
+  // 搜索期间命中分组一律展开，但**用户显式覆盖优先**（搜索中手动收起就保持收起）。
+  // 合成覆盖不写进 groupOverrides：清空搜索后它自然消失，展开态回到搜索前的判定结果 ——
+  // 因此不需要为「恢复」额外存一份快照。规则见 task-search.ts。
+  const expansionOverrides = useMemo(
+    () =>
+      resolveSearchExpansionOverrides({
+        searchActive,
+        visibleGroups,
+        userOverrides: groupOverrides,
+      }),
+    [searchActive, visibleGroups, groupOverrides],
+  );
+
   const isGroupExpanded = (group: WorkspaceGroup): boolean =>
     isWorkspaceGroupExpanded(group, {
       currentSessionId,
       currentWorkspaceName,
-      overrides: groupOverrides,
+      overrides: expansionOverrides,
     });
 
   const handleToggleGroup = useCallback((name: string, next: boolean) => {
     setGroupOverrides((prev) => new Map(prev).set(name, next));
   }, []);
 
-  const isFallbackWorkspace = (name: string) => name === NO_WORKSPACE_GROUP;
   // 分组名可能是内部哨兵，展示前统一翻成当前语言
   const groupLabel = (name: string) =>
     isFallbackWorkspace(name) ? t('shell.workspace.none') : name;
@@ -250,26 +321,95 @@ export function WorkspaceSection({
 
   return (
     <div className={styles.section}>
-      <div className={styles.header}>
-        <span className={styles.label}>{t('shell.workspace.label')}</span>
-        <IconButton
-          buttonSize="sm"
-          variant="ghost"
-          shape="rounded"
-          title={workspace ? t('shell.workspace.change') : t('shell.workspace.open')}
-          aria-label={workspace ? t('shell.workspace.change') : t('shell.workspace.open')}
-          onClick={onOpenWorkspace}
-          disabled={openingWorkspace}
-        >
-          <FolderIcon size={15} />
-        </IconButton>
+      {/* 标题行与搜索条叠在同一个网格单元里：展开时搜索条原地"盖"住标题行（"工作区"
+          字样与两个图标一起隐去），收起时标题行原样回来。这样既不用为两套布局
+          各留一份高度（列表不会跳动），又能给"覆盖"做过渡动画。 */}
+      <div className={styles.header} data-search-open={searchOpen ? 'true' : 'false'}>
+        <div className={styles.headerSlot}>
+          <div className={styles.headerBar}>
+            <span className={styles.label}>{t('shell.workspace.label')}</span>
+            <div className={styles.headerActions}>
+              {/* 搜索开关：点一下展开搜索条（覆盖本行），再点 = 收起并清空。
+                  aria-expanded 让读屏软件知道这是展开控件。 */}
+              <IconButton
+                buttonSize="sm"
+                variant="ghost"
+                shape="rounded"
+                title={t('shell.search.toggle')}
+                aria-label={t('shell.search.toggle')}
+                aria-expanded={searchOpen}
+                data-sidebar-search-toggle
+                onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+              >
+                <SearchIcon size={15} />
+              </IconButton>
+              <IconButton
+                buttonSize="sm"
+                variant="ghost"
+                shape="rounded"
+                title={workspace ? t('shell.workspace.change') : t('shell.workspace.open')}
+                aria-label={workspace ? t('shell.workspace.change') : t('shell.workspace.open')}
+                onClick={onOpenWorkspace}
+                disabled={openingWorkspace}
+              >
+                <FolderIcon size={15} />
+              </IconButton>
+            </div>
+          </div>
+
+          {/* 历史任务搜索条：范围 = 任务标题 + 工作区名（规则见同目录 task-search.ts）。
+              输入即时筛选；点右侧 ×（或按 Esc）收起并清空，列表与分组展开态随之复原。 */}
+          <div
+            className={styles.searchBar}
+            // 收起态**不能**用 hidden 属性 / display:none：那会让元素直接离开渲染树，
+            // 收起动画没有起始帧，只能硬切。这里靠 CSS 的 visibility + opacity + scaleX
+            // 过渡（见 .searchBar 收起态），元素始终在 DOM 里，动画才可能发生。
+            // aria-hidden 与 tabIndex=-1 是双保险：visibility:hidden 本就把节点移出
+            // 无障碍树和 Tab 顺序，显式声明让意图不依赖浏览器细节。
+            aria-hidden={!searchOpen}
+            data-sidebar-search-bar
+          >
+            <span className={styles.searchIcon} aria-hidden="true">
+              <SearchIcon size={13} />
+            </span>
+            <input
+              ref={searchInputRef}
+              className={styles.searchInput}
+              type="text"
+              value={searchKeyword}
+              onChange={(event) => setSearchKeyword(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder={t('shell.search.placeholder')}
+              aria-label={t('shell.search.placeholder')}
+              data-sidebar-search-input
+              tabIndex={searchOpen ? undefined : -1}
+            />
+            <button
+              type="button"
+              className={styles.searchClear}
+              onClick={closeSearch}
+              title={t('common.close')}
+              aria-label={t('common.close')}
+              data-sidebar-search-close
+              tabIndex={searchOpen ? undefined : -1}
+            >
+              <CloseIcon size={12} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {groups.length === 0 ? (
         <div className={styles.empty}>{t('shell.workspace.empty')}</div>
+      ) : searchActive && visibleGroups.length === 0 ? (
+        // 有历史任务但关键词没命中：明确告诉用户「搜过了、没结果」,
+        // 与「暂无历史任务」分开 —— 后者是空列表，不该用同一句糊过去。
+        <div className={styles.empty} role="status">
+          {t('shell.search.noResults', { keyword: searchKeyword.trim() })}
+        </div>
       ) : (
         <nav className={styles.tree} aria-label={t('shell.workspace.tree')}>
-          {groups.map((group) => {
+          {visibleGroups.map((group) => {
             const fallback = isFallbackWorkspace(group.name);
             return (
               <Collapse

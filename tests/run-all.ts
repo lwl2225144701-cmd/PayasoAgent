@@ -158,6 +158,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-last-session', file: 'tests/frontend-last-session.test.ts' },
   { name: 'frontend-portal-root', file: 'tests/frontend-portal-root.test.ts' },
   { name: 'workspace-expansion', file: 'tests/workspace-expansion.test.ts' },
+  // 历史任务搜索（侧栏任务列表：标题 + 工作区名筛选、分组保留、搜索期展开/恢复）
+  { name: 'task-search', file: 'tests/task-search.test.ts' },
   { name: 'frontend-plan-state', file: 'tests/frontend-plan-state.test.ts' },
   { name: 'frontend-thinking-level', file: 'tests/frontend-thinking-level.test.ts' },
   { name: 'frontend-i18n-coverage', file: 'tests/frontend-i18n-coverage.test.ts' },

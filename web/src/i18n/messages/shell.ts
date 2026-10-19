@@ -78,6 +78,23 @@ export const shellMessages = {
     'en-US': 'This deletes every session and run under “{name}”. This cannot be undone.',
   },
 
+  // 历史任务搜索（工作区行上的放大镜 → 点开展开输入框，点 × 收起并清空）：
+  // 范围 = 任务标题 + 工作区名，不搜聊天正文。规则（含大小写 / 首尾空格 /
+  // 特殊字符 / 分组保留）见 web/src/components/WorkspaceSection/task-search.ts。
+  'shell.search.toggle': {
+    'zh-CN': '搜索历史任务',
+    'en-US': 'Search history',
+  },
+  'shell.search.placeholder': {
+    'zh-CN': '搜索任务或工作区',
+    'en-US': 'Search tasks or workspaces',
+  },
+  // 无匹配提示：带上用户实际输入的关键词（已去首尾空格），比单纯「没有结果」可诊断
+  'shell.search.noResults': {
+    'zh-CN': '没有匹配“{keyword}”的任务',
+    'en-US': 'No tasks match “{keyword}”',
+  },
+
   // 目录选择弹窗
   'shell.picker.title': { 'zh-CN': '选择文件夹', 'en-US': 'Choose folder' },
   'shell.picker.pathPlaceholder': {
