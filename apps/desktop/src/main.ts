@@ -16,7 +16,7 @@
 // 所以 cwd 必须是「app 根」（含 web/dist 的那层），不能随便选。
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
@@ -24,6 +24,15 @@ import { stopManagedBackend } from './backend-process.js';
 import { createUpdateCoordinator, type UpdateCoordinator } from './update/coordinator.js';
 import { IDLE_UPDATE_STATUS, type UpdateStatus } from './update/status.js';
 import { activeTasks } from './update/tasks.js';
+import {
+  planShortcutRepair,
+  type ShortcutLink,
+  shouldRestoreMissingShortcut,
+  WINDOWS_APP_USER_MODEL_ID,
+  WINDOWS_SHORTCUT_DESCRIPTION,
+  WINDOWS_SHORTCUT_NAME,
+  windowsShortcutDetails,
+} from './windows-shortcut.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,6 +61,14 @@ const backendCommand = (() => {
   if (existsSync(bundled)) return { command: bundled, env: {} };
   return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
 })();
+
+/**
+ * 快捷方式上的 AppUserModelID 必须和进程一致（electron-builder 的 appId）。
+ * 不设的话，Windows 用 exe 路径当身份；更新把 exe 换掉之后，任务栏和桌面快捷方式会被当成「目标已移动」。
+ */
+if (process.platform === 'win32' && app.isPackaged) {
+  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+}
 
 const PORT = Number(process.env.PORT ?? 4500);
 const BACKEND_URL = `http://127.0.0.1:${PORT}`;
@@ -553,7 +570,110 @@ async function warnIfBackendMismatch(win: BrowserWindow): Promise<void> {
   }
 }
 
+const WINDOWS_SHORTCUT_VERSION_FILE = 'windows-shortcut-version';
+
+function readSeenShortcutVersion(): string | null {
+  try {
+    const file = path.join(app.getPath('userData'), WINDOWS_SHORTCUT_VERSION_FILE);
+    if (!existsSync(file)) return null;
+    const text = readFileSync(file, 'utf8').trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberShortcutVersion(version: string): void {
+  const file = path.join(app.getPath('userData'), WINDOWS_SHORTCUT_VERSION_FILE);
+  writeFileSync(file, `${version}\n`, 'utf8');
+}
+
+function readInstalledShortcut(file: string): ShortcutLink | null {
+  if (!existsSync(file)) return null;
+  try {
+    const read = shell.readShortcutLink(file);
+    return {
+      target: read.target,
+      cwd: read.cwd,
+      icon: read.icon,
+      iconIndex: read.iconIndex,
+      appUserModelId: read.appUserModelId,
+    };
+  } catch {
+    // 读不出来的 .lnk 按失效处理，下面会按当前 exe 重写。
+    return { target: '' };
+  }
+}
+
+/** 重写桌面和开始菜单快捷方式。返回 false 表示有条目没写成功，调用方不要记下「这个版本已经核对过」。 */
+function repairWindowsShortcuts(restoreIfMissing: boolean): boolean {
+  const locations = [
+    app.getPath('desktop'),
+    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  ];
+  let ok = true;
+  for (const dir of locations) {
+    const file = path.join(dir, WINDOWS_SHORTCUT_NAME);
+    try {
+      const plan = planShortcutRepair({
+        existing: readInstalledShortcut(file),
+        execPath: process.execPath,
+        appUserModelId: WINDOWS_APP_USER_MODEL_ID,
+        restoreIfMissing,
+      });
+      if (plan.action === 'skip') continue;
+      const wrote = shell.writeShortcutLink(
+        file,
+        'create',
+        windowsShortcutDetails(
+          process.execPath,
+          WINDOWS_APP_USER_MODEL_ID,
+          WINDOWS_SHORTCUT_DESCRIPTION,
+        ),
+      );
+      if (!wrote) ok = false;
+      console.log(`[shortcut] ${plan.reason} ${wrote ? 'updated' : 'failed'} ${file}`);
+    } catch (error) {
+      ok = false;
+      console.log(
+        `[shortcut] repair failed ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return ok;
+}
+
+/**
+ * 打包后的 Windows 客户端核对快捷方式。
+ *
+ * 安装器在新文件落盘后会重写 .lnk；这里再兜一层，因为资源管理器可能在安装器退出后
+ * 才根据链接跟踪把桌面图标改到已删除的临时路径。更新后的第一次启动（或带着 --updated）
+ * 会把已经被系统删掉的图标补回。同一版本里用户再删掉桌面图标，则不再自动加回。
+ */
+function repairWindowsLaunchShortcuts(): void {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  const version = app.getVersion();
+  const restoreIfMissing = shouldRestoreMissingShortcut({
+    argv: process.argv,
+    seenVersion: readSeenShortcutVersion(),
+    currentVersion: version,
+  });
+  repairWindowsShortcuts(restoreIfMissing);
+  if (!restoreIfMissing) return;
+  const timer = setTimeout(() => {
+    if (repairWindowsShortcuts(true)) {
+      try {
+        rememberShortcutVersion(version);
+      } catch {
+        // 版本文件写失败就下次启动再核对，不能挡住窗口。
+      }
+    }
+  }, 3_000);
+  timer.unref?.();
+}
+
 async function boot(): Promise<void> {
+  repairWindowsLaunchShortcuts();
   buildMenu();
   registerDirectoryPicker();
   registerUpdateBridge();
