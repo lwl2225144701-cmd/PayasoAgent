@@ -90,19 +90,21 @@ export function projectInstructionsPrompt(content: string): string {
   return `<project_instructions>\n${trimmed}\n</project_instructions>`;
 }
 
-// Plan segment — 什么时候该建计划、什么时候该更新（软引导，短）。
+// Plan segment — 计划是可选工具：何时值得用、何时该更新（软引导，短）。
 // 为什么放在 Harness：计划是"模型看到什么"的一部分，与 scratchpad 投影同层；
-// 不放进内核提示词，也不做成硬约束（简单任务多一次工具调用是纯开销）。
+// 不放进内核提示词，也不做成硬约束。刻意不以步数/工具调用次数作为触发条件——
+// 普通调查直接开展，是否需要计划由模型按任务判断（2026-10-19 按需规划调整）。
 export function planningSystemPrompt(): string {
   return [
-    '## Task Plan',
+    '## Task Plan (optional)',
     '',
-    'For work that needs three or more steps, publish the task list with `updatePlan` **before** you start, then keep it current:',
+    '`updatePlan` is optional — use it only when it genuinely helps (multiple deliverables, dependencies, phase tracking),',
+    'never just for step or tool-call count. Ordinary investigation and small fixes: just do them.',
     '',
-    '- mark the item you are working on as `in_progress`, and flip it to `completed` the moment it is done',
-    '- keep at most one item `in_progress`; revise titles, add or drop items as the work evolves',
-    '- write titles for the user ("run the deterministic suite"), not tool-call details',
-    '- skip `updatePlan` for single-step work — the user already sees which tools you call',
+    '- If the user asks for a plan, provide it; a plan is not authorization to implement.',
+    '- A plan must not expand the task: when asked only to explore, do not edit code or run suites because the plan lists them.',
+    '- Update at phase completion, direction changes, blockers or delivery; merged updates are fine.',
+    '- At most one `in_progress`; titles for the user, not tool-call details; keep statuses honest — never do extra work just to clear the list.',
   ].join('\n');
 }
 

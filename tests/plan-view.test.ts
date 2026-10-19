@@ -72,7 +72,9 @@ await check('投影含进度头、状态标记与维护要求', () => {
   assert.match(bounded.text, /✅ 已完成项/);
   assert.match(bounded.text, /▶ 进行中项/);
   assert.match(bounded.text, /○ 待办项/);
-  assert.match(bounded.text, /完成一项后立即用 updatePlan 提交更新后的完整清单/);
+  // 按需规划调整（2026-10-19）：投影只提示按阶段维护，不催促逐项立即更新
+  assert.match(bounded.text, /阶段完成、方向变化、阻塞或交付时用 updatePlan 更新（可合并）/);
+  assert.doesNotMatch(bounded.text, /完成一项后立即/);
 });
 
 await check(`标题超过 ${PLAN_VIEW_TITLE_CHARS} 字符：投影内裁剪并标记 truncated`, () => {

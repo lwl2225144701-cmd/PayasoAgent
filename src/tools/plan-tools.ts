@@ -10,9 +10,9 @@ import { register } from './tools.js';
 register({
   name: 'updatePlan',
   description:
-    '提交本次任务的完整清单（全量替换，不是增量）。多步任务开始时先建计划，每完成一项立即更新；' +
-    '单步任务不要建。status 取值：pending=待办，in_progress=进行中（同时最多一项），completed=已完成。' +
-    '清空计划传空数组。标题写给用户看，不要写工具参数细节。',
+    '提交本次任务的完整清单（全量替换，不是增量）。计划是可选能力：按需使用，阶段完成、方向变化、' +
+    '阻塞或交付时更新（可合并）。status 取值：pending=待办，in_progress=进行中（同时最多一项），' +
+    'completed=已完成。清空计划传空数组。标题写给用户看，不要写工具参数细节。',
   effect: 'idempotent',
   parameters: {
     type: 'object',

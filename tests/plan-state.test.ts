@@ -59,11 +59,13 @@ check('首次提交：自动编号 t1/t2、revision=1、changed=true', () => {
   );
 });
 
-check('结果文本回给模型：含进度、清单与"完成后立即更新"引导', () => {
+check('结果文本回给模型：含进度、清单与"按阶段更新"引导', () => {
   assert.match(first.resultText, /\[计划\] 0\/2 完成（revision 1）/);
   assert.match(first.resultText, /1\. ▶ 跑通确定性套件/);
   assert.match(first.resultText, /2\. ○ 补 plan 状态机测试/);
-  assert.match(first.resultText, /完成后立即用 updatePlan 把它标为 completed/);
+  // 按需规划调整（2026-10-19）：不再催促"完成一项立即重发"，改按阶段/合并更新
+  assert.match(first.resultText, /阶段完成、方向变化或交付时再用 updatePlan 更新（可合并）/);
+  assert.doesNotMatch(first.resultText, /立即用 updatePlan 把它标为 completed/);
 });
 
 check('重复提交同一清单：changed=false、原引用、revision 不变（前端零抖动）', () => {

@@ -144,7 +144,7 @@ await check('context_usage 计入 planTokens（预算可审计）', () => {
   assert.ok((usages[usages.length - 1].planTokens ?? 0) > 0);
 });
 
-await check('工具结果回给模型：含进度与"完成后立即更新"引导', () => {
+await check('工具结果回给模型：含进度与"按阶段更新"引导', () => {
   const toolMessages = run.traces.filter(
     (event) => event.type === 'tool_result' && event.tool === 'updatePlan',
   ) as Array<Extract<TraceEvent, { type: 'tool_result' }>>;

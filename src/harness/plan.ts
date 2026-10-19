@@ -172,9 +172,11 @@ export function renderPlanResult(plan: Plan): string {
       `  ${index + 1}. ${STATUS_LABEL[item.status]} ${clip(item.title, PLAN_MAX_TITLE_CHARS)}`,
   );
   const active = plan.items.find((item) => item.status === 'in_progress');
+  // 按阶段更新（2026-10-19 按需规划调整）：不再催促"完成一项立即重发"，
+  // 合并更新与阶段边界更新都是一等公民；状态真实优先于清单整洁。
   const tail = active
-    ? `当前进行中：${clip(active.title, PLAN_MAX_TITLE_CHARS)}。完成后立即用 updatePlan 把它标为 completed。`
-    : '当前没有进行中的项：开始下一项时用 updatePlan 标为 in_progress。';
+    ? `当前进行中：${clip(active.title, PLAN_MAX_TITLE_CHARS)}。阶段完成、方向变化或交付时再用 updatePlan 更新（可合并）。`
+    : '当前没有进行中的项。按阶段维护本清单即可，不必每步更新；状态保持真实。';
   return [
     `[计划] ${completed}/${plan.items.length} 完成（revision ${plan.revision}）`,
     ...lines,
@@ -202,7 +204,7 @@ export function renderBoundedPlanView(plan: Plan): { text: string; truncated: bo
     text: [
       header,
       ...lines,
-      '维护要求：完成一项后立即用 updatePlan 提交更新后的完整清单（用户在看这份进度）。',
+      '维护要求：阶段完成、方向变化、阻塞或交付时用 updatePlan 更新（可合并）；未完成就如实说明原因。',
     ].join('\n'),
     truncated,
   };
