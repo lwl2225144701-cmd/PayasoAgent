@@ -1,7 +1,8 @@
 // 模块 3: Agent Loop — 控制 LLM 与 Tool 交互（Runtime 内核，不含 CLI 入口）
 
-import type { AgentContextHarness } from '../harness/context-harness.js';
+import type { AgentContextHarness, PreparedModelTurn } from '../harness/context-harness.js';
 import type { ContextHarnessState } from '../harness/context-state.js';
+import type { ExecutionBudgetDecision } from '../harness/execution-policy.js';
 import {
   type ChatMessage,
   type ChatStreamDelta,
@@ -310,6 +311,24 @@ export async function runAgent(
   const MAX_WRAP_UP_IGNORED_TURNS = 2;
   // v2.6：本次模型请求是否被预算硬截止中止（与用户取消、执行失败三方区分）。
   let budgetAborted = false;
+  // v2.6 统一预算结算入口：observeExecution + 推进时间锚点。每次结算后锚点前移到
+  // "现在"，后续增量从新锚点起算。内层（最终审查）先结算并推进锚点，外层 catch
+  // 不会再从旧锚点重复累加同一段墙钟时间——审查失败时那次结算曾把审查耗时算两遍。
+  const settleBudget = (
+    modelCalls: number,
+    outputTokens: number,
+  ): ExecutionBudgetDecision | undefined => {
+    if (!contextHarness.observeExecution) return undefined;
+    const now = performance.now();
+    const decision = contextHarness.observeExecution({
+      modelCalls,
+      outputTokens,
+      activeMs: now - budgetMarkAt,
+    });
+    budgetMarkAt = now;
+    return decision;
+  };
+
   try {
     // No fixed iteration cap: a turn continues while the model keeps
     // producing tool calls. Cancellation, tool safety, and the optional
@@ -369,121 +388,124 @@ export async function runAgent(
       // 摘要也是模型请求（同样可能持续长输出），必须与主请求共用同一条预算
       // 看门狗；此前摘要只接用户取消信号，是覆盖缺口。
       budgetAborted = false;
-      const modelDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
-        budgetAborted = true;
-      });
-      const ctx = await contextHarness.prepareTurn(
-        messages,
-        scratchpad,
-        schemas,
-        modelDerived.signal,
-      );
-      // v2.6：压缩摘要发生在 prepareTurn 内部（Harness 自持的模型调用）——
-      // 全部模型请求统一计量，这里的跨阈决策与主循环的 observeExecution 同路：
-      // 发事件、随本轮 checkpoint 落盘。
-      for (const decision of ctx.budgetDecisions ?? []) {
-        const decisionLevel = decision.level;
-        if (decision.buckets.length > 0 && decisionLevel !== 'none') {
-          emit({
-            type: 'budget_decision',
-            level: decisionLevel,
-            buckets: decision.buckets,
-            modelCalls: decision.state.usage.modelCalls,
-            outputTokens: decision.state.usage.outputTokens,
-            activeMs: decision.state.usage.activeMs,
-          });
-          save();
-        }
-      }
-      emit({
-        type: 'context_trim',
-        beforeMessages: ctx.usage.beforeMessages,
-        afterMessages: ctx.usage.afterMessages,
-      });
-      emit({
-        type: 'context_usage',
-        model: modelContext.model,
-        modelSource: modelContext.modelSource,
-        configSource: modelContext.source,
-        emergencyTrim: ctx.usage.emergencyTrim,
-        contextWindowTokens: modelContext.contextWindowTokens,
-        maxOutputTokens: modelContext.maxOutputTokens,
-        safetyTokens: modelContext.safetyTokens,
-        inputBudgetTokens: ctx.usage.inputBudgetTokens,
-        messageTokens: ctx.usage.messageTokens,
-        systemTokens: ctx.usage.systemTokens,
-        toolSchemaTokens: ctx.usage.toolSchemaTokens,
-        scratchpadTokens: ctx.scratchpadTokens,
-        planTokens: ctx.planTokens,
-        estimatedInputTokens: ctx.usage.estimatedInputTokens,
-        ...(lastRequestUsage === undefined
-          ? {}
-          : { pressureTokens: promptSideTokens(lastRequestUsage) }),
-        usageRatio: ctx.usage.usageRatio,
-        trimmedMessages: ctx.usage.trimmedMessages,
-        overBudget: ctx.usage.overBudget,
-      });
-      if (ctx.compaction) {
-        emit({
-          type: 'context_compaction',
-          summarizedMessages: ctx.compaction.summarizedMessages,
-          totalSummarizedMessages: ctx.compaction.totalSummarizedMessages,
-          summaryTokens: ctx.compaction.summaryTokens,
-          sourceTokens: ctx.compaction.sourceTokens,
-          cacheAligned: ctx.compaction.cacheAligned,
-        });
-      }
-      if (ctx.usage.beforeMessages !== ctx.usage.afterMessages) {
-        observer.log(`\n=== Context ===`);
-        observer.log(`before:\n${ctx.usage.beforeMessages} messages`);
-        observer.log(`after:\n${ctx.usage.afterMessages} messages`);
-        observer.log(`trimmed:\n${ctx.usage.trimmedMessages}`);
-      }
-      if (ctx.usage.overBudget) {
-        throw new Error(
-          `Context budget exceeded: estimated ${ctx.usage.estimatedInputTokens} input tokens, ` +
-            `budget ${ctx.usage.inputBudgetTokens}`,
-        );
-      }
-
-      // 1. 调用 LLM 判断下一步
-      // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
-      // 图片在调用边界物化：Harness 视图里的图片是路径引用，这里读取为 base64
-      // 副本（不污染 transcript / checkpoint）；非视觉模型则剥离图片并文本注明。
-      const modelMessages = materializeMessagesForModel(
-        ctx.messages,
-        workspaceRoot,
-        visionEnabled,
-        resolveInlineImageBudget(),
-      );
-      // Trace: LLM 调用开始 —— llm_call 只在调用结束后落盘，大上下文 prefill 的
-      // 首 token 等待期（可达数十秒）必须有自己的事件，否则前端在该窗口完全静默。
-      emit({
-        type: 'llm_call_started',
-        iteration: i + 1,
-        messageCount: messages.length,
-        estimatedInputTokens: ctx.usage.estimatedInputTokens,
-      });
-      // 请求体规模的可观测代理 ≈ HTTP body 字节数（messages + tools 序列化；
-      // 鉴权头与少量请求参数不计，恒小于真实 body）。补这个字段之前，
-      // 「请求体 ≤1.5MB / 图片不再全量 base64」这条验收项没有任何观测点。
-      const requestBodyBytes = JSON.stringify([modelMessages, schemas]).length;
-      // 收尾请求使用裁剪后的输出上限：独立小额额度，不用普通请求的完整上限。
-      const wrapUpLimits = wrapUpActive
-        ? contextHarness.executionBudgetWrapUpLimits?.()
-        : undefined;
-      const effectiveModelConfig =
-        wrapUpActive && wrapUpLimits?.maxOutputTokens !== undefined && opts.modelConfig
-          ? {
-              ...opts.modelConfig,
-              maxOutputTokens: Math.min(
-                opts.modelConfig.maxOutputTokens ?? wrapUpLimits.maxOutputTokens,
-                wrapUpLimits.maxOutputTokens,
-              ),
-            }
-          : opts.modelConfig;
+      // 模型活动段（prepareTurn 内的压缩摘要 + 主请求）在同一个 try/finally 内：
+      // 摘要失败、上下文超限等早期抛错也保证看门狗清理——此前 finally 只包住
+      // chat，prepareTurn 抛错时派生信号的轮询 interval 会泄漏（且可能迟到地
+      // 把 budgetAborted 置上，把真实错误伪装成预算停止）。声明在 try 之外：
+      // finally 要能引用它做清理。
+      let modelDerived: ReturnType<typeof deriveModelCallSignal> | undefined;
+      let ctx: PreparedModelTurn;
+      let effectiveModelConfig: ModelConfig | undefined;
       let assistantMsg: ChatMessage & { usage?: TokenUsage };
       try {
+        modelDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
+          budgetAborted = true;
+        });
+        ctx = await contextHarness.prepareTurn(messages, scratchpad, schemas, modelDerived.signal);
+        // v2.6：压缩摘要发生在 prepareTurn 内部（Harness 自持的模型调用）——
+        // 全部模型请求统一计量，这里的跨阈决策与主循环的 observeExecution 同路：
+        // 发事件、随本轮 checkpoint 落盘。
+        for (const decision of ctx.budgetDecisions ?? []) {
+          const decisionLevel = decision.level;
+          if (decision.buckets.length > 0 && decisionLevel !== 'none') {
+            emit({
+              type: 'budget_decision',
+              level: decisionLevel,
+              buckets: decision.buckets,
+              modelCalls: decision.state.usage.modelCalls,
+              outputTokens: decision.state.usage.outputTokens,
+              activeMs: decision.state.usage.activeMs,
+            });
+            save();
+          }
+        }
+        emit({
+          type: 'context_trim',
+          beforeMessages: ctx.usage.beforeMessages,
+          afterMessages: ctx.usage.afterMessages,
+        });
+        emit({
+          type: 'context_usage',
+          model: modelContext.model,
+          modelSource: modelContext.modelSource,
+          configSource: modelContext.source,
+          emergencyTrim: ctx.usage.emergencyTrim,
+          contextWindowTokens: modelContext.contextWindowTokens,
+          maxOutputTokens: modelContext.maxOutputTokens,
+          safetyTokens: modelContext.safetyTokens,
+          inputBudgetTokens: ctx.usage.inputBudgetTokens,
+          messageTokens: ctx.usage.messageTokens,
+          systemTokens: ctx.usage.systemTokens,
+          toolSchemaTokens: ctx.usage.toolSchemaTokens,
+          scratchpadTokens: ctx.scratchpadTokens,
+          planTokens: ctx.planTokens,
+          estimatedInputTokens: ctx.usage.estimatedInputTokens,
+          ...(lastRequestUsage === undefined
+            ? {}
+            : { pressureTokens: promptSideTokens(lastRequestUsage) }),
+          usageRatio: ctx.usage.usageRatio,
+          trimmedMessages: ctx.usage.trimmedMessages,
+          overBudget: ctx.usage.overBudget,
+        });
+        if (ctx.compaction) {
+          emit({
+            type: 'context_compaction',
+            summarizedMessages: ctx.compaction.summarizedMessages,
+            totalSummarizedMessages: ctx.compaction.totalSummarizedMessages,
+            summaryTokens: ctx.compaction.summaryTokens,
+            sourceTokens: ctx.compaction.sourceTokens,
+            cacheAligned: ctx.compaction.cacheAligned,
+          });
+        }
+        if (ctx.usage.beforeMessages !== ctx.usage.afterMessages) {
+          observer.log(`\n=== Context ===`);
+          observer.log(`before:\n${ctx.usage.beforeMessages} messages`);
+          observer.log(`after:\n${ctx.usage.afterMessages} messages`);
+          observer.log(`trimmed:\n${ctx.usage.trimmedMessages}`);
+        }
+        if (ctx.usage.overBudget) {
+          throw new Error(
+            `Context budget exceeded: estimated ${ctx.usage.estimatedInputTokens} input tokens, ` +
+              `budget ${ctx.usage.inputBudgetTokens}`,
+          );
+        }
+
+        // 1. 调用 LLM 判断下一步
+        // 1. 调用 LLM 判断下一步（signal 直达 HTTP/流式层：abort 立即中断在途请求）
+        // 图片在调用边界物化：Harness 视图里的图片是路径引用，这里读取为 base64
+        // 副本（不污染 transcript / checkpoint）；非视觉模型则剥离图片并文本注明。
+        const modelMessages = materializeMessagesForModel(
+          ctx.messages,
+          workspaceRoot,
+          visionEnabled,
+          resolveInlineImageBudget(),
+        );
+        // Trace: LLM 调用开始 —— llm_call 只在调用结束后落盘，大上下文 prefill 的
+        // 首 token 等待期（可达数十秒）必须有自己的事件，否则前端在该窗口完全静默。
+        emit({
+          type: 'llm_call_started',
+          iteration: i + 1,
+          messageCount: messages.length,
+          estimatedInputTokens: ctx.usage.estimatedInputTokens,
+        });
+        // 请求体规模的可观测代理 ≈ HTTP body 字节数（messages + tools 序列化；
+        // 鉴权头与少量请求参数不计，恒小于真实 body）。补这个字段之前，
+        // 「请求体 ≤1.5MB / 图片不再全量 base64」这条验收项没有任何观测点。
+        const requestBodyBytes = JSON.stringify([modelMessages, schemas]).length;
+        // 收尾请求使用裁剪后的输出上限：独立小额额度，不用普通请求的完整上限。
+        const wrapUpLimits = wrapUpActive
+          ? contextHarness.executionBudgetWrapUpLimits?.()
+          : undefined;
+        effectiveModelConfig =
+          wrapUpActive && wrapUpLimits?.maxOutputTokens !== undefined && opts.modelConfig
+            ? {
+                ...opts.modelConfig,
+                maxOutputTokens: Math.min(
+                  opts.modelConfig.maxOutputTokens ?? wrapUpLimits.maxOutputTokens,
+                  wrapUpLimits.maxOutputTokens,
+                ),
+              }
+            : opts.modelConfig;
         assistantMsg = await chat(
           modelMessages,
           schemas,
@@ -504,7 +526,7 @@ export async function runAgent(
           },
         );
       } finally {
-        modelDerived.dispose();
+        modelDerived?.dispose();
       }
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
@@ -523,15 +545,12 @@ export async function runAgent(
       // 调用（含内部重试）+ 真实输出 token + 自上一标记以来的活动时长（含本迭代
       // 内的工具执行）。Harness 只分级与排队提醒，不拦截；exhausted 转优雅停止
       // 是阶段二的事。
-      if (contextHarness.observeExecution) {
-        const now = performance.now();
-        const budgetDecision = contextHarness.observeExecution({
-          modelCalls: budgetModelCalls,
+      {
+        const budgetDecision = settleBudget(
+          budgetModelCalls,
           // usage 缺失时记 0：宁可少算也不把估算写成真实消耗。
-          outputTokens: requestUsage?.outputTokens ?? 0,
-          activeMs: now - budgetMarkAt,
-        });
-        budgetMarkAt = now;
+          requestUsage?.outputTokens ?? 0,
+        );
         budgetModelCalls = 0; // 已入账，下一轮重新计数
         // 只在本轮新跨阈值时发事件并落 checkpoint。level 是粘滞档位，跨过 warn 后
         // 会一直保持；若按 level 判断，事件和 checkpoint 会在后续每一轮重复产生。
@@ -683,7 +702,6 @@ export async function runAgent(
               // 最终审查也是模型请求：计入执行预算（含内部重试与真实输出 token），
               // 并与主请求共用同一套预算硬截止 / 收尾额度（审查同样可能长输出）。
               let reviewModelCalls = 0;
-              const reviewMarkAt = performance.now();
               budgetAborted = false;
               const reviewDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
                 budgetAborted = true;
@@ -708,20 +726,16 @@ export async function runAgent(
                 );
               } catch (reviewErr) {
                 // 交付检查请求失败也入账（尝试次数 + 活动时长）——失败路径不漏账。
-                contextHarness.observeExecution?.({
-                  modelCalls: reviewModelCalls,
-                  outputTokens: 0,
-                  activeMs: performance.now() - reviewMarkAt,
-                });
+                // 走统一结算入口：锚点随之前移，外层 catch 不会把这段耗时再算一遍。
+                settleBudget(reviewModelCalls, 0);
                 throw reviewErr;
               } finally {
                 reviewDerived.dispose();
               }
-              const reviewDecision = contextHarness.observeExecution?.({
-                modelCalls: reviewModelCalls,
-                outputTokens: reviewed.usage?.outputTokens ?? 0,
-                activeMs: performance.now() - reviewMarkAt,
-              });
+              const reviewDecision = settleBudget(
+                reviewModelCalls,
+                reviewed.usage?.outputTokens ?? 0,
+              );
               if (reviewDecision && reviewDecision.buckets.length > 0) {
                 const reviewLevel = reviewDecision.level;
                 if (reviewLevel !== 'none') {
@@ -933,15 +947,9 @@ export async function runAgent(
     // 注意：不再要求 budgetModelCalls > 0——工具执行阶段（两次 observeExecution
     // 之间）的 attempts 恒为 0，但那段墙钟时间真实发生过。先前置条件导致工具阶段
     // 的耗时在失败/取消/预算中止路径上整体丢失（checkpoint 只存模型耗时）。
-    if (contextHarness.observeExecution) {
-      contextHarness.observeExecution({
-        modelCalls: budgetModelCalls,
-        outputTokens: 0,
-        activeMs: performance.now() - budgetMarkAt,
-      });
-      budgetModelCalls = 0;
-      save();
-    }
+    settleBudget(budgetModelCalls, 0);
+    budgetModelCalls = 0;
+    save();
     // v2.6：请求进行中被预算硬截止中止 ≠ 用户取消 ≠ 执行失败。落优雅停止，
     // Host 保存现场并以 budget_exhausted 说明——模型未产出可用响应，
     // 绝不按 failed 计，也绝不冒充 completed。

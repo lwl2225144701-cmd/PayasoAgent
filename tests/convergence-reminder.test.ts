@@ -781,6 +781,90 @@ try {
     assert.equal(skipped.length, 2, '批次内两个工具都被拦下（逐工具准入判定）');
   }
 
+  // ---- 6q. 最终审查失败：审查耗时只结算一次（统一入口，外层不重复累加）----
+  {
+    // 修复前：审查路径用私有锚点结算但不推进外层 budgetMarkAt，外层 catch 再从
+    // 旧锚点结算一次——同一段墙钟时间双重入账（保存耗时 ~2x 实际消耗）。
+    const harness = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      finalReview: true,
+      executionBudget: { maxModelCalls: 10, warnRatio: 0.7, convergeRatio: 0.9 },
+    });
+    const run = options('budget-review-fail-once', harness);
+    requests = [];
+    requestBodies = [];
+    let fetchCount = 0;
+    globalThis.fetch = (async () => {
+      fetchCount += 1;
+      if (fetchCount <= 2) {
+        const message = fetchCount === 1 ? toolMessage(call()) : done;
+        const delta = {
+          ...message,
+          tool_calls: message.tool_calls?.map((tool, index) => ({ ...tool, index })),
+        };
+        const chunks = [
+          { choices: [{ index: 0, delta, finish_reason: null }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: message.tool_calls?.length ? 'tool_calls' : 'stop',
+              },
+            ],
+          },
+        ];
+        return new Response(
+          `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`,
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      }
+      // 第 3 个请求起 = 最终审查：延迟 500ms 后 400（不重试）→ 审查失败
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return new Response('bad request', { status: 400 });
+    }) as typeof fetch;
+    const err = await runAgent('审查失败的任务', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(
+      err instanceof Error && !(err instanceof AgentStopRequestedError),
+      '审查失败 → 执行失败',
+    );
+    const activeMs = run.snapshots.at(-1)?.harnessState?.executionBudget?.usage?.activeMs ?? 0;
+    assert.ok(activeMs >= 400, `审查耗时已入账（实际 ${activeMs.toFixed(0)}ms）`);
+    assert.ok(activeMs < 850, `审查耗时只结算一次（${activeMs.toFixed(0)}ms；双算会是 ~1000ms）`);
+  }
+
+  // ---- 6r. prepareTurn 提前抛错也走同一个 finally（看门狗不泄漏、预算仍结算）----
+  {
+    // 极小上下文窗口：prepareTurn 的 overBudget fail-closed 在 chat 之前抛错——
+    // 修复前派生信号的轮询 interval 只包在 chat 的 finally 里，这条路径会泄漏。
+    const harness = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      modelContext: resolveModelContextConfig({
+        model: 'tiny-ctx',
+        contextWindowTokens: 300,
+        maxOutputTokens: 100,
+        safetyTokens: 50,
+      }),
+      executionBudget: { maxModelCalls: 10, warnRatio: 0.7, convergeRatio: 0.9 },
+    });
+    const run = options('budget-prepare-throw', harness);
+    script([read(), done]);
+    const err = await runAgent('上下文必然超限', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.match(String(err), /Context budget exceeded/, '真实错误原样抛出（不被伪装成预算停止）');
+    // 提前抛错路径同样结算并落盘：prepareTurn 的耗时进了 checkpoint
+    const budget = run.snapshots.at(-1)?.harnessState?.executionBudget;
+    assert.ok(budget, '提前抛错也结算预算');
+    assert.equal(run.events.filter((e) => e.type === 'error').length, 1);
+  }
+
   // ---- 7. 预算可显式关闭：off 是"只观察不硬限制"的唯一出口 ----
   {
     const disabled = new DefaultContextHarness({
