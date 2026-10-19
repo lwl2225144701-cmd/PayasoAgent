@@ -84,11 +84,19 @@ export const settingsMessages = {
     'zh-CN': '当前文件系统权限：{label}',
     'en-US': 'Current filesystem permission: {label}',
   },
+  'settings.permission.fullAccessConfirmTitle': {
+    'zh-CN': '启用 Full access',
+    'en-US': 'Enable Full access',
+  },
   'settings.permission.fullAccessConfirm': {
     'zh-CN':
-      'Full access 允许 Agent 读取、修改和删除当前用户可访问的宿主文件。网络权限不会因此开放。\n\n确认启用 Full access？',
+      'Full access 允许 Agent 读取、修改和删除当前用户可访问的宿主文件。网络权限不会因此开放。',
     'en-US':
-      'Full access lets the Agent read, modify and delete host files the current user can access. Network access is not opened by it.\n\nEnable Full access?',
+      'Full access lets the Agent read, modify and delete host files the current user can access. Network access is not opened by it.',
+  },
+  'settings.permission.fullAccessConfirmAsk': {
+    'zh-CN': '确认启用 Full access？',
+    'en-US': 'Enable Full access?',
   },
 
   // 模型提供方：加载与状态
