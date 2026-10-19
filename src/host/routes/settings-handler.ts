@@ -36,6 +36,10 @@ export async function handleSettings(
   port: number,
 ): Promise<void> {
   try {
+    if (s.length === 2 && s[1] === 'catalog-probe' && method === 'GET') {
+      // 启动后台探测的进程内状态。前端用它等到写回完成后再拉一次模型列表。
+      return sendJson(res, 200, manager.getCatalogProbeStatus());
+    }
     if (s.length === 3 && s[1] === 'pi-ai' && s[2] === 'providers' && method === 'GET') {
       // pi-ai 内置 Provider 的公开目录：只返回可选 Provider、模型能力和默认地址，
       // 不执行认证解析，也不把任何 API key 返回给浏览器。

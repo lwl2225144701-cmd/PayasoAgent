@@ -57,6 +57,9 @@ export type {
 export class RunManager {
   private lifecycle: 'open' | 'closing' | 'closed' = 'open';
   private closePromise?: Promise<void>;
+  // 启动期远端目录探测的进程内状态。页面首屏往往早于探测结束，前端靠它决定何时再拉模型列表。
+  private catalogProbeRunning = false;
+  private catalogProbeFinishedAt: string | null = null;
 
   private readonly store: RunStore;
   private readonly modelService: ModelService;
@@ -431,6 +434,20 @@ export class RunManager {
   // 远端目录缓存只读快照（启动后台探测会写，路由读）
   getBuiltinRemoteCatalogs(): Record<string, BuiltinRemoteCatalogEntry> {
     return this.modelService.getBuiltinRemoteCatalogs();
+  }
+
+  // 启动探测开始/结束。只存在于本进程，不落盘。
+  beginCatalogProbe(): void {
+    this.catalogProbeRunning = true;
+  }
+
+  finishCatalogProbe(): void {
+    this.catalogProbeRunning = false;
+    this.catalogProbeFinishedAt = new Date().toISOString();
+  }
+
+  getCatalogProbeStatus(): { running: boolean; finishedAt: string | null } {
+    return { running: this.catalogProbeRunning, finishedAt: this.catalogProbeFinishedAt };
   }
 
   // Host 启动时一次性导入 .env 环境模型配置（设置中已有导入标记则不重复）

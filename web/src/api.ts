@@ -444,6 +444,11 @@ export function listModels(): Promise<{ models: ModelProviderView[] }> {
   return jsonFetch('/settings/models', { cache: 'no-store' });
 }
 
+/** 启动期远端目录探测是否还在跑。finishedAt 有值表示本进程至少完成过一轮。 */
+export function getCatalogProbe(): Promise<{ running: boolean; finishedAt: string | null }> {
+  return jsonFetch('/settings/catalog-probe', { cache: 'no-store' });
+}
+
 export function createModel(input: CreateModelProviderInput): Promise<ModelProviderView> {
   return jsonFetch('/settings/models', {
     method: 'POST',

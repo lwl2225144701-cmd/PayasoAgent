@@ -9,6 +9,7 @@ import {
   deleteWorkspaceGroup,
   downloadSessionExport,
   fetchSessionStats,
+  getCatalogProbe,
   getDefaultModel,
   getSessionGoal,
   getSessionPlanMode,
@@ -356,6 +357,36 @@ export default function App() {
     void refreshPiProviders();
     void refreshDefaultModel();
   }, [refreshRuns, refreshSessions, refreshModels, refreshPiProviders, refreshDefaultModel]);
+
+  // 启动探测在 listen 之后才把新模型写进已保存列表。首屏那次 listModels 经常早于写回，
+  // 等到探测落下再拉一次，下拉里才会出现刚检测到的模型。
+  useEffect(() => {
+    let cancelled = false;
+    const started = Date.now();
+    const watch = async () => {
+      while (!cancelled && Date.now() - started < 45_000) {
+        try {
+          const status = await getCatalogProbe();
+          if (!status.running) {
+            await refreshModels();
+            await refreshPiProviders();
+            window.dispatchEvent(new Event('settings:modelsChanged'));
+            return;
+          }
+        } catch {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (cancelled) return;
+      await refreshModels();
+      window.dispatchEvent(new Event('settings:modelsChanged'));
+    };
+    void watch();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshModels, refreshPiProviders]);
 
   // 当前会话镜像到本地记录：选会话 / 新建会话 / 回到 landing 都会经由此处落盘，
   // 不必在每个 setCurrentSessionId 调用点各写一遍（避免漏写导致恢复不一致）。

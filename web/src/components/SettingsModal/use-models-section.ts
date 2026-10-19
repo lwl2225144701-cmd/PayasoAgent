@@ -143,6 +143,19 @@ export function useModelsSection({ open, onSaved }: UseModelsSectionOptions): Mo
     }
   }, [open, refresh]);
 
+  // 启动探测写回已保存模型后，App 会派发这个事件。设置页开着时只更新列表，
+  // 不重置正在编辑的表单。
+  useEffect(() => {
+    const handler = () => {
+      if (!open) return;
+      void listModels()
+        .then((resp) => setModels(resp.models))
+        .catch(() => {});
+    };
+    window.addEventListener('settings:modelsChanged', handler);
+    return () => window.removeEventListener('settings:modelsChanged', handler);
+  }, [open]);
+
   useEffect(() => {
     if (!open) {
       setFormMode('list');
