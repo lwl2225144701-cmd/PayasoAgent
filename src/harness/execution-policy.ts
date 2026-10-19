@@ -27,11 +27,20 @@ export interface ExecutionBudgetPolicy {
   warnRatio: number;
   /** 收敛审查比例（默认 0.9）：达到即要求收尾一次，之后不再重复。 */
   convergeRatio: number;
+  /**
+   * 预留收尾的独立小额额度（阶段二）：总预算耗尽后允许的最后一次生成。
+   * 与总预算分开计量——收尾请求使用裁剪后的 maxOutputTokens 与独立时限，
+   * 不能反过来把总预算撑大，也不能用普通请求的完整输出上限。
+   */
+  wrapUpMaxOutputTokens?: number;
+  wrapUpMaxActiveMs?: number;
 }
 
 export const DEFAULT_EXECUTION_BUDGET_POLICY: Readonly<ExecutionBudgetPolicy> = {
   warnRatio: 0.7,
   convergeRatio: 0.9,
+  wrapUpMaxOutputTokens: 1_024,
+  wrapUpMaxActiveMs: 60_000,
 };
 
 /** 累计事实（Runtime 观测，Harness 只累加）。 */
@@ -157,6 +166,23 @@ function bucketMax(
     default:
       return policy.maxActiveMs;
   }
+}
+
+/**
+ * 请求进行中的预算投影判定（阶段二「持续长输出」约束）：
+ * 以当前累计用量加上「本次请求已经进行的时间」投影总耗时，超过 maxActiveMs
+ * 即返回 true——Runtime 据此中在途请求，而不是等响应结束后才记账。
+ * 未配置 maxActiveMs 时恒 false（该维度不构成硬约束）。
+ */
+export function executionBudgetWouldExceed(
+  state: ExecutionBudgetState,
+  policy: ExecutionBudgetPolicy,
+  extraActiveMs: number,
+): boolean {
+  const max = policy.maxActiveMs;
+  if (max === undefined || !Number.isFinite(max) || max <= 0) return false;
+  const projected = state.usage.activeMs + Math.max(0, extraActiveMs);
+  return projected >= max;
 }
 
 /** 每桶用量与上限（未配置上限的桶不出现在结果里）。 */
@@ -337,6 +363,12 @@ export function resolveExecutionBudgetPolicy(
       env.PAYASO_BUDGET_CONVERGE_RATIO,
       DEFAULT_EXECUTION_BUDGET_POLICY.convergeRatio,
     ),
+    ...(env.PAYASO_WRAPUP_MAX_OUTPUT_TOKENS === undefined
+      ? {}
+      : { wrapUpMaxOutputTokens: positiveInt(env.PAYASO_WRAPUP_MAX_OUTPUT_TOKENS) as number }),
+    ...(env.PAYASO_WRAPUP_MAX_ACTIVE_MS === undefined
+      ? {}
+      : { wrapUpMaxActiveMs: positiveInt(env.PAYASO_WRAPUP_MAX_ACTIVE_MS) as number }),
   };
   if (policy.warnRatio > policy.convergeRatio) {
     throw new Error('Invalid execution budget ratios: warnRatio must not exceed convergeRatio');

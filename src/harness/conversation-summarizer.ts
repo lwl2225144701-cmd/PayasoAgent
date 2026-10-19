@@ -18,6 +18,12 @@ export interface ConversationSummaryRequest {
   signal?: AbortSignal;
   /** 省略时退回"整段 JSON 塞进一条 user 消息"的冷启动写法。 */
   prefix?: ConversationSummaryPrefix;
+  /**
+   * 每次真实 Provider 请求（含内部重试）发生时回调。调用方（Harness）在请求
+   * **失败**时也能据此入账——否则 summarize 抛错时尝试次数随之丢失，
+   * "全部模型请求统一计量"在失败路径上漏账。
+   */
+  onModelCall?: () => void;
 }
 
 export interface ConversationSummaryResult {
@@ -127,10 +133,20 @@ export class LlmConversationSummarizer implements ConversationSummarizer {
     const { messages, tools } = buildSummaryConversation(request);
     // 摘要也是模型请求：按真实 Provider 请求计数（含内部重试），输出 token 取
     // 真实 usage（缺失记 0，不估算）——执行预算必须覆盖全部模型调用。
+    // onModelCall 同步给调用方：summarize 抛错时尝试次数不丢（失败也计量）。
     let modelCalls = 0;
-    const result = await chat(messages, tools, undefined, this.modelConfig, request.signal, () => {
+    const onAttempt = (): void => {
       modelCalls += 1;
-    });
+      request.onModelCall?.();
+    };
+    const result = await chat(
+      messages,
+      tools,
+      undefined,
+      this.modelConfig,
+      request.signal,
+      onAttempt,
+    );
     return {
       summary: stripThink(result.content),
       outputTokens: result.usage?.outputTokens ?? 0,

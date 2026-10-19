@@ -37,6 +37,53 @@ const BUDGET_TOOL_BLOCKED_MESSAGE =
   'EXECUTION_BUDGET_EXHAUSTED: this tool call was not executed (execution budget spent, no new tool work). ' +
   'Deliver the final answer now based on established results; state what is done and what is not.';
 
+/** 预算看门狗轮询间隔：请求进行中每 250ms 做一次投影判定（廉价，且测试可控）。 */
+const BUDGET_WATCHDOG_INTERVAL_MS = 250;
+
+/**
+ * 派生模型调用信号：把「用户取消」与「预算硬截止」合并成一个 AbortSignal。
+ *
+ * 为什么需要派生：v2.6 阶段二的持续长输出约束要求**请求进行中**就能中止——
+ * 累计活动时长越过 maxActiveMs 时不能等响应结束（那时模型可能已经又吐了几千
+ * token）。chat() 只接受一个 signal，因此这里把两个中止源汇到一个派生控制器：
+ *   - 用户取消：原样传播（语义不变，Host 仍按 stopped/用户主动处理）；
+ *   - 预算截止：onHardStop 先打标记（Runtime 据此与用户取消区分），再 abort。
+ * 没有 hardStop 时零开销，直接透传用户信号。
+ */
+function deriveModelCallSignal(
+  userSignal: AbortSignal | undefined,
+  hardStop: (() => boolean) | undefined,
+  onHardStop: () => void,
+): { signal: AbortSignal | undefined; dispose: () => void } {
+  if (!hardStop) return { signal: userSignal, dispose: () => {} };
+  const controller = new AbortController();
+  let settled = false;
+  const stop = (reason?: unknown): void => {
+    if (settled) return;
+    settled = true;
+    controller.abort(reason);
+  };
+  const timer = setInterval(() => {
+    if (hardStop()) {
+      onHardStop();
+      stop(new Error('execution budget exhausted during model request'));
+    }
+  }, BUDGET_WATCHDOG_INTERVAL_MS);
+  timer.unref?.();
+  const onUserAbort = (): void => stop(userSignal?.reason);
+  if (userSignal) {
+    if (userSignal.aborted) stop(userSignal.reason);
+    else userSignal.addEventListener('abort', onUserAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearInterval(timer);
+      userSignal?.removeEventListener('abort', onUserAbort);
+    },
+  };
+}
+
 // Harness may request a graceful stop after the current tool turn. This is
 // intentionally distinct from an execution error: Host turns it into the
 // normal stopped terminal state and can preserve the checkpoint for resume.
@@ -244,23 +291,26 @@ export async function runAgent(
     return true;
   };
 
+  // v2.6 执行预算（Harness 持有）：活动时长用单调标记做增量累计，避免
+  // 「每迭代重算 start→now」漏掉工具执行时间。恢复场景由 Harness 从
+  // checkpoint 累计值继续，新 Run 从零开始。
+  // 模型调用数按**真实 Provider 请求**计（onRequestSent 每次 HTTP 尝试 +1，
+  // 含 chat() 内部重试）——按成功响应计会漏算重试，违背「含每次重试」的口径。
+  // 声明在 try 之外：失败/取消路径的 catch 也要能入账（失败不漏账）。
+  let budgetMarkAt = performance.now();
+  let budgetModelCalls = 0;
+  // v2.6 阶段二强制收尾：耗尽后注入一次收尾指令，只保留预留的收尾生成；
+  // 模型若连续两轮仍发起工具调用（忽略收尾指令），Runtime 优雅停止。
+  let wrapUpInjected = false;
+  let wrapUpStartedAt: number | undefined;
+  let wrapUpIgnoredTurns = 0;
+  const MAX_WRAP_UP_IGNORED_TURNS = 2;
+  // v2.6：本次模型请求是否被预算硬截止中止（与用户取消、执行失败三方区分）。
+  let budgetAborted = false;
   try {
     // No fixed iteration cap: a turn continues while the model keeps
     // producing tool calls. Cancellation, tool safety, and the optional
     // Harness stop policy are the termination mechanisms.
-    // v2.6 执行预算（Harness 持有）：活动时长用单调标记做增量累计，避免
-    // 「每迭代重算 start→now」漏掉工具执行时间。恢复场景由 Harness 从
-    // checkpoint 累计值继续，新 Run 从零开始。
-    // 模型调用数按**真实 Provider 请求**计（onRequestSent 每次 HTTP 尝试 +1，
-    // 含 chat() 内部重试）——按成功响应计会漏算重试，违背「含每次重试」的口径。
-    // 请求发出后整轮失败的随 Run 终止，不再入账（失败即终态，无后续预算决策）。
-    let budgetMarkAt = performance.now();
-    let budgetModelCalls = 0;
-    // v2.6 阶段二强制收尾：耗尽后注入一次收尾指令，只保留预留的收尾生成；
-    // 模型若连续两轮仍发起工具调用（忽略收尾指令），Runtime 优雅停止。
-    let wrapUpInjected = false;
-    let wrapUpIgnoredTurns = 0;
-    const MAX_WRAP_UP_IGNORED_TURNS = 2;
     for (let i = startIter; ; i++) {
       // True cancellation（v1.6）：迭代边界检查 —— 上一轮工具完成后、发起新一轮
       // LLM 请求前生效。中途取消由 signal 传播进 chat()/tool 执行负责。
@@ -271,6 +321,7 @@ export async function runAgent(
       if ((contextHarness.executionBudgetLevel?.() ?? 'none') === 'exhausted') {
         if (!wrapUpInjected) {
           wrapUpInjected = true;
+          wrapUpStartedAt = performance.now();
           messages.push({ role: 'user', content: BUDGET_WRAP_UP_INSTRUCTION });
           save();
           observer.log('[预算] 执行预算耗尽，注入收尾指令，停止新工具工作');
@@ -381,25 +432,69 @@ export async function runAgent(
       // 鉴权头与少量请求参数不计，恒小于真实 body）。补这个字段之前，
       // 「请求体 ≤1.5MB / 图片不再全量 base64」这条验收项没有任何观测点。
       const requestBodyBytes = JSON.stringify([modelMessages, schemas]).length;
-      const assistantMsg = await chat(
-        modelMessages,
-        schemas,
-        contextHarness.reviewFinalAnswer ? undefined : opts.onStreamDelta,
-        opts.modelConfig,
-        opts.signal,
-        // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
-        // 拆成「Host 侧整理」与「Provider 首包/网络」两段。
-        (attempt) => {
-          // 每次真实 HTTP 请求（含 chat() 内部重试）都计入模型调用预算。
-          budgetModelCalls += 1;
-          emit({
-            type: 'llm_request_sent',
-            iteration: i + 1,
-            attempt,
-            requestBodyBytes,
-          });
-        },
-      );
+      // v2.6 阶段二：请求进行中的预算硬截止 + 收尾独立额度。
+      // hardStop 两种形态：常规请求 = 累计活动时长投影（usage.activeMs + 本次已
+      // 进行时间 ≥ maxActiveMs 即中止在途请求——持续长输出不能等响应结束才记账）；
+      // 收尾请求 = 独立的 wrapUp 时限（wrapUpStartedAt 起算，总预算已耗尽，
+      // 收尾另有小额，两者不互相侵蚀）。
+      const wrapUpActive = wrapUpInjected;
+      const hardStop = contextHarness.executionBudgetProjection
+        ? () => {
+            if (wrapUpActive) {
+              const wrapUpMaxMs = contextHarness.executionBudgetWrapUpLimits?.()?.maxActiveMs;
+              return (
+                wrapUpMaxMs !== undefined &&
+                wrapUpStartedAt !== undefined &&
+                performance.now() - wrapUpStartedAt >= wrapUpMaxMs
+              );
+            }
+            return (
+              contextHarness.executionBudgetProjection?.(performance.now() - budgetMarkAt) ?? false
+            );
+          }
+        : undefined;
+      budgetAborted = false;
+      const derived = deriveModelCallSignal(opts.signal, hardStop, () => {
+        budgetAborted = true;
+      });
+      // 收尾请求使用裁剪后的输出上限：独立小额额度，不用普通请求的完整上限。
+      const wrapUpLimits = wrapUpActive
+        ? contextHarness.executionBudgetWrapUpLimits?.()
+        : undefined;
+      const effectiveModelConfig =
+        wrapUpActive && wrapUpLimits?.maxOutputTokens !== undefined && opts.modelConfig
+          ? {
+              ...opts.modelConfig,
+              maxOutputTokens: Math.min(
+                opts.modelConfig.maxOutputTokens ?? wrapUpLimits.maxOutputTokens,
+                wrapUpLimits.maxOutputTokens,
+              ),
+            }
+          : opts.modelConfig;
+      let assistantMsg: ChatMessage & { usage?: TokenUsage };
+      try {
+        assistantMsg = await chat(
+          modelMessages,
+          schemas,
+          contextHarness.reviewFinalAnswer ? undefined : opts.onStreamDelta,
+          effectiveModelConfig,
+          derived.signal,
+          // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
+          // 拆成「Host 侧整理」与「Provider 首包/网络」两段。
+          (attempt) => {
+            // 每次真实 HTTP 请求（含 chat() 内部重试）都计入模型调用预算。
+            budgetModelCalls += 1;
+            emit({
+              type: 'llm_request_sent',
+              iteration: i + 1,
+              attempt,
+              requestBodyBytes,
+            });
+          },
+        );
+      } finally {
+        derived.dispose();
+      }
       // Provider reasoning_content and inline <think> blocks are trace/display
       // concerns only; neither is persisted into the next LLM context.
       const { reasoning_content } = assistantMsg;
@@ -574,25 +669,43 @@ export async function runAgent(
                 iteration: i + 1,
                 messageCount: reviewMessages.length,
               });
-              // 最终审查也是模型请求：计入执行预算（含内部重试与真实输出 token）。
+              // 最终审查也是模型请求：计入执行预算（含内部重试与真实输出 token），
+              // 并与主请求共用同一套预算硬截止 / 收尾额度（审查同样可能长输出）。
               let reviewModelCalls = 0;
               const reviewMarkAt = performance.now();
-              const reviewed = await chat(
-                reviewMessages,
-                [],
-                undefined,
-                opts.modelConfig,
-                opts.signal,
-                (attempt) => {
-                  reviewModelCalls += 1;
-                  emit({
-                    type: 'llm_request_sent',
-                    iteration: i + 1,
-                    attempt,
-                    requestBodyBytes: JSON.stringify(reviewMessages).length,
-                  });
-                },
-              );
+              budgetAborted = false;
+              const reviewDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
+                budgetAborted = true;
+              });
+              let reviewed: ChatMessage & { usage?: TokenUsage };
+              try {
+                reviewed = await chat(
+                  reviewMessages,
+                  [],
+                  undefined,
+                  effectiveModelConfig,
+                  reviewDerived.signal,
+                  (attempt) => {
+                    reviewModelCalls += 1;
+                    emit({
+                      type: 'llm_request_sent',
+                      iteration: i + 1,
+                      attempt,
+                      requestBodyBytes: JSON.stringify(reviewMessages).length,
+                    });
+                  },
+                );
+              } catch (reviewErr) {
+                // 交付检查请求失败也入账（尝试次数 + 活动时长）——失败路径不漏账。
+                contextHarness.observeExecution?.({
+                  modelCalls: reviewModelCalls,
+                  outputTokens: 0,
+                  activeMs: performance.now() - reviewMarkAt,
+                });
+                throw reviewErr;
+              } finally {
+                reviewDerived.dispose();
+              }
               const reviewDecision = contextHarness.observeExecution?.({
                 modelCalls: reviewModelCalls,
                 outputTokens: reviewed.usage?.outputTokens ?? 0,
@@ -788,6 +901,29 @@ export async function runAgent(
       // 5. 循环 → LLM 继续判断
     }
   } catch (err) {
+    // v2.6：失败 / 取消 / 预算中止路径都要入账——未计入的模型调用与活动时长随
+    // 终态 checkpoint 落盘。否则"全部模型请求统一计量"在失败路径上漏账：
+    // 主请求抛出前的 attempts（含内部重试）与此前累计的活动时长就此消失。
+    if (budgetModelCalls > 0 && contextHarness.observeExecution) {
+      contextHarness.observeExecution({
+        modelCalls: budgetModelCalls,
+        outputTokens: 0,
+        activeMs: performance.now() - budgetMarkAt,
+      });
+      budgetModelCalls = 0;
+      save();
+    }
+    // v2.6：请求进行中被预算硬截止中止 ≠ 用户取消 ≠ 执行失败。落优雅停止，
+    // Host 保存现场并以 budget_exhausted 说明——模型未产出可用响应，
+    // 绝不按 failed 计，也绝不冒充 completed。
+    if (budgetAborted) {
+      throw new AgentStopRequestedError({
+        code: 'budget_exhausted',
+        notice:
+          '执行预算（累计活动时长）在模型请求进行中耗尽，Runtime 已中止在途请求，未获得完整响应。' +
+          '以上为已建立的证据与部分结果；未完成部分因预算耗尽未能继续。',
+      });
+    }
     if (err instanceof AgentStopRequestedError) {
       // Graceful policy stop: preserve the running checkpoint without
       // emitting an error event. Host finalizes the Run as stopped.

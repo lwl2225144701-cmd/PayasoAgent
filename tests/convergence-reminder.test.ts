@@ -15,7 +15,7 @@ import path from 'node:path';
 import { createAgentExecutionContext } from '../src/bootstrap/runtime-bootstrap.js';
 import { DefaultContextHarness } from '../src/harness/context-harness.js';
 import { resolveModelContextConfig } from '../src/harness/model-context.js';
-import type { ChatMessage } from '../src/llm/llm.js';
+import type { ChatMessage, ModelConfig } from '../src/llm/llm.js';
 import { AgentStopRequestedError, runAgent } from '../src/runtime/agent.js';
 import type { CheckpointSnapshot } from '../src/runtime/checkpoint-port.js';
 import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
@@ -87,17 +87,32 @@ const done: ChatMessage = { role: 'assistant', content: 'done' };
 
 const originalFetch = globalThis.fetch;
 let requests: Array<Array<{ role: string; content: string }>> = [];
+// 请求体原文（收尾额度 max_tokens 断言用）。
+let requestBodies: string[] = [];
 function script(
   messages: ChatMessage[],
   onRequest?: (index: number) => void,
   failFirstFetch = false,
+  options: { delayMs?: number; alwaysFail?: boolean; slowAt?: number[] } = {},
 ) {
   requests = [];
+  requestBodies = [];
+  const delayMs = options.delayMs ?? 0;
+  const slowAt = options.slowAt;
   // 轮次与 fetch 次数解耦：内部重试属于同一轮，必须重放同一条脚本消息。
   let turn = 0;
   globalThis.fetch = (async (_url, init) => {
-    requests.push(JSON.parse(String(init?.body)).messages);
+    const body = String(init?.body);
+    requestBodies.push(body);
+    requests.push(JSON.parse(body).messages);
     onRequest?.(requests.length);
+    // slowAt（1 基请求序号）只拖慢指定请求；否则 delayMs 作用于全部请求。
+    const wait = slowAt ? (slowAt.includes(requests.length) ? delayMs : 0) : delayMs;
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    // 全部 5xx：chat() 内部重试耗尽后抛出——失败路径计量测试用。
+    if (options.alwaysFail) {
+      return new Response('boom', { status: 500 });
+    }
     // 瞬时 5xx：chat() 内部按 shouldRetry 自动重试，用于验证预算「含每次重试」。
     if (failFirstFetch && requests.length === 1) {
       return new Response('boom', { status: 500 });
@@ -135,7 +150,11 @@ const hasBudgetWarning = (messages: (typeof requests)[number]) =>
 const hasBudgetConverge = (messages: (typeof requests)[number]) =>
   contextText(messages).includes('[Execution budget nearly exhausted]');
 
-function options(runId: string, contextHarness: DefaultContextHarness) {
+function options(
+  runId: string,
+  contextHarness: DefaultContextHarness,
+  modelConfig: ModelConfig = MODEL,
+) {
   const root = path.join(ROOT, runId);
   fs.mkdirSync(root, { recursive: true });
   const snapshots: CheckpointSnapshot[] = [];
@@ -152,7 +171,7 @@ function options(runId: string, contextHarness: DefaultContextHarness) {
     },
     observer: silentRuntimeObserver,
     onTrace: (event: TraceEvent) => events.push(event),
-    modelConfig: MODEL,
+    modelConfig,
     contextHarness,
   };
 }
@@ -165,6 +184,13 @@ const budgetHarness = () =>
     modelConfig: MODEL,
     // maxModelCalls=4：第 3 次响应跨 70% 预警线，第 4 次到 100% 耗尽。
     executionBudget: { maxModelCalls: 4, warnRatio: 0.7, convergeRatio: 0.9 },
+  });
+// 仅配置累计活动时长上限：请求进行中的持续长输出约束专用。
+const timeBudgetHarness = (maxActiveMs: number) =>
+  new DefaultContextHarness({
+    permissionMode: 'workspace-write',
+    modelConfig: MODEL,
+    executionBudget: { maxActiveMs, warnRatio: 0.7, convergeRatio: 0.9 },
   });
 const goalReviewHarness = () =>
   new DefaultContextHarness({
@@ -498,6 +524,146 @@ try {
     );
     assert.equal(prepared.budgetDecisions?.[0]?.level, 'exhausted');
     assert.equal(prepared.budgetDecisions?.[0]?.state.usage.modelCalls, 3);
+    assert.equal(harness.executionBudgetLevel(), 'exhausted');
+  }
+
+  // ---- 6i. 请求进行中的持续长输出：累计时间越限即在途中止（不等响应结束）----
+  {
+    const run = options('budget-midrequest', timeBudgetHarness(1_200));
+    // 每个响应延迟 2.5s：第 1 个请求在 ~1.25s 处被看门狗中止
+    script([read(), read(), done], undefined, false, { delayMs: 2_500 });
+    const err = await runAgent('持续长输出的请求', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(err instanceof AgentStopRequestedError, '请求进行中预算耗尽 → 优雅停止（非 failed）');
+    assert.equal(err.stop?.code, 'budget_exhausted');
+    assert.ok(err.stop?.notice?.includes('进行中'), '停止说明指明请求进行中耗尽');
+    // 在途活动时长已入账（失败/中止路径不漏账）
+    const usage = run.snapshots.at(-1)?.harnessState?.executionBudget?.usage;
+    assert.ok((usage?.activeMs ?? 0) >= 1_200, '中止路径把在途时间计入预算');
+    // 语义三分：不是执行失败（无 error 事件），也不是用户取消
+    assert.equal(run.events.filter((e) => e.type === 'error').length, 0);
+  }
+
+  // ---- 6j. 预留收尾独立额度：收尾请求的输出上限被裁剪 ----
+  {
+    const run = options(
+      'budget-wrapup-tokens',
+      new DefaultContextHarness({
+        permissionMode: 'workspace-write',
+        modelConfig: { ...MODEL, maxOutputTokens: 4_096 },
+        executionBudget: {
+          maxModelCalls: 3,
+          warnRatio: 0.7,
+          convergeRatio: 0.9,
+          wrapUpMaxOutputTokens: 64,
+        },
+      }),
+      // runAgent 的 modelConfig 才是请求 max_tokens 的来源（harness 的那份只用于
+      // 上下文预算）——收尾裁剪改的是前者。
+      { ...MODEL, maxOutputTokens: 4_096 },
+    );
+    script([read(), read(), read(), done]);
+    assert.equal(await runAgent('耗尽后收尾', undefined, run), 'done');
+    const maxTokens = requestBodies.map((body) => {
+      try {
+        return (JSON.parse(body) as { max_tokens?: number }).max_tokens;
+      } catch {
+        return undefined;
+      }
+    });
+    assert.equal(maxTokens[3], 64, '收尾请求使用独立小额输出额度（不是普通请求的 4096）');
+    assert.equal(maxTokens[0], 4_096, '普通请求仍用完整上限');
+  }
+
+  // ---- 6k. 预留收尾独立时限：收尾请求本身也受小额时间预算约束 ----
+  {
+    const run = options(
+      'budget-wrapup-time',
+      new DefaultContextHarness({
+        permissionMode: 'workspace-write',
+        modelConfig: MODEL,
+        executionBudget: {
+          maxModelCalls: 3,
+          warnRatio: 0.7,
+          convergeRatio: 0.9,
+          wrapUpMaxActiveMs: 800,
+        },
+      }),
+    );
+    // 只拖慢第 4 个请求（收尾请求）：2.5s > wrapUpMaxActiveMs 800ms → 收尾时限中止
+    script([read(), read(), read(), done], undefined, false, { slowAt: [4], delayMs: 2_500 });
+    const err = await runAgent('收尾也超时', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(err instanceof AgentStopRequestedError, '收尾请求超独立时限 → 优雅停止');
+    assert.equal(err.stop?.code, 'budget_exhausted');
+    assert.equal(run.events.filter((e) => e.type === 'error').length, 0);
+  }
+
+  // ---- 6l. 主请求失败也入账：attempts（含内部重试）不丢 ----
+  {
+    const run = options('budget-fail-meter', budgetHarness());
+    // 全部 5xx：chat() 内部重试 2 次后抛出
+    script([read(), done], undefined, false, { alwaysFail: true });
+    const err = await runAgent('全部请求失败', undefined, run).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(
+      err instanceof Error && !(err instanceof AgentStopRequestedError),
+      '执行失败（非优雅停止）',
+    );
+    const sent = run.events.filter((e) => e.type === 'llm_request_sent').length;
+    const metered = run.snapshots.at(-1)?.harnessState?.executionBudget?.usage?.modelCalls;
+    assert.ok(sent >= 1, '确实发出了请求');
+    assert.equal(metered, sent, '失败路径的模型调用 attempts 全部入账');
+  }
+
+  // ---- 6m. 摘要请求失败也入账：压缩失败不跳过计量 ----
+  {
+    const harness = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelConfig: MODEL,
+      modelContext: resolveModelContextConfig({
+        model: 'compact-fail',
+        contextWindowTokens: 600,
+        maxOutputTokens: 200,
+        safetyTokens: 100,
+      }),
+      executionBudget: { maxModelCalls: 1, warnRatio: 0.7, convergeRatio: 0.9 },
+      summarizer: {
+        summarize: async (request) => {
+          // 请求已发生（随后失败）：attempt 必须可被调用方入账
+          request.onModelCall?.();
+          throw new Error('summary upstream 500');
+        },
+      },
+    });
+    const transcript: ChatMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'x'.repeat(400) },
+      { role: 'assistant', content: 'y'.repeat(400) },
+      { role: 'user', content: 'z'.repeat(400) },
+    ];
+    const padView = {
+      task: 't',
+      completedSteps: [],
+      failedSteps: [],
+      invalidSteps: [],
+      nextStep: null,
+      lastResult: '',
+    };
+    const prepared = await harness.prepareTurn(transcript, padView, []);
+    assert.equal(prepared.compaction, undefined, '摘要失败不改写压缩状态');
+    // 失败的尝试计入预算：1/1 → exhausted 决策随 prepareTurn 回传
+    assert.ok(
+      prepared.budgetDecisions && prepared.budgetDecisions.length > 0,
+      '失败的摘要尝试入账并回传 Runtime',
+    );
+    assert.equal(prepared.budgetDecisions?.[0]?.level, 'exhausted');
     assert.equal(harness.executionBudgetLevel(), 'exhausted');
   }
 

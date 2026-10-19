@@ -28,6 +28,7 @@ import {
   type ExecutionBudgetState,
   type ExecutionBudgetUsage,
   executionBudgetBucketsFor,
+  executionBudgetWouldExceed,
   normalizeExecutionBudgetState,
   renderExecutionBudgetRemaining,
   renderExecutionBudgetReminder,
@@ -186,6 +187,12 @@ export interface AgentContextHarness {
   // v2.6：当前预算档位（粘滞、单调不降）。Runtime 在模型调用前与每个工具执行前
   // 做准入检查；exhausted 即停止新工作，只保留预留的收尾生成。
   executionBudgetLevel?(): ExecutionBudgetLevel;
+  // v2.6：请求进行中的预算投影——把「本次请求已进行的时间」叠加到累计用量上，
+  // 判断是否已越过 maxActiveMs。Runtime 每 250ms 轮询一次，为 true 即中止在途
+  // 请求（持续长输出的硬约束；不配置 maxActiveMs 恒 false）。
+  executionBudgetProjection?(elapsedMs: number): boolean;
+  // v2.6：预留收尾的独立小额额度（收尾请求专用；未启用预算时 undefined）。
+  executionBudgetWrapUpLimits?(): { maxOutputTokens?: number; maxActiveMs?: number } | undefined;
   // 模型成功响应后才消费待发送提醒；请求失败/取消时保留，供恢复后继续投影。
   acknowledgeProgressReminder?(): boolean;
   // v2.6：消费全部待投递提醒（重复调用 + 执行预算）。与 progress 的 acknowledge 同
@@ -650,6 +657,23 @@ export class DefaultContextHarness implements AgentContextHarness {
     return 'none';
   }
 
+  executionBudgetProjection(elapsedMs: number): boolean {
+    if (!this.executionBudgetPolicy) return false;
+    return executionBudgetWouldExceed(
+      normalizeExecutionBudgetState(this.state.executionBudget),
+      this.executionBudgetPolicy,
+      elapsedMs,
+    );
+  }
+
+  executionBudgetWrapUpLimits(): { maxOutputTokens?: number; maxActiveMs?: number } | undefined {
+    if (!this.executionBudgetPolicy) return undefined;
+    return {
+      maxOutputTokens: this.executionBudgetPolicy.wrapUpMaxOutputTokens,
+      maxActiveMs: this.executionBudgetPolicy.wrapUpMaxActiveMs,
+    };
+  }
+
   /**
    * 待投递提醒的注入文本（prepareTurn → [Context] 末尾）。
    * 桶名缺失时按当前实际用量重算，保证渲染的一定是真实比例。
@@ -1015,6 +1039,9 @@ export class DefaultContextHarness implements AgentContextHarness {
       128,
       Math.min(4_096, Math.floor(this.modelContext.maxInputTokens * 0.08)),
     );
+    // 摘要请求的尝试次数：成功走返回值，失败走 onModelCall 回调——
+    // 两条路都要入账，否则 summarize 抛错时这次模型调用从预算里消失。
+    let summaryAttempts = 0;
     try {
       const cacheAligned = removedMessages[0]?.role !== 'tool' && removedMessages.length > 0;
       const summary = await this.summarizer.summarize({
@@ -1024,10 +1051,13 @@ export class DefaultContextHarness implements AgentContextHarness {
         signal,
         // P2-E：复现上一请求的真前缀（system + tools + 被压缩区域）。
         prefix: cacheAligned ? { system: this.systemPromptText(), tools } : undefined,
+        onModelCall: () => {
+          summaryAttempts += 1;
+        },
       });
       // 全部模型请求统一计量：摘要调用计入执行预算（含内部重试与真实输出 token）。
       this.advanceBudgetForPrepare({
-        modelCalls: summary.modelCalls,
+        modelCalls: Math.max(summaryAttempts, summary.modelCalls),
         outputTokens: summary.outputTokens,
         activeMs: 0,
       });
@@ -1055,6 +1085,12 @@ export class DefaultContextHarness implements AgentContextHarness {
       };
     } catch {
       // Summary is an optimization：摘要失败不改写状态，调用方保持现状。
+      // 但请求已经发生：至少一次尝试必须计入预算（失败路径不漏账）。
+      this.advanceBudgetForPrepare({
+        modelCalls: Math.max(1, summaryAttempts),
+        outputTokens: 0,
+        activeMs: 0,
+      });
       return null;
     }
   }

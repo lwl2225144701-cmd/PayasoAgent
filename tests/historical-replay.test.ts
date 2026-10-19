@@ -5,20 +5,21 @@
 // **覆盖范围**——对真实发生过的不收敛 Run，新机制是能兜住、还是只会
 // 误报？对正常长任务，新机制是保持安静、还是吵闹？本套件用两类证据回答：
 //
-// A. 历史回放（fixture = 治理报告复盘的 Run ae568d19，43 次工具调用 /
-//    29 次模型调用 / 2 次失败，从 ~/.payaso/payaso.db 事件表一次性提取，
-//    之后完全离线，不依赖活库）：
+// A. 历史回放（fixture = 治理报告复盘的 Run ae568d19，从 ~/.payaso/payaso.db
+//    事件表一次性提取后完全离线）。**回合口径与真实执行一致**：fixture 按
+//    llm_call 边界划分回合——一轮模型响应后的多个工具执行完才计一个工具
+//    回合（与 runAgent 调用 observeToolTurn 的时序相同）。该 Run 共 29 个模型
+//    回合，其中 28 个含工具调用（43 次工具调用分布其中）：
 //    - repeat-call：0 次提醒——真实 Run 最长连续相同调用仅 1 次，
 //      新统计不在这个 Run 上误报（与治理报告的回放结论一致）；
-//    - goal-review：默认阈值下触发 4 次——旧机制（只读 8 回合/120s、
-//      同参数重复）对这个 Run 全部脱靶，新机制按全部工具回合能兜住；
-//    - budget：maxModelCalls=20 时第 20 次模型调用即耗尽——这个 15 分
-//      38 秒的 Run 会被机械边界挡住，而不是跑到调用方耐心耗尽。
+//    - goal-review：默认阈值（10 回合）下触发 **2 次**（第 10、20 个工具
+//      回合）——旧机制（只读 8 回合/120s、同参数重复）对这个 Run 全部脱靶；
+//    - budget：maxModelCalls=20 时**执行在第 20 个回合边界停止**——准入判定
+//      拦住后续 9 个回合（不是只打一个 exhausted 标记继续跑），这正是
+//      "模型即使忽略提醒也无法继续无限调用"的机械证明。
 //
-// B. 正常长任务（合成的合法多步工作：不同文件、不同命令、合法轮询）：
-//    - repeat-call 0 提醒（换参数是合法工作，不是不收敛）；
-//    - goal-review 按周期触发但不阻断，任务走到终态；
-//    - 预算默认关闭时零事件（默认行为不变）。
+// B. 正常长任务（合成的合法多步工作）：15 个回合不同文件/命令/合法轮询，
+//    repeat-call 0 提醒、goal-review 第 10 回合触发 1 次且不阻断。
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -58,12 +59,18 @@ interface FixtureCall {
   args: Record<string, unknown>;
   disposition: ToolInvocationObservation['disposition'];
 }
+interface FixtureTurn {
+  iteration: number;
+  durationMs: number;
+  outputTokens: number;
+  calls: FixtureCall[];
+}
 interface Fixture {
   runId: string;
   source: string;
   modelCalls: number;
   outputTokens: number;
-  toolCalls: FixtureCall[];
+  turns: FixtureTurn[];
 }
 
 const fixture = JSON.parse(
@@ -73,23 +80,37 @@ const fixture = JSON.parse(
   ),
 ) as Fixture;
 
+const allCalls: FixtureCall[] = fixture.turns.flatMap((turn) => turn.calls);
+const toolTurns = fixture.turns.filter((turn) => turn.calls.length > 0);
+
+function freshBudgetState(): ExecutionBudgetState {
+  return {
+    usage: { modelCalls: 0, outputTokens: 0, activeMs: 0 },
+    warned: { modelCalls: false, outputTokens: false, activeMs: false },
+    converged: { modelCalls: false, outputTokens: false, activeMs: false },
+    exhausted: [],
+  };
+}
+
 check('fixture 完整性（与治理报告记录一致）', () => {
   assert.equal(fixture.runId, 'ae568d19-c0bb-4124-9237-85e278083269');
-  assert.equal(fixture.toolCalls.length, 43, '43 次工具调用');
+  assert.equal(fixture.turns.length, 29, '29 个模型回合（llm_call 边界）');
+  assert.equal(toolTurns.length, 28, '28 个含工具调用的回合');
+  assert.equal(allCalls.length, 43, '43 次工具调用');
   assert.equal(fixture.modelCalls, 29, '29 次模型调用');
   assert.equal(fixture.outputTokens, 60824, '60824 输出 token');
   assert.equal(
-    fixture.toolCalls.filter((c) => c.disposition === 'failed').length,
+    allCalls.filter((c) => c.disposition === 'failed').length,
     2,
     '2 次失败调用（tool_error 配对）',
   );
 });
 
-// ---- A1. 历史回放：repeat-call 零误报 ----
+// ---- A1. 历史回放：repeat-call 零误报（按真实调用顺序）----
 check('历史回放：repeat-call 0 提醒（真实 Run 不误报）', () => {
   let state: RepeatCallState | undefined;
   const reminders: number[] = [];
-  for (const call of fixture.toolCalls) {
+  for (const call of allCalls) {
     const step = advanceRepeatCall(
       state,
       { tool: call.tool, args: call.args, disposition: call.disposition, attempts: 1 },
@@ -99,17 +120,16 @@ check('历史回放：repeat-call 0 提醒（真实 Run 不误报）', () => {
     if (step.reminder) reminders.push(step.reminder.level);
   }
   assert.deepEqual(reminders, [], '该 Run 最长连续相同调用仅 1 次，不应有任何提醒');
-  assert.ok(state && state.count >= 1, '计数仍在推进（最后一次调用的连续性）');
 });
 
-// ---- A2. 历史回放：goal-review 能兜住（旧机制全部脱靶的那个 Run）----
-check('历史回放：goal-review 默认阈值触发 4 次（43 回合 / 10）', () => {
+// ---- A2. 历史回放：goal-review 按真实工具回合触发 ----
+check('历史回放：goal-review 默认阈值触发 2 次（28 个工具回合 / 10）', () => {
   let state: GoalReviewState = normalizeGoalReviewState(undefined);
-  let reviews = 0;
-  for (let i = 0; i < fixture.toolCalls.length; i++) {
+  const reviewTurns: number[] = [];
+  for (const turn of toolTurns) {
     const step = advanceGoalReview(
       state,
-      { durationMs: 20_000 },
+      { durationMs: turn.durationMs },
       {
         everyTurns: 10,
         everyMs: 10_000_000, // 隔离回合维度
@@ -117,80 +137,112 @@ check('历史回放：goal-review 默认阈值触发 4 次（43 回合 / 10）',
     );
     state = step.state;
     if (step.reminder) {
-      reviews++;
-      // 回放要模拟真实时序：提醒注入后由 acknowledge 落 delivered，
-      // 否则 pending 期间不重复触发，只能数到第 1 次。
+      reviewTurns.push(step.reminder.toolTurns);
+      // 真实时序：提醒注入后由 acknowledge 落 delivered，周期才能继续
       state = { ...state, review: 'delivered' };
     }
   }
-  assert.equal(reviews, 4, '43 个工具回合 → 4 次周期审查');
-  // 第 4 次审查（第 40 回合）投递后周期重启，41-43 回合在新周期计数中
-  assert.equal(state.review, 'none');
-  assert.equal(state.toolTurns, 3);
+  // reminder.toolTurns 是**周期内**计数（触发即重置），两个周期都报 10
+  assert.deepEqual(reviewTurns, [10, 10], '第 10、20 个工具回合各触发一次审查');
 });
 
-// ---- A3. 历史回放：预算在机械边界挡住这个 Run ----
-check('历史回放：maxModelCalls=20 时第 20 次模型调用耗尽', () => {
-  const policy: ExecutionBudgetPolicy = {
-    maxModelCalls: 20,
-    warnRatio: 0.7,
-    convergeRatio: 0.9,
-  };
-  let state: ExecutionBudgetState = {
-    usage: { modelCalls: 0, outputTokens: 0, activeMs: 0 },
-    warned: { modelCalls: false, outputTokens: false, activeMs: false },
-    converged: { modelCalls: false, outputTokens: false, activeMs: false },
-    exhausted: [],
-  };
+// ---- A3. 历史回放：预算在执行边界停止（不是只打标记）----
+check('历史回放：maxModelCalls=20 时执行在第 20 回合边界停止', () => {
+  const policy: ExecutionBudgetPolicy = { maxModelCalls: 20, warnRatio: 0.7, convergeRatio: 0.9 };
+  let state = freshBudgetState();
   const levels: string[] = [];
-  for (let i = 1; i <= fixture.modelCalls; i++) {
-    const usage: ExecutionBudgetUsage = { modelCalls: 1, outputTokens: 0, activeMs: 30_000 };
+  let executedTurns = 0;
+  let stopped = false;
+  for (const turn of fixture.turns) {
+    // 准入判定（与 agent.ts 迭代顶部一致）：exhausted 即停止新工作
+    if (state.exhausted.length > 0) {
+      stopped = true;
+      break;
+    }
+    executedTurns += 1;
+    const usage: ExecutionBudgetUsage = {
+      modelCalls: 1,
+      outputTokens: turn.outputTokens,
+      activeMs: turn.durationMs,
+    };
     const decision = advanceExecutionBudget(state, usage, policy);
     state = decision.state;
     if (decision.buckets.length > 0) levels.push(decision.level);
   }
+  assert.equal(executedTurns, 20, '只执行了 20 个回合就被准入拦下');
+  assert.equal(stopped, true, '执行在边界停止，不是跑完 29 回合再打标记');
+  assert.equal(fixture.turns.length - executedTurns, 9, '后续 9 个回合未执行');
   assert.deepEqual(
     levels,
     ['warn', 'converge', 'exhausted'],
     '第 14 次（70%）预警、第 18 次（90%）收敛、第 20 次耗尽',
   );
-  assert.equal(state.usage.modelCalls, 29, '回放跑完整个 Run 的累计');
 });
 
-check('历史回放：maxOutputTokens=50000 也会在输出维度耗尽', () => {
+check('历史回放：maxActiveMs=300000 时执行在累计 5 分钟边界停止', () => {
   const policy: ExecutionBudgetPolicy = {
-    maxOutputTokens: 50_000,
+    maxActiveMs: 300_000,
     warnRatio: 0.7,
     convergeRatio: 0.9,
   };
-  let state: ExecutionBudgetState = {
-    usage: { modelCalls: 0, outputTokens: 0, activeMs: 0 },
-    warned: { modelCalls: false, outputTokens: false, activeMs: false },
-    converged: { modelCalls: false, outputTokens: false, activeMs: false },
-    exhausted: [],
-  };
+  let state = freshBudgetState();
   const levels: string[] = [];
-  const perCall = Math.floor(fixture.outputTokens / fixture.modelCalls);
-  for (let i = 1; i <= fixture.modelCalls; i++) {
+  let executedTurns = 0;
+  let stopped = false;
+  for (const turn of fixture.turns) {
+    if (state.exhausted.length > 0) {
+      stopped = true;
+      break;
+    }
+    executedTurns += 1;
     const decision = advanceExecutionBudget(
       state,
-      { modelCalls: 1, outputTokens: perCall, activeMs: 0 },
+      { modelCalls: 1, outputTokens: turn.outputTokens, activeMs: turn.durationMs },
       policy,
     );
     state = decision.state;
     if (decision.buckets.length > 0) levels.push(decision.level);
   }
-  assert.deepEqual(
-    levels,
-    ['warn', 'converge', 'exhausted'],
-    '输出 token 维度同样兜底（70%/90%/100% 三档）',
-  );
+  assert.ok(stopped, '时间维度同样在执行边界停止');
+  assert.equal(executedTurns, 7, '第 7 回合（单回合 55s）跨过 300s 上限即停止');
+  // 该回合一步跨过 90% 与 100% 两条线：advanceExecutionBudget 优先判 exhausted，
+  // converge 档被跳过是正确行为（不会补播一个已被越过 intermediate 档）。
+  assert.deepEqual(levels, ['warn', 'exhausted']);
+});
+
+check('历史回放：maxOutputTokens=50000 时输出维度在执行边界停止', () => {
+  const policy: ExecutionBudgetPolicy = {
+    maxOutputTokens: 50_000,
+    warnRatio: 0.7,
+    convergeRatio: 0.9,
+  };
+  let state = freshBudgetState();
+  const levels: string[] = [];
+  let executedTurns = 0;
+  let stopped = false;
+  for (const turn of fixture.turns) {
+    if (state.exhausted.length > 0) {
+      stopped = true;
+      break;
+    }
+    executedTurns += 1;
+    const decision = advanceExecutionBudget(
+      state,
+      { modelCalls: 1, outputTokens: turn.outputTokens, activeMs: turn.durationMs },
+      policy,
+    );
+    state = decision.state;
+    if (decision.buckets.length > 0) levels.push(decision.level);
+  }
+  assert.ok(stopped, '输出 token 维度同样兜底');
+  assert.ok(executedTurns < fixture.turns.length);
+  assert.deepEqual(levels, ['warn', 'converge', 'exhausted']);
 });
 
 // ---- B. 正常长任务：合法多步工作零误报、不阻断 ----
 check('正常长任务：15 回合不同文件/命令/轮询的合法工作零重复提醒', () => {
   // 模拟一个正常的"读代码 → 改代码 → 跑测试 → 轮询 CI"长任务：
-  // 参数全都不同（合法换参数），只有最后一组是同一个轮询调用 ×3。
+  // 参数全都不同（合法换参数），只有最后一组是同一个轮询调用 ×2（未到阈值 3）。
   const plan: FixtureCall[] = [];
   for (let i = 0; i < 4; i++)
     plan.push({ tool: 'read', args: { path: `src/mod-${i}.ts` }, disposition: 'executed' });
@@ -210,7 +262,6 @@ check('正常长任务：15 回合不同文件/命令/轮询的合法工作零�
     });
   for (let i = 0; i < 2; i++)
     plan.push({ tool: 'read', args: { path: `test/report-${i}.md` }, disposition: 'executed' });
-  // 合法轮询：同一调用连续 2 次（未到阈值 3）
   for (let i = 0; i < 2; i++)
     plan.push({
       tool: 'shellJob',
@@ -242,24 +293,20 @@ check('正常长任务：目标审查按周期触发但不阻断（15 回合 →
       { everyTurns: 10, everyMs: 10_000_000 },
     );
     state = step.state;
-    if (step.reminder) reviews++;
-    // 投递后 acknowledge：delivered 状态进入下一周期
-    if (step.reminder) state = { ...state, review: 'delivered' };
+    if (step.reminder) {
+      reviews++;
+      state = { ...state, review: 'delivered' };
+    }
   }
   assert.equal(reviews, 1, '第 10 回合触发一次');
   assert.equal(state.toolTurns, 5, '审查后周期重新计数（15 - 10）');
 });
 
 check('正常长任务：预算默认关闭时三个策略零事件', () => {
-  // 未配置任何上限 → resolveExecutionBudgetPolicy 返回 false → Harness 不启用
-  // （行为与引入前一致）。这里直接验证策略函数在无上限时的空转语义。
+  // 未配置任何上限 → 策略函数空转（Harness 层 resolveExecutionBudgetPolicy
+  // 返回 false，行为与引入前一致）。这里验证纯函数在无上限时的语义。
   const policy: ExecutionBudgetPolicy = { warnRatio: 0.7, convergeRatio: 0.9 };
-  let state: ExecutionBudgetState = {
-    usage: { modelCalls: 0, outputTokens: 0, activeMs: 0 },
-    warned: { modelCalls: false, outputTokens: false, activeMs: false },
-    converged: { modelCalls: false, outputTokens: false, activeMs: false },
-    exhausted: [],
-  };
+  let state = freshBudgetState();
   for (let i = 0; i < 100; i++) {
     const decision = advanceExecutionBudget(
       state,

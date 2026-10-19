@@ -18,6 +18,7 @@ import {
   type ExecutionBudgetUsage,
   executionBudgetBucketsFor,
   executionBudgetRatios,
+  executionBudgetWouldExceed,
   normalizeExecutionBudgetState,
   renderExecutionBudgetReminder,
   resolveExecutionBudgetPolicy,
@@ -217,6 +218,72 @@ check('env：off 优先于任何上限（策略开关最高）', () => {
   );
 });
 
+// ---- 请求进行中的投影判定（持续长输出约束）----
+
+check('投影判定：累计 + 在途时间越过 maxActiveMs 才为 true', () => {
+  const policy: ExecutionBudgetPolicy = {
+    maxActiveMs: 100_000,
+    warnRatio: 0.7,
+    convergeRatio: 0.9,
+  };
+  const state = createExecutionBudgetState();
+  assert.equal(executionBudgetWouldExceed(state, policy, 99_999), false, '差 1ms 也不算越界');
+  assert.equal(executionBudgetWouldExceed(state, policy, 100_000), true, '到达上限即越界');
+  const used = normalizeExecutionBudgetState({
+    usage: { modelCalls: 1, outputTokens: 0, activeMs: 60_000 },
+    warned: {},
+    converged: {},
+    exhausted: [],
+  });
+  assert.equal(executionBudgetWouldExceed(used, policy, 39_999), false);
+  assert.equal(executionBudgetWouldExceed(used, policy, 40_000), true, '累计与在途叠加');
+});
+
+check('投影判定：未配置 maxActiveMs 恒 false（该维度不构成硬约束）', () => {
+  const policy: ExecutionBudgetPolicy = { maxModelCalls: 5, warnRatio: 0.7, convergeRatio: 0.9 };
+  assert.equal(executionBudgetWouldExceed(createExecutionBudgetState(), policy, 10_000_000), false);
+});
+
+check('投影判定：坏输入（负在途时间）按 0 计，不误判', () => {
+  const policy: ExecutionBudgetPolicy = { maxActiveMs: 1_000, warnRatio: 0.7, convergeRatio: 0.9 };
+  const state = normalizeExecutionBudgetState({
+    usage: { modelCalls: 0, outputTokens: 0, activeMs: 999 },
+    warned: {},
+    converged: {},
+    exhausted: [],
+  });
+  assert.equal(executionBudgetWouldExceed(state, policy, -500), false);
+  assert.equal(executionBudgetWouldExceed(state, policy, 1), true);
+});
+
+// ---- 预留收尾的独立额度 ----
+
+check('wrap-up 额度有默认值（收尾不是普通请求的完整上限）', () => {
+  assert.equal(DEFAULT_EXECUTION_BUDGET_POLICY.wrapUpMaxOutputTokens, 1_024);
+  assert.equal(DEFAULT_EXECUTION_BUDGET_POLICY.wrapUpMaxActiveMs, 60_000);
+  const p = resolveExecutionBudgetPolicy({ PAYASO_MAX_MODEL_CALLS: '10' });
+  assert.equal(p && p.wrapUpMaxOutputTokens, 1_024, '启用预算即带收尾额度');
+  assert.equal(p && p.wrapUpMaxActiveMs, 60_000);
+});
+
+check('wrap-up 额度可被 env 覆盖；非法值报错（不静默退化）', () => {
+  const p = resolveExecutionBudgetPolicy({
+    PAYASO_MAX_MODEL_CALLS: '10',
+    PAYASO_WRAPUP_MAX_OUTPUT_TOKENS: '256',
+    PAYASO_WRAPUP_MAX_ACTIVE_MS: '15000',
+  });
+  assert.equal(p && p.wrapUpMaxOutputTokens, 256);
+  assert.equal(p && p.wrapUpMaxActiveMs, 15_000);
+  assert.throws(
+    () =>
+      resolveExecutionBudgetPolicy({
+        PAYASO_MAX_MODEL_CALLS: '10',
+        PAYASO_WRAPUP_MAX_ACTIVE_MS: '0',
+      }),
+    /Invalid execution budget limit/,
+  );
+});
+
 check('env：三类上限与比例均可覆盖', () => {
   const p = resolveExecutionBudgetPolicy({
     PAYASO_MAX_MODEL_CALLS: '50',
@@ -231,6 +298,9 @@ check('env：三类上限与比例均可覆盖', () => {
     maxActiveMs: 600_000,
     warnRatio: 0.6,
     convergeRatio: 0.8,
+    // v2.6：启用预算即携带收尾额度（未显式覆盖时取默认值）
+    wrapUpMaxOutputTokens: DEFAULT_EXECUTION_BUDGET_POLICY.wrapUpMaxOutputTokens,
+    wrapUpMaxActiveMs: DEFAULT_EXECUTION_BUDGET_POLICY.wrapUpMaxActiveMs,
   });
 });
 

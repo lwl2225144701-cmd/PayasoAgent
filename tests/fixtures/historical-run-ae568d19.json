@@ -1,426 +1,628 @@
 {
  "runId": "ae568d19-c0bb-4124-9237-85e278083269",
- "source": "~/.payaso/payaso.db events 表（2026-10-18 治理复盘 Run；tool_error 配对的调用 disposition=failed）",
+ "source": "~/.payaso/payaso.db events 表（2026-10-18 治理复盘 Run）。turns 按 llm_call 边界划分（与 runAgent 迭代一致：一轮模型响应后的多个工具执行完才计一个工具回合）；tool_error 配对的调用 disposition=failed。",
  "modelCalls": 29,
  "outputTokens": 60824,
- "toolCalls": [
+ "turns": [
   {
-   "tool": "shellJob",
-   "args": {
-    "action": "output",
-    "jobId": "job-1"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('remaining='+c.remaining,'limit='+c.limit,'reset_in_s='+(c.reset-now))}).catch(e=>console.log('ERR',e.message))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nconst sleep=(ms)=>new Promise((r)=>setTimeout(r,ms));\nconst H={\"user-agent\":\"payaso-agent-inventory\",\"accept\":\"application/vnd.github+json\"};\nasync function get(url){const r=await fetch(url,{headers:H});const t=await r.text();let b=null;try{b=JSON.parse(t)}catch{}return {status:r.status,body:b,raw:t.slice(0,200)};}\n(async()=>{\n  for(let i=0;i<40;i++){\n    const r=await fetch(\"https://api.github.com/rate_limit\",{headers:H});\n    const j=await r.json();const c=j.resources.core;\n    if(c.remaining>0){console.log(\"[quota] remaining=\"+c.remaining);break;}\n    const s=Math.max(0,c.reset-Math.floor(Date.now()/1000))+3;\n    console.log(\"[quota] limited, wait \"+s+\"s\");\n    await sleep(s*1000);\n  }\n  const repo=\"lwl2225144701-cmd/PayasoAgent\";\n  const rels=[];\n  for(let p=1;p<=3;p++){\n    const r=await get(\"https://api.github.com/repos/\"+repo+\"/releases?per_page=100&page=\"+p);\n    if(r.status!==200){console.log(\"releases HTTP \"+r.status+\" \"+r.raw);break;}\n    if(!Array.isArray(r.body)||r.body.length===0)break;\n    for(const x of r.body)rels.push({tag:x.tag_name,created:(x.created_at||\"\").slice(0,19),assets:(x.assets||[]).length,draft:x.draft,pre:x.prerelease});\n    if(r.body.length<100)break;\n  }\n  rels.sort((a,b)=>(a.tag<b.tag?1:-1));\n  console.log(\"=== RELEASES (\"+rels.length+\") ===\");\n  for(const r of rels)console.log(r.tag+\"  created=\"+r.created+\"  assets=\"+r.assets+(r.draft?\"  DRAFT\":\"\")+(r.pre?\"  PRE\":\"\"));\n  const tags=[];\n  for(let p=1;p<=3;p++){\n    const r=await get(\"https://api.github.com/repos/\"+repo+\"/tags?per_page=100&page=\"+p);\n    if(r.status!==200){console.log(\"tags HTTP \"+r.status+\" \"+r.raw);break;}\n    if(!Array.isArray(r.body)||r.body.length===0)break;\n    for(const x of r.body)tags.push(x.name);\n    if(r.body.length<100)break;\n  }\n  console.log(\"=== REMOTE TAGS (\"+tags.length+\") ===\");\n  console.log(tags.sort((a,b)=>(a<b?1:-1)).join(\" \"));\n})().catch(e=>console.log(\"FATAL \"+String(e)));\n' 2>&1 | tail -60",
-    "timeoutMs": 300000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;console.log('core: remaining='+c.remaining+'/'+c.limit+'  reset_in_s='+(c.reset-Math.floor(Date.now()/1000)))}).catch(e=>console.log('ERR',e.message))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "for t in v0.3.5 v0.4.0 v0.4.1 v0.4.2 v0.4.3 v0.4.4 v0.4.5 v0.4.10 v0.4.11 v0.4.12; do c=$(git rev-parse -q --verify \"$t^{commit}\"); if git merge-base --is-ancestor \"$c\" main; then echo \"$t  ${c:0:8}  在 main 上（删 tag 不丢提交）\"; else echo \"$t  ${c:0:8}  !! 不在 main，删 tag 会孤立提交\"; fi; done"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "git log --oneline -3; echo \"=== status ===\"; git status --porcelain | head -20; echo \"=== branch ===\"; git status -sb | head -2"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "read",
-   "args": {
-    "path": "Casks/payasoagent.rb"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nconst H={\"user-agent\":\"payaso-agent-inventory\",\"accept\":\"application/vnd.github+json\"};\nconst repo=\"lwl2225144701-cmd/PayasoAgent\";\n(async()=>{\n for(const tag of [\"v0.4.16\",\"v0.4.14\"]){\n  const r=await fetch(\"https://api.github.com/repos/\"+repo+\"/releases/tags/\"+tag,{headers:H});\n  const j=await r.json();\n  console.log(\"=== \"+tag+\"  (\"+ (j.assets||[]).length +\" assets) ===\");\n  for(const a of (j.assets||[])) console.log(\"   \"+a.name+\"  \"+(a.size/1048576).toFixed(1)+\"MiB\");\n }\n})().catch(e=>console.log(\"ERR\",e.message));'",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "for t in v2.2.0 v1.0.0-local-mvp v0.3.5; do c=$(git rev-parse -q --verify \"$t^{commit}\"); if git merge-base --is-ancestor \"$c\" main; then echo \"$t  ${c:0:8}  在 main 上\"; else echo \"$t  ${c:0:8}  !! 不在 main（删 tag 会孤立提交）\"; fi; done; echo \"--- 全部 tag 是否都在 main 上 ---\"; miss=0; for t in $(git tag); do c=$(git rev-parse -q --verify \"$t^{commit}\"); git merge-base --is-ancestor \"$c\" main || { echo \"孤立: $t\"; miss=1; }; done; [ $miss -eq 0 ] && echo \"全部 17 个 tag 的提交都是 main 的祖先，删 tag 不会丢提交\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nconst H={\"user-agent\":\"payaso-agent-inventory\",\"accept\":\"application/vnd.github+json\"};\nconst repo=\"lwl2225144701-cmd/PayasoAgent\";\n(async()=>{\n const r=await fetch(\"https://api.github.com/repos/\"+repo+\"/releases/latest\",{headers:H});\n console.log(\"latest release HTTP \"+r.status);\n if(r.status===200){const j=await r.json();console.log(\"latest = \"+j.tag_name+\"  (\"+j.name+\")\");}\n const rr=await fetch(\"https://api.github.com/repos/\"+repo,{headers:H});\n const jj=await rr.json();\n console.log(\"repo: \"+jj.full_name+\"  private=\"+jj.private+\"  default=\"+jj.default_branch);\n})().catch(e=>console.log(\"ERR\",e.message));'",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "updatePlan",
-   "args": {
-    "items": [
-     {
-      "id": "1",
-      "status": "completed",
-      "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+   "iteration": 1,
+   "durationMs": 18625,
+   "outputTokens": 449,
+   "calls": [
+    {
+     "tool": "shellJob",
+     "args": {
+      "action": "output",
+      "jobId": "job-1"
      },
-     {
-      "id": "2",
-      "status": "completed",
-      "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('remaining='+c.remaining,'limit='+c.limit,'reset_in_s='+(c.reset-now))}).catch(e=>console.log('ERR',e.message))\""
      },
-     {
-      "id": "3",
-      "status": "in_progress",
-      "title": "准备可一键执行的清理脚本与命令（远端删除需要 GitHub 凭据，本机没有）"
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 2,
+   "durationMs": 129623,
+   "outputTokens": 1195,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nconst sleep=(ms)=>new Promise((r)=>setTimeout(r,ms));\nconst H={\"user-agent\":\"payaso-agent-inventory\",\"accept\":\"application/vnd.github+json\"};\nasync function get(url){const r=await fetch(url,{headers:H});const t=await r.text();let b=null;try{b=JSON.parse(t)}catch{}return {status:r.status,body:b,raw:t.slice(0,200)};}\n(async()=>{\n  for(let i=0;i<40;i++){\n    const r=await fetch(\"https://api.github.com/rate_limit\",{headers:H});\n    const j=await r.json();const c=j.resources.core;\n    if(c.remaining>0){console.log(\"[quota] remaining=\"+c.remaining);break;}\n    const s=Math.max(0,c.reset-Math.floor(Date.now()/1000))+3;\n    console.log(\"[quota] limited, wait \"+s+\"s\");\n    await sleep(s*1000);\n  }\n  const repo=\"lwl2225144701-cmd/PayasoAgent\";\n  const rels=[];\n  for(let p=1;p<=3;p++){\n    const r=await get(\"https://api.github.com/repos/\"+repo+\"/releases?per_page=100&page=\"+p);\n    if(r.status!==200){console.log(\"releases HTTP \"+r.status+\" \"+r.raw);break;}\n    if(!Array.isArray(r.body)||r.body.length===0)break;\n    for(const x of r.body)rels.push({tag:x.tag_name,created:(x.created_at||\"\").slice(0,19),assets:(x.assets||[]).length,draft:x.draft,pre:x.prerelease});\n    if(r.body.length<100)break;\n  }\n  rels.sort((a,b)=>(a.tag<b.tag?1:-1));\n  console.log(\"=== RELEASES (\"+rels.length+\") ===\");\n  for(const r of rels)console.log(r.tag+\"  created=\"+r.created+\"  assets=\"+r.assets+(r.draft?\"  DRAFT\":\"\")+(r.pre?\"  PRE\":\"\"));\n  const tags=[];\n  for(let p=1;p<=3;p++){\n    const r=await get(\"https://api.github.com/repos/\"+repo+\"/tags?per_page=100&page=\"+p);\n    if(r.status!==200){console.log(\"tags HTTP \"+r.status+\" \"+r.raw);break;}\n    if(!Array.isArray(r.body)||r.body.length===0)break;\n    for(const x of r.body)tags.push(x.name);\n    if(r.body.length<100)break;\n  }\n  console.log(\"=== REMOTE TAGS (\"+tags.length+\") ===\");\n  console.log(tags.sort((a,b)=>(a<b?1:-1)).join(\" \"));\n})().catch(e=>console.log(\"FATAL \"+String(e)));\n' 2>&1 | tail -60",
+      "timeoutMs": 300000
      },
-     {
-      "id": "4",
-      "status": "pending",
-      "title": "复核清理清单并汇报，附本地 tag 同步命令"
-     }
-    ]
-   },
-   "disposition": "executed"
+     "disposition": "executed"
+    }
+   ]
   },
   {
-   "tool": "shell",
-   "args": {
-    "command": "ls -la ~/.git-credentials ~/.ssh/ 2>&1 | head -20; echo \"=== ssh key present? ===\"; ls -1 ~/.ssh/id_* 2>/dev/null || echo \"(无 SSH 私钥)\"; echo \"=== 尝试匿名 SSH 认证探测（不实际连接仓库） ===\"; ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -T git@github.com 2>&1 | head -5",
-    "timeoutMs": 30000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nconst H={\"user-agent\":\"Mozilla/5.0\"};\n(async()=>{\n try{\n  const r=await fetch(\"https://github.com/lwl2225144701-cmd/PayasoAgent/releases\",{headers:H});\n  const t=await r.text();\n  console.log(\"HTTP \"+r.status+\"  bytes=\"+t.length);\n  const tags=[...new Set([...t.matchAll(/releases\\/tag\\/(v[0-9][0-9A-Za-z.\\-]*)/g)].map(m=>m[1]))];\n  console.log(\"tags in HTML: \"+tags.join(\" \"));\n  console.log(\"draft markers: \"+(t.match(/[Dd]raft/g)||[]).length);\n  const m=t.match(/Draft<\\/span>/g); console.log(\"explicit Draft spans: \"+(m?m.length:0));\n }catch(e){console.log(\"ERR \"+e.message)}\n})();'",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('anonymous API quota: remaining='+c.remaining+' / '+c.limit+'  (reset in '+Math.round((c.reset-now)/60)+' min)')}).catch(e=>console.log('ERR',e.message))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "grep -n \"tag\\|release\" .github/workflows/release.yml | head -30"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "grep -rn \"v0\\.4\\.\\(6\\|5\\|4\\|3\\|2\\|1\\|0\\|10\\|11\\|12\\)\\b\" --include=*.ts --include=*.md --include=*.json --include=*.rb --include=*.yml docs src apps web Casks .github 2>/dev/null | grep -v node_modules | head -20; echo \"=== 引用旧版本号的地方（以上） ===\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "read",
-   "args": {
-    "limit": 45,
-    "path": "scripts/copy-runtime.mjs"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"const p=require('./package.json');console.log(JSON.stringify(p.scripts,null,2))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "write",
-   "args": {
-    "content": "#!/usr/bin/env node\n// 清理 GitHub 历史 Release 与对应 tag，只保留最近 N 个版本。\n//\n// 为什么存在：桌面端发版节奏快（一天数版），每版 DMG/zip/exe 加起来约 800MiB，\n// 旧 Release 既占 Releases 页也占仓库存储配额；而用户侧升级只依赖「最新 Release 的\n// feed」（latest-mac.yml / latest.yml），历史版本没有留存价值 —— 发版记录本身留在\n// git tag 与 docs/plans 手账里，不依赖 Release 页。\n//\n// 契约：\n// - 规划（dry-run）可不带 token；`--yes` 真正删除时必须带 GITHUB_TOKEN，\n//   因为匿名 API 既没有写权限、也看不到草稿 Release（删不干净）。\n// - 永远保留被标记为 latest 的 Release：electron-updater 的 feed 挂在它上面。\n// - 永远保留 Casks/payasoagent.rb 锁定的版本：Homebrew 通道指向它。\n// - 删 tag 前校验目标提交是默认分支的祖先，否则跳过（除非 --force），\n//   避免 tag 一删提交变成没人引用的孤儿。\nimport { execFileSync } from 'node:child_process';\nimport { readFileSync } from 'node:fs';\n\nconst DEFAULT_REPO = 'lwl2225144701-cmd/PayasoAgent';\nconst DEFAULT_BRANCH = 'main';\n\nconst USAGE = `用法：\n  node scripts/prune-releases.mjs [--keep 4] [--yes] [--force] [--prune-local]\n                                   [--include-non-release-tags] [--repo owner/name]\n\n  默认 dry-run：只盘点并打印删除计划，不动远端。\n  --yes                        真正删除（必须提供 GITHUB_TOKEN）。\n  --keep N                     保留最近 N 个版本，默认 4。\n  --force                      目标提交不在默认分支祖先链上也强制删 tag。\n  --prune-local                远端 tag 删掉后，同步删掉本地同名 tag。\n  --include-non-release-tags   连「没有对应 Release」的历史 tag（v2.2.0 /\n                               v1.0.0-local-mvp）一起删；默认保留。\n  环境变量：GITHUB_TOKEN（或 GH_TOKEN）、GITHUB_REPOSITORY。\n`;\n\nfunction fail(message) {\n  console.error(`\\n✗ ${message}`);\n  process.exit(2);\n}\n\nfunction parseArgs(argv) {\n  const opts = {\n    keep: 4,\n    dryRun: true,\n    force: false,\n    pruneLocal: false,\n    includeNonReleaseTags: false,\n    repo: process.env.GITHUB_REPOSITORY || DEFAULT_REPO,\n  };\n  for (let i = 0; i < argv.length; i += 1) {\n    const arg = argv[i];\n    if (arg === '--help' || arg === '-h') {\n      process.stdout.write(USAGE);\n      process.exit(0);\n    } else if (arg === '--yes' || arg === '-y') {\n      opts.dryRun = false;\n    } else if (arg === '--force') {\n      opts.force = true;\n    } else if (arg === '--prune-local') {\n      opts.pruneLocal = true;\n    } else if (arg === '--include-non-release-tags') {\n      opts.includeNonReleaseTags = true;\n    } else if (arg === '--keep') {\n      opts.keep = Number(argv[(i += 1)]);\n    } else if (arg === '--repo') {\n      opts.repo = argv[(i += 1)];\n    } else {\n      fail(`未知参数：${arg}\\n\\n${USAGE}`);\n    }\n  }\n  if (!Number.isInteger(opts.keep) || opts.keep < 1) fail(`--keep 必须是正整数，收到：${opts.keep}`);\n  return opts;\n}\n\n/** 语义版本拆解；认不出形状的返回 null（排序时垫底，优先被清掉）。 */\nfunction parseSemver(tag) {\n  const m = /^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(tag);\n  if (!m) return null;\n  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre: m[4] ?? null };\n}\n\n/** 新的在前；预发布排在同名正式版之前（0.4.16-rc1 视为比 0.4.15 旧）。 */\nfunction compareTagDesc(a, b) {\n  const sa = parseSemver(a);\n  const sb = parseSemver(b);\n  if (sa && sb) {\n    if (sa.major !== sb.major) return sb.major - sa.major;\n    if (sa.minor !== sb.minor) return sb.minor - sa.minor;\n    if (sa.patch !== sb.patch) return sb.patch - sa.patch;\n    if (sa.pre && !sb.pre) return 1;\n    if (!sa.pre && sb.pre) return -1;\n    if (sa.pre && sb.pre) return sa.pre < sb.pre ? 1 : -1;\n    return 0;\n  }\n  if (sa) return -1;\n  if (sb) return 1;\n  return a < b ? 1 : -1;\n}\n\nasync function api(method, path, { token, body } = {}) {\n  const headers = {\n    accept: 'application/vnd.github+json',\n    'x-github-api-version': '2022-11-28',\n    'user-agent': 'payaso-agent-release-prune',\n  };\n  if (token) headers.authorization = `Bearer ${token}`;\n  if (body) headers['content-type'] = 'application/json';\n  const res = await fetch(`https://api.github.com${path}`, {\n    method,\n    headers,\n    ...(body ? { body: JSON.stringify(body) } : {}),\n  });\n  const remaining = res.headers.get('x-ratelimit-remaining');\n  if (remaining === '0' && res.status === 403) {\n    const reset = Number(res.headers.get('x-ratelimit-reset') ?? 0) * 1000;\n    const waitMs = Math.max(0, reset - Date.now()) + 2000;\n    throw new Error(`GitHub API 配额用尽，${Math.round(waitMs / 1000)}s 后重置（认证请求是 5000 次/小时）`);\n  }\n  const text = await res.text();\n  let json = null;\n  try {\n    json = JSON.parse(text);\n  } catch {\n    /* 保留 text 兜底 */\n  }\n  if (res.status === 404) return { status: 404, body: null };\n  if (!res.ok) {\n    const detail = json?.message ?? text.slice(0, 200);\n    throw new Error(`GitHub API ${method} ${path} → ${res.status} ${detail}`);\n  }\n  return { status: res.status, body: json };\n}\n\nasync function listAll(path, token) {\n  const out = [];\n  for (let page = 1; page <= 20; page += 1) {\n    const { body } = await api('GET', `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, { token });\n    if (!Array.isArray(body) || body.length === 0) break;\n    out.push(...body);\n    if (body.length < 100) break;\n  }\n  return out;\n}\n\n/** Homebrew cask 钉住的版本，删了 brew 装不了。 */\nfunction caskTag() {\n  try {\n    const text = readFileSync('Casks/payasoagent.rb', 'utf8');\n    const m = /^\\s*version\\s+\"([^\"]+)\"/m.exec(text);\n    return m ? `v${m[1]}` : null;\n  } catch {\n    return null;\n  }\n}\n\nfunction localTagCommit(tag) {\n  try {\n    const sha = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${tag}^{commit}`], {\n      encoding: 'utf8',\n      stdio: ['ignore', 'pipe', 'ignore'],\n    }).trim();\n    return sha || null;\n  } catch {\n    return null;\n  }\n}\n\nfunction isAncestorOf(commit, branch) {\n  try {\n    execFileSync('git', ['merge-base', '--is-ancestor', commit, branch], { stdio: 'ignore' });\n    return true;\n  } catch {\n    return false;\n  }\n}\n\nfunction gib(bytes) {\n  return `${(bytes / 1024 ** 3).toFixed(1)}GiB`;\n}\n\nasync function main() {\n  const opts = parseArgs(process.argv.slice(2));\n  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';\n  if (!opts.dryRun && !token) {\n    fail('真正删除必须提供 GITHUB_TOKEN（或 GH_TOKEN）：\\n  GITHUB_TOKEN=ghp_xxx node scripts/prune-releases.mjs --yes\\n不带 token 先跑一次 dry-run 看计划。');\n  }\n  if (!token) {\n    console.log('⚠ 未提供 token：匿名盘点只能看到「已发布」Release，草稿 Release 不在清单里。');\n  }\n\n  const releases = await listAll(`/repos/${opts.repo}/releases`, token);\n  if (releases.length === 0) fail(`仓库 ${opts.repo} 一个 Release 都没读到，检查 --repo 与 token。`);\n  const remoteTags = await listAll(`/repos/${opts.repo}/tags`, token);\n\n  const latest = await api('GET', `/repos/${opts.repo}/releases/latest`, { token });\n  const latestTag = latest.status === 200 ? latest.body?.tag_name ?? null : null;\n  const pinned = caskTag();\n\n  const sorted = [...releases].sort((a, b) => compareTagDesc(a.tag_name, b.tag_name));\n  const keepTags = new Set(sorted.slice(0, opts.keep).map((r) => r.tag_name));\n  if (latestTag) keepTags.add(latestTag); // updater feed 所在，绝不删\n  if (pinned) keepTags.add(pinned); // Homebrew 通道，绝不删\n\n  const doomed = sorted.filter((r) => !keepTags.has(r.tag_name));\n  const releaseTags = new Set(releases.map((r) => r.tag_name));\n  const orphanTags = remoteTags\n    .map((t) => t.name)\n    .filter((t) => !releaseTags.has(t) && !keepTags.has(t))\n    .sort(compareTagDesc);\n\n  const width = Math.max(...sorted.map((r) => r.tag_name.length), 8);\n  const rows = sorted.map((r) => {\n    const bytes = (r.assets ?? []).reduce((sum, a) => sum + (a.size ?? 0), 0);\n    const kind = r.draft ? '草稿' : '已发布';\n    const action = keepTags.has(r.tag_name) ? '保留' : '删除';\n    return {\n      tag: r.tag_name,\n      kind,\n      assets: (r.assets ?? []).length,\n      bytes,\n      action,\n    };\n  });\n\n  console.log(`\\n仓库：${opts.repo}（共 ${releases.length} 个 Release、${remoteTags.length} 个 tag）`);\n  console.log(`保留 ${opts.keep} 个最新版本${latestTag ? ` + latest(${latestTag})` : ''}${pinned ? ` + cask(${pinned})` : ''}`);\n  console.log(`\\n${'版本'.padEnd(width)}  类型    资产   体积      动作`);\n  for (const row of rows) {\n    console.log(\n      `${row.tag.padEnd(width)}  ${row.kind}   ${String(row.assets).padStart(2)}    ${gib(row.bytes).padStart(8)}  ${row.action}`,\n    );\n  }\n\n  const doomedBytes = doomed.reduce((sum, r) => sum + (r.assets ?? []).reduce((s, a) => s + (a.size ?? 0), 0), 0);\n  console.log(\n    `\\n计划：删除 ${doomed.length} 个 Release（释放约 ${gib(doomedBytes)}）` +\n      `${orphanTags.length > 0 ? `；另有 ${orphanTags.length} 个无 Release 的 tag：${orphanTags.join(' ')}` : ''}`,\n  );\n  if (opts.includeNonReleaseTags) console.log('（--include-non-release-tags：上面那批 tag 也删）');\n\n  if (opts.dryRun) {\n    console.log('\\ndry-run 结束，远端未做任何改动。确认计划后加 --yes 执行。');\n    return;\n  }\n\n  let failures = 0;\n  for (const release of doomed) {\n    const { id } = release;\n    try {\n      await api('DELETE', `/repos/${opts.repo}/releases/${id}`, { token });\n      console.log(`✓ 删除 Release ${release.tag_name}`);\n    } catch (error) {\n      failures += 1;\n      console.error(`✗ 删除 Release ${release.tag_name} 失败：${error.message}`);\n      continue; // Release 没删掉就不动它的 tag，避免只掉一半\n    }\n    const commit = localTagCommit(release.tag_name);\n    if (commit && !isAncestorOf(commit, DEFAULT_BRANCH) && !opts.force) {\n      failures += 1;\n      console.error(`✗ 跳过 tag ${release.tag_name}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上（--force 可强删）`);\n      continue;\n    }\n    try {\n      const res = await api('DELETE', `/repos/${opts.repo}/git/refs/tags/${release.tag_name}`, { token });\n      if (res.status === 404) {\n        console.log(`· tag ${release.tag_name} 远端不存在（草稿 Release 本来就没 tag），跳过`);\n      } else {\n        console.log(`✓ 删除 tag ${release.tag_name}`);\n        if (opts.pruneLocal) {\n          try {\n            execFileSync('git', ['tag', '-d', release.tag_name], { stdio: 'ignore' });\n            console.log(`✓ 删除本地 tag ${release.tag_name}`);\n          } catch {\n            console.error(`✗ 删除本地 tag ${release.tag_name} 失败`);\n          }\n        }\n      }\n    } catch (error) {\n      failures += 1;\n      console.error(`✗ 删除 tag ${release.tag_name} 失败：${error.message}`);\n    }\n  }\n\n  if (opts.includeNonReleaseTags) {\n    for (const tag of orphanTags) {\n      const commit = localTagCommit(tag);\n      if (commit && !isAncestorOf(commit, DEFAULT_BRANCH) && !opts.force) {\n        failures += 1;\n        console.error(`✗ 跳过 tag ${tag}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上`);\n        continue;\n      }\n      try {\n        await api('DELETE', `/repos/${opts.repo}/git/refs/tags/${tag}`, { token });\n        console.log(`✓ 删除 tag ${tag}（无对应 Release）`);\n      } catch (error) {\n        failures += 1;\n        console.error(`✗ 删除 tag ${tag} 失败：${error.message}`);\n      }\n    }\n  }\n\n  if (failures > 0) {\n    console.error(`\\n完成，但有 ${failures} 处失败，请逐条重试。`);\n    process.exit(1);\n  }\n  console.log(`\\n完成：剩 ${keepTags.size} 个版本（${[...keepTags].sort(compareTagDesc).join(' ')}）。`);\n  console.log('本机同步：git fetch --prune-tags origin（或 --prune-local 已代劳）。');\n}\n\nmain().catch((error) => {\n  console.error(`\\n✗ ${error.message}`);\n  process.exit(1);\n});\n",
-    "path": "scripts/prune-releases.mjs"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;console.log('quota remaining='+c.remaining+' reset_in_s='+(c.reset-Math.floor(Date.now()/1000)))}).catch(e=>console.log('ERR',e.message))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node --check scripts/prune-releases.mjs && echo \"语法 OK\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"\nprocess.env.GITHUB_TOKEN='stub-token';\nprocess.argv=[process.argv[0],'scripts/prune-releases.mjs','--keep','4'];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+'-arm64.dmg',size:220*1048576},{name:t+'-x64.zip',size:235*1048576},{name:t+'-setup.exe',size:173*1048576}]});\nconst tags=['v0.3.5','v0.4.0','v0.4.1','v0.4.2','v0.4.3','v0.4.4','v0.4.5','v0.4.6','v0.4.10','v0.4.11','v0.4.12','v0.4.13','v0.4.14','v0.4.15','v0.4.16'];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,'v2.2.0','v1.0.0-local-mvp'];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};\n  const u=String(url);\n  const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf('/releases?per_page=100&page=1')>=0)body=releases;\n  else if(u.indexOf('/tags?per_page=100&page=1')>=0)body=allTags.map((n,i)=>({name:n}));\n  else if(u.indexOf('/releases/latest')>=0)body={tag_name:'v0.4.16'};\n  else {status=404;body={message:'Not Found'};}\n  if(!auth)return {status:401,headers:{get:()=>null},text:async()=>JSON.stringify({message:'Requires authentication'}),json:async()=>({message:'Requires authentication'})};\n  return {status,headers:{get:(k)=>(k==='x-ratelimit-remaining'?'5000':null)},text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import('./scripts/prune-releases.mjs');\n\" 2>&1",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "cat > /tmp/stub.mjs <<'EOF'\nprocess.env.GITHUB_TOKEN='stub-token';\nconst argv=[process.argv[0],'scripts/prune-releases.mjs',...(process.argv.slice(2))];\nprocess.argv=argv;\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+'-arm64.dmg',size:220*1048576},{name:t+'-x64.zip',size:235*1048576},{name:t+'-setup.exe',size:173*1048576}]});\nconst tags=['v0.3.5','v0.4.0','v0.4.1','v0.4.2','v0.4.3','v0.4.4','v0.4.5','v0.4.6','v0.4.10','v0.4.11','v0.4.12','v0.4.13','v0.4.14','v0.4.15','v0.4.16'];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,'v2.2.0','v1.0.0-local-mvp'];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};\n  const u=String(url);\n  const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf('/releases?per_page=100&page=1')>=0)body=releases;\n  else if(u.indexOf('/tags?per_page=100&page=1')>=0)body=allTags.map((n,i)=>({name:n}));\n  else if(u.indexOf('/releases/latest')>=0)body={tag_name:'v0.4.16'};\n  else {status=404;body={message:'Not Found'};}\n  if(!auth)return {status:401,ok:false,headers:{get:()=>null},text:async()=>JSON.stringify({message:'Requires authentication'}),json:async()=>({message:'Requires authentication'})};\n  return {status,ok:status>=200&&status<300,headers:{get:(k)=>(k==='x-ratelimit-remaining'?'5000':null)},text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import('./scripts/prune-releases.mjs');\nEOF\necho \"===== 1) 无 token 的 dry-run（应给出计划并拒绝执行删除）=====\"\nnode /tmp/stub.mjs --keep 4 2>&1 | head -5\necho; echo \"===== 2) --yes 但无 token（应拒绝）=====\"\nnode -e \"delete process.env.GITHUB_TOKEN\" 2>/dev/null; GITHUB_TOKEN= node /tmp/stub.mjs --yes 2>&1 | tail -5\necho; echo \"===== 3) 带 token 的 dry-run（完整计划）=====\"\nnode /tmp/stub.mjs --keep 4 2>&1",
-    "timeoutMs": 60000
-   },
-   "disposition": "failed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nprocess.env.GITHUB_TOKEN=\"stub-token\";\nprocess.argv=[process.argv[0],\"scripts/prune-releases.mjs\",...process.argv.slice(1)];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+\"-arm64.dmg\",size:220*1048576},{name:t+\"-x64.zip\",size:235*1048576},{name:t+\"-setup.exe\",size:173*1048576}]});\nconst tags=[\"v0.3.5\",\"v0.4.0\",\"v0.4.1\",\"v0.4.2\",\"v0.4.3\",\"v0.4.4\",\"v0.4.5\",\"v0.4.6\",\"v0.4.10\",\"v0.4.11\",\"v0.4.12\",\"v0.4.13\",\"v0.4.14\",\"v0.4.15\",\"v0.4.16\"];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,\"v2.2.0\",\"v1.0.0-local-mvp\"];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};const u=String(url);const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf(\"/releases?per_page=100&page=1\")>=0)body=releases;\n  else if(u.indexOf(\"/tags?per_page=100&page=1\")>=0)body=allTags.map((n)=>({name:n}));\n  else if(u.indexOf(\"/releases/latest\")>=0)body={tag_name:\"v0.4.16\"};\n  else {status=404;body={message:\"Not Found\"};}\n  const headers={get:(k)=>(k===\"x-ratelimit-remaining\"?(auth?\"5000\":null):null)};\n  if(!auth)return {status:401,ok:false,headers,text:async()=>JSON.stringify({message:\"Requires authentication\"}),json:async()=>({message:\"Requires authentication\"})};\n  return {status,ok:status>=200&&status<300,headers,text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import(\"./scripts/prune-releases.mjs\");\n' --keep 4 2>&1",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nconst ARGS=[\"--keep\",\"4\"];\nprocess.env.GITHUB_TOKEN=\"stub-token\";\nprocess.argv=[process.argv[0],\"scripts/prune-releases.mjs\",...ARGS];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+\"-arm64.dmg\",size:220*1048576},{name:t+\"-x64.zip\",size:235*1048576},{name:t+\"-setup.exe\",size:173*1048576}]});\nconst tags=[\"v0.3.5\",\"v0.4.0\",\"v0.4.1\",\"v0.4.2\",\"v0.4.3\",\"v0.4.4\",\"v0.4.5\",\"v0.4.6\",\"v0.4.10\",\"v0.4.11\",\"v0.4.12\",\"v0.4.13\",\"v0.4.14\",\"v0.4.15\",\"v0.4.16\"];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,\"v2.2.0\",\"v1.0.0-local-mvp\"];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};const u=String(url);const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf(\"/releases?per_page=100&page=1\")>=0)body=releases;\n  else if(u.indexOf(\"/tags?per_page=100&page=1\")>=0)body=allTags.map((n)=>({name:n}));\n  else if(u.indexOf(\"/releases/latest\")>=0)body={tag_name:\"v0.4.16\"};\n  else {status=404;body={message:\"Not Found\"};}\n  const headers={get:(k)=>(k===\"x-ratelimit-remaining\"?(auth?\"5000\":null):null)};\n  if(!auth)return {status:401,ok:false,headers,text:async()=>JSON.stringify({message:\"Requires authentication\"}),json:async()=>({message:\"Requires authentication\"})};\n  return {status,ok:status>=200&&status<300,headers,text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import(\"./scripts/prune-releases.mjs\");\n' 2>&1",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "edit",
-   "args": {
-    "edits": [
-     {
-      "newText": "  \"prepack\": \"build\",\n  \"prune:releases\": \"node scripts/prune-releases.mjs\"\n}",
-      "oldText": "  \"prepack\": \"build\"\n}"
-     }
-    ],
-    "path": "package.json"
-   },
-   "disposition": "failed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node scripts/prune-releases.mjs --keep 4 2>&1 | head -30",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "read",
-   "args": {
-    "limit": 30,
-    "offset": 1,
-    "path": "package.json"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "updatePlan",
-   "args": {
-    "items": [
-     {
-      "id": "1",
-      "status": "completed",
-      "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+   "iteration": 3,
+   "durationMs": 31337,
+   "outputTokens": 4298,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;console.log('core: remaining='+c.remaining+'/'+c.limit+'  reset_in_s='+(c.reset-Math.floor(Date.now()/1000)))}).catch(e=>console.log('ERR',e.message))\""
      },
-     {
-      "id": "2",
-      "status": "completed",
-      "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "for t in v0.3.5 v0.4.0 v0.4.1 v0.4.2 v0.4.3 v0.4.4 v0.4.5 v0.4.10 v0.4.11 v0.4.12; do c=$(git rev-parse -q --verify \"$t^{commit}\"); if git merge-base --is-ancestor \"$c\" main; then echo \"$t  ${c:0:8}  在 main 上（删 tag 不丢提交）\"; else echo \"$t  ${c:0:8}  !! 不在 main，删 tag 会孤立提交\"; fi; done"
      },
-     {
-      "id": "3",
-      "status": "in_progress",
-      "title": "准备可一键执行的清理脚本与命令（远端删除需要 GitHub 凭据，本机没有）"
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 4,
+   "durationMs": 29702,
+   "outputTokens": 2077,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "git log --oneline -3; echo \"=== status ===\"; git status --porcelain | head -20; echo \"=== branch ===\"; git status -sb | head -2"
      },
-     {
-      "id": "4",
-      "status": "pending",
-      "title": "复核清理清单并汇报，附本地 tag 同步命令"
-     }
-    ]
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "read",
-   "args": {
-    "limit": 30,
-    "offset": 45,
-    "path": "package.json"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "read",
-   "args": {
-    "limit": 16,
-    "offset": 30,
-    "path": "package.json"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "edit",
-   "args": {
-    "edits": [
-     {
-      "newText": "    \"prepack\": \"npm run build\",\n    \"prune:releases\": \"node scripts/prune-releases.mjs\"\n  },",
-      "oldText": "    \"prepack\": \"npm run build\"\n  },"
-     }
-    ],
-    "path": "package.json"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"const p=require('./package.json');console.log('JSON 合法；prune:releases =',p.scripts['prune:releases']);console.log('scripts 总数',Object.keys(p.scripts).length)\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('quota remaining='+c.remaining+' reset_in_s='+(c.reset-now)+' ('+Math.round((c.reset-now)/60)+' min)')}).catch(e=>console.log('ERR',e.message))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e '\nconst ARGS=[\"--keep\",\"4\",\"--yes\",\"--prune-local\"];\nprocess.env.GITHUB_TOKEN=\"stub-token\";\nprocess.argv=[process.argv[0],\"scripts/prune-releases.mjs\",...ARGS];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+\".dmg\",size:100}]});\nconst tags=[\"v0.3.5\",\"v0.4.0\",\"v0.4.1\",\"v0.4.2\",\"v0.4.3\",\"v0.4.4\",\"v0.4.5\",\"v0.4.6\",\"v0.4.10\",\"v0.4.11\",\"v0.4.12\",\"v0.4.13\",\"v0.4.14\",\"v0.4.15\",\"v0.4.16\"];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,\"v2.2.0\",\"v1.0.0-local-mvp\"];\nconst deleted=[];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};const u=String(url);const m=init.method||\"GET\";const auth=(init.headers||{}).authorization;\n  const headers={get:(k)=>(k===\"x-ratelimit-remaining\"?\"5000\":null)};\n  let status=200,body=null;\n  if(m===\"DELETE\"){deleted.push(m+\" \"+u.replace(\"https://api.github.com\",\"\"));return {status:204,ok:true,headers,text:async()=>\"\",json:async()=>null};}\n  if(u.indexOf(\"/releases?per_page=100&page=1\")>=0)body=releases;\n  else if(u.indexOf(\"/tags?per_page=100&page=1\")>=0)body=allTags.map((n)=>({name:n}));\n  else if(u.indexOf(\"/releases/latest\")>=0)body={tag_name:\"v0.4.16\"};\n  else {status=404;body={message:\"Not Found\"};}\n  return {status,ok:status>=200&&status<300,headers,text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import(\"./scripts/prune-releases.mjs\");\nconsole.log(\"\\n=== 桩捕获到的 DELETE 调用（\"+deleted.length+\" 条）===\");\nfor(const d of deleted)console.log(\"  \"+d);\n' 2>&1 | tail -40",
-    "timeoutMs": 60000
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "git status --porcelain; echo \"=== 新增文件行数 ===\"; wc -l scripts/prune-releases.mjs; echo \"=== package.json diff ===\"; git diff package.json"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node scripts/prune-releases.mjs --help 2>&1 | head -20"
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "shell",
-   "args": {
-    "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('quota remaining='+c.remaining+' reset_in_s='+(c.reset-now))}).catch(e=>console.log('ERR',e.message))\""
-   },
-   "disposition": "executed"
-  },
-  {
-   "tool": "updatePlan",
-   "args": {
-    "items": [
-     {
-      "id": "1",
-      "status": "completed",
-      "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+     "disposition": "executed"
+    },
+    {
+     "tool": "read",
+     "args": {
+      "path": "Casks/payasoagent.rb"
      },
-     {
-      "id": "2",
-      "status": "completed",
-      "title": "盘点远端实际存在的 tags/releases，定出保留清单"
-     },
-     {
-      "id": "3",
-      "status": "completed",
-      "title": "写好清理脚本并挂到 package.json（dry-run 与删除路径均已用桩验证）"
-     },
-     {
-      "id": "4",
-      "status": "in_progress",
-      "title": "复核清理清单并汇报，附本地 tag 同步命令"
-     }
-    ]
-   },
-   "disposition": "executed"
+     "disposition": "executed"
+    }
+   ]
   },
   {
-   "tool": "shell",
-   "args": {
-    "command": "node scripts/prune-releases.mjs --keep 4 2>&1 | tail -32; echo \"exit=$?\"",
-    "timeoutMs": 120000
-   },
-   "disposition": "executed"
+   "iteration": 5,
+   "durationMs": 41332,
+   "outputTokens": 2068,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nconst H={\"user-agent\":\"payaso-agent-inventory\",\"accept\":\"application/vnd.github+json\"};\nconst repo=\"lwl2225144701-cmd/PayasoAgent\";\n(async()=>{\n for(const tag of [\"v0.4.16\",\"v0.4.14\"]){\n  const r=await fetch(\"https://api.github.com/repos/\"+repo+\"/releases/tags/\"+tag,{headers:H});\n  const j=await r.json();\n  console.log(\"=== \"+tag+\"  (\"+ (j.assets||[]).length +\" assets) ===\");\n  for(const a of (j.assets||[])) console.log(\"   \"+a.name+\"  \"+(a.size/1048576).toFixed(1)+\"MiB\");\n }\n})().catch(e=>console.log(\"ERR\",e.message));'",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
   },
   {
-   "tool": "calculator",
-   "args": {
-    "expression": "216.6 + 210.6 + 172.7 + 234.9 + 0.6"
-   },
-   "disposition": "executed"
+   "iteration": 6,
+   "durationMs": 7163,
+   "outputTokens": 2667,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "for t in v2.2.0 v1.0.0-local-mvp v0.3.5; do c=$(git rev-parse -q --verify \"$t^{commit}\"); if git merge-base --is-ancestor \"$c\" main; then echo \"$t  ${c:0:8}  在 main 上\"; else echo \"$t  ${c:0:8}  !! 不在 main（删 tag 会孤立提交）\"; fi; done; echo \"--- 全部 tag 是否都在 main 上 ---\"; miss=0; for t in $(git tag); do c=$(git rev-parse -q --verify \"$t^{commit}\"); git merge-base --is-ancestor \"$c\" main || { echo \"孤立: $t\"; miss=1; }; done; [ $miss -eq 0 ] && echo \"全部 17 个 tag 的提交都是 main 的祖先，删 tag 不会丢提交\""
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nconst H={\"user-agent\":\"payaso-agent-inventory\",\"accept\":\"application/vnd.github+json\"};\nconst repo=\"lwl2225144701-cmd/PayasoAgent\";\n(async()=>{\n const r=await fetch(\"https://api.github.com/repos/\"+repo+\"/releases/latest\",{headers:H});\n console.log(\"latest release HTTP \"+r.status);\n if(r.status===200){const j=await r.json();console.log(\"latest = \"+j.tag_name+\"  (\"+j.name+\")\");}\n const rr=await fetch(\"https://api.github.com/repos/\"+repo,{headers:H});\n const jj=await rr.json();\n console.log(\"repo: \"+jj.full_name+\"  private=\"+jj.private+\"  default=\"+jj.default_branch);\n})().catch(e=>console.log(\"ERR\",e.message));'",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
   },
   {
-   "tool": "calculator",
-   "args": {
-    "expression": "210.6 + 234.9 + 172.7 + 0.6"
-   },
-   "disposition": "executed"
+   "iteration": 7,
+   "durationMs": 55188,
+   "outputTokens": 296,
+   "calls": [
+    {
+     "tool": "updatePlan",
+     "args": {
+      "items": [
+       {
+        "id": "1",
+        "status": "completed",
+        "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+       },
+       {
+        "id": "2",
+        "status": "completed",
+        "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+       },
+       {
+        "id": "3",
+        "status": "in_progress",
+        "title": "准备可一键执行的清理脚本与命令（远端删除需要 GitHub 凭据，本机没有）"
+       },
+       {
+        "id": "4",
+        "status": "pending",
+        "title": "复核清理清单并汇报，附本地 tag 同步命令"
+       }
+      ]
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "ls -la ~/.git-credentials ~/.ssh/ 2>&1 | head -20; echo \"=== ssh key present? ===\"; ls -1 ~/.ssh/id_* 2>/dev/null || echo \"(无 SSH 私钥)\"; echo \"=== 尝试匿名 SSH 认证探测（不实际连接仓库） ===\"; ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -T git@github.com 2>&1 | head -5",
+      "timeoutMs": 30000
+     },
+     "disposition": "executed"
+    }
+   ]
   },
   {
-   "tool": "updatePlan",
-   "args": {
-    "items": [
-     {
-      "id": "1",
-      "status": "completed",
-      "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+   "iteration": 8,
+   "durationMs": 28878,
+   "outputTokens": 3749,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nconst H={\"user-agent\":\"Mozilla/5.0\"};\n(async()=>{\n try{\n  const r=await fetch(\"https://github.com/lwl2225144701-cmd/PayasoAgent/releases\",{headers:H});\n  const t=await r.text();\n  console.log(\"HTTP \"+r.status+\"  bytes=\"+t.length);\n  const tags=[...new Set([...t.matchAll(/releases\\/tag\\/(v[0-9][0-9A-Za-z.\\-]*)/g)].map(m=>m[1]))];\n  console.log(\"tags in HTML: \"+tags.join(\" \"));\n  console.log(\"draft markers: \"+(t.match(/[Dd]raft/g)||[]).length);\n  const m=t.match(/Draft<\\/span>/g); console.log(\"explicit Draft spans: \"+(m?m.length:0));\n }catch(e){console.log(\"ERR \"+e.message)}\n})();'",
+      "timeoutMs": 60000
      },
-     {
-      "id": "2",
-      "status": "completed",
-      "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('anonymous API quota: remaining='+c.remaining+' / '+c.limit+'  (reset in '+Math.round((c.reset-now)/60)+' min)')}).catch(e=>console.log('ERR',e.message))\""
      },
-     {
-      "id": "3",
-      "status": "completed",
-      "title": "写好清理脚本并挂到 package.json（dry-run 与删除路径均已用桩验证）"
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 9,
+   "durationMs": 73024,
+   "outputTokens": 1493,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "grep -n \"tag\\|release\" .github/workflows/release.yml | head -30"
      },
-     {
-      "id": "4",
-      "status": "completed",
-      "title": "复核清理清单并汇报，附本地 tag 同步命令"
-     }
-    ]
-   },
-   "disposition": "executed"
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "grep -rn \"v0\\.4\\.\\(6\\|5\\|4\\|3\\|2\\|1\\|0\\|10\\|11\\|12\\)\\b\" --include=*.ts --include=*.md --include=*.json --include=*.rb --include=*.yml docs src apps web Casks .github 2>/dev/null | grep -v node_modules | head -20; echo \"=== 引用旧版本号的地方（以上） ===\""
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 10,
+   "durationMs": 170628,
+   "outputTokens": 5019,
+   "calls": [
+    {
+     "tool": "read",
+     "args": {
+      "limit": 45,
+      "path": "scripts/copy-runtime.mjs"
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"const p=require('./package.json');console.log(JSON.stringify(p.scripts,null,2))\""
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 11,
+   "durationMs": 5433,
+   "outputTokens": 13487,
+   "calls": [
+    {
+     "tool": "write",
+     "args": {
+      "content": "#!/usr/bin/env node\n// 清理 GitHub 历史 Release 与对应 tag，只保留最近 N 个版本。\n//\n// 为什么存在：桌面端发版节奏快（一天数版），每版 DMG/zip/exe 加起来约 800MiB，\n// 旧 Release 既占 Releases 页也占仓库存储配额；而用户侧升级只依赖「最新 Release 的\n// feed」（latest-mac.yml / latest.yml），历史版本没有留存价值 —— 发版记录本身留在\n// git tag 与 docs/plans 手账里，不依赖 Release 页。\n//\n// 契约：\n// - 规划（dry-run）可不带 token；`--yes` 真正删除时必须带 GITHUB_TOKEN，\n//   因为匿名 API 既没有写权限、也看不到草稿 Release（删不干净）。\n// - 永远保留被标记为 latest 的 Release：electron-updater 的 feed 挂在它上面。\n// - 永远保留 Casks/payasoagent.rb 锁定的版本：Homebrew 通道指向它。\n// - 删 tag 前校验目标提交是默认分支的祖先，否则跳过（除非 --force），\n//   避免 tag 一删提交变成没人引用的孤儿。\nimport { execFileSync } from 'node:child_process';\nimport { readFileSync } from 'node:fs';\n\nconst DEFAULT_REPO = 'lwl2225144701-cmd/PayasoAgent';\nconst DEFAULT_BRANCH = 'main';\n\nconst USAGE = `用法：\n  node scripts/prune-releases.mjs [--keep 4] [--yes] [--force] [--prune-local]\n                                   [--include-non-release-tags] [--repo owner/name]\n\n  默认 dry-run：只盘点并打印删除计划，不动远端。\n  --yes                        真正删除（必须提供 GITHUB_TOKEN）。\n  --keep N                     保留最近 N 个版本，默认 4。\n  --force                      目标提交不在默认分支祖先链上也强制删 tag。\n  --prune-local                远端 tag 删掉后，同步删掉本地同名 tag。\n  --include-non-release-tags   连「没有对应 Release」的历史 tag（v2.2.0 /\n                               v1.0.0-local-mvp）一起删；默认保留。\n  环境变量：GITHUB_TOKEN（或 GH_TOKEN）、GITHUB_REPOSITORY。\n`;\n\nfunction fail(message) {\n  console.error(`\\n✗ ${message}`);\n  process.exit(2);\n}\n\nfunction parseArgs(argv) {\n  const opts = {\n    keep: 4,\n    dryRun: true,\n    force: false,\n    pruneLocal: false,\n    includeNonReleaseTags: false,\n    repo: process.env.GITHUB_REPOSITORY || DEFAULT_REPO,\n  };\n  for (let i = 0; i < argv.length; i += 1) {\n    const arg = argv[i];\n    if (arg === '--help' || arg === '-h') {\n      process.stdout.write(USAGE);\n      process.exit(0);\n    } else if (arg === '--yes' || arg === '-y') {\n      opts.dryRun = false;\n    } else if (arg === '--force') {\n      opts.force = true;\n    } else if (arg === '--prune-local') {\n      opts.pruneLocal = true;\n    } else if (arg === '--include-non-release-tags') {\n      opts.includeNonReleaseTags = true;\n    } else if (arg === '--keep') {\n      opts.keep = Number(argv[(i += 1)]);\n    } else if (arg === '--repo') {\n      opts.repo = argv[(i += 1)];\n    } else {\n      fail(`未知参数：${arg}\\n\\n${USAGE}`);\n    }\n  }\n  if (!Number.isInteger(opts.keep) || opts.keep < 1) fail(`--keep 必须是正整数，收到：${opts.keep}`);\n  return opts;\n}\n\n/** 语义版本拆解；认不出形状的返回 null（排序时垫底，优先被清掉）。 */\nfunction parseSemver(tag) {\n  const m = /^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(tag);\n  if (!m) return null;\n  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre: m[4] ?? null };\n}\n\n/** 新的在前；预发布排在同名正式版之前（0.4.16-rc1 视为比 0.4.15 旧）。 */\nfunction compareTagDesc(a, b) {\n  const sa = parseSemver(a);\n  const sb = parseSemver(b);\n  if (sa && sb) {\n    if (sa.major !== sb.major) return sb.major - sa.major;\n    if (sa.minor !== sb.minor) return sb.minor - sa.minor;\n    if (sa.patch !== sb.patch) return sb.patch - sa.patch;\n    if (sa.pre && !sb.pre) return 1;\n    if (!sa.pre && sb.pre) return -1;\n    if (sa.pre && sb.pre) return sa.pre < sb.pre ? 1 : -1;\n    return 0;\n  }\n  if (sa) return -1;\n  if (sb) return 1;\n  return a < b ? 1 : -1;\n}\n\nasync function api(method, path, { token, body } = {}) {\n  const headers = {\n    accept: 'application/vnd.github+json',\n    'x-github-api-version': '2022-11-28',\n    'user-agent': 'payaso-agent-release-prune',\n  };\n  if (token) headers.authorization = `Bearer ${token}`;\n  if (body) headers['content-type'] = 'application/json';\n  const res = await fetch(`https://api.github.com${path}`, {\n    method,\n    headers,\n    ...(body ? { body: JSON.stringify(body) } : {}),\n  });\n  const remaining = res.headers.get('x-ratelimit-remaining');\n  if (remaining === '0' && res.status === 403) {\n    const reset = Number(res.headers.get('x-ratelimit-reset') ?? 0) * 1000;\n    const waitMs = Math.max(0, reset - Date.now()) + 2000;\n    throw new Error(`GitHub API 配额用尽，${Math.round(waitMs / 1000)}s 后重置（认证请求是 5000 次/小时）`);\n  }\n  const text = await res.text();\n  let json = null;\n  try {\n    json = JSON.parse(text);\n  } catch {\n    /* 保留 text 兜底 */\n  }\n  if (res.status === 404) return { status: 404, body: null };\n  if (!res.ok) {\n    const detail = json?.message ?? text.slice(0, 200);\n    throw new Error(`GitHub API ${method} ${path} → ${res.status} ${detail}`);\n  }\n  return { status: res.status, body: json };\n}\n\nasync function listAll(path, token) {\n  const out = [];\n  for (let page = 1; page <= 20; page += 1) {\n    const { body } = await api('GET', `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, { token });\n    if (!Array.isArray(body) || body.length === 0) break;\n    out.push(...body);\n    if (body.length < 100) break;\n  }\n  return out;\n}\n\n/** Homebrew cask 钉住的版本，删了 brew 装不了。 */\nfunction caskTag() {\n  try {\n    const text = readFileSync('Casks/payasoagent.rb', 'utf8');\n    const m = /^\\s*version\\s+\"([^\"]+)\"/m.exec(text);\n    return m ? `v${m[1]}` : null;\n  } catch {\n    return null;\n  }\n}\n\nfunction localTagCommit(tag) {\n  try {\n    const sha = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${tag}^{commit}`], {\n      encoding: 'utf8',\n      stdio: ['ignore', 'pipe', 'ignore'],\n    }).trim();\n    return sha || null;\n  } catch {\n    return null;\n  }\n}\n\nfunction isAncestorOf(commit, branch) {\n  try {\n    execFileSync('git', ['merge-base', '--is-ancestor', commit, branch], { stdio: 'ignore' });\n    return true;\n  } catch {\n    return false;\n  }\n}\n\nfunction gib(bytes) {\n  return `${(bytes / 1024 ** 3).toFixed(1)}GiB`;\n}\n\nasync function main() {\n  const opts = parseArgs(process.argv.slice(2));\n  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';\n  if (!opts.dryRun && !token) {\n    fail('真正删除必须提供 GITHUB_TOKEN（或 GH_TOKEN）：\\n  GITHUB_TOKEN=ghp_xxx node scripts/prune-releases.mjs --yes\\n不带 token 先跑一次 dry-run 看计划。');\n  }\n  if (!token) {\n    console.log('⚠ 未提供 token：匿名盘点只能看到「已发布」Release，草稿 Release 不在清单里。');\n  }\n\n  const releases = await listAll(`/repos/${opts.repo}/releases`, token);\n  if (releases.length === 0) fail(`仓库 ${opts.repo} 一个 Release 都没读到，检查 --repo 与 token。`);\n  const remoteTags = await listAll(`/repos/${opts.repo}/tags`, token);\n\n  const latest = await api('GET', `/repos/${opts.repo}/releases/latest`, { token });\n  const latestTag = latest.status === 200 ? latest.body?.tag_name ?? null : null;\n  const pinned = caskTag();\n\n  const sorted = [...releases].sort((a, b) => compareTagDesc(a.tag_name, b.tag_name));\n  const keepTags = new Set(sorted.slice(0, opts.keep).map((r) => r.tag_name));\n  if (latestTag) keepTags.add(latestTag); // updater feed 所在，绝不删\n  if (pinned) keepTags.add(pinned); // Homebrew 通道，绝不删\n\n  const doomed = sorted.filter((r) => !keepTags.has(r.tag_name));\n  const releaseTags = new Set(releases.map((r) => r.tag_name));\n  const orphanTags = remoteTags\n    .map((t) => t.name)\n    .filter((t) => !releaseTags.has(t) && !keepTags.has(t))\n    .sort(compareTagDesc);\n\n  const width = Math.max(...sorted.map((r) => r.tag_name.length), 8);\n  const rows = sorted.map((r) => {\n    const bytes = (r.assets ?? []).reduce((sum, a) => sum + (a.size ?? 0), 0);\n    const kind = r.draft ? '草稿' : '已发布';\n    const action = keepTags.has(r.tag_name) ? '保留' : '删除';\n    return {\n      tag: r.tag_name,\n      kind,\n      assets: (r.assets ?? []).length,\n      bytes,\n      action,\n    };\n  });\n\n  console.log(`\\n仓库：${opts.repo}（共 ${releases.length} 个 Release、${remoteTags.length} 个 tag）`);\n  console.log(`保留 ${opts.keep} 个最新版本${latestTag ? ` + latest(${latestTag})` : ''}${pinned ? ` + cask(${pinned})` : ''}`);\n  console.log(`\\n${'版本'.padEnd(width)}  类型    资产   体积      动作`);\n  for (const row of rows) {\n    console.log(\n      `${row.tag.padEnd(width)}  ${row.kind}   ${String(row.assets).padStart(2)}    ${gib(row.bytes).padStart(8)}  ${row.action}`,\n    );\n  }\n\n  const doomedBytes = doomed.reduce((sum, r) => sum + (r.assets ?? []).reduce((s, a) => s + (a.size ?? 0), 0), 0);\n  console.log(\n    `\\n计划：删除 ${doomed.length} 个 Release（释放约 ${gib(doomedBytes)}）` +\n      `${orphanTags.length > 0 ? `；另有 ${orphanTags.length} 个无 Release 的 tag：${orphanTags.join(' ')}` : ''}`,\n  );\n  if (opts.includeNonReleaseTags) console.log('（--include-non-release-tags：上面那批 tag 也删）');\n\n  if (opts.dryRun) {\n    console.log('\\ndry-run 结束，远端未做任何改动。确认计划后加 --yes 执行。');\n    return;\n  }\n\n  let failures = 0;\n  for (const release of doomed) {\n    const { id } = release;\n    try {\n      await api('DELETE', `/repos/${opts.repo}/releases/${id}`, { token });\n      console.log(`✓ 删除 Release ${release.tag_name}`);\n    } catch (error) {\n      failures += 1;\n      console.error(`✗ 删除 Release ${release.tag_name} 失败：${error.message}`);\n      continue; // Release 没删掉就不动它的 tag，避免只掉一半\n    }\n    const commit = localTagCommit(release.tag_name);\n    if (commit && !isAncestorOf(commit, DEFAULT_BRANCH) && !opts.force) {\n      failures += 1;\n      console.error(`✗ 跳过 tag ${release.tag_name}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上（--force 可强删）`);\n      continue;\n    }\n    try {\n      const res = await api('DELETE', `/repos/${opts.repo}/git/refs/tags/${release.tag_name}`, { token });\n      if (res.status === 404) {\n        console.log(`· tag ${release.tag_name} 远端不存在（草稿 Release 本来就没 tag），跳过`);\n      } else {\n        console.log(`✓ 删除 tag ${release.tag_name}`);\n        if (opts.pruneLocal) {\n          try {\n            execFileSync('git', ['tag', '-d', release.tag_name], { stdio: 'ignore' });\n            console.log(`✓ 删除本地 tag ${release.tag_name}`);\n          } catch {\n            console.error(`✗ 删除本地 tag ${release.tag_name} 失败`);\n          }\n        }\n      }\n    } catch (error) {\n      failures += 1;\n      console.error(`✗ 删除 tag ${release.tag_name} 失败：${error.message}`);\n    }\n  }\n\n  if (opts.includeNonReleaseTags) {\n    for (const tag of orphanTags) {\n      const commit = localTagCommit(tag);\n      if (commit && !isAncestorOf(commit, DEFAULT_BRANCH) && !opts.force) {\n        failures += 1;\n        console.error(`✗ 跳过 tag ${tag}：提交 ${commit.slice(0, 8)} 不在 ${DEFAULT_BRANCH} 祖先链上`);\n        continue;\n      }\n      try {\n        await api('DELETE', `/repos/${opts.repo}/git/refs/tags/${tag}`, { token });\n        console.log(`✓ 删除 tag ${tag}（无对应 Release）`);\n      } catch (error) {\n        failures += 1;\n        console.error(`✗ 删除 tag ${tag} 失败：${error.message}`);\n      }\n    }\n  }\n\n  if (failures > 0) {\n    console.error(`\\n完成，但有 ${failures} 处失败，请逐条重试。`);\n    process.exit(1);\n  }\n  console.log(`\\n完成：剩 ${keepTags.size} 个版本（${[...keepTags].sort(compareTagDesc).join(' ')}）。`);\n  console.log('本机同步：git fetch --prune-tags origin（或 --prune-local 已代劳）。');\n}\n\nmain().catch((error) => {\n  console.error(`\\n✗ ${error.message}`);\n  process.exit(1);\n});\n",
+      "path": "scripts/prune-releases.mjs"
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 12,
+   "durationMs": 38060,
+   "outputTokens": 263,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;console.log('quota remaining='+c.remaining+' reset_in_s='+(c.reset-Math.floor(Date.now()/1000)))}).catch(e=>console.log('ERR',e.message))\""
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node --check scripts/prune-releases.mjs && echo \"语法 OK\""
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 13,
+   "durationMs": 10844,
+   "outputTokens": 2562,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"\nprocess.env.GITHUB_TOKEN='stub-token';\nprocess.argv=[process.argv[0],'scripts/prune-releases.mjs','--keep','4'];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+'-arm64.dmg',size:220*1048576},{name:t+'-x64.zip',size:235*1048576},{name:t+'-setup.exe',size:173*1048576}]});\nconst tags=['v0.3.5','v0.4.0','v0.4.1','v0.4.2','v0.4.3','v0.4.4','v0.4.5','v0.4.6','v0.4.10','v0.4.11','v0.4.12','v0.4.13','v0.4.14','v0.4.15','v0.4.16'];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,'v2.2.0','v1.0.0-local-mvp'];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};\n  const u=String(url);\n  const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf('/releases?per_page=100&page=1')>=0)body=releases;\n  else if(u.indexOf('/tags?per_page=100&page=1')>=0)body=allTags.map((n,i)=>({name:n}));\n  else if(u.indexOf('/releases/latest')>=0)body={tag_name:'v0.4.16'};\n  else {status=404;body={message:'Not Found'};}\n  if(!auth)return {status:401,headers:{get:()=>null},text:async()=>JSON.stringify({message:'Requires authentication'}),json:async()=>({message:'Requires authentication'})};\n  return {status,headers:{get:(k)=>(k==='x-ratelimit-remaining'?'5000':null)},text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import('./scripts/prune-releases.mjs');\n\" 2>&1",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 14,
+   "durationMs": 15183,
+   "outputTokens": 899,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "cat > /tmp/stub.mjs <<'EOF'\nprocess.env.GITHUB_TOKEN='stub-token';\nconst argv=[process.argv[0],'scripts/prune-releases.mjs',...(process.argv.slice(2))];\nprocess.argv=argv;\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+'-arm64.dmg',size:220*1048576},{name:t+'-x64.zip',size:235*1048576},{name:t+'-setup.exe',size:173*1048576}]});\nconst tags=['v0.3.5','v0.4.0','v0.4.1','v0.4.2','v0.4.3','v0.4.4','v0.4.5','v0.4.6','v0.4.10','v0.4.11','v0.4.12','v0.4.13','v0.4.14','v0.4.15','v0.4.16'];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,'v2.2.0','v1.0.0-local-mvp'];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};\n  const u=String(url);\n  const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf('/releases?per_page=100&page=1')>=0)body=releases;\n  else if(u.indexOf('/tags?per_page=100&page=1')>=0)body=allTags.map((n,i)=>({name:n}));\n  else if(u.indexOf('/releases/latest')>=0)body={tag_name:'v0.4.16'};\n  else {status=404;body={message:'Not Found'};}\n  if(!auth)return {status:401,ok:false,headers:{get:()=>null},text:async()=>JSON.stringify({message:'Requires authentication'}),json:async()=>({message:'Requires authentication'})};\n  return {status,ok:status>=200&&status<300,headers:{get:(k)=>(k==='x-ratelimit-remaining'?'5000':null)},text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import('./scripts/prune-releases.mjs');\nEOF\necho \"===== 1) 无 token 的 dry-run（应给出计划并拒绝执行删除）=====\"\nnode /tmp/stub.mjs --keep 4 2>&1 | head -5\necho; echo \"===== 2) --yes 但无 token（应拒绝）=====\"\nnode -e \"delete process.env.GITHUB_TOKEN\" 2>/dev/null; GITHUB_TOKEN= node /tmp/stub.mjs --yes 2>&1 | tail -5\necho; echo \"===== 3) 带 token 的 dry-run（完整计划）=====\"\nnode /tmp/stub.mjs --keep 4 2>&1",
+      "timeoutMs": 60000
+     },
+     "disposition": "failed"
+    }
+   ]
+  },
+  {
+   "iteration": 15,
+   "durationMs": 11157,
+   "outputTokens": 1150,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nprocess.env.GITHUB_TOKEN=\"stub-token\";\nprocess.argv=[process.argv[0],\"scripts/prune-releases.mjs\",...process.argv.slice(1)];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+\"-arm64.dmg\",size:220*1048576},{name:t+\"-x64.zip\",size:235*1048576},{name:t+\"-setup.exe\",size:173*1048576}]});\nconst tags=[\"v0.3.5\",\"v0.4.0\",\"v0.4.1\",\"v0.4.2\",\"v0.4.3\",\"v0.4.4\",\"v0.4.5\",\"v0.4.6\",\"v0.4.10\",\"v0.4.11\",\"v0.4.12\",\"v0.4.13\",\"v0.4.14\",\"v0.4.15\",\"v0.4.16\"];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,\"v2.2.0\",\"v1.0.0-local-mvp\"];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};const u=String(url);const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf(\"/releases?per_page=100&page=1\")>=0)body=releases;\n  else if(u.indexOf(\"/tags?per_page=100&page=1\")>=0)body=allTags.map((n)=>({name:n}));\n  else if(u.indexOf(\"/releases/latest\")>=0)body={tag_name:\"v0.4.16\"};\n  else {status=404;body={message:\"Not Found\"};}\n  const headers={get:(k)=>(k===\"x-ratelimit-remaining\"?(auth?\"5000\":null):null)};\n  if(!auth)return {status:401,ok:false,headers,text:async()=>JSON.stringify({message:\"Requires authentication\"}),json:async()=>({message:\"Requires authentication\"})};\n  return {status,ok:status>=200&&status<300,headers,text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import(\"./scripts/prune-releases.mjs\");\n' --keep 4 2>&1",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 16,
+   "durationMs": 46884,
+   "outputTokens": 940,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nconst ARGS=[\"--keep\",\"4\"];\nprocess.env.GITHUB_TOKEN=\"stub-token\";\nprocess.argv=[process.argv[0],\"scripts/prune-releases.mjs\",...ARGS];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+\"-arm64.dmg\",size:220*1048576},{name:t+\"-x64.zip\",size:235*1048576},{name:t+\"-setup.exe\",size:173*1048576}]});\nconst tags=[\"v0.3.5\",\"v0.4.0\",\"v0.4.1\",\"v0.4.2\",\"v0.4.3\",\"v0.4.4\",\"v0.4.5\",\"v0.4.6\",\"v0.4.10\",\"v0.4.11\",\"v0.4.12\",\"v0.4.13\",\"v0.4.14\",\"v0.4.15\",\"v0.4.16\"];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,\"v2.2.0\",\"v1.0.0-local-mvp\"];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};const u=String(url);const auth=(init.headers||{}).authorization;\n  let status=200,body=null;\n  if(u.indexOf(\"/releases?per_page=100&page=1\")>=0)body=releases;\n  else if(u.indexOf(\"/tags?per_page=100&page=1\")>=0)body=allTags.map((n)=>({name:n}));\n  else if(u.indexOf(\"/releases/latest\")>=0)body={tag_name:\"v0.4.16\"};\n  else {status=404;body={message:\"Not Found\"};}\n  const headers={get:(k)=>(k===\"x-ratelimit-remaining\"?(auth?\"5000\":null):null)};\n  if(!auth)return {status:401,ok:false,headers,text:async()=>JSON.stringify({message:\"Requires authentication\"}),json:async()=>({message:\"Requires authentication\"})};\n  return {status,ok:status>=200&&status<300,headers,text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import(\"./scripts/prune-releases.mjs\");\n' 2>&1",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 17,
+   "durationMs": 5265,
+   "outputTokens": 3478,
+   "calls": [
+    {
+     "tool": "edit",
+     "args": {
+      "edits": [
+       {
+        "newText": "  \"prepack\": \"build\",\n  \"prune:releases\": \"node scripts/prune-releases.mjs\"\n}",
+        "oldText": "  \"prepack\": \"build\"\n}"
+       }
+      ],
+      "path": "package.json"
+     },
+     "disposition": "failed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node scripts/prune-releases.mjs --keep 4 2>&1 | head -30",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 18,
+   "durationMs": 5064,
+   "outputTokens": 196,
+   "calls": [
+    {
+     "tool": "read",
+     "args": {
+      "limit": 30,
+      "offset": 1,
+      "path": "package.json"
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "updatePlan",
+     "args": {
+      "items": [
+       {
+        "id": "1",
+        "status": "completed",
+        "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+       },
+       {
+        "id": "2",
+        "status": "completed",
+        "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+       },
+       {
+        "id": "3",
+        "status": "in_progress",
+        "title": "准备可一键执行的清理脚本与命令（远端删除需要 GitHub 凭据，本机没有）"
+       },
+       {
+        "id": "4",
+        "status": "pending",
+        "title": "复核清理清单并汇报，附本地 tag 同步命令"
+       }
+      ]
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 19,
+   "durationMs": 2510,
+   "outputTokens": 237,
+   "calls": [
+    {
+     "tool": "read",
+     "args": {
+      "limit": 30,
+      "offset": 45,
+      "path": "package.json"
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 20,
+   "durationMs": 2925,
+   "outputTokens": 86,
+   "calls": [
+    {
+     "tool": "read",
+     "args": {
+      "limit": 16,
+      "offset": 30,
+      "path": "package.json"
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 21,
+   "durationMs": 9275,
+   "outputTokens": 150,
+   "calls": [
+    {
+     "tool": "edit",
+     "args": {
+      "edits": [
+       {
+        "newText": "    \"prepack\": \"npm run build\",\n    \"prune:releases\": \"node scripts/prune-releases.mjs\"\n  },",
+        "oldText": "    \"prepack\": \"npm run build\"\n  },"
+       }
+      ],
+      "path": "package.json"
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 22,
+   "durationMs": 12182,
+   "outputTokens": 434,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"const p=require('./package.json');console.log('JSON 合法；prune:releases =',p.scripts['prune:releases']);console.log('scripts 总数',Object.keys(p.scripts).length)\""
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('quota remaining='+c.remaining+' reset_in_s='+(c.reset-now)+' ('+Math.round((c.reset-now)/60)+' min)')}).catch(e=>console.log('ERR',e.message))\""
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 23,
+   "durationMs": 52321,
+   "outputTokens": 837,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e '\nconst ARGS=[\"--keep\",\"4\",\"--yes\",\"--prune-local\"];\nprocess.env.GITHUB_TOKEN=\"stub-token\";\nprocess.argv=[process.argv[0],\"scripts/prune-releases.mjs\",...ARGS];\nconst mk=(t,id)=>({tag_name:t,id,draft:false,assets:[{name:t+\".dmg\",size:100}]});\nconst tags=[\"v0.3.5\",\"v0.4.0\",\"v0.4.1\",\"v0.4.2\",\"v0.4.3\",\"v0.4.4\",\"v0.4.5\",\"v0.4.6\",\"v0.4.10\",\"v0.4.11\",\"v0.4.12\",\"v0.4.13\",\"v0.4.14\",\"v0.4.15\",\"v0.4.16\"];\nconst releases=tags.map((t,i)=>mk(t,1000+i));\nconst allTags=[...tags,\"v2.2.0\",\"v1.0.0-local-mvp\"];\nconst deleted=[];\nglobalThis.fetch=async(url,init)=>{\n  init=init||{};const u=String(url);const m=init.method||\"GET\";const auth=(init.headers||{}).authorization;\n  const headers={get:(k)=>(k===\"x-ratelimit-remaining\"?\"5000\":null)};\n  let status=200,body=null;\n  if(m===\"DELETE\"){deleted.push(m+\" \"+u.replace(\"https://api.github.com\",\"\"));return {status:204,ok:true,headers,text:async()=>\"\",json:async()=>null};}\n  if(u.indexOf(\"/releases?per_page=100&page=1\")>=0)body=releases;\n  else if(u.indexOf(\"/tags?per_page=100&page=1\")>=0)body=allTags.map((n)=>({name:n}));\n  else if(u.indexOf(\"/releases/latest\")>=0)body={tag_name:\"v0.4.16\"};\n  else {status=404;body={message:\"Not Found\"};}\n  return {status,ok:status>=200&&status<300,headers,text:async()=>JSON.stringify(body),json:async()=>body};\n};\nawait import(\"./scripts/prune-releases.mjs\");\nconsole.log(\"\\n=== 桩捕获到的 DELETE 调用（\"+deleted.length+\" 条）===\");\nfor(const d of deleted)console.log(\"  \"+d);\n' 2>&1 | tail -40",
+      "timeoutMs": 60000
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 24,
+   "durationMs": 7743,
+   "outputTokens": 3706,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "git status --porcelain; echo \"=== 新增文件行数 ===\"; wc -l scripts/prune-releases.mjs; echo \"=== package.json diff ===\"; git diff package.json"
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node scripts/prune-releases.mjs --help 2>&1 | head -20"
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 25,
+   "durationMs": 18583,
+   "outputTokens": 466,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node -e \"fetch('https://api.github.com/rate_limit',{headers:{'user-agent':'payaso-agent'}}).then(async r=>{const j=await r.json();const c=j.resources.core;const now=Math.floor(Date.now()/1000);console.log('quota remaining='+c.remaining+' reset_in_s='+(c.reset-now))}).catch(e=>console.log('ERR',e.message))\""
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "updatePlan",
+     "args": {
+      "items": [
+       {
+        "id": "1",
+        "status": "completed",
+        "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+       },
+       {
+        "id": "2",
+        "status": "completed",
+        "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+       },
+       {
+        "id": "3",
+        "status": "completed",
+        "title": "写好清理脚本并挂到 package.json（dry-run 与删除路径均已用桩验证）"
+       },
+       {
+        "id": "4",
+        "status": "in_progress",
+        "title": "复核清理清单并汇报，附本地 tag 同步命令"
+       }
+      ]
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 26,
+   "durationMs": 27197,
+   "outputTokens": 1100,
+   "calls": [
+    {
+     "tool": "shell",
+     "args": {
+      "command": "node scripts/prune-releases.mjs --keep 4 2>&1 | tail -32; echo \"exit=$?\"",
+      "timeoutMs": 120000
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 27,
+   "durationMs": 27194,
+   "outputTokens": 2056,
+   "calls": [
+    {
+     "tool": "calculator",
+     "args": {
+      "expression": "216.6 + 210.6 + 172.7 + 234.9 + 0.6"
+     },
+     "disposition": "executed"
+    },
+    {
+     "tool": "calculator",
+     "args": {
+      "expression": "210.6 + 234.9 + 172.7 + 0.6"
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 28,
+   "durationMs": 46939,
+   "outputTokens": 2091,
+   "calls": [
+    {
+     "tool": "updatePlan",
+     "args": {
+      "items": [
+       {
+        "id": "1",
+        "status": "completed",
+        "title": "确认清理条件（远端仓库、可用的发布/凭据工具）"
+       },
+       {
+        "id": "2",
+        "status": "completed",
+        "title": "盘点远端实际存在的 tags/releases，定出保留清单"
+       },
+       {
+        "id": "3",
+        "status": "completed",
+        "title": "写好清理脚本并挂到 package.json（dry-run 与删除路径均已用桩验证）"
+       },
+       {
+        "id": "4",
+        "status": "completed",
+        "title": "复核清理清单并汇报，附本地 tag 同步命令"
+       }
+      ]
+     },
+     "disposition": "executed"
+    }
+   ]
+  },
+  {
+   "iteration": 29,
+   "durationMs": 13,
+   "outputTokens": 3375,
+   "calls": []
   }
  ]
 }
