@@ -14,15 +14,31 @@ export const previewMessages = {
   'preview.dock.restore': { 'zh-CN': '还原', 'en-US': 'Restore' },
   'preview.dock.closeTab': { 'zh-CN': '关闭标签', 'en-US': 'Close tab' },
   'preview.dock.open': { 'zh-CN': '打开文件预览', 'en-US': 'Open file preview' },
-  // 面板首页（"开始"视图）的入口卡片：只做文件这一张
-  'preview.dock.home.workspaceFiles.description': {
-    'zh-CN': '浏览会话工作区的文件',
-    'en-US': 'Browse files in the session workspace',
-  },
+  // 面板首页两格：浏览器、文件。
+  'preview.dock.home.browser': { 'zh-CN': '浏览器', 'en-US': 'Browser' },
   'preview.dock.home.title': { 'zh-CN': '开始', 'en-US': 'Start' },
   // 标签条：一个"文件"标签 = 一棵独立的目录树（对齐 DSH 的面板标签形态）
   'preview.dock.filesTab': { 'zh-CN': '文件', 'en-US': 'Files' },
   'preview.dock.filesTabN': { 'zh-CN': '文件 {n}', 'en-US': 'Files {n}' },
+  'preview.dock.webTab': { 'zh-CN': '浏览器', 'en-US': 'Browser' },
+  'preview.dock.webTabN': { 'zh-CN': '浏览器 {n}', 'en-US': 'Browser {n}' },
+  'preview.browser.address': { 'zh-CN': '网址', 'en-US': 'Address' },
+  'preview.browser.addressPlaceholder': {
+    'zh-CN': '输入网址',
+    'en-US': 'Enter a URL',
+  },
+  'preview.browser.back': { 'zh-CN': '后退', 'en-US': 'Back' },
+  'preview.browser.forward': { 'zh-CN': '前进', 'en-US': 'Forward' },
+  'preview.browser.reload': { 'zh-CN': '重新加载', 'en-US': 'Reload' },
+  'preview.browser.invalid': {
+    'zh-CN': '请输入 http 或 https 网址',
+    'en-US': 'Enter an http or https URL',
+  },
+  'preview.browser.empty': {
+    'zh-CN': '输入网址后打开',
+    'en-US': 'Enter a URL to open it',
+  },
+  'preview.browser.frame': { 'zh-CN': '内嵌网页', 'en-US': 'Embedded page' },
   'preview.dock.newTab': { 'zh-CN': '新建标签', 'en-US': 'New tab' },
   // 文件预览视图顶部的操作条（路径 + 刷新 + 在应用中打开）
   'preview.fileBar.path': { 'zh-CN': '文件路径', 'en-US': 'File path' },

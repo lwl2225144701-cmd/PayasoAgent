@@ -3,7 +3,8 @@
 // 标签身份分两类（文件标签不在这里 —— Word/PDF 等由 App 层 tabsApi 持有，
 // Timeline 点文件也要往同一个集合里塞）：
 //   - 'home'    "开始"标签：面板首页（入口卡片）。＋ 新建的就是它；
-//   - 'browser' "文件"标签：一棵独立的目录树（各自记住浏览位置/过滤词）。
+//   - 'browser' "文件"标签：一棵独立的目录树（各自记住浏览位置/过滤词）；
+//   - 'web'     "浏览器"标签：一块内嵌浏览器（各自记住打开的页面）。
 //
 // 交互序列（用户真机截图三步，docs/plans/preview-module-plan.md §9）：
 //   ① 面板打开            → 空标签集；strip 显示"开始"入口（无胶囊/无 ×/无 ＋）；
@@ -14,7 +15,7 @@
 // 为什么单独一个纯模块：标签的增删/激活迁移/命名要能脱离 React 单测
 // （tests/frontend-preview-registry.test.ts）；组件只消费这里的状态机。
 
-export type DockTabKind = 'home' | 'browser';
+export type DockTabKind = 'home' | 'browser' | 'web';
 
 export interface DockTab {
   id: number;
@@ -58,6 +59,23 @@ export function openFilesTab(tabs: DockTabs): DockTabs {
   return appendTab(tabs, 'browser');
 }
 
+/**
+ * 首页"浏览器"卡片：把当前激活的"开始"标签转成"浏览器"标签；
+ * 没有激活的"开始"标签就新建一个。
+ */
+export function openWebTab(tabs: DockTabs): DockTabs {
+  if (tabs.activeId !== null) {
+    const active = tabs.tabs.find((tab) => tab.id === tabs.activeId);
+    if (active && active.kind === 'home') {
+      return {
+        tabs: tabs.tabs.map((tab) => (tab.id === active.id ? { ...tab, kind: 'web' } : tab)),
+        activeId: tabs.activeId,
+      };
+    }
+  }
+  return appendTab(tabs, 'web');
+}
+
 /** ＋：新建一个"开始"标签并激活（新标签默认落在开始页，对齐截图 ③）。 */
 export function addStartTab(tabs: DockTabs): DockTabs {
   return appendTab(tabs, 'home');
@@ -85,4 +103,13 @@ export function browserTabLabel(
   return ordinal === 0
     ? { key: 'preview.dock.filesTab' }
     : { key: 'preview.dock.filesTabN', n: ordinal + 1 };
+}
+
+/** 第 ordinal 个"浏览器"标签的显示名：首个叫「浏览器」，之后「浏览器 2」。 */
+export function webTabLabel(
+  ordinal: number,
+): { key: 'preview.dock.webTab' } | { key: 'preview.dock.webTabN'; n: number } {
+  return ordinal === 0
+    ? { key: 'preview.dock.webTab' }
+    : { key: 'preview.dock.webTabN', n: ordinal + 1 };
 }

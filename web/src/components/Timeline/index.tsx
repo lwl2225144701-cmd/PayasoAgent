@@ -9,6 +9,8 @@ import { workspaceFileUrl } from '../../api';
 import { formatTime, stripThinkTags } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
 import { useI18n } from '../../i18n';
+// 同类隐患：run.task 是 API 边界未校验的字段，脏数据（null/数字）在这里同样会炸。
+import { runTaskText } from '../../run-task';
 import type { ContextUsageEvent, HostRun } from '../../types';
 import { CollapsibleText } from '../CollapsibleText';
 import { CopyButton } from '../CopyButton';
@@ -217,6 +219,10 @@ export const Timeline = memo(function Timeline({
   // 注意判定用的是**附件总数**而不是图片数：1 张图 + 1 个文档时那张图也是方格。
   const attachmentsCompact = (attachments?.length ?? 0) > 1;
 
+  // 用户原文的安全取值：run.task 类型上必填，运行时却可能是 null/数字（同 TurnNavigator）。
+  // 非字符串降级为空串，交由上面的渲染分支显示空文案，而不是让整条 Timeline 抛错。
+  const userTaskText = runTaskText(run);
+
   return (
     <div
       id={run ? `run-${run.runId}` : undefined}
@@ -256,14 +262,14 @@ export const Timeline = memo(function Timeline({
           {/* 用户消息与助手正文共用 MarkdownText：手打的 **加粗**、# 标题、列表、代码块
               都按 Markdown 渲染。这里不做模型输出那套畸形 fence 修复 —— 不改写用户原文。 */}
           <div className={styles.userText}>
-            <MarkdownText text={run.task} />
+            <MarkdownText text={userTaskText} />
           </div>
           <div className={styles.userMeta}>
             <time className={styles.time}>
               {formatTime(runStarted?.timestamp ?? run.createdAt, language)}
             </time>
             {/* 复制用户自己发出的原文：与时间戳同一页脚行、低调的纯图标按钮 */}
-            <CopyButton text={run.task} iconOnly />
+            <CopyButton text={userTaskText} iconOnly />
           </div>
         </article>
 

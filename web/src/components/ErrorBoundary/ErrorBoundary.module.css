@@ -1,0 +1,52 @@
+/* 根级错误边界的降级页：唯一要求是「任何时候都能读」——
+   崩的那棵树可能连主题变量都没生效，所以这里只依赖 index.css/theme.css 的
+   语义变量，并给出兜底色值，不引用任何组件级样式。 */
+
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  background: var(--bg-primary, #10141b);
+  color: var(--text-primary, #e9edf5);
+}
+
+.card {
+  width: 100%;
+  max-width: 460px;
+  padding: 28px 28px 24px;
+  border: 1px solid var(--color-border-default, rgba(164, 185, 216, 0.16));
+  border-radius: var(--radius-lg, 14px);
+  background: var(--color-surface-raised, rgba(28, 35, 47, 0.97));
+  box-shadow: var(--shadow-md, 0 14px 36px rgba(0, 0, 0, 0.3));
+}
+
+.title {
+  margin-bottom: 8px;
+  font-size: var(--font-size-lg, 18px);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.hint {
+  margin-bottom: 18px;
+  font-size: var(--font-size-sm, 13px);
+  line-height: 1.7;
+  color: var(--color-text-secondary, #b0bacb);
+}
+
+.action {
+  padding: 8px 16px;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 600;
+  color: var(--color-text-on-brand, #fff);
+  background: var(--color-brand, #4f7ff0);
+  border-radius: var(--radius-sm, 7px);
+  transition: background 0.12s ease;
+}
+
+.action:hover {
+  background: var(--color-brand-hover, #6b94f4);
+}

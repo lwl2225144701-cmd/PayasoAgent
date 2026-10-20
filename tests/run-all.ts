@@ -157,6 +157,8 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-run-events', file: 'tests/frontend-run-events.test.ts' },
   { name: 'frontend-last-session', file: 'tests/frontend-last-session.test.ts' },
   { name: 'frontend-portal-root', file: 'tests/frontend-portal-root.test.ts' },
+  // 脏数据不白屏：Run 文本安全取值 + 根级 ErrorBoundary 接线不变量
+  { name: 'frontend-run-task', file: 'tests/frontend-run-task.test.ts' },
   { name: 'workspace-expansion', file: 'tests/workspace-expansion.test.ts' },
   // 历史任务搜索（侧栏任务列表：标题 + 工作区名筛选、分组保留、搜索期展开/恢复）
   { name: 'task-search', file: 'tests/task-search.test.ts' },

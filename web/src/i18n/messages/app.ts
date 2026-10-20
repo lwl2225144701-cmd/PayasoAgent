@@ -102,6 +102,16 @@ export const appMessages = {
   'app.archived': { 'zh-CN': '已归档', 'en-US': 'Archived' },
   'app.archiveFailed': { 'zh-CN': '归档失败：{message}', 'en-US': 'Archive failed: {message}' },
 
+  // 根级错误边界（渲染期异常兜底页；文案须在组件树已崩的情况下也能读懂）
+  'app.crash.title': { 'zh-CN': '界面出现异常', 'en-US': 'Something went wrong' },
+  'app.crash.hint': {
+    'zh-CN':
+      '页面遇到一个未预期的问题，渲染已中止以免显示错误内容。重新加载通常可继续使用；若反复出现，请连同浏览器控制台的报错一起反馈。',
+    'en-US':
+      'The page hit an unexpected problem, so rendering stopped instead of showing wrong content. Reloading usually gets you going again; if it keeps happening, report it together with the error in the browser console.',
+  },
+  'app.crash.reload': { 'zh-CN': '重新加载', 'en-US': 'Reload' },
+
   // 空态与首屏
   'app.preparingWorkspace': { 'zh-CN': '正在准备工作区…', 'en-US': 'Preparing workspace…' },
   'app.heroTitle': {

@@ -238,77 +238,70 @@
 }
 
 /* ===== 面板首页（"开始"视图）=====
-   参照 DSH 右侧面板首页：一张卡片 = 一个入口。当前只有"工作区文件"一张
-   （终端/浏览器明确不做，见 docs/plans/preview-gui-调研报告.md 的范围收窄）。 */
+   两格居中：浏览器、文件。方形卡片，图标在上、文字在下。 */
 .home {
   flex: 1;
   min-height: 0;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.homeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 112px);
+  gap: 16px;
+}
+
+.homeTile {
+  display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 10px;
-  padding: var(--space-4) var(--space-3);
-  justify-content: center;
-}
-
-.homeCard {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  text-align: left;
-  background: color-mix(in srgb, var(--color-card-glass) 62%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  width: 112px;
+  height: 112px;
+  padding: 12px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
   border-radius: 12px;
-  cursor: pointer;
-  color: inherit;
+  background: color-mix(in srgb, var(--color-surface-subtle) 48%, transparent);
+  color: var(--color-text-secondary);
   font: inherit;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
 }
 
-.homeCard:hover,
-.homeCard:focus-visible {
-  background: color-mix(in srgb, var(--color-card-glass) 92%, transparent);
-  border-color: color-mix(in srgb, var(--border-color) 100%, transparent);
+.homeTile:hover:not(:disabled),
+.homeTile:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--color-surface-hover) 72%, transparent);
+  color: var(--color-text-primary);
 }
 
-.homeCardIcon {
+.homeTile:disabled {
+  cursor: default;
+  opacity: 1;
+  color: var(--color-text-secondary);
+}
+
+.homeTile:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.homeTileIcon {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
-  border-radius: 9px;
+  color: var(--color-text-tertiary);
 }
 
-.homeCardText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+.homeTile:hover:not(:disabled) .homeTileIcon {
+  color: var(--color-text-secondary);
 }
 
-.homeCardTitle {
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-}
-
-.homeCardDesc {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-}
-
-.homeCardShortcut {
-  margin-left: auto;
-  flex-shrink: 0;
-  padding: 2px 7px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
-  border-radius: 6px;
+.homeTileLabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

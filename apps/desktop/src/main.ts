@@ -311,6 +311,8 @@ function createWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false, // 页面只是普通 Web 页面（同源 localhost），不需要 Node 能力
+      // 预览面板里的内嵌浏览器。访客页跑在独立 webview 里，不进主界面的源。
+      webviewTag: true,
       // 唯一的能力桥：选目录（原生对话框）。编译产物是 preload.cjs（CommonJS），
       // 因为 sandbox 化的 preload 不能是 ESM，而本包是 "type": "module"。
       preload: path.join(here, 'preload.cjs'),

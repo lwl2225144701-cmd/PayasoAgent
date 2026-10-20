@@ -1,6 +1,7 @@
 import type { CSSProperties, MouseEvent, PointerEvent } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
+import { runResultClip, runTaskClip, runTaskText } from '../../run-task';
 import type { HostRun } from '../../types';
 import styles from './TurnNavigator.module.css';
 
@@ -175,7 +176,9 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
                   aria-current={isActive ? 'true' : undefined}
                   aria-label={t('shell.turnNav.mark', {
                     index: index + 1,
-                    task: run.task.slice(0, 30),
+                    // 脏 task（null/缺字段，来自历史库或版本错位）不能连导航条一起炸掉：
+                    // 取值走 run-task 的安全入口，空值兜底为「未命名任务」，与侧栏会话标题口径一致。
+                    task: runTaskClip(run, 30) || t('app.untitledTask'),
                   })}
                   className={`${styles.mark} ${isActive ? styles.markActive : ''} ${isPreview ? styles.markPreview : ''}`}
                   onFocus={() => setPreviewIndex(index)}
@@ -191,9 +194,9 @@ function TurnNavigatorInner({ runs, activeRunId, onNavigate }: TurnNavigatorProp
         </div>
         {preview && (
           <div className={styles.preview} style={markPosition(previewIndex, runs.length)}>
-            <span className={styles.previewPrompt}>{preview.task}</span>
-            {preview.result && (
-              <span className={styles.previewSummary}>{preview.result.slice(0, 160)}</span>
+            <span className={styles.previewPrompt}>{runTaskText(preview)}</span>
+            {runResultClip(preview, 160) && (
+              <span className={styles.previewSummary}>{runResultClip(preview, 160)}</span>
             )}
           </div>
         )}
