@@ -10,6 +10,8 @@
 //   v1.9 P1 能力（grep 正则+ignore / glob / 项目指令发现链 / shell 只读命令免回放）、
 //   v1.10 P2 与能力（原生适配器原始参数恢复 / scratchpad 瘦身 / 后台长任务通道）、
 //   v2.2 Plan（Harness 持有的任务清单：全量替换状态机 / 有界投影注入 / 工具→plan_update→注入闭环）
+//   v2.5 执行效率（check 工具与 facts 协议 / 执行证据存储与复用 / Biome 基线与多重集合比较 /
+//        事实型进度闭环 progress-watch）
 // 说明:
 //   1. 每个套件在独立子进程运行（各自设置 SANDBOX_ROOT / mkdtemp，避免环境变量互相污染）
 //   2. 以子进程退出码判定套件通过与否（各套件内部已实现 失败 → 非 0 退出）
@@ -204,6 +206,11 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'run-stats', file: 'tests/run-stats.test.ts' },
   { name: 'session-commands', file: 'tests/session-commands.test.ts' },
   { name: 'token-usage', file: 'tests/token-usage.test.ts' },
+  // v2.5 执行效率（计划 20261020）：A/B/C/D/E 批次的确定性套件。
+  { name: 'check-tool', file: 'tests/check-tool.test.ts' },
+  { name: 'check-baseline', file: 'tests/check-baseline.test.ts' },
+  { name: 'execution-evidence', file: 'tests/execution-evidence.test.ts' },
+  { name: 'progress-watch', file: 'tests/progress-watch.test.ts' },
 ];
 
 interface SuiteResult {

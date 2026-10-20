@@ -229,6 +229,31 @@ export type TraceEvent =
       spillPath?: string;
     }
   | {
+      type: 'check_result';
+      step: number;
+      timestamp: string;
+      checkId: string;
+      profile: 'process' | 'biome-lint';
+      conclusion: 'passed' | 'failed' | 'inconclusive' | null;
+      source: 'executed' | 'reused';
+      reusedFrom?: string;
+      durationMs: number;
+      logRefs?: { stdoutRef?: string; stderrRef?: string };
+    }
+  | {
+      type: 'progress_watch';
+      step: number;
+      timestamp: string;
+      iteration: number;
+      /** warn = 首次事实型进度审查；escalate = 同周期升级（每周期最多 2 次）。 */
+      level: 'warn' | 'escalate';
+      noProgressTurns: number;
+      activeMs: number;
+      reminders: number;
+      /** 有界的触发依据（重复事实数/回合/时长），与注入模型的文本同源。 */
+      reason?: string;
+    }
+  | {
       type: 'shell_sandbox_started';
       step: number;
       timestamp: string;
@@ -477,6 +502,25 @@ export type TraceEventInput =
       originalBytes: number;
       returnedBytes: number;
       spillPath?: string;
+    }
+  | {
+      type: 'check_result';
+      checkId: string;
+      profile: 'process' | 'biome-lint';
+      conclusion: 'passed' | 'failed' | 'inconclusive' | null;
+      source: 'executed' | 'reused';
+      reusedFrom?: string;
+      durationMs: number;
+      logRefs?: { stdoutRef?: string; stderrRef?: string };
+    }
+  | {
+      type: 'progress_watch';
+      iteration: number;
+      level: 'warn' | 'escalate';
+      noProgressTurns: number;
+      activeMs: number;
+      reminders: number;
+      reason?: string;
     }
   | {
       type: 'shell_sandbox_started';

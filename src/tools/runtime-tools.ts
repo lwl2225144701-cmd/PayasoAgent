@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ToolFacts } from '../execution-evidence.js';
 import { toolTimeoutPolicy } from '../runtime/tool-invocation/process-manager.js';
 import {
   getBackgroundJob,
@@ -30,13 +31,16 @@ import {
   shellTimeoutPolicy,
 } from '../sandbox/shell-timeout.js';
 import { resolveToolOutputBudget, utf8ByteLength } from '../tool-output-budget.js';
+import { checkTool, registerCheckTool } from './check.js';
 import {
   assertWritableZone,
   canonicalPathKey,
   isProbablyBinary,
   resolveAuthorizedPath,
+  workspaceRelativePath,
 } from './filesystem.js';
 import { compileGlob } from './glob-pattern.js';
+import { factDigest, readFacts } from './tool-facts.js';
 import {
   RequiredRuntimeToolUnavailableError,
   register,
@@ -162,8 +166,30 @@ register({
       if (hits.length > 0) groups.set(file.relPath, hits);
     }
 
+    // 计划 §8.1：grep 只产生"规范化查询 + 结果摘要"事实，且 complete=false
+    //（默认忽略依赖目录、受输出预算与扫描上限约束，不能宣称整个范围已查清）。
+    const grepFacts = (text: string): ToolFacts | null => {
+      const logicalPath = workspaceRelativePath(context, real);
+      if (!logicalPath) return null;
+      const scopeDigest = factDigest(
+        scan.files.map((file) => `${file.relPath}:${file.size}`).join('\n'),
+      );
+      return readFacts({
+        kind: 'grep',
+        path: logicalPath,
+        versionKind: 'content',
+        version: scopeDigest,
+        queryHash: factDigest(`${pattern}\u0000${rel}\u0000${maxResults}\u0000${includeIgnored}`),
+        returnedText: text,
+        complete: false,
+      });
+    };
+
     if (matchCount === 0) {
-      return `未找到 "${pattern}"（${rel}；已扫描 ${filesScanned} 个文件${includeIgnored ? '' : '，已忽略依赖/产物目录'}）`;
+      const emptyText = `未找到 "${pattern}"（${rel}；已扫描 ${filesScanned} 个文件${includeIgnored ? '' : '，已忽略依赖/产物目录'}）`;
+      const facts = grepFacts(emptyText);
+      if (!facts) return emptyText;
+      return { content: emptyText, facts };
     }
 
     const lines: string[] = [];
@@ -182,7 +208,10 @@ register({
     if (skippedLarge > 0)
       notes.push(`[grep 提示] 跳过 ${skippedLarge} 个超过 ${SEARCH_MAX_FILE_BYTES} 字节的文件。`);
     if (scan.truncated) notes.push('[grep 提示] 文件数达到扫描上限，结果可能不完整。');
-    return [...lines, ...notes].join('\n');
+    const matchedText = [...lines, ...notes].join('\n');
+    const matchedFacts = grepFacts(matchedText);
+    if (!matchedFacts) return matchedText;
+    return { content: matchedText, facts: matchedFacts };
   },
   validateResult: (result) => {
     if (typeof result === 'string' && result.startsWith('[sandbox-tool-invalid]')) {
@@ -478,6 +507,18 @@ function liveShellOutput(
   };
 }
 
+// v2.5（批次A · 计划 §9.3）：沙箱拒绝反馈。补充"已有能力"指引——同一次 shell
+// 调用的临时文件用注入的 TMPDIR（受管 scratch，调用结束即删）；跨调用需要保留
+// 的文件按当前权限放工作区允许目录。文案不含任何宿主私有路径；不给任意 /tmp
+// 加白名单，也不新建跨 Run 临时文件系统（保持 shell scratch 既有生命周期）。
+export const SHELL_SANDBOX_DENIED_FEEDBACK =
+  'Shell operation denied by the workspace sandbox (filesystem policy). ' +
+  'The command attempted to write outside the allowed roots. ' +
+  '恢复方式：同一次 shell 调用内的临时文件请改用注入的 TMPDIR（受管 scratch，HOME 同样可写；' +
+  '调用结束即删除，不能跨调用传递文件，不代表 Workspace 可写）。' +
+  '需要跨调用保留或最终交付的文件：按当前权限写入工作区允许的目录' +
+  '（Workspace Write 下如 work/、output/；Read Only 下不可写文件，结果应记为不确定）。';
+
 async function executeContainedShell(
   command: string,
   context: ToolContext,
@@ -502,10 +543,7 @@ async function executeContainedShell(
     });
     if (result.denied) {
       // Do not expose stderr or host paths to the LLM/context.
-      throw new Error(
-        'Shell operation denied by the workspace sandbox (filesystem policy). ' +
-          'The command attempted to write outside the allowed roots.',
-      );
+      throw new Error(SHELL_SANDBOX_DENIED_FEEDBACK);
     }
     const missingTool = result.exitCode !== 0 ? missingShellToolName(result.stderr) : undefined;
     if (missingTool !== undefined) {
@@ -781,3 +819,8 @@ register({
     }
   },
 });
+
+// v2.5（计划 §11.1 批次C）：check 在此接入真实模型工具集，但只开放 profile=process；
+// biome-lint/baseline 由批次D 交付后再放开可用性（当前调用会得到"未实现"结论，不静默降级）。
+// hidden:false 由注册点显式声明，check.ts 自身的默认值保持保守（hidden=true）。
+registerCheckTool({ ...checkTool, hidden: false });

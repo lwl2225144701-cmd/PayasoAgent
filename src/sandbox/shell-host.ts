@@ -16,7 +16,7 @@
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MAX_SHELL_OUTPUT, SHELL_TIMEOUT_MS } from './macos-sandbox.js';
+import { MAX_SHELL_OUTPUT, type ProcessOutputStream, SHELL_TIMEOUT_MS } from './macos-sandbox.js';
 
 /** 命令语言族：决定如何把命令字符串交给解释器。 */
 export type ShellCarrierKind = 'posix' | 'powershell' | 'cmd';
@@ -422,6 +422,147 @@ export interface ShellRunOptions {
   platform?: NodeJS.Platform;
   // v2.3 增量输出：stdout/stderr 数据到达即回调（后台作业滚动词法缓冲用）。
   onOutput?: (text: string) => void;
+  // check 协议（计划 §5.2）：带流标记的**原始** chunk 回调，在底层截断前触发。
+  // 旧 Shell 调用方不传即无操作，onOutput 的形状与语义不变。
+  onRawChunk?: (stream: ProcessOutputStream, chunk: Buffer) => void;
+}
+
+/**
+ * 在 PATH 中解析可执行文件名（不含目录分隔符的名字）。
+ * - posix：逐项 `isFile` 探测（不跟随 symlink 目录以外的规则，交由 spawn 失败暴露）。
+ * - win32：名字本身 → 追加 PATHEXT 扩展名逐个探测。`.bat/.cmd` 由调用方
+ *   （check 参数校验）先行拒绝：它们不是原生进程，需要解释器承载。
+ * 找不到返回 null —— 调用方据此给出"依赖缺失"的结构化错误，绝不静默换载体。
+ */
+export function lookupExecutableInPath(
+  name: string,
+  pathValue: string,
+  options: { platform?: NodeJS.Platform; env?: Record<string, string | undefined> } = {},
+): string | null {
+  if (!name || name.includes('/') || name.includes('\\')) return null;
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const extensions =
+    platform === 'win32'
+      ? (() => {
+          const raw = env.PATHEXT?.trim();
+          const list = (raw || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+          const hasSuffix = /\.[A-Za-z0-9]+$/.test(name);
+          return hasSuffix ? ['' as string, ...list] : ['', ...list];
+        })()
+      : [''];
+  for (const dir of pathValue.split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of extensions) {
+      const candidate = path.join(dir, `${name}${ext}`);
+      try {
+        if (fs.statSync(candidate).isFile()) return candidate;
+      } catch {
+        /* 继续下一个候选 */
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 受控 argv 目标的无沙箱执行（计划 §5.2：受控无沙箱路径仍服从既有门控）。
+ * 与 runUncontainedShell 的区别是刻意的：
+ * - 不发现 shell 载体、不构造 `-c` 脚本：argv 原样交给 spawn，
+ *   `|`、`;`、`$`、引号都只是字面参数。
+ * - 不继承宿主完整 env：只给 HOME/TMPDIR/PATH/LC_ALL（Windows 另加 TMP/TEMP），
+ *   避免宿主环境明文穿过被检查的进程。
+ * 超时 / abort 走同一个 terminateProcessTree，整树终止语义与 Shell 一致。
+ */
+export function runUncontainedProcess(
+  argv: readonly string[],
+  options: ShellRunOptions & { pathValue?: string },
+): Promise<ShellRunResult> {
+  if (!argv.length || argv.some((token) => typeof token !== 'string' || token.length === 0)) {
+    return Promise.reject(new Error('process argv must be a non-empty array of literal strings'));
+  }
+  const platform = options.platform ?? process.platform;
+  const timeout = options.timeoutMs ?? SHELL_TIMEOUT_MS;
+  // Windows 不 detached（避免孤儿进程）；unix detached 成进程组以便整树 kill
+  const detached = platform !== 'win32';
+
+  return new Promise<ShellRunResult>((resolve, reject) => {
+    const child = spawn(argv[0], argv.slice(1), {
+      cwd: options.cwd,
+      env: {
+        PATH: options.pathValue ?? process.env.PATH ?? '',
+        HOME: options.home,
+        TMPDIR: options.tmpdir,
+        ...(platform === 'win32' ? { TMP: options.tmpdir, TEMP: options.tmpdir } : {}),
+        LC_ALL: 'C',
+      },
+      detached,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    let aborted = false;
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      terminateProcessTree(child.pid ?? 0, { platform });
+    }, timeout);
+
+    const onAbort = (): void => {
+      aborted = true;
+      terminateProcessTree(child.pid ?? 0, { platform });
+    };
+    if (options.signal) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    const settle = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      options.signal?.removeEventListener('abort', onAbort);
+      fn();
+    };
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      options.onRawChunk?.('stdout', chunk);
+      if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
+      options.onOutput?.(String(chunk));
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      options.onRawChunk?.('stderr', chunk);
+      if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
+      options.onOutput?.(String(chunk));
+    });
+
+    child.on('error', (err) => {
+      settle(() => reject(err));
+    });
+
+    child.on('close', (code, signalTerm) => {
+      settle(() => {
+        // 与 runUncontainedShell 一致：abort 后正常跑完（exit 0）按成功处理，
+        // 否则视为被取消；取消不计为检查失败，也不产生通过记录。
+        if (aborted && (signalTerm !== null || code !== 0)) {
+          reject(new DOMException('Aborted', 'AbortError'));
+          return;
+        }
+        resolve({
+          exitCode: code,
+          signal: signalTerm ?? null,
+          stdout: outputLimit(stdout),
+          stderr: outputLimit(stderr),
+          timedOut,
+          denied: false,
+        });
+      });
+    });
+  });
 }
 
 /**
@@ -489,10 +630,13 @@ export function runUncontainedShell(
     };
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      // 旧 Shell 调用方不传 onRawChunk，行为不变；传入时同样在截断前拿到原始字节。
+      options.onRawChunk?.('stdout', chunk);
       if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
       options.onOutput?.(String(chunk));
     });
     child.stderr?.on('data', (chunk: Buffer) => {
+      options.onRawChunk?.('stderr', chunk);
       if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
       options.onOutput?.(String(chunk));
     });

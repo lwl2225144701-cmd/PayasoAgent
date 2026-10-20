@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { type PermissionMode, storedPermissionMode } from '../permission-mode.js';
-import { MAX_SHELL_OUTPUT } from './macos-sandbox.js';
+import { MAX_SHELL_OUTPUT, type ProcessOutputStream } from './macos-sandbox.js';
 import {
   buildShellInvocation,
   describeAclIncompatibleCarrier,
@@ -76,6 +76,8 @@ export interface WindowsAclShellOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onOutput?: (text: string) => void;
+  /** check 协议：截断前的原始带流标记 chunk（旧 Shell 调用方不传即无操作）。 */
+  onRawChunk?: (stream: ProcessOutputStream, chunk: Buffer) => void;
   /** 测试注入：替代真实 spawn。 */
   spawnImpl?: typeof spawn;
   nodeExecutable?: string;
@@ -106,16 +108,55 @@ export function runWindowsAclShell(
   if (!isAclCompatibleCarrier(host)) {
     return Promise.reject(new Error(describeAclIncompatibleCarrier(host)));
   }
+  return runWindowsAclArgv(
+    buildWindowsAclRunnerArgv({
+      nodeExecutable: options.nodeExecutable ?? process.execPath,
+      runnerPath: options.runnerPath,
+      workspaceRoot: options.workspaceRoot,
+      scratchPath: options.scratchPath,
+      permissionMode: options.permissionMode,
+      invocation: buildShellInvocation(host, command),
+    }),
+    options,
+  );
+}
+
+/**
+ * 受控 argv 目标（check 协议，计划 §5.2）：同一个薄 runner、同一套受限令牌授权，
+ * 只是 `--` 之后换成**原生程序 + 字面参数数组**（runner 内部本就是
+ * `spawn(command, args)`）。不经 PowerShell/cmd，所以 `|`、`;`、`$`、引号只按
+ * 字面到达被检查的进程；也就不需要、也不接受任何 shell 载体。
+ * `.cmd/.bat` 一类的批处理不是原生进程，由 check 的参数校验先行拒绝。
+ */
+export function runWindowsAclProcess(
+  processArgv: readonly string[],
+  options: WindowsAclShellOptions,
+): Promise<WindowsAclShellResult> {
+  if (
+    !processArgv.length ||
+    processArgv.some((token) => typeof token !== 'string' || token.length === 0)
+  ) {
+    return Promise.reject(new Error('process argv must be a non-empty array of literal strings'));
+  }
+  return runWindowsAclArgv(
+    buildWindowsAclRunnerArgv({
+      nodeExecutable: options.nodeExecutable ?? process.execPath,
+      runnerPath: options.runnerPath,
+      workspaceRoot: options.workspaceRoot,
+      scratchPath: options.scratchPath,
+      permissionMode: options.permissionMode,
+      invocation: processArgv,
+    }),
+    options,
+  );
+}
+
+function runWindowsAclArgv(
+  argv: readonly string[],
+  options: WindowsAclShellOptions,
+): Promise<WindowsAclShellResult> {
   const doSpawn = options.spawnImpl ?? spawn;
   const timeout = options.timeoutMs ?? 60_000;
-  const argv = buildWindowsAclRunnerArgv({
-    nodeExecutable: options.nodeExecutable ?? process.execPath,
-    runnerPath: options.runnerPath,
-    workspaceRoot: options.workspaceRoot,
-    scratchPath: options.scratchPath,
-    permissionMode: options.permissionMode,
-    invocation: buildShellInvocation(host, command),
-  });
 
   return new Promise<WindowsAclShellResult>((resolve, reject) => {
     const child = doSpawn(argv[0], argv.slice(1), {
@@ -171,10 +212,14 @@ export function runWindowsAclShell(
     };
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      // 受限子进程 stdio 继承 runner，两条流仍分别落到 runner 的 stdout/stderr，
+      // 因此这里能拿到真正的按流分离原始字节（旧 Shell 调用方不传即无操作）。
+      options.onRawChunk?.('stdout', chunk);
       if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
       options.onOutput?.(String(chunk));
     });
     child.stderr?.on('data', (chunk: Buffer) => {
+      options.onRawChunk?.('stderr', chunk);
       if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
       options.onOutput?.(String(chunk));
     });

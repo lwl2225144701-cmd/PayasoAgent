@@ -228,6 +228,7 @@ export async function runAgent(
     state,
     scratchpad,
     sideEffectGuard,
+    executionEvidenceStore,
     messages,
     contextHarness,
     modelContext,
@@ -806,10 +807,22 @@ export async function runAgent(
         return answer;
       }
 
+      executionEvidenceStore.setIteration(state.iteration);
       const toolNames = assistantMsg.tool_calls.map((c) => c.function.name).join(', ');
       observer.log(`[LLM 决策] 选择工具: ${toolNames}`);
       let readCalls = 0;
       let otherCalls = 0;
+      // v2.5（计划 §8.2）：本回合可机械验证事实的汇总状态。
+      let invokedCalls = 0;
+      let supportedCalls = 0;
+      let unsupportedCalls = 0;
+      let neutralCalls = 0;
+      let failedCalls = 0;
+      let newReadCount = 0;
+      let changedFileCount = 0;
+      let newCheckCount = 0;
+      let repeatCount = 0;
+      const evidenceIds: string[] = [];
 
       // 3. 执行工具（含重试 + 失败恢复 + 防死循环）
       // v2.6 预算准入（阶段二）：耗尽后不执行任何新工具——模型即使忽略收尾
@@ -825,7 +838,7 @@ export async function runAgent(
         budgetAborted = true;
       });
       try {
-        for (const call of assistantMsg.tool_calls) {
+        for (const [toolCallIndex, call] of assistantMsg.tool_calls.entries()) {
           // True cancellation：工具间检查 —— 前一个工具返回后用户 Stop，
           // 不再执行本条消息里剩余的 tool_calls，也不发下一轮 LLM。
           throwIfAborted(opts.signal);
@@ -851,6 +864,9 @@ export async function runAgent(
             {
               runId,
               toolContext,
+              // v2.5（计划 §6）：执行事实存储 + 本次调用的规范化 origin。
+              evidenceStore: executionEvidenceStore,
+              toolCallOrigin: `iter:${state.iteration}:batch:${toolCallIndex}:call:${call.id}`,
               messages,
               state,
               scratchpad,
@@ -878,11 +894,33 @@ export async function runAgent(
             },
             call,
           );
-          if (!outcome) otherCalls++;
-          else if (outcome.tool !== 'updatePlan') {
+          if (!outcome) {
+            otherCalls++;
+            failedCalls++;
+          } else if (outcome.tool !== 'updatePlan') {
             // 更新计划是中性动作，不伪装成写入进展。
             if (outcome.effect === 'read') readCalls++;
             else otherCalls++;
+          }
+          // v2.5（计划 §8.2）：本回合事实汇总。只统计真正发出的调用；
+          // 无结构化事实的调用使 coverage 降级（不当作进展，也不硬判停滞）。
+          invokedCalls += 1;
+          if (outcome?.tool === 'updatePlan') neutralCalls += 1;
+          const evidence = outcome?.evidence;
+          if (evidence?.supported) {
+            supportedCalls += 1;
+            newReadCount += evidence.newReads;
+            changedFileCount += evidence.newMutations;
+            newCheckCount += evidence.newChecks;
+            for (const id of evidence.evidenceIds) {
+              if (evidenceIds.length < 8 && !evidenceIds.includes(id)) evidenceIds.push(id);
+            }
+            if (evidence.newReads + evidence.newMutations + evidence.newChecks === 0) {
+              repeatCount += 1;
+            }
+          } else if (outcome && outcome.tool !== 'updatePlan') {
+            // 成功但不提供事实的工具：本回合进度未知。
+            unsupportedCalls += 1;
           }
         }
       } finally {
@@ -902,6 +940,16 @@ export async function runAgent(
       }
 
       if (contextHarness.observeToolTurn) {
+        // v2.5（计划 §8.2）：本回合事实汇总。neutralOnly = 本回合只有中性动作
+        // （如 updatePlan）：保留计数但不累积回合/时长，因此 coverage 视为完整。
+        const neutralOnly = invokedCalls > 0 && neutralCalls === invokedCalls;
+        const coverage: 'complete' | 'partial' | 'unknown' = neutralOnly
+          ? 'complete'
+          : supportedCalls === 0
+            ? 'unknown'
+            : unsupportedCalls > 0 || failedCalls > 0
+              ? 'partial'
+              : 'complete';
         // v2.6 周期性目标审查需要原始目标与近期结果：目标取 Run.task（模型改写
         // 计划不构成目标变更），近期结果取最后一条 tool 消息的有界摘要。
         const observations = contextHarness.observeToolTurn({
@@ -909,9 +957,32 @@ export async function runAgent(
           durationMs: performance.now() - turnStartedAt,
           goal: state.task,
           recentResult: lastToolResultDigest(messages),
+          facts: {
+            coverage,
+            newReadCount,
+            changedFileCount,
+            newCheckCount,
+            repeatCount,
+            failedCount: failedCalls,
+            neutralOnly,
+            evidenceIds: evidenceIds.slice(0, 8),
+          },
         });
         if (observations?.progress) {
           emit({ type: 'progress_reminder', iteration: i + 1, ...observations.progress });
+        }
+        if (observations?.progressWatch && observations.progressWatch.remind !== 'none') {
+          emit({
+            type: 'progress_watch',
+            iteration: i + 1,
+            level: observations.progressWatch.remind,
+            noProgressTurns: observations.progressWatch.state.noProgressTurns,
+            activeMs: observations.progressWatch.state.activeMs,
+            reminders: observations.progressWatch.state.reminders,
+            ...(observations.progressWatch.reason
+              ? { reason: observations.progressWatch.reason }
+              : {}),
+          });
         }
         if (observations?.goalReview) {
           emit({

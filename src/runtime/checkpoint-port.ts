@@ -4,6 +4,7 @@
 import type { ContextHarnessState } from '../harness/context-state.js';
 import type { ChatMessage } from '../llm/llm.js';
 import type { PermissionMode } from '../permission-mode.js';
+import type { ExecutionEvidenceSnapshot } from './execution-evidence-store.js';
 import type { Scratchpad } from './scratchpad.js';
 import type { ExecutedOperation } from './side-effect.js';
 import type { AgentState } from './state.js';
@@ -20,6 +21,8 @@ export interface CheckpointSnapshot {
   permissionMode?: PermissionMode;
   sideEffects?: ExecutedOperation[];
   harnessState?: ContextHarnessState;
+  /** v2.5（计划 §6.1）：本 Run 的执行事实记录（检查结论/读取指纹/未决执行），由 Runtime 归属。 */
+  executionEvidence?: ExecutionEvidenceSnapshot;
 }
 
 export interface Checkpoint extends CheckpointSnapshot {

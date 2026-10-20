@@ -4,6 +4,7 @@
 // - 工具只接收"相对路径"参数；文件类工具必须相对 context.workspaceRoot 解析真实路径。
 // - 模型决定"做什么"，Runtime 决定"在哪里执行"。
 
+import type { ToolFacts } from '../execution-evidence.js';
 import type { PlanItemInput } from '../harness/plan.js';
 import type { ToolSchema } from '../llm/llm.js';
 import type { NetworkMode } from '../network-mode.js';
@@ -14,7 +15,10 @@ import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.
 
 // Runtime 注入的工具上下文（LLM 不可见、不可传入）
 export interface ToolContext {
-  runId: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
+  runId: string;
+  // v2.5（计划 §6.3）：Runtime 注入的本次调用身份（Runtime-only，不进模型 Schema）。
+  // check 等工具用它区分"同一次调用的重放/恢复"与"同参数的新检查"。
+  invocationId?: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
   // Background Job 的 Session 级所有权：作业注册表按 sessionId 建索引，
   // 不随单个 Run 结束销毁。缺省（CLI/旧测试）回退到 runId 派生键。
   sessionId?: string;
@@ -66,21 +70,33 @@ export interface ToolImage {
   path: string;
 }
 
+// 计划 §5.3：对象型结果可选携带"这次调用实际产生的事实"（进程退出协议、检查结论、
+// 读取/变更事实）。纯增量：
+// - 字符串结果与"文本+图片"结果完全兼容（不带 facts 就是旧行为）；
+// - facts 属于**证据通道**，不进模型文本、不进 LLM Schema，也不被用来推导旧通路
+//   的结论（没有 facts = 未知，绝不从 `[shell-exit-0]` 推导检查通过）；
+// - 消费侧必须先过 src/execution-evidence.ts 的 validateToolFacts（版本/字段/
+//   工作区相对路径/容量），不认识的 facts 不产生通过事实。
 export interface ToolMultimodalResult {
   content: string;
   images?: ToolImage[];
+  facts?: ToolFacts;
 }
 
-// 工具执行结果：纯文本（向后兼容）或 文本+图片 的多模态结果。
+// 工具执行结果：纯文本（向后兼容）或 文本+图片(+事实) 的对象结果。
 export type ToolResult = string | ToolMultimodalResult;
 
 export function normalizeToolResult(result: ToolResult): {
   text: string;
   images?: ToolImage[];
+  facts?: ToolFacts;
 } {
-  return typeof result === 'string'
-    ? { text: result }
-    : { text: result.content, ...(result.images?.length ? { images: result.images } : {}) };
+  if (typeof result === 'string') return { text: result };
+  return {
+    text: result.content,
+    ...(result.images?.length ? { images: result.images } : {}),
+    ...(result.facts ? { facts: result.facts } : {}),
+  };
 }
 
 export type ToolSandboxEvent =
@@ -120,6 +136,9 @@ export interface Tool {
   // v1.5 融合身份机制：getOperationKey 可选接收 ToolContext（运行时注入，含 runId/workspaceRoot），
   //   路径类工具用它做路径归一化（canonicalPathKey），使 ./work/a.txt 与 work/a.txt 归一为同一 key 且不暴露宿主绝对路径。
   getOperationKey?: (args: Record<string, unknown>, context?: ToolContext) => string;
+  // v2.5（计划 §6）：该工具产出可被 Runtime 记录/复用的执行事实（当前仅 check）。
+  // 标记放在工具声明上，Runtime 据此接线，不需要 import 具体工具模块（分层约束）。
+  evidenceKind?: 'check';
   // v2.3 工具级超时预算：Tool 声明自己的执行 deadline（毫秒），由
   // ToolInvocationProcessManager 在 execute 外包一层有界等待；到期以
   // TimeoutAbortError 中止本调用并返回结构化 TOOL_TIMEOUT 结果（不重试）。

@@ -75,6 +75,12 @@ import {
   type ToolTurnProgress,
 } from './progress-reminder.js';
 import {
+  advanceProgressWatch,
+  normalizeProgressWatchState,
+  type ProgressWatchDecision,
+  renderProgressWatchReminder,
+} from './progress-watch.js';
+import {
   advanceRepeatCall,
   DEFAULT_REPEAT_CALL_POLICY,
   normalizeRepeatCallState,
@@ -157,6 +163,8 @@ export interface PreparedModelTurn {
 export interface ToolTurnObservations {
   progress?: ProgressReminder;
   goalReview?: GoalReviewReminder;
+  /** v2.5（计划 §8）：事实型进度审查（机械可验证的重复）。 */
+  progressWatch?: ProgressWatchDecision;
 }
 
 export interface AgentContextHarness {
@@ -266,6 +274,8 @@ export class DefaultContextHarness implements AgentContextHarness {
   private readonly executionBudgetPolicy: ExecutionBudgetPolicy | false;
   // v2.6 周期性目标审查（undefined = 关闭）。按全部工具回合计数，默认开启。
   private readonly goalReviewPolicy: GoalReviewPolicy | undefined;
+  // v2.5（计划 §8）：事实型进度闭环。PAYASO_PROGRESS_WATCH=off 或 options.progressWatch=false 关闭。
+  private readonly progressWatchPolicy: boolean;
   private state = createContextHarnessState();
   // v2.6：prepareTurn 期间（压缩摘要）产生的预算决策，随 prepareTurn 结果交回
   // Runtime 发事件；transient，不落 checkpoint。
@@ -288,6 +298,7 @@ export class DefaultContextHarness implements AgentContextHarness {
     repeatCall?: RepeatCallPolicy | false;
     executionBudget?: ExecutionBudgetPolicy | false;
     goalReview?: GoalReviewPolicy | false;
+    progressWatch?: boolean;
   }) {
     this.projectionPolicy = options.projection ?? resolveProjectionPolicy();
     this.compactionPolicy = options.compaction ?? resolveCompactionPolicy();
@@ -346,6 +357,8 @@ export class DefaultContextHarness implements AgentContextHarness {
     // v2.6 周期性目标审查：显式关闭优先；未指定按环境解析（默认开启）。
     const resolvedGoalReview = options.goalReview ?? resolveGoalReviewPolicy();
     this.goalReviewPolicy = resolvedGoalReview === false ? undefined : resolvedGoalReview;
+    this.progressWatchPolicy =
+      options.progressWatch !== false && process.env.PAYASO_PROGRESS_WATCH !== 'off';
     if (
       this.progressReminderPolicy &&
       (!Number.isSafeInteger(this.progressReminderPolicy.minReadOnlyTurns) ||
@@ -585,10 +598,29 @@ export class DefaultContextHarness implements AgentContextHarness {
         });
       }
     }
-    if (progress === undefined && goalReview === undefined) return undefined;
+    let progressWatch: ProgressWatchDecision | undefined;
+    if (this.progressWatchPolicy && turn.facts) {
+      const previousWatch = normalizeProgressWatchState(this.state.progressWatch);
+      const decision = advanceProgressWatch(previousWatch, turn.facts, turn.durationMs);
+      this.state.progressWatch = decision.state;
+      if (decision.remind !== 'none') {
+        progressWatch = decision;
+        this.state.pending = this.withPending({
+          progressWatch: {
+            level: decision.remind,
+            reason: decision.reason ?? '',
+            evidenceIds: turn.facts.evidenceIds.slice(0, 8),
+          },
+        });
+      }
+    }
+    if (progress === undefined && goalReview === undefined && progressWatch === undefined) {
+      return undefined;
+    }
     return {
       ...(progress === undefined ? {} : { progress }),
       ...(goalReview === undefined ? {} : { goalReview }),
+      ...(progressWatch === undefined ? {} : { progressWatch }),
     };
   }
 
@@ -743,6 +775,18 @@ export class DefaultContextHarness implements AgentContextHarness {
             : { recentResult: pending.goalReview.recentResult }),
           budgetLines,
         }),
+      );
+    }
+    if (pending.progressWatch) {
+      texts.push(
+        renderProgressWatchReminder(
+          {
+            state: normalizeProgressWatchState(this.state.progressWatch),
+            remind: pending.progressWatch.level,
+            reason: pending.progressWatch.reason,
+          },
+          pending.progressWatch.evidenceIds,
+        ),
       );
     }
     return texts;

@@ -40,7 +40,9 @@ function createHarness(): DefaultContextHarness {
     permissionMode: 'workspace-write',
     modelContext: resolveModelContextConfig({
       model: 'plan-loop-test',
-      contextWindowTokens: 8_000,
+      // v2.5（批次C）：check 工具对真实模型可见后工具 schema 基线约 +0.7k tokens；
+      // 同步上调合成窗口，保持"计划收尾"路径不被上下文压缩插入的额外往返干扰。
+      contextWindowTokens: 10_000,
       maxOutputTokens: 1_000,
       safetyTokens: 500,
     }),

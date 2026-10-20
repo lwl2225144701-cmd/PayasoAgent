@@ -44,7 +44,10 @@ try {
     permissionMode: 'workspace-write',
     modelContext: resolveModelContextConfig({
       model: 'context-test',
-      contextWindowTokens: 6_000,
+      // v2.5（批次C）：check 工具对真实模型可见后，工具 schema 基线增长约 0.7k tokens；
+      // 这里同步上调合成窗口（仍远小于真实模型），让"压缩确实被触发"的断言继续成立，
+      // 而不是让 fixture 在压缩前就撞死。
+      contextWindowTokens: 8_000,
       maxOutputTokens: 1_000,
       safetyTokens: 500,
     }),
@@ -112,7 +115,7 @@ try {
     permissionMode: 'workspace-write',
     modelContext: resolveModelContextConfig({
       model: 'context-test',
-      contextWindowTokens: 6_000,
+      contextWindowTokens: 8_000, // v2.5：check schema 可见后同步上调合成窗口
       maxOutputTokens: 1_000,
       safetyTokens: 500,
     }),
@@ -153,7 +156,7 @@ try {
     permissionMode: 'workspace-write',
     modelContext: resolveModelContextConfig({
       model: 'unknown-small-model', // 不在能力注册表 → 保守 fallback 预算
-      contextWindowTokens: 6_000, // 显式小窗口：让 12KB 工具结果稳定触发超限
+      contextWindowTokens: 8_000, // 显式小窗口：让 12KB 工具结果稳定触发超限（check schema 可见后同步上调）
       maxOutputTokens: 1_000,
       safetyTokens: 500,
     }),

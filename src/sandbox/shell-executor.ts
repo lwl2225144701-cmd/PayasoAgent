@@ -7,23 +7,32 @@
 //   enforcement=partial：写入部分隔离，读与网络不受限——能力报告必须如实标注）
 // - 其余（含 gate 关闭的 win32、linux）→ PAYASO_SHELL_UNSANDBOXED 门控的无沙箱路径
 // - fail-closed 贯穿：沙箱不可用即拒绝执行，绝不静默降级到无沙箱。
+// - 原生 process 入口 executeSandboxedProcess（check 协议，计划 §5.2）：复用上面
+//   全套平台选择 / 工作区授权 / 受管 scratch / 网络策略 / 整树终止，唯一区别是
+//   执行目标是「程序 + 字面 argv 数组」，永远不构造脚本；并额外提供截断前的
+//   原始带流标记 chunk 回调。旧 Shell 接口与行为保持不变。
 
+import fs from 'node:fs';
 import { getNetworkMode, type NetworkMode } from '../network-mode.js';
 import { type PermissionMode, storedPermissionMode } from '../permission-mode.js';
-import type { ToolSandboxEvent } from '../tools/tools.js';
+import { RequiredRuntimeToolUnavailableError, type ToolSandboxEvent } from '../tools/tools.js';
 import {
   MacOSSandbox,
   type MacOSSandboxResult,
+  type ProcessOutputStream,
   probeSandboxAvailability,
 } from './macos-sandbox.js';
 import {
   discoverNativeShellHost,
   discoverShellHost,
   isWindowsAclEnabled,
+  lookupExecutableInPath,
+  runUncontainedProcess,
   runUncontainedShell,
 } from './shell-host.js';
 import type { ShellScratch } from './shell-scratch.js';
-import { runWindowsAclShell } from './windows-acl-sandbox.js';
+import { getMacOSToolchain } from './toolchain-manager.js';
+import { runWindowsAclProcess, runWindowsAclShell } from './windows-acl-sandbox.js';
 
 /** 执行器种类（决定 enforcement 与能力报告）。 */
 export type ShellExecutorKind = 'macos-seatbelt' | 'windows-acl' | 'uncontained-gated';
@@ -124,6 +133,202 @@ export async function executeShellCommand(
   if (kind === 'macos-seatbelt') return executeSeatbelt(request);
   if (kind === 'windows-acl') return executeWindowsAcl(request);
   return executeUncontainedGated(request);
+}
+
+// ---- 原生 process 入口（check 协议，计划 §5.2）----
+// 与 Shell 入口共享**同一套**平台选择、工作区授权、受管 scratch、网络策略与
+// 整树终止；唯一区别是执行目标：这里给出程序 + 字面 argv，永远不构造脚本。
+// 授权 → 执行意图持久化 → 执行 → 结果记录 → Checkpoint 的顺序由调用方
+// （Runtime 的工具调用管线）负责，本模块不引入任何新的时序或旁路。
+
+/** 原生进程入口的执行请求（program 为可执行名，或已授权解析出的绝对路径）。 */
+export interface SandboxedProcessRequest {
+  /** 可执行名称（按执行器 PATH 解析）或已解析的绝对程序路径。绝不拼接成脚本。 */
+  program: string;
+  /** 字面参数数组：每一项原样到达子进程，`|`/`;`/`$`/引号都不被解释。 */
+  args: string[];
+  workspaceRoot: string;
+  /** 子进程 cwd；缺省 = workspaceRoot。必须在工作区内（由沙箱强制）。 */
+  cwd?: string;
+  permissionMode?: PermissionMode;
+  /** Run 注入的网络模式；与 Shell 完全一致（网络能力不变）。 */
+  networkMode?: NetworkMode;
+  /** 受管 scratch（HOME/TMPDIR，所有权限模式下可写、workspace 外）；生命周期归调用方。 */
+  scratch: ShellScratch;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  /** 平台注入（测试）；缺省 process.platform。 */
+  platform?: NodeJS.Platform;
+  /** 原始带流标记 chunk：在底层截断之前采集（完整日志的唯一来源）。 */
+  onRawChunk?: (stream: ProcessOutputStream, chunk: Buffer) => void;
+  /** 旧 Shell 增量回调形状保持不变（live 预览用），可选。 */
+  onOutput?: (text: string) => void;
+  onSandboxEvent?: (event: ToolSandboxEvent) => void;
+}
+
+export type SandboxedProcessResult = MacOSSandboxResult & {
+  executor: ShellExecutorKind;
+  enforcement: ShellEnforcement;
+  /** 实际执行的绝对程序路径（写入事实，便于复核"跑的是哪个程序"）。 */
+  resolvedProgram: string;
+};
+
+export async function executeSandboxedProcess(
+  request: SandboxedProcessRequest,
+): Promise<SandboxedProcessResult> {
+  const kind = selectShellExecutor(request.platform ?? process.platform);
+  if (kind === 'macos-seatbelt') return executeSeatbeltProcess(request);
+  if (kind === 'windows-acl') return executeWindowsAclProcess(request);
+  return executeUncontainedGatedProcess(request);
+}
+
+/**
+ * 把 program 解析成绝对路径。两条规则刻意与 Shell 一致地保守：
+ * - 带目录分隔符 → 视为调用方（工具层）已完成工作区授权解析的路径，必须存在且是文件；
+ * - 纯名字 → 在**子进程实际使用的 PATH**里查找（Seatbelt 用工具链 safePath，
+ *   无沙箱路径用宿主 PATH）。找不到即 RequiredRuntimeToolUnavailableError：
+ *   结构与 Shell 的"命令缺失"同源，可由 Host 走依赖准备，绝不静默换执行方式。
+ */
+function resolveProcessProgram(
+  program: string,
+  pathValue: string,
+  platform: NodeJS.Platform,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (program.includes('/') || program.includes('\\')) {
+    // 带目录分隔符：调用方（工具层）已把工作区相对路径解析成真实路径，
+    // 这里只做存在性复检 —— 不存在/不是文件同样是"依赖缺失"的分类。
+    let isFile = false;
+    try {
+      isFile = fs.statSync(program).isFile();
+    } catch {
+      isFile = false;
+    }
+    if (!isFile) throw new RequiredRuntimeToolUnavailableError(program);
+    return program;
+  }
+  const found = lookupExecutableInPath(program, pathValue, { platform, env });
+  if (!found) throw new RequiredRuntimeToolUnavailableError(program);
+  return found;
+}
+
+async function executeSeatbeltProcess(
+  request: SandboxedProcessRequest,
+): Promise<SandboxedProcessResult> {
+  if (!(await probeSandboxAvailability())) {
+    throw new Error(
+      'Process check unavailable: macOS OS sandbox (sandbox-exec) cannot be applied on this system ' +
+        '(sandbox_apply: Operation not permitted). Refusing to run an unsandboxed process to preserve ' +
+        'filesystem containment.',
+    );
+  }
+  const networkAccess = (request.networkMode ?? getNetworkMode()) === 'on';
+  const sandbox = MacOSSandbox.forWorkspace(
+    request.workspaceRoot,
+    storedPermissionMode(request.permissionMode),
+    networkAccess,
+    { scratchRoots: [request.scratch.path] },
+  );
+  const resolvedProgram = resolveProcessProgram(
+    request.program,
+    getMacOSToolchain().safePath,
+    'darwin',
+  );
+  const result = await sandbox.runProcess([resolvedProgram, ...request.args], {
+    cwd: request.cwd ?? request.workspaceRoot,
+    home: request.scratch.path,
+    tmpdir: request.scratch.path,
+    timeoutMs: request.timeoutMs,
+    signal: request.signal,
+    onOutput: request.onOutput,
+    onRawChunk: request.onRawChunk,
+    onEvent: (event) => {
+      if (event === 'started') {
+        request.onSandboxEvent?.({ type: 'shell_sandbox_started', platform: 'macos' });
+      } else {
+        request.onSandboxEvent?.({
+          type: 'shell_sandbox_denied',
+          platform: 'macos',
+          reason: 'workspace_policy',
+        });
+      }
+    },
+  });
+  return { ...result, executor: 'macos-seatbelt', enforcement: 'full', resolvedProgram };
+}
+
+async function executeUncontainedGatedProcess(
+  request: SandboxedProcessRequest,
+): Promise<SandboxedProcessResult> {
+  if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
+    throw new Error(
+      'Process check unavailable on this platform: 当前平台无 macOS OS Sandbox，' +
+        '为保持文件系统遏制默认拒绝。请设置 PAYASO_SHELL_UNSANDBOXED=1 ' +
+        '显式允许无沙箱执行后重试（默认关闭）。',
+    );
+  }
+  const platform = request.platform ?? process.platform;
+  const resolvedProgram = resolveProcessProgram(request.program, process.env.PATH ?? '', platform);
+  const result = await runUncontainedProcess([resolvedProgram, ...request.args], {
+    cwd: request.cwd ?? request.workspaceRoot,
+    home: request.scratch.path,
+    tmpdir: request.scratch.path,
+    timeoutMs: request.timeoutMs,
+    signal: request.signal,
+    platform,
+    onOutput: request.onOutput,
+    onRawChunk: request.onRawChunk,
+  });
+  return { ...result, executor: 'uncontained-gated', enforcement: 'none', resolvedProgram };
+}
+
+async function executeWindowsAclProcess(
+  request: SandboxedProcessRequest,
+): Promise<SandboxedProcessResult> {
+  if (request.cwd && request.cwd !== request.workspaceRoot) {
+    // 不静默放宽：现有薄 runner 固定以 workspace 为子进程 cwd，且 runner 不在本
+    // 批次可改范围内。宁可明确报错让调用方改 cwd='.'，也不悄悄换个工作目录跑检查。
+    throw new Error(
+      `Windows ACL process check supports cwd = workspace root only (got a subdirectory). ` +
+        `Re-run with cwd="." or use the shell tool; runner --cwd support is a follow-up.`,
+    );
+  }
+  if (storedPermissionMode(request.permissionMode) === 'full-access') {
+    if (process.env.PAYASO_SHELL_UNSANDBOXED !== '1') {
+      throw new Error(
+        'Windows ACL does not support Full access. Explicitly enable PAYASO_SHELL_UNSANDBOXED=1 or choose Workspace write.',
+      );
+    }
+    return executeUncontainedGatedProcess(request);
+  }
+  const resolvedProgram = resolveProcessProgram(request.program, process.env.PATH ?? '', 'win32');
+  const result = await runWindowsAclProcess([resolvedProgram, ...request.args], {
+    workspaceRoot: request.workspaceRoot,
+    scratchPath: request.scratch.path,
+    permissionMode: request.permissionMode,
+    timeoutMs: request.timeoutMs,
+    signal: request.signal,
+    onOutput: request.onOutput,
+    onRawChunk: request.onRawChunk,
+  });
+  if (result.execution !== 'completed') {
+    const state =
+      result.execution === 'not_started'
+        ? 'the process was not executed'
+        : 'execution outcome is unknown; the process may have run; inspect effects before retrying';
+    throw new Error(
+      `Windows ACL sandbox runner failed; ${state}. ${result.runnerFailure ?? 'Runner exited without a completion report.'}`,
+    );
+  }
+  if (result.cleanupErrors.length) {
+    result.stderr += `\nWindows ACL cleanup failed: ${result.cleanupErrors.join('; ')}`;
+  }
+  request.onSandboxEvent?.({
+    type: 'shell_sandbox_started',
+    platform: 'windows',
+    enforcement: 'partial',
+  });
+  return { ...result, executor: 'windows-acl', enforcement: 'partial', resolvedProgram };
 }
 
 // ---- darwin：macOS Seatbelt（自 runtime-tools executeContainedShell 原样搬运）----

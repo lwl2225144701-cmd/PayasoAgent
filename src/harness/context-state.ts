@@ -6,6 +6,7 @@ import {
 import { type GoalReviewState, normalizeGoalReviewState } from './goal-review.js';
 import { createPlan, normalizePlan, type Plan } from './plan.js';
 import { normalizeProgressReminderState, type ProgressReminderState } from './progress-reminder.js';
+import { normalizeProgressWatchState, type ProgressWatchState } from './progress-watch.js';
 import {
   normalizeRepeatCallReminder,
   normalizeRepeatCallState,
@@ -28,6 +29,9 @@ export interface ContextHarnessState {
   // v2.6 周期性目标审查：按全部已完成工具回合计数（覆盖换参数/换命令的
   // 语义等价反复调查）。resume 延续，新 Run 重置；旧 checkpoint 缺省。
   goalReview?: GoalReviewState;
+  // v2.5（计划 §8）：机械可验证的进度闭环状态（只存计数/纪元/投递状态，
+  // 原始执行证据仍在 Runtime 的 execution-evidence-store）。
+  progressWatch?: ProgressWatchState;
   // 已触发但尚未随模型视图投递的提醒。与 progressReminder 的 pending 同语义：
   // 保留是为了 resume 后不丢；模型成功响应后由 Runtime 调 acknowledge 清除。
   pending?: ContextHarnessPendingReminders;
@@ -38,6 +42,7 @@ export interface ContextHarnessPendingReminders {
   repeatCall?: RepeatCallReminder;
   budget?: { level: 'warn' | 'converge'; buckets: ExecutionBudgetBucket[] };
   goalReview?: { toolTurns: number; activeMs: number; goal: string; recentResult?: string };
+  progressWatch?: { level: 'warn' | 'escalate'; reason: string; evidenceIds: string[] };
 }
 
 export function createContextHarnessState(): ContextHarnessState {
@@ -67,7 +72,19 @@ function normalizePendingReminders(value: unknown): ContextHarnessPendingReminde
     goalReview !== undefined &&
     typeof goalReview === 'object' &&
     (typeof goalReview.goal === 'string' || goalReviewToolTurns > 0);
-  if (repeatCall === undefined && budgetLevel === undefined && !hasGoalReview) return undefined;
+  const progressWatch = candidate.progressWatch;
+  const hasProgressWatch =
+    progressWatch !== undefined &&
+    typeof progressWatch === 'object' &&
+    (progressWatch.level === 'warn' || progressWatch.level === 'escalate');
+  if (
+    repeatCall === undefined &&
+    budgetLevel === undefined &&
+    !hasGoalReview &&
+    !hasProgressWatch
+  ) {
+    return undefined;
+  }
   return {
     ...(repeatCall === undefined ? {} : { repeatCall }),
     ...(budgetLevel === undefined
@@ -99,6 +116,20 @@ function normalizePendingReminders(value: unknown): ContextHarnessPendingReminde
           },
         }
       : {}),
+    ...(hasProgressWatch && progressWatch
+      ? {
+          progressWatch: {
+            level: progressWatch.level as 'warn' | 'escalate',
+            reason:
+              typeof progressWatch.reason === 'string' ? progressWatch.reason.slice(0, 240) : '',
+            evidenceIds: Array.isArray(progressWatch.evidenceIds)
+              ? progressWatch.evidenceIds
+                  .filter((id): id is string => typeof id === 'string')
+                  .slice(0, 8)
+              : [],
+          },
+        }
+      : {}),
   };
 }
 
@@ -114,6 +145,9 @@ export function normalizeContextHarnessState(
         ? value.summarizedMessageCount
         : 0,
     plan: normalizePlan((value as { plan?: unknown }).plan),
+    ...(value.progressWatch === undefined
+      ? {}
+      : { progressWatch: normalizeProgressWatchState(value.progressWatch) }),
     ...(value.progressReminder === undefined
       ? {}
       : {

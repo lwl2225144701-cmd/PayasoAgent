@@ -8,7 +8,14 @@
 // read 文本统一按行分页，分块扫描大文件；超长单行有限展示并明确提示。
 //       图片省略提示；其他二进制（NUL/大量控制字符）返回省略提示并指路 shell
 //       工具（file/wc/xxd），不再把乱码文本喂给模型。
+// v2.5（批次A · 计划 §9）：edit 独立上限 MAX_EDIT_BYTES=1MiB（读取分页仍用
+//       MAX_READ_BYTES 64KiB，编辑前文件大小与编辑后内容大小均受此限）；
+//       拒绝时沿原错误文本通路附机器可识别错误码与有界 details：
+//       EDIT_NOT_FOUND / EDIT_AMBIGUOUS / EDIT_OVERLAP / EDIT_TOO_LARGE /
+//       EDIT_STALE；read/write/edit 成功后记录文件读取快照，edit 写前复核，
+//       检测到外部变更拒绝覆盖并要求重新读取（同进程尽力检测，不宣称跨进程事务锁）。
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { storedPermissionMode } from '../permission-mode.js';
@@ -25,12 +32,18 @@ import {
   utf8Head,
 } from '../tool-output-budget.js';
 import { readTextWindow } from './read-text-window.js';
+import { factDigest, mutationFacts, readFacts } from './tool-facts.js';
 import { register, registerAlias, type ToolContext } from './tools.js';
 
 // 单文件读入内存的上限/单行上限（安全阈值，不是模型可见的输出预算）。
 // 模型可见的输出预算统一由 tool-output-budget.ts 决定：read 自己按该预算
 // 切片，Runtime guard 因此对 read 永不触发（宣称契约 == 执行契约）。
 export const MAX_READ_BYTES = 64 * 1024; // 64KB
+
+// 编辑的独立大小上限：read 分页仍用 MAX_READ_BYTES（64KiB），两者解耦。
+// 编辑前文件大小、编辑后内容大小都受 MAX_EDIT_BYTES（1MiB）限制；超限的
+// 恢复路径是定点处理/拆分，不是整篇重写（见 EDIT_TOO_LARGE 反馈文案）。
+export const MAX_EDIT_BYTES = 1 * 1024 * 1024; // 1MiB
 
 // v1.9 read 双限截断：按行号读取时，行数与字节数双限，取先到者。
 const MAX_READ_LINES = 500; // 单次最多返回 500 行
@@ -166,7 +179,7 @@ export function canonicalPathKey(context: ToolContext, rel: string): string | nu
 // 视觉读图用：把真实路径转成工作区相对路径（"/" 分隔）。
 // full-access 下读取工作区外文件时返回 null —— 图片物化与前端预览都以
 // 工作区为根，工作区外图片无法随消息传输，调用方回退文本占位。
-function workspaceRelativePath(context: ToolContext, real: string): string | null {
+export function workspaceRelativePath(context: ToolContext, real: string): string | null {
   const relKey = path.relative(context.workspaceRoot, real);
   if (relKey.startsWith('..') || path.isAbsolute(relKey)) return null;
   const norm = relKey.split(path.sep).join('/').replace(/^\.\//, '');
@@ -185,7 +198,26 @@ export function isProbablyBinary(buf: Buffer): boolean {
 }
 
 // ---- 原子写入辅助（供 write / edit 复用）----
-function atomicWriteContent(real: string, content: string, rel: string): string {
+// 返回写入前后的内容摘要，供调用方产生 MutationFact（计划 §8.1：只有成功提交
+// 且 hash 变化才算修改，"无修改"不算进展）。
+function atomicWriteContent(
+  context: ToolContext,
+  real: string,
+  content: string,
+  rel: string,
+): { message: string; beforeHash: string | null; afterHash: string } {
+  // 写前摘要：全新文件 = null（创建也是真实变更）。
+  let beforeHash: string | null = null;
+  try {
+    const stBefore = fs.lstatSync(real);
+    if (stBefore.isFile() && stBefore.size <= MAX_EDIT_BYTES) {
+      beforeHash = factDigest(fs.readFileSync(real));
+    } else if (stBefore.isFile()) {
+      beforeHash = `${stBefore.size}:${Math.floor(stBefore.mtimeMs)}`;
+    }
+  } catch {
+    beforeHash = null;
+  }
   const tmp = path.join(
     path.dirname(real),
     `.${path.basename(real)}.payaso-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`,
@@ -201,7 +233,83 @@ function atomicWriteContent(real: string, content: string, rel: string): string 
     }
     throw new Error(`写入失败: ${rel}`);
   }
-  return `写入成功: ${rel}`;
+  // 本次写入即"最新的已读状态"：只刷新 read 已跟踪的快照（v2.5）。
+  refreshTrackedSnapshot(context, real);
+  return { message: `写入成功: ${rel}`, beforeHash, afterHash: factDigest(content) };
+}
+
+// ---- 读取快照（EDIT_STALE 支撑，v2.5）----
+// read 成功后建立目标文件签名：≤MAX_EDIT_BYTES 的文件记录内容 SHA-256
+//（精确比较），更大的文件退化为 size+mtimeMs（避免整读大文件）。write/edit
+// 成功只刷新已跟踪条目，不为未读文件新建快照。edit 入口与写前复核该签名：
+// 检测到外部变更（shell 改写、其他进程）时拒绝基于旧内容的覆盖，要求重新
+// read。这是同一 Host 进程内的尽力检测，不提供跨进程事务锁；与写入极端并发
+// 窗口内的变更仍可能漏检。快照表有界（LRU 淘汰）。
+interface FileSnapshot {
+  size: number;
+  mtimeMs: number;
+  hash?: string;
+}
+
+const fileSnapshots = new Map<string, FileSnapshot>();
+const FILE_SNAPSHOT_MAX = 4096;
+
+function snapshotKey(context: ToolContext, real: string): string {
+  return `${context.runId}\n${real}`;
+}
+
+// 计算文件签名：≤1MiB 记哈希；更大的只记 size+mtimeMs。
+function signFile(real: string, st: fs.Stats): FileSnapshot {
+  if (st.size <= MAX_EDIT_BYTES) {
+    const hash = createHash('sha256').update(fs.readFileSync(real)).digest('hex');
+    return { size: st.size, mtimeMs: st.mtimeMs, hash };
+  }
+  return { size: st.size, mtimeMs: st.mtimeMs };
+}
+
+function rememberFileSnapshot(context: ToolContext, real: string, snap: FileSnapshot): void {
+  const key = snapshotKey(context, real);
+  fileSnapshots.delete(key); // 刷新插入顺序（Map 迭代序即 LRU 序）
+  fileSnapshots.set(key, snap);
+  while (fileSnapshots.size > FILE_SNAPSHOT_MAX) {
+    const oldest = fileSnapshots.keys().next();
+    if (oldest.done === true) break;
+    fileSnapshots.delete(oldest.value);
+  }
+}
+
+// best-effort：快照失败不改变工具结果，只退回"无快照则跳过 STALE 检查"。
+// 返回快照供 read 生成读取事实（版本依据必须与 STALE 检查同源）。
+function rememberSnapshotQuietly(context: ToolContext, real: string): FileSnapshot | null {
+  try {
+    const snap = signFile(real, fs.statSync(real));
+    rememberFileSnapshot(context, real, snap);
+    return snap;
+  } catch {
+    return null; // 忽略：快照缺失只意味着放弃一次外部变更检测
+  }
+}
+
+// write/edit 成功后只刷新 read 已跟踪的条目，不为未读文件新建快照：
+// 未 read 的文件没有"读取快照"可复核，edit 不要求先 read 是既有兼容通路，
+// 外部工具直接改这些文件不应误报 EDIT_STALE。
+function refreshTrackedSnapshot(context: ToolContext, real: string): void {
+  const key = snapshotKey(context, real);
+  if (!fileSnapshots.has(key)) return;
+  try {
+    const snap = signFile(real, fs.statSync(real));
+    fileSnapshots.delete(key);
+    fileSnapshots.set(key, snap);
+  } catch {
+    // 刷新失败时删除条目：留旧条目会把自己写的文件误判为 stale。
+    fileSnapshots.delete(key);
+  }
+}
+
+// 签名不一致即读取之后发生过外部变更；两侧都有哈希时优先精确比较。
+function fileSnapshotDiverged(snap: FileSnapshot, current: FileSnapshot): boolean {
+  if (snap.hash && current.hash) return snap.hash !== current.hash;
+  return snap.size !== current.size || snap.mtimeMs !== current.mtimeMs;
 }
 
 // ---- 可写区权限（write / edit / moveFile / deleteFile 共用）----
@@ -269,10 +377,25 @@ register({
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     if (entries.length === 0) return `目录 ${rel} 为空`;
-    return (
+    const content =
       `目录 ${rel} 内容（${entries.length} 项）:\n` +
-      entries.map((e) => `  [${e.type}] ${e.name}`).join('\n')
-    );
+      entries.map((e) => `  [${e.type}] ${e.name}`).join('\n');
+    // 计划 §8.1：目录列举只产生"查询 + 结果摘要"事实；ls 非递归，
+    // 因此 complete=false——不能据此宣称整个范围已查清。
+    const logicalPath = workspaceRelativePath(context, real);
+    if (!logicalPath) return content;
+    const listingDigest = factDigest(entries.map((e) => `${e.type}:${e.name}`).join('\n'));
+    return {
+      content,
+      facts: readFacts({
+        kind: 'ls',
+        path: logicalPath,
+        versionKind: 'content',
+        version: listingDigest,
+        returnedText: content,
+        complete: false,
+      }),
+    };
   },
 });
 registerAlias('ls', 'listDir');
@@ -444,7 +567,27 @@ register({
           `用 offset=${nextOffset} 续读剩余 ${totalLines - nextOffset + 1} 行。`,
       );
     }
-    return [sliced.text, ...hints].filter(Boolean).join('\n');
+    // 文本读取成功即记录读取快照，供 edit 写前复核外部变更（v2.5）。
+    const snapshot = rememberSnapshotQuietly(context, real);
+    const content = [sliced.text, ...hints].filter(Boolean).join('\n');
+    // 计划 §8.1：读取事实由工具自己给出——实际返回的行范围（不是请求范围）、
+    // 版本依据（与 STALE 检查同源的快照）与完整性（是否覆盖到文件末尾）。
+    const logicalPath = workspaceRelativePath(context, real);
+    if (!logicalPath || !snapshot) return content;
+    const complete =
+      !sliced.omittedLines && !hasMoreLines && truncatedLines.length === 0 && startLine === 1;
+    return {
+      content,
+      facts: readFacts({
+        kind: 'file',
+        path: logicalPath,
+        versionKind: snapshot.hash ? 'content' : 'stat',
+        version: snapshot.hash ?? `${snapshot.size}:${Math.floor(snapshot.mtimeMs)}`,
+        returnedRanges: [{ startLine, endLine: lastShownLine }],
+        returnedText: sliced.text,
+        complete,
+      }),
+    };
   },
   validateResult: (result) => {
     // read 不再产生 invalid 结果（截断/图片省略/二进制都有效返回），
@@ -516,7 +659,16 @@ register({
       // ENOENT：目标不存在，允许新建
     }
 
-    return atomicWriteContent(real, content, rel);
+    const written = atomicWriteContent(context, real, content, rel);
+    const logicalPath = workspaceRelativePath(context, real);
+    const facts = logicalPath
+      ? mutationFacts({
+          path: logicalPath,
+          beforeHash: written.beforeHash,
+          afterHash: written.afterHash,
+        })
+      : null;
+    return facts ? { content: written.message, facts } : written.message;
   },
   validateResult: (result) => {
     if (typeof result === 'string' && result.startsWith('[sandbox-tool-invalid]')) {
@@ -583,8 +735,12 @@ function allMatches(text: string, needle: string): number[] {
 }
 
 // 折叠空白后定位：找出"忽略空格差异"后最接近 oldText 的位置。
-// 返回首个能按"去空白"匹配上的行号 + 该位置实际内容，用于提示模型"缩进/空白抄错了"。
-function fuzzyLocate(normalized: string, oldText: string): { line: number; actual: string } | null {
+// 返回首个能按"去空白"匹配上的行号、按 oldText 行数推出的最接近行范围、
+// 以及该位置实际内容（有界预览），用于提示模型"缩进/空白抄错了"。
+function fuzzyLocate(
+  normalized: string,
+  oldText: string,
+): { line: number; endLine: number; actual: string } | null {
   const srcLines = normalized.split('\n');
   // 用 oldText 首行（去首尾空白）作为锚点
   const anchor = oldText.split('\n')[0]?.trim();
@@ -593,12 +749,59 @@ function fuzzyLocate(normalized: string, oldText: string): { line: number; actua
   const anchorStripped = anchor.replace(/\s+/g, ' ').trim();
   const hitLine = srcStripped.findIndex((l) => l?.includes(anchorStripped));
   if (hitLine === -1) return null;
-  return { line: hitLine + 1, actual: JSON.stringify(srcLines[hitLine].slice(0, 120)) };
+  const span = Math.max(1, oldText.split('\n').length);
+  return {
+    line: hitLine + 1,
+    endLine: Math.min(srcLines.length, hitLine + span),
+    actual: JSON.stringify(srcLines[hitLine].slice(0, 120)),
+  };
+}
+
+// ---- edit 失败错误码（v2.5）：机器可识别 code 前缀 + 原人类可读文案 ----
+// 统一拒绝通路：首行给出 code、未产生修改的事实、实际目标路径与（多 edit 时）
+// 1-based 序号；后续行保留原诊断文本与有界 details（旧片段截断预览、最多 8 处
+// 多次匹配位置、当前文件最接近的行范围）。不做自动重试，也不会把改动挪到
+// 别的文件——无法证明目标正确时，只明确指出本次目标与匹配依据，供下一轮纠正。
+type EditErrorCode =
+  | 'EDIT_NOT_FOUND'
+  | 'EDIT_AMBIGUOUS'
+  | 'EDIT_OVERLAP'
+  | 'EDIT_TOO_LARGE'
+  | 'EDIT_STALE';
+
+function editFailure(
+  code: EditErrorCode,
+  rel: string,
+  detail: string,
+  editIndex?: number,
+  totalEdits?: number,
+): Error {
+  const which =
+    editIndex !== undefined && totalEdits !== undefined && totalEdits > 1
+      ? `（第 ${editIndex + 1}/${totalEdits} 处 edit）`
+      : '';
+  return new Error(`[${code}] edit 被拒绝，文件未做修改: ${rel}${which}\n${detail}`);
+}
+
+// EDIT_TOO_LARGE 不抛错：沿用原 [sandbox-tool-invalid] 结果生命周期
+//（validateResult 判 invalid）。恢复建议只给定点处理/拆分路径，不建议整篇重写。
+function editTooLargeInvalid(
+  headline: string,
+  rel: string,
+  actual: number,
+  limit: number,
+  recovery: string,
+): string {
+  return (
+    `[sandbox-tool-invalid][EDIT_TOO_LARGE] ${headline}: ${rel}（实际 ${actual} 字节，编辑上限 ${limit} 字节）\n` +
+    `恢复建议: ${recovery}`
+  );
 }
 
 // 构造 edit 失败时可操作的诊断信息（帮助模型一次修复，避免回退到整文件 write）。
 function editNotFoundError(
   normalized: string,
+  rel: string,
   oldText: string,
   editIndex: number,
   totalEdits: number,
@@ -608,16 +811,16 @@ function editNotFoundError(
     `${which}oldText 在文件中未精确匹配（前80字符）: ${JSON.stringify(oldText.slice(0, 80))}`,
   ];
 
-  // ① 忽略空白能找到 → 几乎肯定是缩进/空格抄错
+  // ① 忽略空白能找到 → 几乎肯定是缩进/空格抄错；给出最接近的行范围
   const fuzzy = fuzzyLocate(normalized, oldText);
   if (fuzzy) {
     parts.push(
-      `提示: 忽略空白差异后，最接近的内容在第 ${fuzzy.line} 行，实际内容为 ${fuzzy.actual} —— 你的 oldText 缩进/空格与文件不一致。请用 read 重新读取该行，逐字符复制（含缩进），不要凭记忆补空白。`,
+      `提示: 忽略空白差异后最接近的内容在第 ${fuzzy.line}-${fuzzy.endLine} 行附近（该行实际内容为 ${fuzzy.actual}）—— 你的 oldText 缩进/空格或跨行边界与文件不一致。请用 read 重新读取该区域，逐字符复制（含缩进），不要凭记忆补空白。`,
     );
     return parts.join('\n');
   }
 
-  // ② oldText 的某个子行能找到 → 定位到大致行号
+  // ② oldText 的某个子行能找到 → 定位到大致行范围
   const probe = oldText
     .split('\n')
     .map((l) => l.trim())
@@ -627,17 +830,26 @@ function editNotFoundError(
     const idx = normalized.indexOf(probe);
     if (idx !== -1) {
       const { line } = lineColAt(normalized, idx);
+      const endLine = Math.min(
+        normalized.split('\n').length,
+        line + oldText.split('\n').length - 1,
+      );
       parts.push(
-        `提示: oldText 中的某片段在第 ${line} 行附近，但整段未完整匹配。可能原因: 相邻行内容/缩进不符，或 oldText 跨越的边界不对。请 read offset 覆盖该区域后重新复制完整 oldText。`,
+        `提示: oldText 中的某个片段在第 ${line}-${endLine} 行附近，但整段未完整匹配。可能原因: 相邻行内容/缩进不符，或 oldText 跨越的边界不对。请 read offset 覆盖该区域后重新复制完整 oldText。`,
       );
       return parts.join('\n');
     }
   }
 
   parts.push(
-    '提示: 文件中找不到任何相关片段，oldText 可能已被之前的编辑改动或来自错误文件。请先 read 该文件确认当前内容，再重新构造 edit；若改动范围确实很大，可改用 write 整文件写入。',
+    `提示: 文件中找不到任何相关片段，oldText 可能已被之前的编辑改动或来自其他文件。本次 edit 的目标仅为 ${rel}，以上匹配都基于该文件当前内容；工具不会自动改动其他文件（也无法证明别的文件才是正确目标时不会替你挪改动）。请先 read 本次目标文件确认当前内容，再重新构造 edit；若改动范围确实很大，可改用 write 整文件写入。`,
   );
   return parts.join('\n');
+}
+
+// 有界预览：超长 oldText 截断到 max 字符（JSON 转义换行，单行可读）。
+function boundedPreview(s: string, max: number): string {
+  return JSON.stringify(s.length > max ? `${s.slice(0, max)}…` : s);
 }
 
 function editMultipleError(
@@ -648,15 +860,19 @@ function editMultipleError(
   totalEdits: number,
 ): string {
   const which = totalEdits > 1 ? `第 ${editIndex + 1}/${totalEdits} 处 edit 的` : '';
-  const positions = allMatches(normalized, oldText)
+  // 有界 details：位置最多列 8 处，避免超大文件把错误信息撑爆上下文。
+  const all = allMatches(normalized, oldText);
+  const shown = all.slice(0, 8);
+  const positions = shown
     .map((i) => {
       const { line } = lineColAt(normalized, i);
       return `第 ${line} 行(${lineContentAt(normalized, i, 60)})`;
     })
     .join('、');
+  const more = shown.length < count ? `（共 ${count} 处，仅列前 ${shown.length} 处）` : '';
   return (
-    `${which}oldText 在文件中出现 ${count} 次（必须恰好 1 次），拒绝编辑: ${JSON.stringify(oldText.slice(0, 60))}\n` +
-    `提示: 分别出现在 ${positions}。请在 oldText 中包含更多前后相邻行（上一行/下一行）使其唯一，但不要扩大到无关代码。`
+    `${which}oldText 在文件中出现 ${count} 次（必须恰好 1 次），拒绝编辑: ${boundedPreview(oldText, 60)}\n` +
+    `提示: 分别出现在 ${positions}${more}。请在 oldText 中包含更多前后相邻行（上一行/下一行）使其唯一，但不要扩大到无关代码。`
   );
 }
 
@@ -798,8 +1014,17 @@ register({
       throw new Error(`文件不存在: ${rel}`);
     }
     if (st.isDirectory()) throw new Error(`是目录，无法编辑: ${rel}`);
-    if (st.size > MAX_READ_BYTES) {
-      return `[sandbox-tool-invalid] 文件过大，无法编辑（限制 ${MAX_READ_BYTES} 字节）: ${rel}`;
+    // 编辑前文件大小：独立上限 MAX_EDIT_BYTES（1MiB），与 read 分页解耦。
+    if (st.size > MAX_EDIT_BYTES) {
+      return editTooLargeInvalid(
+        '文件过大，无法编辑',
+        rel,
+        st.size,
+        MAX_EDIT_BYTES,
+        '先 read 分页定位目标区域，改用 shell 工具（sed/awk/node 流式脚本）定点修改，' +
+          `或把文件拆分为不超过 ${MAX_EDIT_BYTES} 字节的片段后再用 edit 定点编辑。` +
+          '请勿整篇重写该文件（write 单次写入同样受 1MiB 限制），read 分页读取不受此限。',
+      );
     }
 
     let rawContent: string;
@@ -807,6 +1032,29 @@ register({
       rawContent = fs.readFileSync(real, 'utf8');
     } catch {
       throw new Error(`读取失败: ${rel}`);
+    }
+
+    // 写入前复核读取快照（v2.5）：若本工具上次 read/write/edit 之后文件又被
+    // 外部修改（shell、其他进程），拒绝基于旧内容覆盖，要求先重新 read。
+    // 同一进程内的尽力检测，不宣称跨进程事务锁。
+    const priorSnapshot = fileSnapshots.get(snapshotKey(context, real));
+    if (priorSnapshot) {
+      let current: FileSnapshot;
+      try {
+        current = signFile(real, st);
+      } catch {
+        throw new Error(`读取失败: ${rel}`);
+      }
+      if (fileSnapshotDiverged(priorSnapshot, current)) {
+        throw editFailure(
+          'EDIT_STALE',
+          rel,
+          '文件在上次被本工具读取/写入之后已被外部修改（shell 命令、其他工具或进程）。' +
+            '为避免用旧内容覆盖新状态，本次 edit 未做任何修改。' +
+            '请重新 read 该文件取得当前内容，再据此重新构造 edit。' +
+            '说明：该复核是同一进程内的尽力检测，不提供跨进程事务锁。',
+        );
+      }
     }
 
     // BOM：剥离后匹配/替换，写回时还原（UTF-8 BOM \uFEFF）
@@ -821,6 +1069,7 @@ register({
       matched: string; // 实际被替换的文本（exact=oldText；fuzzy=文件真实行块）
       newText: string;
       fuzzy: boolean;
+      editIndex: number; // 原始 edits 数组下标（错误详情回指"第几处 edit"）
     }
 
     // 定位每一次 edit：exact 优先；不中则保守 fuzzy（整行块、唯一、仅空白差异）
@@ -837,7 +1086,13 @@ register({
           idx + e.oldText.length === normalized.length ||
           normalized[idx + e.oldText.length] === '\n';
         if (atLineStart && isStandalone) {
-          ranges.push({ index: idx, matched: e.oldText, newText: e.newText, fuzzy: false });
+          ranges.push({
+            index: idx,
+            matched: e.oldText,
+            newText: e.newText,
+            fuzzy: false,
+            editIndex: ei,
+          });
           continue;
         }
         // 行内命中 → 尝试整行 fuzzy（唯一才应用）
@@ -848,12 +1103,19 @@ register({
             matched: hit.matchedText,
             newText: e.newText,
             fuzzy: true,
+            editIndex: ei,
           });
           fuzzyEdits.add(ei);
           continue;
         }
         // fuzzy 也不中，退回 exact 行内替换（保持旧行为）
-        ranges.push({ index: idx, matched: e.oldText, newText: e.newText, fuzzy: false });
+        ranges.push({
+          index: idx,
+          matched: e.oldText,
+          newText: e.newText,
+          fuzzy: false,
+          editIndex: ei,
+        });
         continue;
       }
       // exact 不中 → 保守 fuzzy
@@ -864,11 +1126,18 @@ register({
           matched: hit.matchedText,
           newText: e.newText,
           fuzzy: true,
+          editIndex: ei,
         });
         fuzzyEdits.add(ei);
         continue;
       }
-      throw new Error(editNotFoundError(normalized, e.oldText, ei, edits.length));
+      throw editFailure(
+        'EDIT_NOT_FOUND',
+        rel,
+        editNotFoundError(normalized, rel, e.oldText, ei, edits.length),
+        ei,
+        edits.length,
+      );
     }
 
     // 严格检查：exact edit 必须恰好出现一次（fuzzy 已保证唯一整行块）
@@ -877,7 +1146,13 @@ register({
       const e = edits[ei];
       const count = (normalized.match(new RegExp(escapeRegex(e.oldText), 'g')) || []).length;
       if (count !== 1) {
-        throw new Error(editMultipleError(normalized, e.oldText, count, ei, edits.length));
+        throw editFailure(
+          'EDIT_AMBIGUOUS',
+          rel,
+          editMultipleError(normalized, e.oldText, count, ei, edits.length),
+          ei,
+          edits.length,
+        );
       }
     }
 
@@ -887,7 +1162,15 @@ register({
       const prev = ranges[i - 1];
       const curr = ranges[i];
       if (prev.index + prev.matched.length > curr.index) {
-        throw new Error('edits 存在重叠修改，拒绝执行');
+        const prevLine = lineColAt(normalized, prev.index).line;
+        const currLine = lineColAt(normalized, curr.index).line;
+        throw editFailure(
+          'EDIT_OVERLAP',
+          rel,
+          `edits 存在重叠修改，拒绝执行：第 ${prev.editIndex + 1} 处（旧片段 ${boundedPreview(prev.matched, 40)}，第 ${prevLine} 行附近）与第 ${curr.editIndex + 1} 处（旧片段 ${boundedPreview(curr.matched, 40)}，第 ${currLine} 行附近）的替换区间交叠。请把相邻 edit 合并为一次替换，或缩小 oldText 使各处区间互不包含。`,
+          curr.editIndex,
+          edits.length,
+        );
       }
     }
 
@@ -926,15 +1209,55 @@ register({
       return `无修改: ${rel}`;
     }
 
+    // 编辑后内容大小同样受 MAX_EDIT_BYTES（1MiB）：超限拒绝，不产生写入。
+    const resultBytes = Buffer.byteLength(result, 'utf8');
+    if (resultBytes > MAX_EDIT_BYTES) {
+      return editTooLargeInvalid(
+        '编辑后内容过大，未写入',
+        rel,
+        resultBytes,
+        MAX_EDIT_BYTES,
+        `本次替换使文件从 ${st.size} 字节增长到超过编辑上限，请缩小 newText 的规模或拆分为多次更小的定点修改。` +
+          `请勿整篇重写该文件（write 单次写入同样受 ${MAX_EDIT_BYTES} 字节限制）。`,
+      );
+    }
+
+    // 写入前最后一道复核：本次调用读取之后文件若又被外部改动，拒绝覆盖。
+    //（这是同进程尽力检测，不宣称跨进程事务锁。）
+    try {
+      const stNow = fs.lstatSync(real);
+      if (stNow.size !== st.size || stNow.mtimeMs !== st.mtimeMs) {
+        throw editFailure(
+          'EDIT_STALE',
+          rel,
+          '文件在本次 edit 读取之后、写入之前发生了外部变更，拒绝覆盖（已定位的 ' +
+            `${ranges.length} 处修改均未落盘）。请重新 read 该文件后再提交 edit。`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('[EDIT_STALE]')) throw err;
+      throw new Error(`写入前复核失败: ${rel}`);
+    }
+
     const patch = buildEditPatch(rel, normalized, ranges);
-    atomicWriteContent(real, result, rel);
+    const written = atomicWriteContent(context, real, result, rel);
     const fuzzyNote =
       fuzzyEdits.size > 0 ? `（其中 ${fuzzyEdits.size} 处按缩进/空白容错匹配）` : '';
-    return `${patch}${fuzzyNote}`;
+    const text = `${patch}${fuzzyNote}`;
+    // 只有 hash 真的变化才产生修改事实（result !== rawContent 已在上方保证）。
+    const logicalPath = workspaceRelativePath(context, real);
+    const facts = logicalPath
+      ? mutationFacts({
+          path: logicalPath,
+          beforeHash: written.beforeHash,
+          afterHash: written.afterHash,
+        })
+      : null;
+    return facts ? { content: text, facts } : text;
   },
   validateResult: (result) => {
     if (typeof result === 'string' && result.startsWith('[sandbox-tool-invalid]')) {
-      return { valid: false, reason: '文件过大，无法编辑' };
+      return { valid: false, reason: '文件过大或编辑后内容过大，无法编辑' };
     }
     return true;
   },

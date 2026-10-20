@@ -339,6 +339,8 @@ export function connectSSE(
     'side_effect_skip',
     'side_effect_uncertain',
     'tool_output_truncated',
+    'check_result',
+    'progress_watch',
     'shell_sandbox_started',
     'shell_sandbox_denied',
     'scratchpad_update',

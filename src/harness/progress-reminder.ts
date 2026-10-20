@@ -12,6 +12,8 @@ export const DEFAULT_PROGRESS_REMINDER_POLICY: Readonly<ProgressReminderPolicy> 
 
 export interface ToolTurnProgress {
   activity: 'read' | 'neutral' | 'other';
+  /** v2.5（计划 §8）：Runtime 汇总的本回合可机械验证事实（缺省=无结构化事实）。 */
+  facts?: import('./progress-watch.js').ToolTurnFacts;
   durationMs: number;
   /**
    * v2.6 周期性目标审查：原始用户目标（Run.task，由 Runtime 每回合原样传入）。

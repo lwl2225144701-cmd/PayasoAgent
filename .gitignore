@@ -58,3 +58,6 @@ eval/.env
 scratch/*
 !scratch/README.md
 *.scratch.*
+
+# 本地测试用 PAYASO_HOME（避免污染真实 ~/.payaso）
+.tmp-test-home/

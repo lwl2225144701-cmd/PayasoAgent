@@ -16,6 +16,10 @@ import type { ApprovalPort } from './approval-port.js';
 import { resolveApprovalPort } from './approval-port.js';
 import type { CheckpointSnapshot, CheckpointWriter } from './checkpoint-port.js';
 import type { AgentExecutionContext } from './contracts.js';
+import {
+  createExecutionEvidenceStore,
+  type ExecutionEvidenceStore,
+} from './execution-evidence-store.js';
 import { protectRuntimeObserver, type RuntimeObserver } from './observer-port.js';
 import { createScratchpad, type Scratchpad } from './scratchpad.js';
 import { createSideEffectGuard, type SideEffectGuard } from './side-effect.js';
@@ -62,6 +66,8 @@ export interface AgentContext {
   trace: Trace;
   scratchpad: Scratchpad;
   sideEffectGuard: SideEffectGuard;
+  /** v2.5（计划 §6.1）：本 Run 的执行事实存储（Runtime 归属，Harness 只读）。 */
+  executionEvidenceStore: ExecutionEvidenceStore;
   messages: ChatMessage[];
   contextHarness: AgentContextHarness;
   modelContext: AgentContextHarness['modelContext'];
@@ -172,6 +178,10 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
   const scratchpad = resume ? resume.scratchpad : createScratchpad(task);
   // v1.3 Side-Effect Safety：记录已成功执行的 non_idempotent 操作；resume 时从 checkpoint 恢复
   const sideEffectGuard = createSideEffectGuard(resume?.sideEffects ?? []);
+  // v2.5（计划 §6.1）：执行事实归属 Runtime —— 新 Run 全新实例（不继承上一 Run 的结论）；
+  // resume 时恢复快照，但复用前仍要重新核对版本（store 内部按未知处理未知版本）。
+  const executionEvidenceStore = createExecutionEvidenceStore();
+  if (resume?.executionEvidence) executionEvidenceStore.restore(resume.executionEvidence);
   const messages: ChatMessage[] = resume
     ? resume.messages
     : contextHarness.createTranscript(task, opts.conversationHistory, opts.attachments);
@@ -192,6 +202,7 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
       permissionMode,
       sideEffects: sideEffectGuard.snapshot(),
       harnessState: contextHarness.snapshotState(),
+      executionEvidence: executionEvidenceStore.snapshot(),
     });
     observer.log(`[Checkpoint] saved → ${file}`);
   };
@@ -232,6 +243,7 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
     trace,
     scratchpad,
     sideEffectGuard,
+    executionEvidenceStore,
     messages,
     contextHarness,
     modelContext: contextHarness.modelContext,

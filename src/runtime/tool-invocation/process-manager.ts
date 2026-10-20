@@ -9,6 +9,7 @@
 // 边界：只消费注入的 ToolInvocationContext（由 runAgent 装配），不反向依赖
 // agent.ts；本模块不拥有可变状态（State/Scratchpad/Messages 均为引用传入）。
 
+import { validateToolFacts } from '../../execution-evidence.js';
 import type { AgentContextHarness } from '../../harness/context-harness.js';
 import type { ToolInvocationDisposition } from '../../harness/repeat-call-policy.js';
 import type { ChatMessage } from '../../llm/llm.js';
@@ -25,6 +26,7 @@ import {
   normalizeToolResult,
   parseToolArguments,
   RequiredRuntimeToolUnavailableError,
+  resolveOperationKey,
   resolveToolEffect,
   type Tool,
   type ToolCallError,
@@ -44,6 +46,7 @@ import {
   type TimeoutPolicy,
 } from '../../util/timeout.js';
 import { type ApprovalPort, resolveApprovalPort } from '../approval-port.js';
+import type { ExecutionEvidenceStore } from '../execution-evidence-store.js';
 import type { RuntimeObserver } from '../observer-port.js';
 import { guardToolOutput } from '../output-guard.js';
 import {
@@ -120,6 +123,10 @@ export interface ToolInvocationContext {
   observeState: (detail: 'summary' | 'full') => void;
   observeScratchpad: () => void;
   pushToolCallError: (toolCallId: string, toolName: string, error: ToolCallError) => void;
+  // v2.5（计划 §6）：执行事实存储（Runtime 归属）。缺省 = 旧行为（不记录、不复用）。
+  evidenceStore?: ExecutionEvidenceStore;
+  // 本次调用的规范化 origin（迭代号/批次位置/tool_call_id）；缺省按 state+call.id 派生。
+  toolCallOrigin?: string;
 }
 
 interface ToolCallShape {
@@ -127,10 +134,29 @@ interface ToolCallShape {
   function: { name: string; arguments: string };
 }
 
+/**
+ * 单次调用产生的可机械验证事实（v2.5 计划 §8.2）。
+ * 只有携带结构化 facts 的调用才有 `supported=true`；其余调用不是进展事实。
+ */
+export interface ToolCallEvidenceFacts {
+  /** 本次调用是否提供了结构化事实（否则该调用的进展未知）。 */
+  supported: boolean;
+  /** 本次调用新增的有效读取事实数（同版本同范围重复不算新增）。 */
+  newReads: number;
+  /** 本次调用新增的真实修改事实数（hash 变化才算修改）。 */
+  newMutations: number;
+  /** 本次调用新出现的有效检查结论数（复用旧结论不算新增成果）。 */
+  newChecks: number;
+  /** 有界证据引用（checkId / 读取路径键），只用于投影，不放大段内容。 */
+  evidenceIds: string[];
+}
+
 // 仅成功且结果有效的调用提供观察信号；其它出口保持 undefined，不能当作只读进展。
 export interface ToolInvocationOutcome {
   tool: string;
   effect: ToolEffect;
+  /** v2.5（计划 §8.2）：本次调用的事实汇总；缺省 = 无结构化事实。 */
+  evidence?: ToolCallEvidenceFacts;
 }
 
 /**
@@ -159,6 +185,7 @@ export async function invokeToolCall(
     observeScratchpad,
     pushToolCallError,
     onToolOutput,
+    evidenceStore,
   } = ctx;
   const toolName = call.function.name;
 
@@ -292,6 +319,60 @@ export async function invokeToolCall(
   // 否则同参数换空格写法可绕过 isBlocked 的防重调/防死循环判定）
   const input = 'expression' in args ? String(args.expression) : JSON.stringify(args);
 
+  // ---------------------------------------------------------------------------
+  // v2.5（计划 §6 / P1-A）：执行事实与身份。
+  // 固定顺序：参数与授权校验（已在上方完成）→ 查可复用结论 → 分配执行身份 →
+  // 沿原副作用保护实际执行。复用只发生在"已结算且可复用"的检查上，且 reusce=false
+  // 只绕过结论复用，不绕过 running/uncertain 保护。
+  // ---------------------------------------------------------------------------
+  const origin = ctx.toolCallOrigin ?? `iter:${state.iteration}:call:${call.id}`;
+  let evidenceInvocation: ReturnType<ExecutionEvidenceStore['getOrCreateInvocation']> = null;
+  if (evidenceStore && toolDef.evidenceKind === 'check') {
+    // 检查对象摘要：用工具自己声明的 operation key（不含 invocationId —— 身份在下一步注入）。
+    const specHash = resolveOperationKey(toolDef, args, {
+      ...toolContext,
+      invocationId: undefined,
+    });
+    const reuseIntent = args.reuse !== false;
+    const reusable = reuseIntent ? evidenceStore.findReusable(specHash, null) : null;
+    if (reusable && reusable.conclusion !== null) {
+      observeDisposition('replayed');
+      const profile = reusable.process !== null ? 'process' : 'biome-lint';
+      emit({
+        type: 'check_result',
+        checkId: reusable.checkId,
+        profile,
+        conclusion: reusable.conclusion,
+        source: 'reused',
+        reusedFrom: reusable.checkId,
+        durationMs: 0,
+        ...(reusable.logRefs ? { logRefs: reusable.logRefs } : {}),
+      });
+      const reusedMsg =
+        `[check-reused] 该检查在此前已执行且结论仍有效（checkId=${reusable.checkId}, profile=${profile}, ` +
+        `conclusion=${reusable.conclusion}），本次未再次启动进程。` +
+        `复用只证明"同一检查对象 + 同一输入版本"的结论，不代表用户任务已验收；需要强制重跑请传 reuse=false。`;
+      messages.push({ role: 'tool', tool_call_id: call.id, content: reusedMsg });
+      return;
+    }
+    evidenceInvocation = evidenceStore.getOrCreateInvocation(origin, {
+      specHash,
+      inputFingerprint: null,
+    });
+    if (!evidenceInvocation) {
+      const capacityMsg =
+        `[check-evidence-capacity] 本 Run 的检查记录已达上限且没有可淘汰的已结算记录（未决/uncertain 与当前迭代引用的记录不会为腾位置删除），` +
+        `本次检查未执行。请先处理未决检查或等待本轮结束后重试。`;
+      observeDisposition('denied');
+      messages.push({ role: 'tool', tool_call_id: call.id, content: capacityMsg });
+      return;
+    }
+  }
+  // 本次调用的 ToolContext：注入 Runtime-only 的执行身份（不进模型 Schema）。
+  const execContext: ToolContext = evidenceInvocation
+    ? { ...toolContext, invocationId: evidenceInvocation.invocationId }
+    : toolContext;
+
   // v1.3.2 Side-Effect Safety：non_idempotent 操作生命周期 ——
   //   succeeded  → 回放首次结果，不执行
   //   executing / uncertain → 不执行，返回明确 uncertain recovery 信息（不伪造成功）
@@ -299,7 +380,7 @@ export async function invokeToolCall(
   // 置于防死循环判定之前。
   if (effect === 'non_idempotent') {
     // 注入 ToolContext（runId + workspaceRoot）供路径工具归一化 identity；LLM 不可覆盖
-    const disposition = resolveOperation(sideEffectGuard, toolDef, args, toolContext, effect);
+    const disposition = resolveOperation(sideEffectGuard, toolDef, args, execContext, effect);
     if (disposition.kind === 'replay') {
       lifecycle.transition('replayed');
       observeDisposition('replayed');
@@ -309,7 +390,7 @@ export async function invokeToolCall(
       emit({
         type: 'side_effect_skip',
         tool: toolName,
-        key: operationIdentity(toolDef, args, toolContext),
+        key: operationIdentity(toolDef, args, execContext),
         replayed: true,
       });
       messages.push({ role: 'tool', tool_call_id: call.id, content: disposition.result });
@@ -319,7 +400,7 @@ export async function invokeToolCall(
       lifecycle.transition('uncertain');
       observeDisposition('uncertain');
       const uncertainMsg =
-        `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, toolContext)}）` +
+        `工具 ${toolName} 该操作（canonical key=${operationIdentity(toolDef, args, execContext)}）` +
         `此前已开始执行但结果不确定（executing/uncertain），Runtime 不会再次自动执行以防重复副作用。` +
         `请勿再次使用相同参数调用。请先读取真实状态确认该操作是否已生效：未生效才可修正参数后重试或改用其他方法，` +
         `已生效则直接继续后续步骤；不要假设它没有发生。`;
@@ -327,7 +408,7 @@ export async function invokeToolCall(
       emit({
         type: 'side_effect_uncertain',
         tool: toolName,
-        key: operationIdentity(toolDef, args, toolContext),
+        key: operationIdentity(toolDef, args, execContext),
       });
       messages.push({ role: 'tool', tool_call_id: call.id, content: uncertainMsg });
       return;
@@ -390,7 +471,7 @@ export async function invokeToolCall(
   //   persist(executing) 失败 → 禁止 execute，作为 Runtime 错误处理（防止无保护的副作用执行）。
   if (effect === 'non_idempotent') {
     lifecycle.transition('intent_persisting');
-    const opKey = operationIdentity(toolDef, args, toolContext);
+    const opKey = operationIdentity(toolDef, args, execContext);
     sideEffectGuard.begin(opKey);
     try {
       save();
@@ -419,7 +500,7 @@ export async function invokeToolCall(
       const start = performance.now();
       // ToolContext 由 Runtime 注入：runId/workspaceRoot 均不可见、不可通过 args 覆盖
       const rawResult = await execute(toolName, args, {
-        ...toolContext,
+        ...execContext,
         // 本次调用的 deadline 信号：工具需监听并尽快终止；
         // runSignal 保留原始 Run 取消信号（后台作业等长生命周期用途）。
         signal: deadline.signal,
@@ -451,6 +532,60 @@ export async function invokeToolCall(
       const normalized = normalizeToolResult(rawResult);
       const attachedImages: ToolImage[] | undefined = normalized.images;
 
+      // v2.5（计划 §5.3/§6.2）：facts 必须在原始结果归一化之后、文本截断与最终保存之前
+      // 校验并记录；一次调用只上报一次（内部重试不重复累计）——本循环对
+      // non_idempotent 的 effectiveRetries=0，天然满足。
+      let callEvidence: ToolCallEvidenceFacts | undefined;
+      if (normalized.facts !== undefined) {
+        const rawFacts = normalized.facts;
+        // 消费侧统一先过 validateToolFacts：版本/字段/路径/容量不认识的事实
+        // 一律不产生"进展"（也不能被换成 passed）。
+        const validated = validateToolFacts(rawFacts);
+        let newChecks = 0;
+        const evidenceIds: string[] = [];
+        if (evidenceStore && evidenceInvocation) {
+          const record = evidenceStore.recordResult(evidenceInvocation.invocationId, rawFacts, {
+            iteration: state.iteration,
+            durationMs,
+          });
+          if (record) {
+            const profile = rawFacts.check?.profile ?? 'process';
+            // 只有本次真实执行并结算出的结论才算"新出现"（复用旧结论不是新成果）。
+            if (record.source === 'executed' && record.conclusion !== null) {
+              newChecks = 1;
+              evidenceIds.push(record.checkId);
+            }
+            emit({
+              type: 'check_result',
+              checkId: record.checkId,
+              profile,
+              conclusion: record.conclusion,
+              source: record.source,
+              durationMs,
+              ...(record.logRefs ? { logRefs: record.logRefs } : {}),
+            });
+          }
+        }
+        // 读取/变更事实单独入有界存储：返回"新增条数"，重复读取不计新增（计划 §8.1）。
+        const safeReads = validated.valid ? (validated.facts?.reads ?? []) : [];
+        const safeMutations = validated.valid ? (validated.facts?.mutations ?? []) : [];
+        const newReads = evidenceStore ? evidenceStore.recordReads(safeReads, state.iteration) : 0;
+        const newMutations = evidenceStore
+          ? evidenceStore.recordMutations(safeMutations, state.iteration)
+          : 0;
+        for (const read of safeReads) {
+          if (evidenceIds.length >= 6) break;
+          evidenceIds.push(read.path);
+        }
+        callEvidence = {
+          supported: validated.valid,
+          newReads,
+          newMutations,
+          newChecks,
+          evidenceIds: evidenceIds.slice(0, 6),
+        };
+      }
+
       // ---- v1.2 Tool Result Validation：执行成功 ≠ 结果有效（validateResult 必须看到完整 raw）----
       const vr = validateToolResult(toolName, rawResult);
 
@@ -479,7 +614,7 @@ export async function invokeToolCall(
       observer.log(`[Tool 返回] ${result}`);
 
       // v1.3 Side-Effect Safety：非幂等 execute 成功后记录操作身份（记录受限结果，防回放大内容）
-      if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, toolContext, effect);
+      if (toolDef) markExecuted(sideEffectGuard, toolDef, args, result, execContext, effect);
 
       // State: 工具执行成功（execute 维度，先于结果有效性判定）
       updateState(state, {
@@ -571,7 +706,11 @@ export async function invokeToolCall(
       save();
       observeDisposition('executed', attempt);
       lifecycle.transition('succeeded');
-      return { tool: toolDef.name, effect }; // 成功，跳出重试
+      return {
+        tool: toolDef.name,
+        effect,
+        ...(callEvidence ? { evidence: callEvidence } : {}),
+      }; // 成功，跳出重试
     } catch (err) {
       // v2.0 Network Capability Check 拒绝：网络工具在网络关闭时被 policy 拦截。
       // 语义 = 拒绝执行（非执行失败）：
@@ -613,7 +752,8 @@ export async function invokeToolCall(
       // 回传模型（不重试——同参数重试通常只是再烧一轮预算）。
       if (deadline.signal.aborted && deadline.signal.reason instanceof TimeoutAbortError) {
         if (effect === 'non_idempotent') {
-          sideEffectGuard.markUncertain(operationIdentity(toolDef, args, toolContext));
+          sideEffectGuard.markUncertain(operationIdentity(toolDef, args, execContext));
+          evidenceStore?.recordUncertain(evidenceInvocation?.invocationId ?? '', 'check_timed_out');
           lifecycle.transition('uncertain');
         } else {
           lifecycle.transition('timed_out');
@@ -698,7 +838,11 @@ export async function invokeToolCall(
       // v1.3.2：non_idempotent execute throw → 操作转为 uncertain（副作用可能已发生），
       // 之后的相同 canonical key 请求将被阻断（resolveOperation 命中 uncertain），不再重复执行。
       if (effect === 'non_idempotent') {
-        sideEffectGuard.markUncertain(operationIdentity(toolDef, args, toolContext));
+        sideEffectGuard.markUncertain(operationIdentity(toolDef, args, execContext));
+        evidenceStore?.recordUncertain(
+          evidenceInvocation?.invocationId ?? '',
+          isAbortError(err) ? 'check_cancelled' : 'check_failed',
+        );
       }
 
       // True cancellation（v1.6）：abort 是终态 —— 不重试、不写恢复消息、

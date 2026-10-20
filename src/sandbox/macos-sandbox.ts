@@ -58,6 +58,9 @@ export async function probeSandboxAvailability(): Promise<boolean> {
   return ok;
 }
 
+/** 原始输出流标记（check 协议用）：区分 stdout / stderr，不做任何合并。 */
+export type ProcessOutputStream = 'stdout' | 'stderr';
+
 export type MacOSSandboxEvent = 'started' | 'denied';
 
 export interface MacOSSandboxResult {
@@ -79,6 +82,11 @@ export interface MacOSSandboxRunOptions {
   onEvent?: (event: MacOSSandboxEvent) => void;
   // v2.3 增量输出：stdout/stderr 数据到达即回调（后台作业滚动词法缓冲用）。
   onOutput?: (text: string) => void;
+  // check 协议（计划 §5.2）：**原始** chunk 回调，带流标记，在底层 outputLimit
+  // 截断之前触发。旧 Shell 调用方不传即为无操作，行为完全不变；Shell 回调
+  // （onOutput）刻意不携带流标记，两者不能互相代替——一次 check 需要按流分别
+  // 保存完整日志，而 live 预览只关心"有没有新文本"。
+  onRawChunk?: (stream: ProcessOutputStream, chunk: Buffer) => void;
 }
 
 // 终止整个进程组：detached spawn 使 child 成为进程组长（pgid = pid），
@@ -244,7 +252,30 @@ export class MacOSSandbox {
     return this.policy.scratchRoots.some((root) => isSandboxPathInside(root, target));
   }
 
+  /** 旧 Shell 入口：脚本语义不变（Seatbelt 内 `/bin/sh -c <command>`）。 */
   async run(command: string, options: MacOSSandboxRunOptions): Promise<MacOSSandboxResult> {
+    return await this.runArgv([SHELL, '-c', command], options);
+  }
+
+  /**
+   * 受控 argv 目标（check 工具，计划 §5.2）：在**同一条 Seatbelt 路径**内直接
+   * 执行程序 + 字面参数数组，不经过任何解释器。因此 `|`、`;`、`$`、引号只会
+   * 按字面到达子进程，不会被二次解析；调用方必须自行完成程序解析与授权。
+   */
+  async runProcess(
+    argv: readonly string[],
+    options: MacOSSandboxRunOptions,
+  ): Promise<MacOSSandboxResult> {
+    if (!argv.length || argv.some((token) => typeof token !== 'string' || token.length === 0)) {
+      throw new Error('process argv must be a non-empty array of literal strings');
+    }
+    return await this.runArgv(argv, options);
+  }
+
+  private async runArgv(
+    argv: readonly string[],
+    options: MacOSSandboxRunOptions,
+  ): Promise<MacOSSandboxResult> {
     const cwd = canonicalizeSandboxPath(options.cwd);
     const home = canonicalizeSandboxPath(options.home);
     const tmpdir = canonicalizeSandboxPath(options.tmpdir);
@@ -293,7 +324,7 @@ export class MacOSSandbox {
     return await new Promise<MacOSSandboxResult>((resolve, reject) => {
       // detached: child 成为进程组长（pgid = pid），超时/abort 时可整组终止，
       // 避免 sandbox-exec 被杀后 /bin/sh 的子孙命令继续运行。
-      const child = spawn(SANDBOX_EXEC, ['-p', profile, SHELL, '-c', command], {
+      const child = spawn(SANDBOX_EXEC, ['-p', profile, ...argv], {
         cwd,
         env,
         detached: true,
@@ -329,10 +360,13 @@ export class MacOSSandbox {
       };
 
       child.stdout?.on('data', (chunk: Buffer) => {
+        // 原始采集必须发生在底层截断之前（计划 §5.2）：这是完整日志的唯一来源。
+        options.onRawChunk?.('stdout', chunk);
         if (stdout.length < MAX_SHELL_OUTPUT * 4) stdout += String(chunk);
         options.onOutput?.(String(chunk));
       });
       child.stderr?.on('data', (chunk: Buffer) => {
+        options.onRawChunk?.('stderr', chunk);
         if (stderr.length < MAX_SHELL_OUTPUT * 4) stderr += String(chunk);
         options.onOutput?.(String(chunk));
       });

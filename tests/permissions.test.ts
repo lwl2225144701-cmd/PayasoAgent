@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execute, getSchemas, type ToolContext } from '../src/tools/tools.js';
+import {
+  execute as executeRaw,
+  getSchemas,
+  normalizeToolResult,
+  type ToolContext,
+} from '../src/tools/tools.js';
 import '../src/tools/filesystem.js';
 import '../src/tools/runtime-tools.js';
 import { SqliteRunStore } from '../src/host/persistence/sqlite-store.js';
@@ -15,6 +20,15 @@ fs.mkdirSync(workspace);
 fs.mkdirSync(outside);
 fs.writeFileSync(path.join(workspace, 'inside.txt'), 'inside', 'utf8');
 fs.writeFileSync(path.join(outside, 'outside.txt'), 'outside', 'utf8');
+
+/** v2.5：read/grep/ls 会带结构化 facts（对象型结果）；本套件只关心模型可见文本。 */
+async function execute(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<string> {
+  return normalizeToolResult(await executeRaw(name, args, ctx)).text;
+}
 
 const context = (permissionMode: ToolContext['permissionMode']): ToolContext => ({
   runId: 'permission-test',

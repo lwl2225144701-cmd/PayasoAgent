@@ -9,6 +9,7 @@
 | 搞清楚系统现在长什么样 | [`architecture-current.md`](./architecture-current.md) |
 | 理解沙箱是怎么守住的 | [`sandbox/sandbox-mental-model.md`](./sandbox/sandbox-mental-model.md) |
 | 查某个方案的实施计划 / 状态 | [`plans/`](./plans/) 下对应文档 |
+| 查看 Agent 执行效率改造范围与分层职责 | [执行效率优化计划](./plans/agent-run-efficiency-optimization-plan-20261020.md) |
 | 排查 Run 为什么慢 / LLM 为什么超时 | 根目录按日期命名的排查报告（如 [`llm-connect-timeout-2026-09-28.md`](./llm-connect-timeout-2026-09-28.md)） |
 | 验收执行不收敛治理改造 | [完整测试场景与执行交接](./guides/execution-governance-acceptance.md) |
 | 查发布 / 打包怎么操作 | [`distribute/npm-publish-runbook.md`](./distribute/npm-publish-runbook.md) |
@@ -57,6 +58,7 @@ docs/
 │   ├── auto-update-调研报告.md        # DSH 自更新三条链路的逆向结论（期 3 依据）
 │   ├── execution-convergence-governance-plan.md  # 执行不收敛治理方案（2026-10-18；阶段一、二已落地）
 │   ├── agent-adaptive-planning-recommendations-20261019.md  # 按需规划调整建议（背景、范围与验收）
+│   ├── agent-run-efficiency-optimization-plan-20261020.md  # 执行效率：分层职责、改造顺序与验收（A/B/C/D/E 已实施）
 │   └── workspace-picker-browse-review.md
 │
 ├── web/                      # 前端 / UI
