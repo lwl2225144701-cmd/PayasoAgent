@@ -5,6 +5,7 @@
 
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { TextAttachmentRef } from '../attachment-types.js';
+import type { TokenUsage } from './token-usage.js';
 
 export interface ToolCall {
   id: string;
@@ -37,8 +38,24 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   reasoning_content?: string;
+  /** 同一端点/模型的工具续传协议；不属于正文、摘要或跨用户轮次记忆。 */
+  providerContinuation?: ProviderContinuation;
   // user / tool 消息可携带图片（user 附件或 read 工具读出的工作区图片）。
   images?: MessageImage[];
+}
+
+export interface ProviderContinuation {
+  version: 1;
+  identity: string;
+  field: 'reasoning_content' | 'reasoning' | 'reasoning_text';
+  text: string;
+}
+
+/** 完成原因属于调用观测，不混入 canonical 消息或下一轮助手正文。 */
+export type LlmStopReason = 'stop' | 'length' | 'toolUse' | 'pending' | 'deferred';
+export interface ChatResponse extends ChatMessage {
+  usage?: TokenUsage;
+  stopReason?: LlmStopReason;
 }
 
 export interface ToolSchema {
@@ -54,6 +71,18 @@ export interface ChatStreamDelta {
   // 其 messageId 取工具调用 id，便于前端把输出归到对应的工具行。
   type: 'assistant_delta' | 'reasoning_delta' | 'shell_output_delta';
   delta: string;
+}
+
+// 传输边界观测：仅记录阶段、耗时和协议元数据，不包含请求正文、凭证或响应正文。
+export interface LlmTransportEvent {
+  phase: 'response_headers' | 'first_body_chunk' | 'first_event' | 'failed' | 'retry';
+  attempt: number;
+  elapsedMs: number;
+  status?: number;
+  contentType?: string;
+  chunkBytes?: number;
+  reason?: 'connect_timeout' | 'idle_timeout' | 'http_error' | 'network_error' | 'response_error';
+  delayMs?: number;
 }
 
 export interface ModelConfig {

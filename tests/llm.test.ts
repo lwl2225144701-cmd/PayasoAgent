@@ -2,7 +2,8 @@
 
 import assert from 'node:assert/strict';
 import { deriveMaxOutputTokens } from '../src/harness/model-context.js';
-import { chat } from '../src/llm/llm.js';
+import { chat, type LlmTransportEvent } from '../src/llm/llm.js';
+import { matchesProviderContinuation } from '../src/llm/provider-continuation.js';
 
 const originalFetch = globalThis.fetch;
 let passed = 0;
@@ -20,6 +21,164 @@ async function test(name: string, fn: () => Promise<void>): Promise<void> {
 }
 
 try {
+  await test('工具续传字段往返回同一端点/模型，不进入正文或其他模型请求', async () => {
+    assert.equal(
+      matchesProviderContinuation(
+        JSON.parse('{"version":1,"field":"reasoning_content","text":"unbound"}'),
+        undefined,
+      ),
+      false,
+    );
+    const config = {
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'test-key',
+      model: 'protocol-test',
+    };
+    const requests: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      calls++;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message:
+                calls === 1
+                  ? {
+                      content: '',
+                      reasoning_content: 'opaque-provider-state',
+                      tool_calls: [
+                        {
+                          id: 'continuation-tool',
+                          type: 'function',
+                          function: { name: 'probe', arguments: '{}' },
+                        },
+                      ],
+                    }
+                  : { content: 'done' },
+              finish_reason: calls === 1 ? 'tool_calls' : 'stop',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+    const first = await chat([{ role: 'user', content: 'inspect' }], undefined, undefined, config);
+    assert.equal(first.providerContinuation?.text, 'opaque-provider-state');
+    assert.equal(first.providerContinuation?.field, 'reasoning_content');
+    const {
+      reasoning_content: _reasoning,
+      usage: _usage,
+      stopReason: _stopReason,
+      ...history
+    } = first;
+    const messages = [
+      { role: 'user' as const, content: 'inspect' },
+      history,
+      { role: 'tool' as const, content: 'ok', tool_call_id: 'continuation-tool' },
+    ];
+    await chat(messages, undefined, undefined, config);
+    const assistant = requests[1].messages.find((m) => m.role === 'assistant');
+    assert.equal(assistant?.reasoning_content, 'opaque-provider-state');
+    assert.ok(!String(assistant?.content).includes('opaque-provider-state'));
+    assert.equal(assistant?.providerContinuation, undefined, '内部载体不能直接进入 wire JSON');
+    for (const changed of [
+      { model: 'other-model' },
+      { baseUrl: 'https://other.example/v1' },
+      { providerId: 'other-provider' },
+    ]) {
+      await chat(messages, undefined, undefined, { ...config, ...changed });
+      const other = requests.at(-1)?.messages.find((m) => m.role === 'assistant');
+      assert.equal(other?.reasoning_content, undefined);
+    }
+    assert.equal(
+      requests[1].messages.filter((m) => String(m.content).includes('opaque-provider-state'))
+        .length,
+      0,
+    );
+  });
+
+  await test('SSE 续传沿用实际字段签名，兼容 reasoning_content/reasoning/reasoning_text', async () => {
+    const config = {
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'test-key',
+      model: 'protocol-test',
+    };
+    for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
+      let count = 0;
+      let outgoing: { messages: Array<Record<string, unknown>> } | undefined;
+      globalThis.fetch = async (_input, init) => {
+        outgoing = JSON.parse(String(init?.body));
+        count++;
+        const delta =
+          count === 1
+            ? {
+                [field]: 'signed-state',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'sse-tool',
+                    type: 'function',
+                    function: { name: 'probe', arguments: '{}' },
+                  },
+                ],
+              }
+            : { content: 'done' };
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ delta, finish_reason: null }] })}\n\n` +
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: count === 1 ? 'tool_calls' : 'stop' }] })}\n\n` +
+            'data: [DONE]\n\n',
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      };
+      const first = await chat(
+        [{ role: 'user', content: 'inspect' }],
+        undefined,
+        undefined,
+        config,
+      );
+      assert.equal(first.providerContinuation?.field, field);
+      const history = { ...first, reasoning_content: undefined };
+      await chat(
+        [history, { role: 'tool', content: 'ok', tool_call_id: 'sse-tool' }],
+        undefined,
+        undefined,
+        config,
+      );
+      assert.equal(outgoing?.messages.find((m) => m.role === 'assistant')?.[field], 'signed-state');
+    }
+  });
+
+  await test('JSON 和 SSE 的输出截断原因透传，不能归一化成正常结束', async () => {
+    for (const streaming of [false, true]) {
+      globalThis.fetch = async () =>
+        new Response(
+          streaming
+            ? 'data: {"choices":[{"delta":{"reasoning_content":"private"},"finish_reason":null}]}\n\n' +
+                'data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":120,"completion_tokens":32768}}\n\n' +
+                'data: [DONE]\n\n'
+            : JSON.stringify({
+                choices: [
+                  {
+                    message: { content: '', reasoning_content: 'private' },
+                    finish_reason: 'length',
+                  },
+                ],
+                usage: { prompt_tokens: 120, completion_tokens: 32768 },
+              }),
+          {
+            status: 200,
+            headers: { 'Content-Type': streaming ? 'text/event-stream' : 'application/json' },
+          },
+        );
+      const response = await chat([{ role: 'user', content: 'continue' }]);
+      assert.equal(response.stopReason, 'length');
+      assert.equal(response.content, '');
+      assert.equal(response.usage?.outputTokens, 32768);
+    }
+  });
+
   await test('valid assistant response is normalized', async () => {
     const requestBodies: Record<string, unknown>[] = [];
     globalThis.fetch = async (_input, init) => {
@@ -35,6 +194,7 @@ try {
     const message = await chat([{ role: 'user', content: 'hello' }]);
     assert.equal(message.content, 'done');
     assert.equal(message.reasoning_content, 'private');
+    assert.equal(message.stopReason, 'stop');
     assert.equal(message.usage?.totalTokens, 150);
     // DISJOINT 分桶透传：input 为未缓存输入，cache 命中单独计桶（此处为 0 → 省略）。
     assert.equal(message.usage?.inputTokens, 120);
@@ -216,6 +376,62 @@ try {
     assert.equal(calls, 3);
   });
 
+  await test('provider terminates a reasoning-only stream → safely retried and succeeds', async () => {
+    // 第一把只吐了思考分片（reasoning_delta），还没产出正文/工具调用就被 provider 掐流。
+    // 重放同请求无副作用，必须重试；这正是 step-5-preview / glm-5.3-flash 反复
+    // "terminated" 时零交付的根因回归。
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls === 1) {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"choices":[{"delta":{"reasoning_content":"想"}}]}\n\n',
+              ),
+            );
+            setTimeout(() => controller.error(new Error('terminated')), 20);
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"恢复"}}]}\n\n' +
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+          'data: [DONE]\n\n',
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    const message = await chat([{ role: 'user', content: 'hello' }]);
+    assert.equal(message.content, '恢复');
+    assert.equal(calls, 2);
+  });
+
+  await test('content already emitted before termination → NOT retried (no partial replay)', async () => {
+    // 一旦吐过正文（emittedContent=true），重放会重复副作用，必须保持"不重放半截响应"。
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"choices":[{"delta":{"content":"部分"}}]}\n\n',
+            ),
+          );
+          setTimeout(() => controller.error(new Error('terminated')), 20);
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    };
+    await assert.rejects(() => chat([{ role: 'user', content: 'hello' }]), /terminated/);
+    assert.equal(calls, 1);
+  });
+
   await test('headers arrived but stream stalls → idle watchdog aborts (no retry)', async () => {
     // 低于策略下限（1s）的配置会被抬起：既验证下限收敛，也保证用例快速确定性。
     process.env.PAYASO_LLM_IDLE_TIMEOUT_MS = '500';
@@ -298,10 +514,12 @@ try {
     }
   });
 
-  await test('connect hang before any response aborts at connect timeout (no retry)', async () => {
+  await test('连接持续超时：三次尝试后有界失败，并记录每次恢复', async () => {
     // 低于策略下限（1s）的配置会被抬起：既验证下限收敛，也保证用例快速确定性。
     process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = '500';
     let calls = 0;
+    const events: LlmTransportEvent[] = [];
+    const attempts: number[] = [];
     globalThis.fetch = async (_input, init) => {
       calls++;
       const signal = init?.signal;
@@ -313,13 +531,228 @@ try {
     };
     try {
       await assert.rejects(
-        () => chat([{ role: 'user', content: 'hello' }]),
-        /no response received within 1000ms/,
+        () =>
+          chat(
+            [{ role: 'user', content: 'hello' }],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            (attempt) => attempts.push(attempt),
+            (event) => events.push(event),
+          ),
+        /no response received within 1000ms.*after 3 attempts/,
       );
-      assert.equal(calls, 1); // connect timeout must NOT be retried
+      assert.equal(calls, 3);
+      assert.deepEqual(attempts, [1, 2, 3]);
+      assert.equal(events.filter((e) => e.phase === 'retry').length, 2);
+      assert.equal(
+        events.filter((e) => e.phase === 'failed' && e.reason === 'connect_timeout').length,
+        3,
+      );
+      assert.ok(
+        events.every((e) => e.phase !== 'response_headers' && e.phase !== 'first_body_chunk'),
+      );
     } finally {
       delete process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
     }
+  });
+
+  await test('首次连接超时后恢复：请求相同、派生信号独立、只交付成功响应', async () => {
+    const prior = process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+    process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = '1000';
+    const bodies: unknown[] = [];
+    const signals: Array<AbortSignal | null | undefined> = [];
+    const events: LlmTransportEvent[] = [];
+    const deltas: string[] = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      signals.push(init?.signal);
+      if (bodies.length === 1)
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    try {
+      const result = await chat(
+        [{ role: 'user', content: 'hello' }],
+        undefined,
+        (event) => deltas.push(event.delta),
+        undefined,
+        undefined,
+        undefined,
+        (event) => events.push(event),
+      );
+      assert.equal(result.content, 'recovered');
+      assert.deepEqual(deltas, ['recovered']);
+      assert.equal(bodies.length, 2);
+      assert.deepEqual(bodies[0], bodies[1]);
+      assert.equal(signals[0]?.aborted, true);
+      assert.equal(signals[1]?.aborted, false);
+      assert.notEqual(signals[0], signals[1]);
+      assert.deepEqual(
+        events.filter((e) => e.attempt === 2).map((e) => e.phase),
+        ['response_headers', 'first_body_chunk', 'first_event'],
+      );
+      assert.ok(events.every((e) => e.elapsedMs >= 0));
+      assert.ok(!JSON.stringify(events).includes('recovered'), '诊断不记录正文');
+    } finally {
+      if (prior === undefined) delete process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+      else process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = prior;
+    }
+  });
+
+  await test('用户在请求中取消：立即退出且不重试', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        controller.abort();
+      });
+    };
+    await assert.rejects(
+      () =>
+        chat(
+          [{ role: 'user', content: 'hello' }],
+          undefined,
+          undefined,
+          undefined,
+          controller.signal,
+        ),
+      { name: 'AbortError' },
+    );
+    assert.equal(calls, 1);
+  });
+
+  await test('Runtime：工具完成后下一请求超时可恢复，不重放写入并保留迭代身份', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { createAgentExecutionContext } = await import('../src/bootstrap/runtime-bootstrap.js');
+    const { DefaultContextHarness } = await import('../src/harness/context-harness.js');
+    const { runAgent } = await import('../src/runtime/agent.js');
+    const { silentRuntimeObserver } = await import('../src/runtime/observer-port.js');
+    const { createTestWorkspaceRoot, MOCK_MODEL_CONFIG, textResponse, toolCallResponse } =
+      await import('./helpers/mock-runner.js');
+    const priorRoot = process.env.SANDBOX_ROOT;
+    const priorTimeout = process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+    const root = createTestWorkspaceRoot('llm-recovery-');
+    process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = '1000';
+    const traces: import('../src/runtime/trace.js').TraceEvent[] = [];
+    const bodies: unknown[] = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      if (bodies.length === 1)
+        return toolCallResponse([
+          { id: 'write-once', name: 'write', args: { path: 'result.txt', content: 'saved' } },
+        ]);
+      if (bodies.length === 2)
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      return textResponse('已完成');
+    };
+    try {
+      const answer = await runAgent('写入result.txt', undefined, {
+        executionContext: createAgentExecutionContext({
+          runId: 'llm-recovery',
+          workspaceRoot: root,
+        }),
+        modelConfig: MOCK_MODEL_CONFIG,
+        contextHarness: new DefaultContextHarness({
+          permissionMode: 'workspace-write',
+          executionBudget: false,
+        }),
+        checkpointWriter: { save: () => 'memory://llm-recovery' },
+        observer: silentRuntimeObserver,
+        onTrace: (event) => traces.push(event),
+      });
+      assert.equal(answer, '已完成');
+      assert.equal(bodies.length, 3);
+      assert.deepEqual(bodies[1], bodies[2]);
+      assert.equal(fs.readFileSync(path.join(root, 'result.txt'), 'utf8'), 'saved');
+      assert.equal(traces.filter((e) => e.type === 'tool_call' && e.tool === 'write').length, 1);
+      assert.deepEqual(
+        traces.filter((e) => e.type === 'llm_request_sent').map((e) => [e.iteration, e.attempt]),
+        [
+          [1, 1],
+          [2, 1],
+          [2, 2],
+        ],
+      );
+      assert.ok(
+        traces.some((e) => e.type === 'llm_transport' && e.iteration === 2 && e.phase === 'retry'),
+      );
+      assert.ok(traces.some((e) => e.type === 'final_answer'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      if (priorRoot === undefined) delete process.env.SANDBOX_ROOT;
+      else process.env.SANDBOX_ROOT = priorRoot;
+      if (priorTimeout === undefined) delete process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS;
+      else process.env.PAYASO_LLM_CONNECT_TIMEOUT_MS = priorTimeout;
+    }
+  });
+
+  await test('用户在退避期间取消：不必等完 Retry-After，不再发请求', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response('busy', { status: 503, headers: { 'Retry-After': '10' } });
+    };
+    const started = performance.now();
+    await assert.rejects(
+      () =>
+        chat(
+          [{ role: 'user', content: 'hello' }],
+          undefined,
+          undefined,
+          undefined,
+          controller.signal,
+          undefined,
+          (event) => {
+            if (event.phase === 'retry') controller.abort();
+          },
+        ),
+      { name: 'AbortError' },
+    );
+    assert.equal(calls, 1);
+    assert.ok(performance.now() - started < 2000);
+  });
+
+  await test('已输出的流中途断开：不重试也不重复交付增量', async () => {
+    let calls = 0;
+    const deltas: string[] = [];
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'),
+            );
+            setTimeout(() => controller.error(new Error('offline')), 20);
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    await assert.rejects(
+      () =>
+        chat([{ role: 'user', content: 'hello' }], undefined, (event) => deltas.push(event.delta)),
+      /offline/,
+    );
+    assert.equal(calls, 1);
+    assert.deepEqual(deltas, ['partial']);
   });
 
   await test('incomplete modelConfig is rejected without falling back to env config', async () => {

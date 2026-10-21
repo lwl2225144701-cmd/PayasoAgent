@@ -260,6 +260,7 @@ export interface LlmCallEvent extends TraceEventBase {
   response: string;
   reasoning?: string;
   hasToolCalls: boolean;
+  stopReason?: 'stop' | 'length' | 'toolUse' | 'pending' | 'deferred';
   usage?: TokenUsage;
 }
 
@@ -271,14 +272,28 @@ export interface LlmCallStartedEvent extends TraceEventBase {
   estimatedInputTokens?: number;
 }
 
-// Provider HTTP 请求真正发出（piFetch 内 fetch 调用前）。
-// 与 llm_call_started 的间隔 = Host 侧整理耗时；与首个 delta 的间隔 = Provider 首包/网络。
+// Provider HTTP尝试开始（piFetch内fetch调用前，尚不证明响应到达）。
+// 与llm_call_started的间隔反映Host整理；响应与解析边界见llm_transport。
 export interface LlmRequestSentEvent extends TraceEventBase {
   type: 'llm_request_sent';
   iteration: number;
   attempt: number;
   /** 请求体字节数（≈ HTTP body，恒略小于真实值）。 */
   requestBodyBytes?: number;
+}
+
+// 协议阶段与耗时；不含请求/响应正文。
+export interface LlmTransportEvent extends TraceEventBase {
+  type: 'llm_transport';
+  iteration: number;
+  phase: 'response_headers' | 'first_body_chunk' | 'first_event' | 'failed' | 'retry';
+  attempt: number;
+  elapsedMs: number;
+  status?: number;
+  contentType?: string;
+  chunkBytes?: number;
+  reason?: 'connect_timeout' | 'idle_timeout' | 'http_error' | 'network_error' | 'response_error';
+  delayMs?: number;
 }
 
 export interface ToolCallEvent extends TraceEventBase {
@@ -354,6 +369,10 @@ export interface ContextUsageEvent extends TraceEventBase {
   scratchpadTokens: number;
   /** Plan 投影注入 system 的估算 token（旧事件无此字段）。 */
   planTokens?: number;
+  /** 工具历史有损投影的独立计数；不等于 trimmedMessages。 */
+  projectedToolResults?: number;
+  projectedToolBytesSaved?: number;
+  unprojectedInputTokens?: number;
   estimatedInputTokens: number;
   // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
   // 环形指示器的真实压力锚点；首轮或 provider 未上报时缺省。
@@ -594,6 +613,7 @@ export type TraceEvent =
   | LlmCallEvent
   | LlmCallStartedEvent
   | LlmRequestSentEvent
+  | LlmTransportEvent
   | ToolCallEvent
   | ToolCallInvalidEvent
   | ToolResultEvent

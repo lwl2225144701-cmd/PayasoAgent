@@ -319,6 +319,7 @@ export function connectSSE(
     'llm_call',
     'llm_call_started',
     'llm_request_sent',
+    'llm_transport',
     'tool_call',
     'tool_call_invalid',
     'tool_result',

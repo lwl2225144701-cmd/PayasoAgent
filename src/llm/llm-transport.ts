@@ -44,10 +44,9 @@ export async function piFetch(
     headers[key.toLowerCase() === 'authorization' ? 'Authorization' : key] = value;
   }
   const requestInit = { ...init, headers };
-  // HTTP 请求真正发出的瞬间打点（在发起 fetch 之前调用回调）：
-  // llm_call_started → 此处 = Host 侧整理耗时；此处 → 首个 delta = Provider 首包/网络。
+  // fetch 调用前打点；不代表响应头、网络字节或模型增量已经到达。
   onRequestSent?.();
-  // v2.3 连接超时：响应头返回（fetch resolve）前无任何数据 → 中止本次 HTTP 尝试。
+  // 响应头返回（fetch resolve）前超时 → 中止本次 HTTP 尝试。
   const connectMs = diagnostics.connectTimeoutMs;
   let connectTimer: ReturnType<typeof setTimeout> | undefined;
   if (connectMs !== undefined && diagnostics.timeoutController) {
@@ -69,6 +68,33 @@ export async function piFetch(
     throw error;
   } finally {
     if (connectTimer) clearTimeout(connectTimer);
+  }
+  diagnostics.responseReceived = true;
+  diagnostics.onTransport?.({
+    phase: 'response_headers',
+    status: response.status,
+    contentType: response.headers.get('content-type')?.slice(0, 120) ?? undefined,
+  });
+  // 在归一化/适配器之前观察真实 body，区分网络等待与解析等待；保持背压与取消传播。
+  if (response.body && diagnostics.onTransport) {
+    let observed = false;
+    response = new Response(
+      response.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            if (!observed && chunk.byteLength > 0) {
+              observed = true;
+              diagnostics.onTransport?.({
+                phase: 'first_body_chunk',
+                chunkBytes: chunk.byteLength,
+              });
+            }
+            controller.enqueue(chunk);
+          },
+        }),
+      ),
+      { status: response.status, statusText: response.statusText, headers: response.headers },
+    );
   }
   if (!response.ok) {
     diagnostics.status = response.status;
@@ -151,7 +177,15 @@ export async function piFetch(
       ],
     });
   });
-  const finishReason = message.tool_calls?.length ? 'tool_calls' : 'stop';
+  // JSON 兼容响应同样保留服务端的 length；不能把输出截断伪装成正常 stop。
+  const firstChoice = Array.isArray(original.choices) ? original.choices[0] : undefined;
+  const wireFinishReason = isRecord(firstChoice) ? firstChoice.finish_reason : undefined;
+  const finishReason =
+    typeof wireFinishReason === 'string'
+      ? wireFinishReason
+      : message.tool_calls?.length
+        ? 'tool_calls'
+        : 'stop';
   chunks.push(
     `data: ${JSON.stringify({
       id,
@@ -190,29 +224,68 @@ function isAbortOrTimeoutMessage(message: string): boolean {
 }
 
 // 只有"瞬时错误"才重试：HTTP 408/429/5xx，或未产生 HTTP 状态的网络错误
-// （abort/timeout 类消息一律不重试——用户取消与分层超时必须是终态）。
+// 此函数不靠错误字符串重试超时；本地连接超时由chat依据结构化来源单独处理。
 export function shouldRetry(result: AssistantMessage, diagnostics: FetchDiagnostics): boolean {
   if (result.stopReason !== 'error') return false;
   if (result.errorMessage === 'Request timed out.') return false;
   if (diagnostics.status !== undefined) {
     return diagnostics.status === 408 || diagnostics.status === 429 || diagnostics.status >= 500;
   }
-  return diagnostics.error !== undefined && !isAbortOrTimeoutMessage(diagnostics.error.message);
+  if (diagnostics.error !== undefined) {
+    return !isAbortOrTimeoutMessage(diagnostics.error.message);
+  }
+  // 流式 provider 掐流（如 "terminated"）：无 HTTP 状态、无 transport error，但按消息归类
+  // 仍属瞬时错误。是否安全重放由调用方用 emittedContent（未产出正文/工具调用）兜底。
+  return isTransientStreamError(result.errorMessage ?? '');
 }
 
-export function retryDelay(attempt: number, diagnostics: FetchDiagnostics): Promise<void> {
+// 瞬时传输/服务端错误分类（按错误消息，不靠结构化信号）：provider 掐流（terminated）、
+// 网络抖动（fetch failed / connection / socket / reset）等。
+// 与 shouldRetry 互补：shouldRetry 面向 stream.result() 返回的 error 结果；这里面向
+// for-await 直接抛出的错误。刻意排除 abort/timeout——它们由派生 AbortController 的
+// 结构化语义（TimeoutAbortError / AbortError）单独处理，绝不该靠字符串猜测重试一条
+// 正在超时或已取消的请求。
+export function isTransientStreamError(message: string): boolean {
+  if (isAbortOrTimeoutMessage(message)) return false;
+  return /terminated|fetch failed|network|connection|overloaded|rate.?limit|too many requests|service.?unavailable|server.?error|internal.?error|socket|reset|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|premature/i.test(
+    message,
+  );
+}
+
+export function retryDelayMs(attempt: number, diagnostics: FetchDiagnostics): number {
   // 429 限速：毫秒级退避无意义，采用秒级指数退避（5s→10s→20s…上限 60s），
   // 服务端给了 Retry-After 时以其为准。其余错误保持原有快速退避语义；
   // 503 仅在显式携带 Retry-After 时按建议值等待，否则维持毫秒级。
   if (diagnostics.status === 429) {
-    return new Promise((resolve) =>
-      setTimeout(resolve, Math.min(diagnostics.retryAfterMs ?? 5_000 * 2 ** attempt, 60_000)),
-    );
+    return Math.min(diagnostics.retryAfterMs ?? 5_000 * 2 ** attempt, 60_000);
   }
   if (diagnostics.status === 503 && diagnostics.retryAfterMs !== undefined) {
-    return new Promise((resolve) => setTimeout(resolve, diagnostics.retryAfterMs));
+    return diagnostics.retryAfterMs;
   }
-  return new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+  return 25 * 2 ** attempt;
+}
+
+export function retryDelay(
+  attempt: number,
+  diagnostics: FetchDiagnostics,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(
+      () => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      },
+      retryDelayMs(attempt, diagnostics),
+    );
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
 }
 
 export function formatTransportError(

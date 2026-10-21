@@ -27,20 +27,25 @@ import { InlineThinkEmitter, toLegacyMessage, toPiContext } from './llm-messages
 import type { FetchDiagnostics } from './llm-sse.js';
 import {
   formatTransportError,
+  isTransientStreamError,
   llmTimeoutPolicy,
   piFetch,
   requestHeadersFor,
   retryDelay,
+  retryDelayMs,
   shouldRetry,
 } from './llm-transport.js';
 import type {
   ChatMessage,
+  ChatResponse,
   ChatStreamDelta,
+  LlmTransportEvent,
   ModelConfig,
   ResolvedEndpointConfig,
   ToolSchema,
 } from './llm-types.js';
-import { normalizeTokenUsage, type TokenUsage } from './token-usage.js';
+import { captureProviderContinuation, continuationIdentity } from './provider-continuation.js';
+import { normalizeTokenUsage } from './token-usage.js';
 import {
   mergeRawArguments,
   rawArgumentsByToolCallId,
@@ -50,8 +55,11 @@ import {
 export { llmTimeoutPolicy } from './llm-transport.js';
 export type {
   ChatMessage,
+  ChatResponse,
   ChatStreamDelta,
+  LlmStopReason,
   LlmTimeoutPolicy,
+  LlmTransportEvent,
   MessageImage,
   ModelConfig,
   ToolCall,
@@ -223,17 +231,25 @@ export async function chat(
   modelConfig?: ModelConfig,
   signal?: AbortSignal,
   onRequestSent?: (attempt: number) => void,
-): Promise<ChatMessage & { usage?: TokenUsage }> {
+  onTransport?: (event: LlmTransportEvent) => void,
+): Promise<ChatResponse> {
   const config = resolveEndpointConfig(modelConfig);
   const { models, model } = createConfiguredModel(config);
-  const context = toPiContext(messages, tools, config.providerId, config.model, model.api);
+  const identity = continuationIdentity(config.baseUrl, config.providerId, config.model);
+  const context = toPiContext(
+    messages,
+    tools,
+    config.providerId,
+    config.model,
+    model.api,
+    identity,
+  );
   const messageId = crypto.randomUUID();
   const policy = llmTimeoutPolicy();
   let totalAttempts = 0;
 
-  // pi-ai's stream owns one request lifecycle. Keep its internal retry count at
-  // zero and retry the whole lifecycle here so timeout/abort errors are never
-  // retried, while transient HTTP/network errors still get two retries.
+  // pi-ai 内部不重试。此处统一处理有界恢复：响应头之前的连接超时可重试，
+  // 用户取消、流空闲超时或已输出内容后的错误终止，避免重放半截响应。
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -248,11 +264,24 @@ export async function chat(
       if (signal.aborted) onUserAbort();
       else signal.addEventListener('abort', onUserAbort, { once: true });
     }
+    const attemptStarted = performance.now();
+    const reportTransport = (event: Omit<LlmTransportEvent, 'attempt' | 'elapsedMs'>): void => {
+      onTransport?.({
+        ...event,
+        attempt: attempt + 1,
+        elapsedMs: Math.round(performance.now() - attemptStarted),
+      });
+    };
     const diagnostics: FetchDiagnostics = {
       attempts: 0,
       timeoutController,
       connectTimeoutMs: policy.connectMs,
+      onTransport: reportTransport,
     };
+    let responseStarted = false;
+    // v2.7 重试安全边界：是否已产出正文/工具调用（有副作用），而非"是否收到过任何事件"。
+    // 思考 token（thinking_delta）不算——provider 在思考阶段掐流/断网时，重放同请求无副作用。
+    let emittedContent = false;
     // 流空闲看门狗：每个事件续期；prefill 首 token 漫长等待与中途停滞都会触发。
     const idleWatchdog = createIdleWatchdog(policy.idleMs, () => {
       timeoutController.abort(
@@ -266,7 +295,11 @@ export async function chat(
     // 统一把"本次尝试被中止"翻译成可区分语义的错误。
     const abortError = (): Error => {
       const reason = timeoutController.signal.reason;
-      if (reason instanceof TimeoutAbortError) return new Error(reason.message);
+      if (reason instanceof TimeoutAbortError) {
+        return new Error(
+          `${reason.message}${attempt > 0 ? ` (after ${attempt + 1} attempts)` : ''}`,
+        );
+      }
       return new DOMException('Aborted', 'AbortError');
     };
 
@@ -313,11 +346,22 @@ export async function chat(
       const rawArguments = new ToolArgumentAccumulator();
       for await (const event of stream) {
         idleWatchdog.poke();
-        if (event.type === 'text_delta') inline.push(event.delta);
+        // start 可由适配器本地发出，不能作为首个已解析模型事件的证据。
+        if (!responseStarted && event.type !== 'start' && event.type !== 'error') {
+          responseStarted = true;
+          reportTransport({ phase: 'first_event' });
+        }
+        if (event.type === 'text_delta') {
+          emittedContent = true;
+          inline.push(event.delta);
+        }
         if (event.type === 'thinking_delta') {
           onDelta?.({ messageId, type: 'reasoning_delta', delta: event.delta });
         }
-        if (event.type === 'toolcall_delta') rawArguments.push(event.contentIndex, event.delta);
+        if (event.type === 'toolcall_delta') {
+          emittedContent = true;
+          rawArguments.push(event.contentIndex, event.delta);
+        }
         if (event.type === 'error' && event.reason === 'aborted') {
           throw abortError();
         }
@@ -325,7 +369,6 @@ export async function chat(
       inline.push('', true);
 
       const result = await stream.result();
-      totalAttempts += diagnostics.attempts;
       if (result.stopReason === 'aborted' || timeoutController.signal.aborted) {
         throw abortError();
       }
@@ -343,18 +386,56 @@ export async function chat(
         // 运行时 usage 可能缺失/损坏（第三方兼容端点）。normalizeTokenUsage
         // 宁缺勿错：任一桶异常即整体拒绝，绝不因统计字段让整次调用失败。
         const usage = normalizeTokenUsage(result.usage);
-        return Object.assign(message, usage === undefined ? {} : { usage });
+        const providerContinuation = captureProviderContinuation(result, identity);
+        return {
+          ...message,
+          stopReason: result.stopReason,
+          ...(providerContinuation ? { providerContinuation } : {}),
+          ...(usage === undefined ? {} : { usage }),
+        };
       }
-      if (attempt < MAX_RETRIES && shouldRetry(result, diagnostics)) {
-        await retryDelay(attempt, diagnostics);
-        continue;
+      if (attempt >= MAX_RETRIES || emittedContent || !shouldRetry(result, diagnostics)) {
+        throw formatTransportError(result, diagnostics, totalAttempts + diagnostics.attempts);
       }
-      throw formatTransportError(result, diagnostics, totalAttempts);
+      reportTransport({
+        phase: 'failed',
+        reason: diagnostics.status === undefined ? 'network_error' : 'http_error',
+        status: diagnostics.status,
+      });
+    } catch (error) {
+      // 只依据派生信号中的结构化来源恢复连接超时，不按错误字符串猜测。
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const reason = timeoutController.signal.reason;
+      reportTransport({
+        phase: 'failed',
+        reason:
+          reason instanceof TimeoutAbortError
+            ? reason.source === 'llm-connect'
+              ? 'connect_timeout'
+              : 'idle_timeout'
+            : diagnostics.status !== undefined
+              ? 'http_error'
+              : diagnostics.responseReceived
+                ? 'response_error'
+                : 'network_error',
+        status: diagnostics.status,
+      });
+      const connectTimeout = reason instanceof TimeoutAbortError && reason.source === 'llm-connect';
+      // 只吐了思考（无正文/工具调用）时的瞬时传输/服务端错误可安全重放；一旦产出过内容，
+      // 重放会重复副作用，维持"不重放半截响应"的旧语义不变。
+      const replayableTransient = !emittedContent && isTransientStreamError(
+        error instanceof Error ? error.message : String(error),
+      );
+      if (!(connectTimeout || replayableTransient) || attempt >= MAX_RETRIES) throw error;
     } finally {
       // 无论成功、失败还是被中止：清理本尝试的空闲看门狗与用户取消监听。
       idleWatchdog.dispose();
       signal?.removeEventListener('abort', onUserAbort);
+      totalAttempts += diagnostics.attempts;
     }
+    // 先释放上次尝试的看门狗/监听，再退避；用户取消可立即中断等待。
+    reportTransport({ phase: 'retry', delayMs: retryDelayMs(attempt, diagnostics) });
+    await retryDelay(attempt, diagnostics, signal);
   }
 
   throw new Error('LLM request failed');

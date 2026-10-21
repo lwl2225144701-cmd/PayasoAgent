@@ -6,6 +6,7 @@
 //   （它需要保留原响应的 id/model/usage 字段）。
 
 import { isRecord } from './llm-messages.js';
+import type { LlmTransportEvent } from './llm-types.js';
 
 export interface FetchDiagnostics {
   attempts: number;
@@ -20,6 +21,8 @@ export interface FetchDiagnostics {
   // 由 chat() 每次 attempt 注入；undefined = 不启用连接超时（防御性兼容）。
   timeoutController?: AbortController;
   connectTimeoutMs?: number;
+  responseReceived?: boolean;
+  onTransport?: (event: Omit<LlmTransportEvent, 'attempt' | 'elapsedMs'>) => void;
 }
 
 /**

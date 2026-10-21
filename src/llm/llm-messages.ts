@@ -8,6 +8,7 @@
 
 import type { Api, AssistantMessage, Context, ImageContent, TSchema } from '@earendil-works/pi-ai';
 import type { ChatMessage, ChatStreamDelta, ToolCall, ToolSchema } from './llm-types.js';
+import { matchesProviderContinuation } from './provider-continuation.js';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -102,9 +103,20 @@ function toPiAssistant(
   providerId: string,
   modelId: string,
   api: Api,
+  continuationIdentity?: string,
 ): AssistantMessage {
   const content: AssistantMessage['content'] = [];
-  if (message.reasoning_content) {
+  if (
+    api === 'openai-completions' &&
+    message.tool_calls?.length &&
+    matchesProviderContinuation(message.providerContinuation, continuationIdentity)
+  ) {
+    content.push({
+      type: 'thinking',
+      thinking: message.providerContinuation.text,
+      thinkingSignature: message.providerContinuation.field,
+    });
+  } else if (message.reasoning_content && !message.providerContinuation) {
     content.push({ type: 'thinking', thinking: message.reasoning_content });
   }
   if (message.content) content.push({ type: 'text', text: message.content });
@@ -148,6 +160,7 @@ export function toPiContext(
   providerId: string,
   modelId: string,
   api: Api,
+  continuationIdentity?: string,
 ): Context {
   const systemMessages = messages
     .filter((message) => message.role === 'system')
@@ -176,7 +189,7 @@ export function toPiContext(
     }
 
     if (message.role === 'assistant') {
-      converted.push(toPiAssistant(message, providerId, modelId, api));
+      converted.push(toPiAssistant(message, providerId, modelId, api, continuationIdentity));
       continue;
     }
 
