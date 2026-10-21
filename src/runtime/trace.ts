@@ -1,5 +1,6 @@
 // Trace 模块 — 记录 Agent 每一步执行过程（LLM 调用 / 工具调用 / 最终答案 / 错误）
 
+import type { LlmStopReason, LlmTransportEvent } from '../llm/llm-types.js';
 // 工具结果附带的图片引用（工作区相对路径 + MIME），与 tools.js 的 ToolImage 同构。
 // trace 只存路径引用，不存 base64（事件持久化进 checkpoint，须保持轻量）。
 import type { TokenUsage } from '../llm/token-usage.js';
@@ -12,6 +13,12 @@ export interface TraceImage {
 // ---- 事件类型定义 ----
 // 完整事件（存储在 trace.events 中，step/timestamp 由 addEvent 自动填充）
 export type TraceEvent =
+  | (LlmTransportEvent & {
+      type: 'llm_transport';
+      step: number;
+      timestamp: string;
+      iteration: number;
+    })
   | {
       type: 'llm_call';
       purpose?: 'final_review' | 'final_draft';
@@ -22,6 +29,7 @@ export type TraceEvent =
       response: string; // LLM 返回内容
       reasoning?: string; // 部分推理模型单独返回的思考内容
       hasToolCalls: boolean; // 是否产生 tool_call
+      stopReason?: LlmStopReason;
       usage?: TokenUsage;
     }
   | {
@@ -36,10 +44,10 @@ export type TraceEvent =
       estimatedInputTokens?: number; // 上下文估算输入 tokens（前端可提示 prefill 规模）
     }
   | {
-      // LLM HTTP 请求真正发出（piFetch 内 globalThis.fetch 调用前）。
+      // LLM HTTP 尝试开始（piFetch 内globalThis.fetch调用前，尚不证明响应到达）。
       // 与 llm_call_started 的间隔 = Host 侧上下文整理耗时（toPiContext /
       // 图片物化 / Provider 模型组装）；与首个 assistant/reasoning_delta 的
-      // 间隔 = 纯 Provider 首包/网络耗时（prefill / 排队 / TLS）。
+      // 间隔包含网络、网关、prefill与适配器解析，细分边界见llm_transport。
       // 用于把 run-stats 的 ttftMs 分解为两段，定位 16–18s 首 token 延迟。
       type: 'llm_request_sent';
       step: number;
@@ -136,6 +144,10 @@ export type TraceEvent =
       scratchpadTokens: number;
       // v2.2 Plan：计划投影注入 system 的估算 token（旧事件无此字段）。
       planTokens?: number;
+      /** 工具历史有损投影的独立计数；不等于 trimmedMessages。 */
+      projectedToolResults?: number;
+      projectedToolBytesSaved?: number;
+      unprojectedInputTokens?: number;
       estimatedInputTokens: number;
       // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
       // 用于环形/压力的真实锚点；无上报（如首轮）时缺省走估算。
@@ -354,6 +366,10 @@ export type TraceEvent =
 
 // 事件输入（无需 step/timestamp，由 addEvent 补全）
 export type TraceEventInput =
+  | (LlmTransportEvent & {
+      type: 'llm_transport';
+      iteration: number;
+    })
   | {
       type: 'llm_call';
       purpose?: 'final_review' | 'final_draft';
@@ -362,6 +378,7 @@ export type TraceEventInput =
       response: string;
       reasoning?: string;
       hasToolCalls: boolean;
+      stopReason?: LlmStopReason;
       usage?: TokenUsage;
     }
   | {
@@ -437,6 +454,10 @@ export type TraceEventInput =
       scratchpadTokens: number;
       // v2.2 Plan：计划投影注入 system 的估算 token（旧事件无此字段）。
       planTokens?: number;
+      /** 工具历史有损投影的独立计数；不等于 trimmedMessages。 */
+      projectedToolResults?: number;
+      projectedToolBytesSaved?: number;
+      unprojectedInputTokens?: number;
       estimatedInputTokens: number;
       // 上次 provider 实际上报的 prompt 侧真实用量（未缓存输入 + cache 流量），
       // 用于环形/压力的真实锚点；无上报（如首轮）时缺省走估算。

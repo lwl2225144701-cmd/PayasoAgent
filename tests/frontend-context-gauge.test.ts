@@ -414,6 +414,54 @@ const requestSent = (over: Record<string, unknown> = {}): HostEvent =>
     attempt: 1,
     ...over,
   }) as HostEvent;
+const transport = (
+  phase: 'response_headers' | 'first_body_chunk' | 'first_event' | 'retry',
+): HostEvent => ({
+  ...base,
+  type: 'llm_transport',
+  iteration: 2,
+  attempt: 1,
+  phase,
+  elapsedMs: 10,
+});
+check(
+  '响应头/原始字节/解析事件/退避观测不提前关闭首增量等待',
+  (['response_headers', 'first_body_chunk', 'first_event', 'retry'] as const).every(
+    (phase) =>
+      deriveModelWaitState([llmStart(), requestSent(), transport(phase)], nowAfter)?.attempt === 1,
+  ),
+);
+check(
+  '重试使用最新尝试的等待锚点，后续传输记录不覆盖它',
+  deriveModelWaitState(
+    [
+      llmStart(),
+      requestSent(),
+      transport('retry'),
+      requestSent({ attempt: 2 }),
+      transport('response_headers'),
+    ],
+    nowAfter,
+  )?.attempt === 2,
+);
+check(
+  '可见增量之后的传输记录不重新开启等待',
+  deriveModelWaitState(
+    [
+      llmStart(),
+      requestSent(),
+      {
+        type: 'assistant_delta',
+        runId: 'r',
+        messageId: 'm1',
+        timestamp: base.timestamp,
+        delta: 'hi',
+      },
+      transport('first_event'),
+    ],
+    nowAfter,
+  ) === null,
+);
 check(
   '最后一条是 llm_request_sent → 返回等待状态（requestSentAt/attempt + 回退 llm_call_started 字段）',
   (() => {

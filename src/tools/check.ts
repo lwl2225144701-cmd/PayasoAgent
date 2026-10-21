@@ -30,6 +30,7 @@ import {
   type BiomeBaselineComparison,
   type BiomeBaselineDeps,
   biomeFacts,
+  biomeInputFingerprint,
   describeBiomeComparison,
   runBiomeBaseline,
 } from './check-baseline.js';
@@ -506,9 +507,22 @@ export const checkTool: Tool = {
     '以原生程序 + 字面参数数组执行一次可信检查（profile=process），或运行首版仅 CSS 的 Biome 检查（profile=biome-lint；baseline=HEAD 时给出 introduced/resolved，不 checkout/stash 真实工作区）。' +
     '不接受 sh/bash/zsh/cmd/powershell/pwsh 等解释器承载脚本，也不接受宿主绝对路径：需要管道/分号/重定向时改用 shell 工具。' +
     'process 的 passed 只代表进程退出协议通过（exit 0、未超时），不代表测试覆盖完整或用户任务已验收。' +
+    '例如 {"profile":"process","program":"npx","args":["tsc","--noEmit"]}。' +
+    '验证命令优先直接交给 check，保留真实退出码；shell 中 command | tail 后的 $? 是 tail 的状态。' +
     `完整 stdout/stderr 单独发布为可 read 读回的日志；模型可见文本受统一输出预算约束。超时沿用 shell 策略。`,
   effect: checkToolEffect,
   evidenceKind: 'check',
+  getEvidenceFingerprint: (args, context) => {
+    const normalized = normalizeCheckArgs(args);
+    if (
+      !normalized.ok ||
+      normalized.profile !== 'biome-lint' ||
+      normalized.baseline ||
+      normalized.cwd !== '.'
+    )
+      return null;
+    return biomeInputFingerprint(context, normalized.paths, normalized.timeoutMs);
+  },
   // 网络能力与 Shell 一致：跟随全局 network.mode（off 时整次调用被统一拒绝）。
   capabilities: { network: true },
   // 工具级 deadline 必须晚于命令级超时，否则 [check-timeout] 会被外层 TOOL_TIMEOUT 吞掉。

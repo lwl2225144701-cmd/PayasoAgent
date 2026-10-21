@@ -19,6 +19,8 @@ export interface ToolContext {
   // v2.5（计划 §6.3）：Runtime 注入的本次调用身份（Runtime-only，不进模型 Schema）。
   // check 等工具用它区分"同一次调用的重放/恢复"与"同参数的新检查"。
   invocationId?: string; // 当前 Agent Run 的 runId，只能来自 Agent Runtime State
+  /** SDK 可关闭检查复用；不改变未决执行、副作用或权限保护。 */
+  checkReuse?: boolean;
   // Background Job 的 Session 级所有权：作业注册表按 sessionId 建索引，
   // 不随单个 Run 结束销毁。缺省（CLI/旧测试）回退到 runId 派生键。
   sessionId?: string;
@@ -115,6 +117,11 @@ export type ToolSandboxEvent =
 export type ToolEffect = 'read' | 'idempotent' | 'non_idempotent';
 
 export interface Tool {
+  /** 仅工具适配器能核实输入闭包；null 表示无法证明，绝不自动复用。 */
+  getEvidenceFingerprint?: (
+    args: Record<string, unknown>,
+    context: ToolContext,
+  ) => Promise<string | null> | string | null;
   name: string;
   description: string;
   parameters: object; // JSON Schema（严禁包含 runId 等 Runtime 内部字段）

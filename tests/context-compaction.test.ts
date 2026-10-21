@@ -96,7 +96,7 @@ try {
   );
   assert.ok(compaction && compaction.summarizedMessages > 0);
   assert.match(
-    String(requestMessages[0].find((m) => String(m.content).startsWith('[Context]'))?.content),
+    String(requestMessages[0].find((m) => String(m.content).includes('[Context]'))?.content),
     /\[Conversation Summary\]/,
   );
   assert.ok(requestMessages[0].some((m) => m.role === 'user' && m.content === 'current-task'));
@@ -142,7 +142,7 @@ try {
   });
   assert.equal(resumed, 'done');
   const resumedContext = String(
-    requestMessages[1].find((m) => String(m.content).startsWith('[Context]'))?.content,
+    requestMessages[1].find((m) => String(m.content).includes('[Context]'))?.content,
   );
   assert.match(resumedContext, /\[Conversation Summary\]/);
   assert.match(resumedContext, /earlier turns compacted/);

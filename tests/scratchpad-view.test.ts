@@ -39,14 +39,13 @@ function step(index: number, result = 'R'.repeat(1_000)) {
   return { step: index, tool: 'read', input: `src/file-${index}.ts`, result };
 }
 
-await test('空 scratchpad 仍有结构（任务/下一步/约束）', () => {
+await test('空记录只显示事实，不虚构下一步或业务完成状态', () => {
   const view = renderBoundedScratchpadView(pad());
-  assert.match(view.text, /执行进度 Scratchpad/);
+  assert.match(view.text, /工具执行记录/);
   assert.match(view.text, /任务: 分析项目/);
-  assert.match(view.text, /已完成步骤:/);
+  assert.match(view.text, /已执行 0 次调用/);
   assert.match(view.text, /\(暂无\)/);
-  assert.match(view.text, /下一步:/);
-  assert.match(view.text, /禁止重复调用失败记录中的相同参数/);
+  assert.doesNotMatch(view.text, /下一步|等待 LLM|已完成步骤|失败记录|无效结果记录/);
 });
 
 await test('不再回放工具结果（结果由 transcript 承载）', () => {
@@ -67,8 +66,8 @@ await test('步骤列表只保留最近 N 步并标注省略', () => {
     maxCompletedSteps: 5,
   });
   assert.equal(view.omittedCompletedSteps, 25);
-  assert.match(view.text, /共 30 步（最近 5 步）/);
-  assert.match(view.text, /已省略更早 25 步/);
+  assert.match(view.text, /已执行 30 次调用（最近 5 次）/);
+  assert.match(view.text, /已省略更早 25 次调用/);
   assert.ok(view.text.includes('read("src/file-30.ts")'), '保留最新');
   assert.ok(!view.text.includes('src/file-25.ts'), '更早的应被省略');
 });
@@ -93,18 +92,18 @@ await test('失败/无效记录保留（防重复调用的关键信号）', () =
     }),
   );
   assert.ok(view.text.includes('已失败 3 次'));
-  assert.ok(view.text.includes('禁止再次调用相同参数'));
+  assert.ok(view.text.includes('文件不存在'));
   assert.ok(view.text.includes('结果无效'));
-  assert.ok(view.text.includes('不要重复依赖该结果'));
+  assert.ok(view.text.includes('二进制文件，不支持搜索'));
 });
 
-await test('nextStep 被渲染（未决策时给出等待提示）', () => {
+await test('只呈现已存在的待执行调用，用户请求有独立投影时不重复', () => {
   const withNext = renderBoundedScratchpadView(
     pad({ nextStep: { tool: 'edit', input: 'src/a.ts' } }),
   );
   assert.ok(withNext.text.includes('edit("src/a.ts")'));
-  const without = renderBoundedScratchpadView(pad());
-  assert.ok(without.text.includes('等待 LLM 决策'));
+  const without = renderBoundedScratchpadView(pad(), { includeTask: false });
+  assert.doesNotMatch(without.text, /待执行调用|下一步|任务:|分析项目/);
 });
 
 await test('token 预算：20 步各 1000 字符结果时仍显著低于旧实现（旧 ≈6.3K）', () => {

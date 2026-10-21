@@ -11,8 +11,11 @@
 import assert from 'node:assert/strict';
 import { type AgentContextHarness, DefaultContextHarness } from '../src/harness/context-harness.js';
 import { resolveModelContextConfig } from '../src/harness/model-context.js';
+import { loadCheckpoint } from '../src/persistence/file-checkpoint-store.js';
 import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
 import type { TraceEvent } from '../src/runtime/trace.js';
+import { validateToolArguments } from '../src/tools/tool-arguments.js';
+import { getTool } from '../src/tools/tools.js';
 import {
   createTestWorkspaceRoot,
   runMockAgent,
@@ -123,13 +126,10 @@ await check('第二轮请求：计划进尾部 [Context]，不进 system（前�
   const contexts = bodies.map((body) => {
     const messages =
       (body as { messages?: Array<{ role: string; content: unknown }> }).messages ?? [];
-    const context = messages.find(
-      (m) => m.role === 'user' && String(m.content).startsWith('[Context]'),
-    );
+    const context = messages.find((m) => String(m.content).includes('[Context]'));
     return context ? String(context.content) : '';
   });
-  // 注意：v2.4 起本剧本会多一次请求 —— 模型输出文本时计划仍有 in_progress 项，
-  // 触发一次 plan_finalize_reminder（见文末 C 组测试）。前两轮语义不变。
+  // 状态投影仅提供事实；不会因 in_progress 项而强制模型再来一轮。
   assert.ok(contexts.length >= 2, `至少两次请求，实际 ${contexts.length}`);
   assert.doesNotMatch(contexts[0], /\[当前计划\]/, '第一轮还没有计划');
   assert.match(contexts[1], /\[当前计划\] 0\/3 完成（revision 1）/);
@@ -335,30 +335,15 @@ await check('没有计划（未调用 updatePlan）：不发审计事件', () =>
   assert.ok(!noPort.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
 });
 
-// ---- 6. v2.4 收尾前的计划收尾提醒（C）----
-//
-// 真实事故（2026-09-28 turn 17）：模型干完活直接输出结论，忘了把进行中的
-// 计划项标完成 → 面板永久停在「进行中」。这里验证：收尾前注入一次提醒、
-// 模型可借此收尾、且提醒只发生一次（不循环）。
-
-await check('收尾前仍有 in_progress 项 → 发一次 plan_finalize_reminder 并追加提醒', () => {
-  const reminders = run.traces.filter((e) => e.type === 'plan_finalize_reminder') as Array<
-    Extract<TraceEvent, { type: 'plan_finalize_reminder' }>
-  >;
-  assert.equal(reminders.length, 1, '每次 Run 只提醒一次');
-  assert.equal(reminders[0].unfinished, 3, '三项均未完成');
-  // 提醒必须排在 final_answer 之前（同一轮收尾路径内）
-  const types = run.traces.map((event) => event.type);
-  assert.ok(
-    types.indexOf('plan_finalize_reminder') < types.indexOf('final_answer'),
-    '提醒应在 final_answer 之前发出',
-  );
-  // 提醒确实进了模型视图（下一次请求的 messages 能看到它）
-  const prompted = bodies.some((body) => JSON.stringify(body).includes('不要留下进行中的项就结束'));
-  assert.ok(prompted, '提醒文本应注入下一次模型请求');
+// ---- 6. 计划状态仅提示，由模型决定维护和交付 ----
+await check('仍有 in_progress：保留状态事实，不强制追加模型轮次', () => {
+  assert.equal(run.fetchCalls, 2);
+  assert.ok(!run.traces.some((event) => event.type === 'plan_finalize_reminder'));
+  assert.ok(run.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
+  assert.equal(harness.snapshotState().plan.items[0].status, 'in_progress');
 });
 
-await check('模型收到提醒后可以收尾：updatePlan 标完成 → 不再发审计事件', async () => {
+await check('模型自主更新计划并交付：状态与审计仍正确', async () => {
   const harness = createHarness();
   const done = await runMockAgent({
     runId: 'plan-loop-finalize',
@@ -375,9 +360,7 @@ await check('模型收到提醒后可以收尾：updatePlan 标完成 → 不再
             args: { items: [{ id: 'a', title: 'A', status: 'in_progress' }] },
           },
         ]),
-      // 第一次尝试收尾：计划仍有 in_progress → 触发提醒
-      () => textResponse('先到这里。'),
-      // 收到提醒后收尾：把计划标完成
+      // 模型自行决定更新计划，Runtime 不打回它的答复。
       () =>
         toolCallResponse([
           {
@@ -391,7 +374,8 @@ await check('模型收到提醒后可以收尾：updatePlan 标完成 → 不再
   });
   assert.equal(done.error, undefined, done.error?.message ?? 'run failed');
   const types = done.traces.map((event) => event.type);
-  assert.ok(types.includes('plan_finalize_reminder'), '应注入过提醒');
+  assert.ok(!types.includes('plan_finalize_reminder'));
+  assert.equal(done.fetchCalls, 3);
   assert.ok(
     !types.includes('plan_incomplete_at_finish'),
     '模型在提醒后收尾完成 → 不该再留未完成审计事件',
@@ -438,6 +422,141 @@ await check('只剩 pending（无 in_progress）→ 不提醒', async () => {
   assert.ok(pendingOnly.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
 });
 
+await check('计划面板提交后由模型决定下一步与最终交付，不自动结束或隐藏工具', async () => {
+  const h = createHarness();
+  const requests: unknown[] = [];
+  const planned = await runMockAgent({
+    runId: 'plan-panel-delivery',
+    task: '给消息输入框增加草稿，完成测试与构建。先给我调研出个计划，计划对话框给我就行',
+    workspaceRoot: WORKSPACE,
+    contextHarness: h,
+    observer: silentRuntimeObserver,
+    onRequest: (body) => requests.push(body),
+    script: [
+      () =>
+        toolCallResponse([
+          {
+            id: 'deliver-plan',
+            name: 'updatePlan',
+            args: {
+              items: [
+                { title: '调研完成', status: 'completed' },
+                { title: '实现草稿与验证', status: 'pending' },
+              ],
+            },
+          },
+        ]),
+      () => toolCallResponse([{ id: 'model-chosen-read', name: 'ls', args: { path: '.' } }]),
+      () => textResponse('计划已提交，请确认后实施。'),
+    ],
+  });
+  assert.equal(planned.error, undefined);
+  assert.equal(planned.fetchCalls, 3, '计划成功不代替模型的继续或完成决策');
+  assert.equal(planned.answer, '计划已提交，请确认后实施。');
+  assert.equal(h.snapshotState().plan.items[1].status, 'pending', '不能伪造未来工作已完成');
+  assert.equal(planEvents(planned.traces).length, 1);
+  assert.ok(planned.traces.some((event) => event.type === 'final_answer'));
+  assert.ok(planned.traces.some((event) => event.type === 'plan_incomplete_at_finish'));
+  assert.ok(planned.traces.some((event) => event.type === 'tool_result' && event.tool === 'ls'));
+  assert.ok(!planned.traces.some((event) => event.type === 'tool_error'));
+  assert.match(JSON.stringify(requests[0]), /计划对话框给我就行/);
+  assert.doesNotMatch(JSON.stringify(requests), /A successful submission completes this turn/);
+  const saved = loadCheckpoint('plan-panel-delivery');
+  assert.equal(saved?.state.status, 'completed');
+  assert.equal(saved?.messages.at(-1)?.content, planned.answer);
+  assert.equal(saved?.harnessState?.plan.items[1].status, 'pending');
+});
+
+await check('失败提交、空清单与进行中状态如实反馈，不替模型改写最终答复', async () => {
+  for (const [index, items] of [
+    [{ title: '错误状态', status: 'bad-status' }],
+    [],
+    [{ title: '还在调研', status: 'in_progress' }],
+  ].entries()) {
+    const h = createHarness();
+    const result = await runMockAgent({
+      runId: `plan-panel-not-delivered-${index}`,
+      task: '先给我调研出个计划，计划对话框给我就行',
+      workspaceRoot: WORKSPACE,
+      contextHarness: h,
+      observer: silentRuntimeObserver,
+      script: [
+        () => toolCallResponse([{ id: 'incomplete-plan', name: 'updatePlan', args: { items } }]),
+        () => textResponse('调研尚未完成，计划暂未交付。'),
+      ],
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.fetchCalls, 2);
+    assert.notEqual(result.answer, '计划已提交到计划面板。');
+  }
+});
+
+await check('文字计划不要求面板：updatePlan 后继续给出用户要求的计划正文', async () => {
+  const result = await runMockAgent({
+    runId: 'plan-text-delivery',
+    task: '先给我一个计划',
+    workspaceRoot: WORKSPACE,
+    contextHarness: createHarness(),
+    observer: silentRuntimeObserver,
+    script: [
+      () =>
+        toolCallResponse([
+          {
+            id: 'text-plan',
+            name: 'updatePlan',
+            args: {
+              items: [{ title: '实现与验证', status: 'pending' }],
+            },
+          },
+        ]),
+      () => textResponse('方案：修改存储层和输入框，测试任务隔离与发送失败保留。'),
+    ],
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.fetchCalls, 2);
+  assert.match(result.answer ?? '', /方案：/);
+});
+
+await check('真实 Run 的 content/title 错误可修正，合法示例与 Schema 一致', async () => {
+  const planTool = getTool('updatePlan');
+  assert.ok(planTool);
+  const example = planTool.description.match(/参数示例：(\{.*\})。条目/)?.[1];
+  assert.ok(example, '工具描述必须包含完整参数对象示例');
+  assert.equal(validateToolArguments(planTool.parameters, JSON.parse(example)).ok, true);
+  const bodies: unknown[] = [];
+  const result = await runMockAgent({
+    runId: 'plan-content-title-recovery',
+    task: '给我一个计划',
+    workspaceRoot: WORKSPACE,
+    onRequest: (body) => bodies.push(body),
+    script: [
+      () =>
+        toolCallResponse([
+          {
+            id: 'invalid-plan',
+            name: 'updatePlan',
+            args: { items: [{ content: '验证', status: 'pending' }] },
+          },
+        ]),
+      () =>
+        toolCallResponse([
+          {
+            id: 'corrected-plan',
+            name: 'updatePlan',
+            args: { items: [{ title: '验证', status: 'pending' }] },
+          },
+        ]),
+      () => textResponse('计划已提交'),
+    ],
+  });
+  assert.equal(result.error, undefined, String(result.error));
+  assert.equal(planEvents(result.traces).length, 1, '非法参数不能被猜测修复或写入计划');
+  const second = JSON.stringify(bodies[1]);
+  assert.match(second, /items\[0\]\.title/);
+  assert.match(second, /items\[0\]\.content/);
+  assert.match(second, /INVALID_ARGUMENT_SHAPE/);
+});
+
 console.log(`\nPlan 闭环汇总: ${passed} PASS / ${failed} FAIL`);
 if (failed) process.exit(1);
-console.log('验收：工具 → 状态 → 事件 → 注入 → 越界报错 → 无端口 fail-closed → 收尾提醒 ✓');
+console.log('验收：工具 → 状态 → 事件 → 提示 → 参数校验 → 模型自主交付 ✓');

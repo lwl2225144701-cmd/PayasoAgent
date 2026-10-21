@@ -52,6 +52,7 @@ export interface AgentContextDeps {
     onTrace?: (ev: TraceEvent) => void;
     modelConfig?: ModelConfig;
     contextHarness?: AgentContextHarness;
+    checkReuse?: boolean;
     previousHarnessState?: ContextHarnessState;
     approvalPort?: ApprovalPort;
     toolchainPreparationPort?: ToolchainPreparationPort;
@@ -61,6 +62,7 @@ export interface AgentContextDeps {
 }
 
 export interface AgentContext {
+  executionGoal: string;
   toolContext: ToolContext;
   state: AgentState;
   trace: Trace;
@@ -99,6 +101,7 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
   // 先装配 Runtime 已就绪的部分；planPort 需要等 Harness 创建后再接（见下）。
   const toolContext: ToolContext = {
     runId,
+    checkReuse: opts.checkReuse,
     sessionId,
     workspaceRoot,
     permissionMode,
@@ -151,9 +154,17 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
           repeatCall: undefined,
           executionBudget: undefined,
           goalReview: undefined,
+          progressWatch: undefined,
           pending: undefined,
         },
   );
+  const executionGoal =
+    contextHarness.beginTask?.(
+      task,
+      opts.conversationHistory ?? [],
+      workspaceRoot,
+      resume !== undefined,
+    ) ?? task;
   // v2.2 Plan：计划状态由 Harness 持有（随 harnessState 进 checkpoint）。Runtime 只把
   // 写入口装饰成"语义 → plan_update 事件"：Harness 不碰 trace，工具只见文本。
   const planPort = contextHarness.planPort?.();
@@ -182,6 +193,25 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
   // resume 时恢复快照，但复用前仍要重新核对版本（store 内部按未知处理未知版本）。
   const executionEvidenceStore = createExecutionEvidenceStore();
   if (resume?.executionEvidence) executionEvidenceStore.restore(resume.executionEvidence);
+  else {
+    const focus = contextHarness.snapshotState().taskFocus;
+    if (focus?.workspaceRoot === workspaceRoot && focus.reads.length) {
+      // 同会话仅承接读取观察，由模型判断与本轮的关系；不继承检查执行或副作用。
+      executionEvidenceStore.restore({
+        version: 1,
+        sequence: focus.reads.length,
+        records: [],
+        pending: [],
+        mutations: [],
+        reads: focus.reads.map((read, seq) => ({
+          ...read,
+          kind: 'file',
+          returnedHash: 'handoff',
+          seq: seq + 1,
+        })),
+      });
+    }
+  }
   const messages: ChatMessage[] = resume
     ? resume.messages
     : contextHarness.createTranscript(task, opts.conversationHistory, opts.attachments);
@@ -238,6 +268,7 @@ export function createAgentContext(deps: AgentContextDeps): AgentContext {
   };
 
   return {
+    executionGoal,
     toolContext,
     state,
     trace,

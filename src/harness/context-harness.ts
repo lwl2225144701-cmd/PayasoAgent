@@ -1,8 +1,16 @@
-import type { ChatMessage, MessageImage, ModelConfig, ToolSchema } from '../llm/llm.js';
+import { type EvidenceView, isWorkspaceRelativePath } from '../execution-evidence.js';
+import type {
+  ChatMessage,
+  LlmStopReason,
+  MessageImage,
+  ModelConfig,
+  ToolSchema,
+} from '../llm/llm.js';
 import { getNetworkMode } from '../network-mode.js';
 import type { PermissionMode } from '../permission-mode.js';
 import type { RuntimeToolchainCapabilities } from '../sandbox/toolchain-manager.js';
 import type { TaskConstraints } from '../task-constraints.js';
+import { utf8ByteLength } from '../tool-output-budget.js';
 import {
   type CompactionPolicy,
   resolveCompactionPolicy,
@@ -31,7 +39,6 @@ import {
   executionBudgetBucketsFor,
   executionBudgetWouldExceed,
   normalizeExecutionBudgetState,
-  renderExecutionBudgetRemaining,
   renderExecutionBudgetReminder,
   resolveExecutionBudgetPolicy,
 } from './execution-policy.js';
@@ -53,6 +60,7 @@ import {
   toolchainSystemPrompt,
 } from './instructions.js';
 import {
+  estimateJsonTokens,
   estimateTextTokens,
   getKnownModelCapability,
   type ModelContextConfig,
@@ -91,6 +99,7 @@ import {
   type ToolInvocationObservation,
 } from './repeat-call-policy.js';
 import { renderBoundedScratchpadView, type ScratchpadView } from './scratchpad-view.js';
+import { normalizeTaskFocus, renderTaskFocus, resolveTaskFocus } from './task-focus.js';
 import {
   type ProjectionPolicy,
   projectStaleToolOutputs,
@@ -112,6 +121,12 @@ export interface ContextCompactionResult {
  * visible content. The Runtime owns the *invariant* (a run must never end
  * silently with an empty answer); the Harness owns the *words* and the budget.
  */
+export interface EmptyTurnObservation {
+  stopReason?: LlmStopReason;
+  durationMs: number;
+  outputTokens?: number;
+}
+
 export interface EmptyTurnPolicy {
   /** Instruction appended to the transcript to make the model continue. */
   nudge: string;
@@ -151,6 +166,8 @@ export interface PreparedModelTurn {
   /** 计划投影注入 system 消耗的估算 token（有界，见 planViewText）。 */
   planTokens: number;
   compaction?: ContextCompactionResult;
+  /** 实际发给模型的工具历史有损投影；与消息删除、摘要压缩分别记录。 */
+  toolProjection?: { projectedCount: number; savedBytes: number; unprojectedInputTokens: number };
   /**
    * v2.6：prepareTurn 期间（压缩摘要等 Harness 自持的模型调用）新跨过的预算档位。
    * 全部模型请求统一计量——Runtime 据此发事件并落 checkpoint，与主循环的
@@ -168,6 +185,12 @@ export interface ToolTurnObservations {
 }
 
 export interface AgentContextHarness {
+  beginTask?(
+    task: string,
+    history: readonly ChatMessage[],
+    workspaceRoot: string,
+    resuming?: boolean,
+  ): string;
   reviewFinalAnswer?: (input: FinalReviewInput) => Promise<string>;
   readonly modelContext: ModelContextConfig;
   createTranscript(
@@ -180,6 +203,7 @@ export interface AgentContextHarness {
     scratchpad: ScratchpadView,
     tools: ToolSchema[],
     signal?: AbortSignal,
+    evidenceView?: EvidenceView,
   ): Promise<PreparedModelTurn>;
   restoreState(state: ContextHarnessState | undefined): void;
   snapshotState(): ContextHarnessState;
@@ -234,7 +258,7 @@ export interface AgentContextHarness {
   refreshToolchain?(capabilities: RuntimeToolchainCapabilities): void;
   // v1.8 空回合不变量：模型既没有工具调用也没有可见内容时，Runtime 依此策略
   // 追加提示并重试；返回 undefined 表示不做恢复（直接按失败处理）。
-  emptyTurnPolicy?(): EmptyTurnPolicy;
+  emptyTurnPolicy?(observation?: EmptyTurnObservation): EmptyTurnPolicy;
   // 文本完成度属于 Harness 策略；缺省/返回 undefined 表示接受此回答。
   incompleteTurnPolicy?(answer: string): IncompleteTurnPolicy | undefined;
   // 任务约束（Host 在 Run 创建时固化，非模型可控）：仅影响指令内容，
@@ -631,6 +655,18 @@ export class DefaultContextHarness implements AgentContextHarness {
     return true;
   }
 
+  beginTask(
+    task: string,
+    history: readonly ChatMessage[],
+    workspaceRoot: string,
+    resuming = false,
+  ): string {
+    const previous = normalizeTaskFocus(this.state.taskFocus);
+    this.state.taskFocus = resolveTaskFocus(task, previous, history, workspaceRoot);
+    if (!resuming) this.state.progressWatch = undefined;
+    return task;
+  }
+
   // ---- v2.6 执行不收敛治理：Harness 只累计与投递提醒，阻断由 Runtime 决定 ----
 
   /**
@@ -758,22 +794,11 @@ export class DefaultContextHarness implements AgentContextHarness {
       );
     }
     if (pending.goalReview) {
-      // 剩余预算按当前真实用量重算（预算关闭时为空数组，文案整段省略）。
-      const budgetLines = this.executionBudgetPolicy
-        ? renderExecutionBudgetRemaining(
-            normalizeExecutionBudgetState(this.state.executionBudget),
-            this.executionBudgetPolicy,
-          )
-        : [];
+      // 用户目标和工具结果已有独立上下文；常规回顾只保留本周期观察。
       texts.push(
         renderGoalReviewReminder({
-          goal: pending.goalReview.goal,
           toolTurns: pending.goalReview.toolTurns,
           activeMs: pending.goalReview.activeMs,
-          ...(pending.goalReview.recentResult === undefined
-            ? {}
-            : { recentResult: pending.goalReview.recentResult }),
-          budgetLines,
         }),
       );
     }
@@ -820,26 +845,8 @@ export class DefaultContextHarness implements AgentContextHarness {
   }
 
   planFinalizePolicy(): PlanFinalizePolicy | undefined {
-    const report = buildPlanReport(this.state.plan);
-    if (report.unfinished.length === 0) return undefined;
-    // 只在有 in_progress 项时提醒：那是"输出完了却显示进行中"的真实矛盾。
-    // 只剩 pending（模型从没开始／有意跳过）不打扰——面板会如实显示"待办"，
-    // 不值得为它多花一次 LLM 往返。
-    const active = report.unfinished.filter((item) => item.status === 'in_progress');
-    if (active.length === 0) return undefined;
-    const lines = report.unfinished
-      .map((item) => `  - ${item.title}（${item.status === 'in_progress' ? '进行中' : '待办'}）`)
-      .join('\n');
-    return {
-      unfinished: report.unfinished.length,
-      nudge:
-        `你的任务计划里还有 ${report.unfinished.length} 项未完成，其中 ${active.length} 项标着"进行中"：\n${lines}\n` +
-        '在给出最终答复前，先判断它们是否真的完成了：\n' +
-        '- 若已完成：调用 updatePlan 把它们标为 completed，再收尾；\n' +
-        '- 若确实没做完（放弃/改方案/受阻塞）：调用 updatePlan 如实收敛计划，' +
-        '并在最终答复里说明原因。\n' +
-        '不要留下进行中的项就结束。',
-    };
+    // 计划状态已在模型视图中提示；不因待办/进行中项打回模型选择的最终答复。
+    return undefined;
   }
 
   /**
@@ -937,7 +944,49 @@ export class DefaultContextHarness implements AgentContextHarness {
    * - 不进 ContextManager 裁剪路径，避免抢占「最后一条 user=当前任务」边界、
    *   也避免 compaction 的 view/canonical 消息计数错位（v2.5 稳定前缀）。
    */
-  private dynamicContextMessage(planText: string, scratchpadText: string): ChatMessage | null {
+  /** 事实只从 Runtime 的只读视图投影，不能靠历史摘要重新推断通过状态。 */
+  private evidenceViewText(view: EvidenceView | undefined, maxTokens: number): string {
+    if (!view?.checks.length && !view?.reads?.length) return '';
+    let text =
+      '[Execution evidence]\nResults apply to recorded inputs. Unknown or stale versions do not verify current code.\n';
+    for (const check of view.checks.slice(0, 8)) {
+      if (!/^[\w-]{1,80}$/.test(check.checkId)) continue;
+      const refs = Object.values(check.logRefs ?? {}).filter(isWorkspaceRelativePath);
+      const row = `${JSON.stringify({
+        id: check.checkId,
+        profile: check.profile,
+        result: check.conclusion ?? 'unknown',
+        validity: check.validity ?? 'version-unknown',
+        reusable: check.reusable,
+        ...(refs.length ? { logs: refs } : {}),
+      })}\n`;
+      if (utf8ByteLength(text + row) > 2_048 || estimateTextTokens(text + row) > maxTokens) break;
+      text += row;
+    }
+    if (view.reads?.length) {
+      const header =
+        '\n[Read coverage · recorded versions]\nThese ranges were returned earlier; the body may have been compacted. Reuse visible content, or retrieve the relevant range if it is no longer present. Revalidate changed versions.\n';
+      if (estimateTextTokens(text + header) <= maxTokens && utf8ByteLength(text + header) <= 2048)
+        text += header;
+      for (const read of [...view.reads].reverse().slice(0, 8)) {
+        if (!isWorkspaceRelativePath(read.path)) continue;
+        const row = `${JSON.stringify({
+          path: read.path,
+          version: read.version.slice(0, 12),
+          lines: read.returnedRanges.slice(0, 8).map((r) => [r.startLine, r.endLine]),
+        })}\n`;
+        if (estimateTextTokens(text + row) > maxTokens || utf8ByteLength(text + row) > 2048) break;
+        text += row;
+      }
+    }
+    return estimateTextTokens(text) <= maxTokens ? text.trim() : '';
+  }
+
+  private dynamicContextMessage(
+    planText: string,
+    scratchpadText: string,
+    evidenceText = '',
+  ): ChatMessage | null {
     const summaryText = this.state.conversationSummary
       ? `[Conversation Summary]\n${this.state.conversationSummary}`
       : '';
@@ -948,11 +997,33 @@ export class DefaultContextHarness implements AgentContextHarness {
     // 生成文本素材；Runtime 负责发事件、在模型成功响应后消费（acknowledgeConvergence
     // Reminders）。提醒一律只投影模型视图，不改 canonical transcript、不阻断工具。
     const convergenceTexts = this.pendingReminderTexts();
-    const parts = [planText, scratchpadText, summaryText, reminderText, ...convergenceTexts]
+    const parts = [
+      planText,
+      scratchpadText,
+      evidenceText,
+      summaryText,
+      reminderText,
+      ...convergenceTexts,
+    ]
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
     if (parts.length === 0) return null;
     return { role: 'user', content: `[Context]\n${parts.join('\n\n')}` };
+  }
+
+  /** 只在达到既有压缩压力线后节省工具历史；条数变多本身不是丢正文的理由。 */
+  private projectToolResults(messages: ChatMessage[], tools: ToolSchema[]) {
+    const unprojectedInputTokens =
+      this.contextManager.estimateTokens(messages) + (tools.length ? estimateJsonTokens(tools) : 0);
+    const { trigger } = resolveCompactionThresholds(
+      this.compactionPolicy,
+      this.modelContext.maxInputTokens,
+    );
+    const result =
+      unprojectedInputTokens > trigger
+        ? projectStaleToolOutputs(messages, this.projectionPolicy)
+        : { messages, projectedCount: 0, savedBytes: 0 };
+    return { ...result, unprojectedInputTokens };
   }
 
   async prepareTurn(
@@ -960,7 +1031,11 @@ export class DefaultContextHarness implements AgentContextHarness {
     scratchpad: ScratchpadView,
     tools: ToolSchema[],
     signal?: AbortSignal,
+    evidenceView?: EvidenceView,
   ): Promise<PreparedModelTurn> {
+    if (this.state.taskFocus && evidenceView?.reads?.length) {
+      this.state.taskFocus.reads = evidenceView.reads.slice(-16);
+    }
     // 收集本次 prepareTurn 期间（压缩摘要）产生的预算决策，随结果交回 Runtime。
     this.prepareBudgetDecisions = [];
     // v1.10：scratchpad 视图只承载"进度/防重复"信号（不含工具结果——那些在
@@ -969,18 +1044,40 @@ export class DefaultContextHarness implements AgentContextHarness {
       256,
       Math.min(2_000, Math.floor(this.modelContext.maxInputTokens * 0.03)),
     );
-    const boundedScratchpad = renderBoundedScratchpadView(scratchpad);
-    const scratchpadText = this.truncateToTokens(boundedScratchpad.text, maxScratchpadTokens);
+    const boundedScratchpad = renderBoundedScratchpadView(scratchpad, {
+      includeTask: !this.state.taskFocus,
+    });
+    const inheritedReads = this.state.taskFocus?.reads;
+    const taskText = this.state.taskFocus
+      ? this.truncateToTokens(
+          renderTaskFocus(this.state.taskFocus),
+          Math.floor(maxScratchpadTokens / 2),
+        )
+      : '';
+    const evidenceText = [
+      taskText,
+      this.evidenceViewText(
+        {
+          checks: evidenceView?.checks ?? [],
+          reads: evidenceView?.reads?.length ? evidenceView.reads : inheritedReads,
+        },
+        Math.max(0, maxScratchpadTokens - estimateTextTokens(taskText)),
+      ),
+    ]
+      .filter(Boolean)
+      .join('\n');
+    // 在已有执行上下文预算中分配证据视图，不放宽 compaction 的校准边界。
+    const scratchpadText = this.truncateToTokens(
+      boundedScratchpad.text,
+      Math.max(0, maxScratchpadTokens - estimateTextTokens(evidenceText)),
+    );
     // 计划投影与本轮视图共用同一份文本：预算计量必须和实际注入的是同一个字符串。
     const planText = this.planViewText();
     let modelView = this.buildModelView(transcript);
-    // P2-C 投影：在算预算之前，先把"已经变老"的工具结果做确定性降级（免费、
-    // 零 LLM 调用）。放在这里有两个原因：
-    //   1) 下面 process() 的估值与触发判断看到的都是投影**之后**的体积——
-    //      投影省得够多时，昂贵的摘要根本不会发生（成本阶梯：免费的先上）；
-    //   2) 它只改模型视图，canonical transcript 不动。
-    const projection = projectStaleToolOutputs(modelView, this.projectionPolicy);
-    if (projection.projectedCount > 0) modelView = projection.messages;
+    // 压力不足时保留正文；达到现有压缩线后才先做免费投影，再判断是否需要摘要。
+    // 压力使用投影前视图估算，避免一次投影降压后下一轮又把正文恢复而抖动前缀。
+    let projection = this.projectToolResults(modelView, tools);
+    modelView = projection.messages;
     let processed = this.contextManager.process(modelView, tools);
     let compaction: ContextCompactionResult | undefined;
 
@@ -1005,10 +1102,8 @@ export class DefaultContextHarness implements AgentContextHarness {
         };
         // 压缩后重建视图：必须与 compactConversation 用同一套投影策略，否则
         // 这里的估值会和"摘要依据的那份视图"不一致。
-        modelView = projectStaleToolOutputs(
-          this.buildModelView(transcript),
-          this.projectionPolicy,
-        ).messages;
+        projection = this.projectToolResults(this.buildModelView(transcript), tools);
+        modelView = projection.messages;
         processed = this.contextManager.process(modelView, tools);
       }
       // 摘要失败或无可压缩历史 → 保留确定性轮边界裁剪结果（fail-soft）；
@@ -1030,14 +1125,24 @@ export class DefaultContextHarness implements AgentContextHarness {
     // v2.5 稳定前缀：动态上下文（计划/scratchpad/摘要/提醒）在裁剪与压缩全部
     // 完成后追加到视图末尾，不进裁剪路径（见 dynamicContextMessage）。
     // 其 tokens 仍计入真实预算估算，保证 overBudget / usageRatio 不失真。
-    const contextMessage = this.dynamicContextMessage(planText, scratchpadText);
+    const contextMessage = this.dynamicContextMessage(planText, scratchpadText, evidenceText);
     if (contextMessage) {
-      const contextTokens = this.contextManager.estimateMessageTokens(contextMessage);
+      const tail = processed.messages.at(-1);
+      // 工具续传时，观察提示跟随工具结果，不伪造一次新的用户提问。
+      // 只改临时模型视图；canonical 工具结果和 tool_call_id 保持原样。
+      const continuation = tail?.role === 'tool';
+      const merged = continuation
+        ? { ...tail, content: `${tail.content}\n\n${contextMessage.content}` }
+        : contextMessage;
+      const contextTokens =
+        this.contextManager.estimateMessageTokens(merged) -
+        (continuation ? this.contextManager.estimateMessageTokens(tail) : 0);
       const estimated = processed.usage.estimatedInputTokens + contextTokens;
-      processed.messages.push(contextMessage);
+      if (continuation) processed.messages[processed.messages.length - 1] = merged;
+      else processed.messages.push(contextMessage);
       processed.usage = {
         ...processed.usage,
-        afterMessages: processed.usage.afterMessages + 1,
+        afterMessages: processed.usage.afterMessages + (continuation ? 0 : 1),
         messageTokens: processed.usage.messageTokens + contextTokens,
         estimatedInputTokens: estimated,
         usageRatio: Number((estimated / this.modelContext.maxInputTokens).toFixed(4)),
@@ -1052,6 +1157,11 @@ export class DefaultContextHarness implements AgentContextHarness {
       scratchpadTruncated: boundedScratchpad.truncated || scratchpadText !== boundedScratchpad.text,
       planTokens: estimateTextTokens(planText),
       compaction,
+      toolProjection: {
+        projectedCount: projection.projectedCount,
+        savedBytes: projection.savedBytes,
+        unprojectedInputTokens: projection.unprojectedInputTokens,
+      },
       ...(this.prepareBudgetDecisions.length > 0
         ? { budgetDecisions: this.prepareBudgetDecisions }
         : {}),
@@ -1086,10 +1196,7 @@ export class DefaultContextHarness implements AgentContextHarness {
       resolveCompactionThresholds(this.compactionPolicy, this.modelContext.maxInputTokens).retain;
     // P2-C 一致性：裁剪必须发生在**和主请求同一份**视图上（投影之后）。否则这里
     // 按未投影的体积裁，会多裁掉一批本可保留的消息——摘要是有损的，多裁即多丢。
-    const modelView = projectStaleToolOutputs(
-      this.buildModelView(transcript),
-      this.projectionPolicy,
-    ).messages;
+    const modelView = this.projectToolResults(this.buildModelView(transcript), tools).messages;
     const compacted = this.contextManager.process(modelView, tools, effectiveTarget);
     const removedCount = compacted.usage.trimmedMessages;
     if (removedCount <= 0) return null;
@@ -1166,8 +1273,12 @@ export class DefaultContextHarness implements AgentContextHarness {
   }
 
   sanitizeAssistantMessage(message: ChatMessage): ChatMessage {
-    const { reasoning_content: _reasoning, ...historyMessage } = message;
-    return { ...historyMessage, content: stripThink(historyMessage.content) };
+    const { reasoning_content: _reasoning, providerContinuation, ...historyMessage } = message;
+    return {
+      ...historyMessage,
+      content: stripThink(historyMessage.content),
+      ...(message.tool_calls?.length && providerContinuation ? { providerContinuation } : {}),
+    };
   }
 
   sanitizeFinalAnswer(text: string): string {
@@ -1176,43 +1287,32 @@ export class DefaultContextHarness implements AgentContextHarness {
 
   // v1.8：空回合恢复策略。默认提示明确要求"要么调工具、要么给出完整回答"，
   // 并给出有限次数（2 次）——超过次数由 Runtime 落 failed，而不是静默完成。
-  emptyTurnPolicy(): EmptyTurnPolicy {
+  emptyTurnPolicy(observation?: EmptyTurnObservation): EmptyTurnPolicy {
+    const facts = observation
+      ? ` The call took ${Math.round(observation.durationMs / 1000)} seconds` +
+        (observation.outputTokens === undefined
+          ? ''
+          : ` and used ${observation.outputTokens} output tokens`) +
+        '.'
+      : '';
+    const cause =
+      observation?.stopReason === 'length'
+        ? ' The provider reported the output limit was reached before a visible action or answer.'
+        : '';
     return {
       nudge:
-        'Your previous turn produced no visible content: no tool call and an empty answer. ' +
-        'Continue the task now — either call a tool to make progress, or write the complete ' +
-        'user-facing answer. Never end a turn with an empty message.',
+        'Your previous turn produced no visible content: no tool call and an empty answer.' +
+        facts +
+        cause +
+        ' Earlier tool results remain available. Reuse established evidence instead of restarting research; ' +
+        'consider a small actionable tool call rather than solving the whole task in one generation. ' +
+        'If the requested work is already complete or blocked, give a concise user-facing answer.',
       maxRecoveries: 2,
     };
   }
 
-  incompleteTurnPolicy(answer: string): IncompleteTurnPolicy | undefined {
-    // 仅匹配末尾独立的行动句。前文关键词、引用和代码示例不能作为重试依据。
-    // 这是有界恢复启发式，不是任务完成度证明。
-    const ending =
-      answer
-        .trim()
-        .split(/\n|[。！？.!?]/u)
-        .at(-1)
-        ?.trim() ?? '';
-    if (
-      !/^(?:为了[^，,：:]{1,16}[，,]\s*)?(?:接下来|下一步|再确认|让我(?:再)?|我(?:将|会)|(?:I will|I'll|I’ll|Let me|Next)\b)/iu.test(
-        ending,
-      ) ||
-      !/(?:检查|执行|验证|运行|抓取|对照|读取|确认|查看|扫描|比较|\b(?:check|verify|compare|run|read|inspect|fetch)\b)/iu.test(
-        ending,
-      ) ||
-      !/[:：]$/u.test(ending)
-    )
-      return undefined;
-
-    return {
-      reason: 'assistant ended with an unfinished action statement',
-      nudge:
-        'Your previous turn described another action but did not call a tool. ' +
-        'Continue only if that action is authorized and feasible. Otherwise provide the final ' +
-        'answer with the result or blocker. Do not end with an unfinished promise.',
-      maxRecoveries: 1,
-    };
+  incompleteTurnPolicy(_answer: string): IncompleteTurnPolicy | undefined {
+    // 回复措辞不是完成度证据；工作流建议只在提示词中提供，不做关键词收尾拦截。
+    return undefined;
   }
 }

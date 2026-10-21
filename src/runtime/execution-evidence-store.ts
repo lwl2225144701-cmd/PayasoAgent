@@ -14,9 +14,11 @@
 import {
   type CheckConclusion,
   type Diagnostic,
+  type EvidenceView,
   EXECUTION_EVIDENCE_VERSION,
   MAX_DIAGNOSTICS_PER_RECORD,
   type ProcessFact,
+  type ReadRange,
   type ToolFacts,
   validateToolFacts,
 } from '../execution-evidence.js';
@@ -40,6 +42,7 @@ export interface CheckRecord {
   origin: string;
   /** 规范化 profile/程序/参数/cwd/paths/固定 baseline/超时/适配器版本的摘要。 */
   specHash: string;
+  profile?: 'process' | 'biome-lint';
   inputFingerprint: string | null;
   scopeComplete: boolean;
   executionState: ExecutionState;
@@ -58,12 +61,14 @@ export interface CheckRecord {
 }
 
 export interface ReadFingerprint {
+  kind?: 'file' | 'grep' | 'ls';
   path: string;
   versionKind: 'content' | 'stat';
   version: string;
   queryHash?: string;
   returnedHash: string;
   complete: boolean;
+  returnedRanges?: ReadRange[];
   seq: number;
 }
 
@@ -95,22 +100,12 @@ export interface ExecutionEvidenceSnapshot {
 }
 
 /** Harness 只读投影：不带日志正文、不带环境明文。 */
-export interface EvidenceViewCheck {
-  checkId: string;
-  profile: 'process' | 'biome-lint';
-  conclusion: CheckConclusion | null;
-  source: 'executed' | 'reused';
-  reusable: boolean;
-}
-
-export interface EvidenceView {
-  checks: EvidenceViewCheck[];
-}
+export type { EvidenceView, EvidenceViewCheck } from '../execution-evidence.js';
 
 export interface InvocationSpec {
   /** 检查对象摘要（profile/程序/参数/cwd/paths/baseline/工具版本/适配器版本）。 */
   specHash: string;
-  /** 依赖闭包摘要；null = 未提供（比 null 与 null 相同才可复用）。 */
+  /** 依赖闭包摘要；null = 未核实，不能参与自动复用。 */
   inputFingerprint?: string | null;
 }
 
@@ -125,6 +120,8 @@ export interface InvocationHandle {
 export interface RecordMeta {
   iteration?: number;
   durationMs?: number;
+  /** 执行后的重新核对；与执行前不一致时该结果只属于旧版本。 */
+  inputFingerprint?: string | null;
 }
 
 export interface ExecutionEvidenceStore {
@@ -136,6 +133,8 @@ export interface ExecutionEvidenceStore {
   getOrCreateInvocation(origin: string, spec: InvocationSpec): InvocationHandle | null;
   /** 按检查对象摘要 + 依赖闭包查找仍有效的已结算结论。 */
   findReusable(specHash: string, inputFingerprint: string | null): CheckRecord | null;
+  findUnresolved(specHash: string, exceptOrigin?: string): CheckRecord | null;
+  invalidateCompleted(reason: string): void;
   /** 记录一次检查结果（含 invalid facts 的未知记录）。 */
   recordResult(invocationId: string, rawFacts: unknown, meta?: RecordMeta): CheckRecord | null;
   /** 记录未决/不确定退出（超时、取消、异常）。 */
@@ -243,6 +242,9 @@ function normalizeRecord(value: unknown): CheckRecord | null {
     invocationId: value.invocationId,
     origin: value.origin,
     specHash: value.specHash,
+    ...(value.profile === 'process' || value.profile === 'biome-lint'
+      ? { profile: value.profile }
+      : {}),
     inputFingerprint: isStringOrNull(value.inputFingerprint) ? value.inputFingerprint : null,
     scopeComplete: value.scopeComplete === true,
     executionState: state,
@@ -264,7 +266,12 @@ function normalizeRecord(value: unknown): CheckRecord | null {
             : {}),
         }
       : null,
-    reusable: value.reusable === true,
+    // 旧版曾允许 null 指纹及通用进程复用，恢复时不能继续信任这些记录。
+    reusable:
+      value.reusable === true &&
+      value.profile === 'biome-lint' &&
+      isNonEmptyString(value.inputFingerprint) &&
+      value.scopeComplete === true,
     lastAccessSeq: typeof value.lastAccessSeq === 'number' ? value.lastAccessSeq : 0,
     iteration: typeof value.iteration === 'number' ? value.iteration : 0,
   };
@@ -301,14 +308,52 @@ function normalizeReadFingerprint(value: unknown): ReadFingerprint | null {
   if (typeof value.returnedHash !== 'string') return null;
   if (typeof value.complete !== 'boolean') return null;
   return {
+    ...(value.kind === 'file' || value.kind === 'grep' || value.kind === 'ls'
+      ? { kind: value.kind }
+      : {}),
     path: value.path,
     versionKind: value.versionKind,
     version: value.version,
     ...(typeof value.queryHash === 'string' ? { queryHash: value.queryHash } : {}),
     returnedHash: value.returnedHash,
     complete: value.complete,
+    ...(Array.isArray(value.returnedRanges)
+      ? {
+          returnedRanges: mergeReadRanges(
+            value.returnedRanges.filter(
+              (r): r is ReadRange =>
+                isRecord(r) &&
+                Number.isSafeInteger(r.startLine) &&
+                Number.isSafeInteger(r.endLine) &&
+                (r.startLine as number) > 0 &&
+                (r.endLine as number) >= (r.startLine as number),
+            ),
+          ),
+        }
+      : {}),
     seq: typeof value.seq === 'number' ? value.seq : 0,
   };
+}
+
+/** 同版本的行区间求并集；不把两个区间之间的空洞当成已读。 */
+function mergeReadRanges(ranges: readonly ReadRange[]): ReadRange[] {
+  const merged: ReadRange[] = [];
+  for (const range of [...ranges].sort((a, b) => a.startLine - b.startLine)) {
+    const last = merged.at(-1);
+    if (last && range.startLine <= last.endLine + 1)
+      last.endLine = Math.max(last.endLine, range.endLine);
+    else merged.push({ ...range });
+  }
+  return merged.slice(-64);
+}
+
+function sameReadVersion(a: ReadFingerprint, b: ReadFingerprint): boolean {
+  return (
+    a.kind === b.kind &&
+    a.path === b.path &&
+    a.versionKind === b.versionKind &&
+    a.version === b.version
+  );
 }
 
 function normalizeMutationFingerprint(value: unknown): MutationFingerprint | null {
@@ -385,6 +430,9 @@ function isReusableRecord(record: CheckRecord): boolean {
     record.executionState === 'settled' &&
     record.source === 'executed' &&
     record.reusable &&
+    record.profile === 'biome-lint' &&
+    record.scopeComplete &&
+    isNonEmptyString(record.inputFingerprint) &&
     record.conclusion !== null
   );
 }
@@ -424,8 +472,8 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
     const victim = candidates[0];
     if (!victim) return false;
     records = records.filter((record) => record !== victim);
-    const entry = pending.get(victim.invocationId);
-    if (entry && entry.executionState === 'settled') pending.delete(victim.invocationId);
+    const entry = pending.get(victim.origin);
+    if (entry && entry.executionState === 'settled') pending.delete(victim.origin);
     return true;
   };
 
@@ -461,6 +509,7 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
     getOrCreateInvocation(origin: string, spec: InvocationSpec): InvocationHandle | null {
       const existing = pending.get(origin);
       if (existing) {
+        if (existing.specHash !== spec.specHash) return null;
         const record = findRecord(existing.invocationId) ?? null;
         return {
           invocationId: existing.invocationId,
@@ -469,6 +518,7 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
           record,
         };
       }
+      if (this.findUnresolved(spec.specHash, origin)) return null;
       if (!makeRoom()) return null;
       const seq = nextSeq();
       const invocationId = `inv-${seq}`;
@@ -508,7 +558,8 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
     },
 
     findReusable(specHash: string, inputFingerprint: string | null): CheckRecord | null {
-      const fingerprint = inputFingerprint ?? null;
+      if (!inputFingerprint || this.findUnresolved(specHash)) return null;
+      const fingerprint = inputFingerprint;
       const match = records.find(
         (record) =>
           isReusableRecord(record) &&
@@ -518,6 +569,26 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
       if (!match) return null;
       match.lastAccessSeq = nextSeq();
       return match;
+    },
+
+    findUnresolved(specHash: string, exceptOrigin?: string): CheckRecord | null {
+      return (
+        records.find(
+          (record) =>
+            record.specHash === specHash &&
+            record.origin !== exceptOrigin &&
+            record.executionState !== 'settled',
+        ) ?? null
+      );
+    },
+
+    invalidateCompleted(reason: string): void {
+      for (const record of records) {
+        if (record.executionState !== 'settled') continue;
+        record.reusable = false;
+        record.scopeComplete = false;
+        record.invalidationReason = reason;
+      }
     },
 
     recordResult(invocationId: string, rawFacts: unknown, meta?: RecordMeta): CheckRecord | null {
@@ -538,12 +609,20 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
         return record;
       }
       const check = facts.check;
+      record.profile = check?.profile;
       record.process = facts.process ?? null;
       record.conclusion = check?.conclusion ?? null;
       record.diagnostics = check?.diagnostics ?? null;
-      record.scopeComplete = validation.reportComplete;
+      const inputChanged =
+        meta?.inputFingerprint !== undefined && meta.inputFingerprint !== record.inputFingerprint;
+      record.scopeComplete =
+        validation.reportComplete && !!record.inputFingerprint && !inputChanged;
       record.executionState = 'settled';
-      record.reusable = validation.reusable && record.conclusion !== null;
+      record.reusable =
+        check?.profile === 'biome-lint' &&
+        record.scopeComplete &&
+        validation.reusable &&
+        record.conclusion !== null;
       record.finishedAt = now();
       record.lastAccessSeq = nextSeq();
       if (facts.process) {
@@ -553,9 +632,11 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
         };
       }
       if (!record.reusable) {
-        record.invalidationReason = validation.reportComplete
-          ? (validation.issues[0] ?? 'not_reusable')
-          : 'report_incomplete';
+        record.invalidationReason = inputChanged
+          ? 'input_changed'
+          : validation.reportComplete
+            ? (validation.issues[0] ?? 'not_reusable')
+            : 'report_incomplete';
       }
       const entry = pending.get(record.origin);
       if (entry) entry.executionState = 'settled';
@@ -583,6 +664,22 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
         if (!isRecord(fact)) continue;
         const fingerprint = normalizeReadFingerprint({ ...fact, seq: nextSeq() });
         if (!fingerprint) continue;
+        if (fingerprint.kind === 'file' && fingerprint.returnedRanges?.length) {
+          const same = reads.filter((item) => sameReadVersion(item, fingerprint));
+          const covered = mergeReadRanges(same.flatMap((item) => item.returnedRanges ?? []));
+          const novel = fingerprint.returnedRanges.some(
+            (range) =>
+              !covered.some(
+                (old) => old.startLine <= range.startLine && old.endLine >= range.endLine,
+              ),
+          );
+          const merged = mergeReadRanges([...covered, ...fingerprint.returnedRanges]);
+          reads = reads.filter((item) => !sameReadVersion(item, fingerprint));
+          reads.push({ ...fingerprint, returnedRanges: merged });
+          if (novel) added += 1;
+          trimReads();
+          continue;
+        }
         // 相同读取指纹（同版本 + 同返回范围摘要）重复出现不是新增事实（计划 §8.1）：
         // 已有记录只刷新序号并移到队尾，不重复占容量，也不计入新增。
         const key = readFingerprintKey(fingerprint);
@@ -618,6 +715,7 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
           continue;
         }
         mutations.push(fingerprint);
+        this.invalidateCompleted('workspace_changed');
         added += 1;
         trimMutations();
       }
@@ -647,20 +745,41 @@ export function createExecutionEvidenceStore(): ExecutionEvidenceStore {
           conclusion: record.conclusion,
           source: record.source,
           reusable: record.reusable,
+          validity:
+            record.invalidationReason === 'workspace_changed' ||
+            record.invalidationReason === 'input_changed' ||
+            record.invalidationReason === 'unknown_write'
+              ? ('stale' as const)
+              : record.reusable
+                ? ('verified' as const)
+                : ('version-unknown' as const),
+          finishedAt: record.finishedAt,
+          logRefs: record.logRefs ? { ...record.logRefs } : null,
         }));
-      return { checks: recent };
+      return {
+        checks: recent,
+        reads: reads
+          .filter((r) => r.kind === 'file' && r.returnedRanges?.length)
+          .slice(-16)
+          .map((r) => ({
+            path: r.path,
+            versionKind: r.versionKind,
+            version: r.version,
+            returnedRanges: (r.returnedRanges ?? []).map((range) => ({ ...range })),
+            complete: r.complete,
+          })),
+      };
     },
 
     hasUnresolved(): boolean {
-      return records.some(
-        (record) => record.executionState === 'pending' || record.executionState === 'uncertain',
-      );
+      return records.some((record) => record.executionState !== 'settled');
     },
   };
 }
 
 /** 记录里的 profile 只从 facts 形状推断（process 有退出码事实，biome-lint 有诊断）。 */
 function inferProfile(record: CheckRecord): 'process' | 'biome-lint' {
+  if (record.profile) return record.profile;
   if (record.process !== null) return 'process';
   if (record.diagnostics !== null) return 'biome-lint';
   return 'process';

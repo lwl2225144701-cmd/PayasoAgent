@@ -93,7 +93,7 @@ await check('没有计划时：不出现计划段，planTokens=0（零回归）'
   const view = await harness.prepareTurn(harness.createTranscript('t'), SCRATCHPAD, []);
   assert.doesNotMatch(String(view.messages[0].content), /\[当前计划\]/);
   assert.doesNotMatch(
-    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    String(view.messages.find((m) => String(m.content).includes('[Context]'))?.content),
     /\[当前计划\]/,
   );
   assert.equal(view.planTokens, 0);
@@ -110,14 +110,14 @@ await check('planPort 改状态后：下一轮尾部 [Context] 注入计划，pl
 
   const view = await harness.prepareTurn(harness.createTranscript('t'), SCRATCHPAD, []);
   const context = String(
-    view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content,
+    view.messages.find((m) => String(m.content).includes('[Context]'))?.content,
   );
   assert.match(context, /\[当前计划\] 0\/2 完成（revision 1）/);
   assert.match(context, /跑通确定性套件/);
   assert.ok(view.planTokens > 0, 'planTokens 必须计入预算');
   // 计划段在 scratchpad 段之前（目标层 → 执行层）
   assert.ok(
-    context.indexOf('[当前计划]') < context.indexOf('[执行进度 Scratchpad]'),
+    context.indexOf('[当前计划]') < context.indexOf('[工具执行记录]'),
     '计划段应排在 scratchpad 之前',
   );
 });
@@ -142,7 +142,7 @@ await check('snapshot → restore：新 Harness 仍注入同一份计划（resum
   resumed.restoreState(source.snapshotState());
   const view = await resumed.prepareTurn(resumed.createTranscript('t'), SCRATCHPAD, []);
   assert.match(
-    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    String(view.messages.find((m) => String(m.content).includes('[Context]'))?.content),
     /中断前的任务/,
   );
   assert.equal(resumed.snapshotState().plan.revision, 1);

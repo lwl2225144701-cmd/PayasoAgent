@@ -396,10 +396,7 @@ try {
     completed(await run.execute());
     assert.equal(fixture.completions.get(run.id)?.length, 15);
     assert.equal(run.events.filter((event) => event.type === 'goal_review_reminder').length, 3);
-    assert.match(
-      context(transport.bodies[5].messages),
-      /Original user goal: 完成隔离的治理验收任务/,
-    );
+    assert.match(context(transport.bodies[5].messages), /完成隔离的治理验收任务/);
     assert.equal(run.events.filter((event) => event.type === 'repeat_call_reminder').length, 0);
   });
   await check('WIRE-01', 'JSON 兼容响应与 SSE 一样保留同批全部工具调用', async () => {

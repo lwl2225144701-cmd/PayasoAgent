@@ -1,17 +1,17 @@
 // 模块: Progress Watch — 可机械验证的进度闭环（计划 §8 / P2）。
 //
-// 目的：只解决"有据可查的重复"，不判断任务语义是否研究充分。
+// 目的：对没有新增记录事实的回合提供观察提示，不分类任务、不限制工具或决定收尾。
 // 事实来源是 Runtime 汇总的 ToolTurnFacts（本模块不读文件、不跑检查、不改事实存储）。
 //
 // 停滞定义（首版工程起点，需行为验证）：
 //   连续 PROGRESS_WATCH_TURNS 个已完成工具回合没有新增有效事实，
 //   且累计活跃时长 ≥ PROGRESS_WATCH_MIN_ACTIVE_MS → 触发一次事实型进度审查；
 //   送达只更新投递状态，不关闭周期；再同样多回合无新增 → 升级一次，同周期最多 2 次；
-//   一旦出现新增有效事实（新范围读取/真实修改/新版本检查结论）立即关闭周期。
+//   新的读取证据、真实修改或新检查结论均关闭周期。
 //
 // 已知边界（诚实标注）：本版 facts 由 Runtime 依据调用事实推导
 // （读取范围去重、成功编辑/写入、检查结论），因此 coverage 在无结构化事实时
-// 为 'partial'/'unknown'；unknown 会重置机械停滞连续性，避免误判正常业务动作。
+// 为 'partial'/'unknown'；遇到 unknown 停止机械推断，不把未知活动当作停滞。
 
 export const PROGRESS_WATCH_TURNS = 4;
 export const PROGRESS_WATCH_MIN_ACTIVE_MS = 120_000;
@@ -148,7 +148,8 @@ export function advanceProgressWatch(
     cycleOpen: true,
   };
 
-  if (noProgressTurns < turns || accumulatedMs < minActiveMs) {
+  const ready = noProgressTurns >= turns && accumulatedMs >= minActiveMs;
+  if (!ready) {
     return { state: next, remind: 'none' };
   }
   if (state.reminders >= maxReminders) {
@@ -160,7 +161,7 @@ export function advanceProgressWatch(
     return { state: next, remind: 'none' };
   }
   const reason =
-    `连续 ${noProgressTurns} 个已完成工具回合没有新增有效事实（累计活跃 ${Math.floor(accumulatedMs / 1000)}s）：` +
+    `连续 ${noProgressTurns} 个已完成工具回合没有新增记录事实（累计活跃 ${Math.floor(accumulatedMs / 1000)}s）：` +
     `重复调用 ${facts.repeatCount} 次，失败 ${facts.failedCount} 次，新增读取 ${facts.newReadCount}、` +
     `修改 ${facts.changedFileCount}、检查结论 ${facts.newCheckCount}`;
   return {
@@ -186,9 +187,7 @@ export function renderProgressWatchReminder(
   return (
     `\n\n[Progress watch · ${decision.remind === 'escalate' ? 'escalation' : 'review'}]\n` +
     `${decision.reason ?? 'No new verifiable evidence in recent tool turns.'}\n` +
-    'Before the next tool call, state the specific information gap you are trying to close, ' +
-    'or carry out the action the evidence already supports. Do not repeat the same search/read ' +
-    'with the same parameters unless the content or range changed. Plan updates alone are not new evidence.\n' +
+    'Choose an action that adds evidence or advances the requested result; reuse unchanged sources.\n' +
     (bounded.length > 0 ? `Known evidence: ${bounded.join(', ')}\n` : '')
   );
 }

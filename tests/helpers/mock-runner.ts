@@ -14,6 +14,7 @@ import {
 } from '../../src/bootstrap/runtime-bootstrap.js';
 import type { AgentContextHarness } from '../../src/harness/context-harness.js';
 import { runAgent } from '../../src/runtime/agent.js';
+import type { CheckpointSnapshot } from '../../src/runtime/checkpoint-port.js';
 import type { RuntimeObserver } from '../../src/runtime/observer-port.js';
 import type { TraceEvent } from '../../src/runtime/trace.js';
 
@@ -106,6 +107,7 @@ export function createTestWorkspaceRoot(prefix: string): string {
 
 export interface MockRunOptions {
   runId: string;
+  resume?: CheckpointSnapshot;
   task: string;
   /** Canned responses, consumed in order. */
   script: Array<() => Response>;
@@ -134,7 +136,7 @@ export async function runMockAgent(options: MockRunOptions): Promise<MockRunResu
   globalThis.fetch = scripted.fetch;
   const traces: TraceEvent[] = [];
   try {
-    const answer = await runAgent(options.task, undefined, {
+    const answer = await runAgent(options.task, options.resume, {
       executionContext: createAgentExecutionContext({
         runId: options.runId,
         workspaceRoot: options.workspaceRoot,

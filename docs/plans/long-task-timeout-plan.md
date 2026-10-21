@@ -80,12 +80,16 @@ Agent Loop                     不设置固定总超时
 - Session 删除和 Host 关闭后不存在孤儿进程。
 - 不新增前端恢复或“继续运行”交互。
 
+## 2026-10-20 连接超时恢复修订
+
+最新Run在第19次模型调用等待响应头30秒后直接失败。`chat()`现在只对结构化`llm-connect`超时复用既有最多2次重试；每次独立信号和看门狗，先清理再退避。用户取消、流空闲超时、已输出内容后断流均不重试，工具不因HTTP重试再次执行。响应头/首个body块/首个解析事件及重试原因通过`llm_transport`记录，区分等待与解析。此修订替代早期方案“超时绝不重试”的连接部分，不改变模型配置、任务阶段或完成判定。
+
 ## 实施状态（2026-02 已按本方案落地）
 
 | 步骤 | 落地 | 代码/测试 |
 |---|---|---|
 | 1. 共享超时原语 | ✅ `deadline()/clampTimeoutMs()/idleWatchdog()/timeoutOf()` | `src/util/timeout.ts` + `tests/timeout-primitives.test.ts` |
-| 2. LLM 连接+空闲看门狗 | ✅ 移除单请求总时限；`PAYASO_LLM_CONNECT_TIMEOUT_MS`（默认 30s）/ `PAYASO_LLM_IDLE_TIMEOUT_MS`（默认 120s），持续输出不断流不超时，超时不重试 | `src/llm/llm.ts` + `tests/llm.test.ts`（25 例） |
+| 2. LLM 连接+空闲看门狗 | ✅ 移除单请求总时限；`PAYASO_LLM_CONNECT_TIMEOUT_MS`（默认 30s）/ `PAYASO_LLM_IDLE_TIMEOUT_MS`（默认 120s），持续输出不断流不超时；连接超时最多重试2次，空闲超时不重试 | `src/llm/llm.ts` + `tests/llm.test.ts`（31例） |
 | 3. 工具级 TOOL_TIMEOUT | ✅ Tool 声明 `timeoutMs`（缺省 `PAYASO_TOOL_TIMEOUT_MS` 默认 5 分钟），ProcessManager 以 deadline 包裹 execute；到期返回结构化 `TOOL_TIMEOUT`（不重试、非业务失败、副作用不确定置 `uncertain`）；trace `tool_error` 带 `timeout:'tool'` | `src/runtime/tool-invocation/process-manager.ts` / `state-machine.ts` + `tests/tool-timeout.test.ts` |
 | 4. Background Job → Session 级 | ✅ 注册表按 sessionId 索引；Run 终态不再回收；`shellJob` 跨 Run 可见；清理时机 = 显式 kill / Session 删除 / Host 关闭；用户停止仍经父信号传播取消 | `src/sandbox/background-jobs.ts` + `src/tools/runtime-tools.ts` + `src/host/{session-service,run-manager,run-lifecycle-service}` |
 | 5. 增量输出/完成通知/唤醒上限 | ✅ 执行器 `onOutput` 滚动缓冲 + `offset` 增量读取（shellJob output 支持）；settle 入会话通知队列（有界 64）；Agent Loop 迭代边界/收尾竞态注入通知，连续唤醒上限 3（真实进展后重置） | `tests/background-jobs.test.ts` + `tests/job-notification.test.ts` |

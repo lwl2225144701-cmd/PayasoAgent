@@ -1,38 +1,26 @@
-# PAYASO.md — 本仓库的 Agent 约定
+# PAYASO.md — 仓库约定
 
-> 本文件会随 Run 自动注入（`workspace-write` / `full-access` 权限下）。目标：把"先跑最省的验证"和"别重复跑全量"变成默认动作。
+## 验证
 
-## 验证命令（本机量级，先跑最省的再跑全量）
+| 目的 | 命令 |
+| --- | --- |
+| 单个确定性套件 | `node --import tsx tests/<suite>.test.ts` |
+| 全量确定性套件（无 LLM，145 个） | `npm run test:all` |
+| 类型检查 | `npx tsc --noEmit` |
+| 界面文案检查 | `npx tsx tests/helpers/i18n-check.ts [文件…]` |
+| 前端生产构建 | `npm run build:web` |
+| Host 集成 / E2E / 压测（需 LLM） | `npm run test:host` / `npm test` / `npm run test:stress` |
 
-| 目的 | 命令 | 量级 |
-| --- | --- | --- |
-| 单个确定性套件（定位问题） | `node --import tsx tests/<suite>.test.ts` | ~1s |
-| 全量确定性套件（无 LLM，142 个） | `npm run test:all` | 以本机日志为准（有界并发） |
-| 类型检查 | `npx tsc --noEmit` | ~2s |
-| 界面文案残留扫描（i18n） | `npx tsx tests/helpers/i18n-check.ts [文件…]` | <1s |
-| 前端生产构建 | `npm run build:web` | ~5s |
-| 需 LLM：Host 集成 / E2E / 压测 26 场景 | `npm run test:host` / `npm test` / `npm run test:stress` | 分钟级 |
+先跑与改动相关的单套验证；提交前完成类型检查与全量确定性套件。失败先单独定位，只有新改动或未解决的问题需要时才重跑。
 
-## 跑测试的纪律（省时间，也省 context）
+全量日志保存在 `.payaso/logs/run-all-*.log`；复查直接读日志。长命令使用 `shell background=true` 和 `shellJob wait`。并发可用 `PAYASO_TEST_CONCURRENCY` 调整。
 
-1. 先用**单个套件**定位失败，再用 `npm run test:all` 确认；不要为了换一个 `tail`/`grep` 切片重复跑同一条长命令。
-2. `npm run test:all` 会把每个套件的完整输出写入 `.payaso/logs/run-all-*.log`，并在输出末尾打印**结论行 + 失败清单 + 日志路径 + 单个套件的重跑命令**：复查失败直接 read/grep 日志，不必重跑整轮。
-3. 分钟级命令走 `shell` 的 `background=true` + `shellJob wait`，不要把长命令塞进前台阻塞调用。
-4. 过滤长输出前确认关键行不会被切掉（`tail`/`grep` 最容易丢掉汇总顶部的失败行）；结论行在各命令输出的最末尾。
-5. 并发是可调的：`PAYASO_TEST_CONCURRENCY=8 npm run test:all`（默认 `min(6, CPU)`）。
+组件交互测试可复用 `tests/helpers/component-dom.ts` 的 `createComponentDom(source, options)`：入口按 `web/src` 解析，直接导入真实 React 组件，TSX/CSS 由 esbuild 处理，jsdom 提供 DOM/localStorage；返回的 `dom.window` 可操作事件和异步状态，结束调用 `dom.window.close()`。`options.beforeEvaluate(window)` 可设置测试用 fetch 等环境依赖。示例见 `tests/component-dom.test.ts`；布局及真实浏览器兼容性仍需浏览器验证。
 
-## 任务计划（可选，按需使用）
+## 维护
 
-* **计划是可选工具**：由 Agent 自行判断当前任务是否值得用 `updatePlan`。不要仅因步骤较多或需要多次工具调用就先建清单——普通调查、解释问题、查看状态、小范围修改通常直接开展，需要交代方向时简短说明即可。
-* 多个交付目标、明显依赖关系或需要阶段跟踪时，可以使用计划；用户明确要求先出计划或方案时遵从（提供方案不等于获得实施授权）。
-* **计划不得扩张任务**：用户只要求熟悉或分析时，不因列了计划就自行增加修改代码、执行测试、提交发布等工作；调查中可以提建议，后续行动需在用户授权范围内。
-* **按阶段更新**：阶段完成、方向变化、出现阻塞或准备交付时更新，允许合并更新；不要求每完成一项立即重发清单。同时最多一项 `in_progress`。
-* 标题写给用户看（「跑通 runtime-boundary 套件」），不要写工具参数细节 —— 前端会把它渲染成进度清单。
-* **状态保持真实**：未完成就说明原因，不为"清空待办"执行额外工作，也不把"计划全部完成"当作交付通过的证据。
-
-## 代码约定
-
-- **单一来源**：工具输出预算与切片统一走 `src/tool-output-budget.ts`，不要另写一套截断/头尾保留逻辑。
-- **契约同步**：新增/删除工具或 Trace 事件必须同步 `docs/architecture-current.md` §3.3 的机器契约块，否则 `docs-contract` 套件红。
-- **注释与文档用中文**，风格与相邻文件保持一致（模块头写清"为什么存在"与契约）。
-- **提交前**：`npx tsc --noEmit` + `npm run test:all`；出现 FAIL 先单独重跑该套件，确认是不是本轮改动引入的。
+- 工具输出预算与切片统一使用 `src/tool-output-budget.ts`。
+- 新增或删除工具、Trace 事件时，同步 `docs/architecture-current.md` 的机器契约块。
+- 确定性套件数量以 `tests/run-all.ts` 为准；数量变化后同步 README、本文及架构文档。
+- 新增或移动手写文档时维护 `docs/README.md` 索引；文档链接相对当前文件。
+- 注释与文档使用中文。

@@ -1,19 +1,5 @@
-// 模块: 周期性目标审查策略（Harness 层纯函数）。
-//
-// 为什么单独存在：现有两个观察机制都有覆盖盲区——
-//   - progress-reminder 只累计**只读**回合：模型把调查换成「写点东西 / 跑个
-//     命令」就能重置计数，调查实际上仍在继续；
-//   - repeat-call 只认**同工具同参数**：交替读文件、换搜索词、换命令调查同一
-//     问题，参数摘要永远不同，计数永远为 1。
-// 执行不收敛最大量的形态恰好在两者之间：**语义等价、形式不同**的反复调查。
-// 本策略按**全部已完成工具回合**计数（读/写/失败/中性都算，「换个写法」
-// 不能重置周期），周期性把原始目标、近期结果与剩余预算摆回模型面前，
-// 要求它说明下一步要解决的具体问题——目标保持由此获得机械兜底。
-//
-// 分层契约（不可越界）：
-//   - 只提醒、不阻断：合法长任务在说明目标与未解决问题后仍可继续；
-//   - 触发即重置计数（下一周期从零开始），pending 未投递期间不重复触发；
-//   - 文案只陈述事实与下一步，不代模型判定「任务已完成」。
+// 周期回顾：按已完成工具回合与活动时间提供简短建议，不规定任务阶段或阻断工具。
+// 目标、工具结果与预算预警分别已有独立投影，这里不重复它们，也不要求模型解释自己的流程。
 
 export interface GoalReviewPolicy {
   /** 每多少个已完成工具回合审查一次。 */
@@ -84,37 +70,18 @@ export function advanceGoalReview(
 }
 
 export interface GoalReviewRenderInput {
-  /** 原始用户目标（Run.task，Runtime 传入；不得由模型改写）。 */
-  goal: string;
   /** 本周期累计的工具回合数与活动毫秒（触发时的事实）。 */
   toolTurns: number;
   activeMs: number;
-  /** 近期工具结果的有界摘要（Runtime 脱敏截断后传入）。 */
-  recentResult?: string;
-  /** 剩余预算行（预算关闭时为空数组）。 */
-  budgetLines: readonly string[];
 }
 
 /** 注入模型的审查文本（有界；只陈述事实与下一步，不代模型下结论）。 */
 export function renderGoalReviewReminder(input: GoalReviewRenderInput): string {
-  const lines = [
+  return [
     '\n\n[Periodic goal review]',
-    `You have completed ${input.toolTurns} tool turns over ${Math.floor(input.activeMs / 1000)} seconds of active work since the last review.`,
-    `Original user goal: ${input.goal || '(not recorded)'}`,
-  ];
-  if (input.recentResult) {
-    lines.push(`Most recent tool result (bounded): ${input.recentResult}`);
-  }
-  if (input.budgetLines.length > 0) {
-    lines.push(`Remaining execution budget:\n${input.budgetLines.map((l) => `- ${l}`).join('\n')}`);
-  }
-  lines.push(
-    'Before the next action, state in one sentence which specific unresolved question you are working on. ' +
-      'If the requested result is already available, verify and deliver it now. ' +
-      'Do not replan settled decisions and do not repeat broad investigation you have already done. ' +
-      'Long tasks are legitimate: if real work remains, continue with the next concrete step.',
-  );
-  return lines.join('\n');
+    `${input.toolTurns} tool turns over ${Math.floor(input.activeMs / 1000)} seconds since the previous review.`,
+    'Further lookup is useful when it can change implementation, verification or the answer. Otherwise, use established evidence for the next step.',
+  ].join('\n');
 }
 
 /** 环境变量开关：`PAYASO_GOAL_REVIEW=off` 关闭；阈值可覆盖。 */

@@ -239,7 +239,7 @@ web/src/
 <!-- docs-contract:events -->
 
 ```json
-["llm_call","llm_call_started","llm_request_sent","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","progress_reminder","repeat_call_reminder","budget_decision","goal_review_reminder","tool_execution_skipped","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","plan_finalize_reminder","background_job_notified","error","check_result","progress_watch"]
+["llm_call","llm_call_started","llm_request_sent","llm_transport","tool_call","tool_call_invalid","tool_result","tool_result_invalid","final_answer","tool_error","context_trim","context_usage","context_compaction","recovery_decision","progress_reminder","repeat_call_reminder","budget_decision","goal_review_reminder","tool_execution_skipped","empty_turn_recovered","finalization_guard","side_effect_skip","side_effect_uncertain","tool_output_truncated","shell_sandbox_started","shell_sandbox_denied","scratchpad_update","plan_update","plan_incomplete_at_finish","plan_finalize_reminder","background_job_notified","error","check_result","progress_watch"]
 ```
 
 <!-- /docs-contract:events -->
@@ -290,7 +290,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 | 不变量 | 实现 | 守住它的测试 |
 | --- | --- | --- |
-| 回合终态必须有可见产出 | 无 tool_calls 且 content 为空 → 按 `Harness.emptyTurnPolicy()` 有界恢复（默认 2 次），用尽抛 `AgentEmptyAnswerError`，绝不 `completed` 空结果；高置信度未完成文本按 `incompleteTurnPolicy()` 恢复一次，用尽抛 `AgentStalledError` | `tests/empty-turn.test.ts` |
+| 回合终态必须有可见产出 | 无 tool_calls 且 content 为空 → 按 `Harness.emptyTurnPolicy()` 有界恢复（默认 2 次），用尽抛 `AgentEmptyAnswerError`，绝不 `completed` 空结果。默认 Harness 不按回复措辞或计划状态强制续跑；`incompleteTurnPolicy`／`planFinalizePolicy` 保留为 SDK 显式策略端口，默认无策略 | `tests/empty-turn.test.ts`、`tests/plan-loop.test.ts` |
 | 工具参数必须满足声明 schema | `tools/tool-arguments.ts` 校验未知/缺失/类型/枚举，结构化回传（`INVALID_ARGUMENT_SHAPE`），绝不静默丢弃未知参数 | `tests/tool-argument-validation.test.ts` |
 | 只有瞬时错误才重试 | `runtime/tool-error-classifier.ts` 规则链；未分类默认不重试（fail-safe） | `tests/tool-error-classifier.test.ts` |
 | 工具输出预算单一来源 | `src/tool-output-budget.ts` 同时被 Runtime guard 与 read/grep 等生产者使用，宣称契约 == 执行契约 | `tests/tool-output-budget.test.ts` |
@@ -320,6 +320,22 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 * **Tool Output Guard**：`validateResult` 看工具返回的 raw，其后一切（trace/scratchpad/messages/replay）只用 ≤16KB 的 guarded 结果。所有文本 read 统一以 offset 表示起始行号、limit 表示行数（默认/最大 500）；工具层分块扫描并统计总行数，只保留目标窗口，每行最多保留 64 KiB 前缀。模型可见正文按预算返回连续整行前缀，唯一续读 offset 紧接实际返回行；不再拼接窗口首尾或同时提供两个续读游标。超长单行和后台 shell 的生产端截断仍需其他工具处理，Runtime 无法恢复在工具内部已省略的内容。
 
 * **Side-Effect Safety**：`executing → succeeded | uncertain`；`succeeded` 同 key 回放不重跑；`executing/uncertain` 不再自动执行；execute 前必须先持久化 executing。
+
+* **检查事实与复用**：`runtime/execution-evidence-store.ts` 持有每 Run 的检查记录；通用 process 和未知输入版本不自动复用。同 spec 有未决执行时，新 origin 和 `reuse=false` 也不能绕过；同 origin 的恢复仍沿副作用保护。当前仅依赖可封闭的普通 CSS Biome 2 检查具备指纹复用，执行前后核对源码、配置／锁文件、工具原生二进制与环境摘要，命中前检查日志可读性。HEAD 比较、VCS 开启或外部配置等场景保守重跑；本仓库启用了 VCS，因此暂不命中该复用通路。SDK `checkReuse:false`／`PAYASO_CHECK_REUSE=off` 关闭复用而保留事实和未决保护。Runtime 将最近检查的 passed／failed／inconclusive、版本有效性和日志引用经 `prepareTurn(..., evidenceView)` 合并到尾部 `[Context]`；证据文本最多 2KiB、8 条，使用原执行上下文预算，不写 canonical transcript。
+
+* **工具协议连续性**：`llm/provider-continuation.ts` 独立保存 OpenAI 兼容 Provider 实际返回的工具推理协议字段，绑定端点/Provider/模型身份，仅匹配请求按原字段续传；不拼进正文，不传给摘要，新任务清除，同 Run checkpoint 可恢复，状态计入上下文预算。动态 Harness 提示在工具续传时合入最后工具结果的临时模型视图，保留调用关联，不新增用户提问，不改 canonical 工具正文。该通路不改变模型参数、权限或工具选择；真实性能仍需实际任务验证。
+
+* **事实型进度审查**：`harness/progress-watch.ts` 按新增读取、真实修改和有效检查事实识别推进；明确失败的回合累计未推进，不能因 coverage=unknown 被清零。成功但无事实协议的未知工具仍停止机械推断；中性计划回合保留计数。连续 4 回合且累计活动 120 秒无新增事实后提醒，同周期最多两次，resume 延续、新 Run 重置；提醒只投影到 `[Context]`，不增加模型调用。`progressWatch:false`／`PAYASO_PROGRESS_WATCH=off` 可关闭。确定性回归包含真实 Loop 的失败读取与检查证据进入下一请求，实际提速仍需真实任务对照。
+
+* **LLM 传输恢复与观测**：响应头返回前的本地连接超时采用既有重试上限（最多3次HTTP尝试），每次独立派生取消信号；流空闲超时、用户取消或已开始输出后的错误不自动重放。退避可被用户取消即时中断，重试不重复执行工具。`llm_transport`记录每次尝试的响应头、首个原始body块、首个非本地start的解析事件、失败来源及重试延迟，仅含阶段、耗时和协议元数据，不含正文或鉴权头。`llm_request_sent`仍是fetch调用前打点，不能据此证明网络首字节已到达。
+
+* **工具正文保留与观察**：旧工具结果不再因条数变多就有损降级；`DefaultContextHarness` 按投影前视图估算，达到既有 compaction 压力线后才启用分批首尾投影，主请求与摘要使用同一判断。`context_usage` 可选字段 `projectedToolResults`／`projectedToolBytesSaved`／`unprojectedInputTokens` 分开记录正文投影与消息删除；`trimmedMessages=0` 不代表正文从未被缩减。read分页提示只描述本次输出，读取事实只覆盖实际返回行。真实27分钟轨迹与离线重放见效率计划第1.3节；确定性回归见 `tests/tool-output-projection.test.ts`、`tests/filesystem-tools.test.ts`。
+
+* **Coding Agent 提示词精简（2026-10-21）**：核心围绕完成用户请求、针对性修改、验证与交付；可选计划只保留简短使用建议，仓库规则保留验证命令与维护契约。Scratchpad投影改称“工具执行记录”，默认显示最近4次调用，空失败/无效/待执行项省略；用户请求已有独立投影时不重复任务原文。周期回顾不再重复目标、工具结果和常规预算余量，预算预警仍沿独立通路；进度提醒只保留观察事实与简短建议。未改变触发阈值、工具可用性、任务阶段或完成判定。真实checkpoint离线对比的system+动态提示估算为4717→2476 token（约减少47.5%），不包含历史正文与工具Schema，也不代表实际任务提速。
+
+* **用户请求与事实提示**：读取账本按同版本实际行区间求并集，已覆盖切片重读不计新事实。`harness/task-focus.ts` 仅提供本轮请求原话、最近历史请求及已读范围，不做关键词意图分类，不把跟进问题替换成推断目标，不建立实施阶段。同会话同工作区可承接带版本的读取观察，由模型判断相关性；检查结论、执行身份、副作用与预算仍按 Run 隔离。新增必要读取、真实修改、新检查结论都算记录事实进展。进度／重复调用／目标审查均为有界 tips，不改变工具 Schema、阻断工具或决定收尾；旧 checkpoint 的实施阶段计数与催改提示在归一化时丢弃。真实草稿轨迹及 Loop 回归见 `tests/progress-watch.test.ts`。
+
+* **模型自主交付**：任务理解、是否列计划、调研范围、工具选择和完成判断由模型结合用户请求及证据决定；默认 Harness 仅提供提示。updatePlan 成功不自动终止 Run，未来实施项可保持 pending；模型给出非空最终答复时，Runtime 正常保存 final_answer 与 completed checkpoint，计划未完成状态仅留痕，不强制再生成一轮或改写状态。移除了此前的 `allowInvestigationTool` 与 `completedToolTurnAnswer` 业务控制端口。权限、用户取消、参数与执行结果校验、副作用保护、资源上限等执行边界仍由 Runtime 保证；不以 tips 推断用户任务已经完成。回归见 `tests/plan-loop.test.ts`、`tests/empty-turn.test.ts`。
 
 * **Operation Identity (v1.5)**：`toolName::canonicalKey`；`canonicalPathKey` 把 `./work/a.txt` 与 `work/a.txt` 归一为同一 key，且不暴露宿主绝对路径。
 
@@ -434,7 +450,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 142 个确定性套件（无 LLM，有界并发）
+npm run test:all          # 145 个确定性套件（无 LLM，有界并发）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）
@@ -466,7 +482,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 142 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、分层超时与后台作业通知、Plan 状态机、Settings 六域、执行治理功能验收、历史任务搜索规则、套件数量契约、文档引用完整性、docs contract） | `npm run test:all` | 142 套件全绿为合并门槛（有界并发，完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 145 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、分层超时与后台作业通知、Plan 状态机、Settings 六域、执行治理功能验收、历史任务搜索规则、套件数量契约、文档引用完整性、docs contract） | `npm run test:all` | 145 套件全绿为合并门槛（有界并发，完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

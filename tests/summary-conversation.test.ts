@@ -70,13 +70,24 @@ check('快路径：重放剥离图片与思考字段（带 path 的图片块会�
     ...base,
     messages: [
       { role: 'user', content: '看图', images: [{ mimeType: 'image/png', path: 'input/a.png' }] },
-      { role: 'assistant', content: '答', reasoning_content: '隐藏推理' },
+      {
+        role: 'assistant',
+        content: '答',
+        reasoning_content: '隐藏推理',
+        providerContinuation: {
+          version: 1,
+          identity: 'test',
+          field: 'reasoning_content',
+          text: 'private-protocol',
+        },
+      },
     ],
     prefix: { system: SYSTEM, tools: TOOLS },
   });
   assert.equal(built.cacheAligned, true);
   assert.equal(built.messages[1].images, undefined, '图片必须剥离');
   assert.equal(built.messages[2].reasoning_content, undefined, '思考字段必须剥离');
+  assert.equal(built.messages[2].providerContinuation, undefined, '协议字段不进入摘要模型');
   assert.equal(built.messages[1].content, '看图', '文本内容保留');
 });
 

@@ -27,7 +27,7 @@ const MODEL = { baseUrl: 'https://provider.example/v1', apiKey: 'test-key', mode
 /** v2.5 起动态上下文（含收敛提醒）位于尾部 [Context] 消息。 */
 function contextText(messages: Array<{ role: string; content: unknown }>): string {
   return String(
-    messages.find((message) => String(message.content).startsWith('[Context]'))?.content ?? '',
+    messages.find((message) => String(message.content).includes('[Context]'))?.content ?? '',
   );
 }
 
@@ -413,7 +413,12 @@ try {
     assert.equal(await runAgent('交替调用不同工具的调查', undefined, run), 'done');
     // 第 3 个已完成工具回合触发 → 注入第 4 轮请求的 [Context]
     assert.match(contextText(requests[3]), /\[Periodic goal review\]/);
-    assert.match(contextText(requests[3]), /Original user goal: 交替调用不同工具的调查/);
+    assert.match(contextText(requests[3]), /Latest request \(bounded\): 交替调用不同工具的调查/);
+    assert.equal(
+      contextText(requests[3]).split('交替调用不同工具的调查').length - 1,
+      1,
+      '目标只投影一次，周期回顾不重复原文',
+    );
     const reviews = run.events.filter((e) => e.type === 'goal_review_reminder');
     assert.equal(reviews.length, 1, '每周期只触发一次');
     assert.equal(reviews[0].toolTurns, 3);

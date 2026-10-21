@@ -3,6 +3,11 @@
 // 验收：只动 tool 消息 / 保留配对结构 / 只会变小 / 最近 N 轮与最近 K 条保留全文 /
 //       未变更消息保持同一引用 / transcript 不被改动 / UTF-8 安全 / env 可关闭可调。
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { createAgentExecutionContext } from '../src/bootstrap/runtime-bootstrap.js';
+import { DEFAULT_COMPACTION_POLICY } from '../src/harness/compaction-policy.js';
+import { DefaultContextHarness } from '../src/harness/context-harness.js';
+import { resolveModelContextConfig } from '../src/harness/model-context.js';
 import {
   DEFAULT_PROJECTION_POLICY,
   type ProjectionPolicy,
@@ -10,7 +15,17 @@ import {
   resolveProjectionPolicy,
 } from '../src/harness/tool-output-projection.js';
 import type { ChatMessage } from '../src/llm/llm.js';
+import { runAgent } from '../src/runtime/agent.js';
+import { silentRuntimeObserver } from '../src/runtime/observer-port.js';
+import { createScratchpad } from '../src/runtime/scratchpad.js';
+import type { TraceEvent } from '../src/runtime/trace.js';
 import { TOOL_OUTPUT_MARKER, utf8ByteLength } from '../src/tool-output-budget.js';
+import {
+  createTestWorkspaceRoot,
+  MOCK_MODEL_CONFIG,
+  scriptedFetch,
+  textResponse,
+} from './helpers/mock-runner.js';
 
 let passed = 0;
 let failed = 0;
@@ -282,6 +297,136 @@ check('env：可关闭、可调保留条数', () => {
     resolveProjectionPolicy({ PAYASO_PROJECT_KEEP_TOOL_RESULTS: 'abc' }).keepRecentToolResults,
     DEFAULT_PROJECTION_POLICY.keepRecentToolResults,
   );
+});
+
+// 真实 a85c23fa 的结构：单个用户任务产生79条工具结果；充裕预算不应丢掉核心正文。
+function investigationHistory(): ChatMessage[] {
+  const messages: ChatMessage[] = [{ role: 'user', content: '实现草稿保存并验证' }];
+  for (let n = 0; n < 79; n++) {
+    messages.push(
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: `read-${n}`,
+            type: 'function',
+            function: { name: 'read', arguments: JSON.stringify({ path: `file-${n}.ts` }) },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: `read-${n}`,
+        content: `header-${n}\n${'x'.repeat(1800)}\n${n === 0 ? 'function handleSend() { return onSend(text); }' : 'body'}\n${'x'.repeat(1000)}\ntail-${n}`,
+      },
+    );
+  }
+  return messages;
+}
+const replayContext = resolveModelContextConfig({
+  model: 'projection-replay',
+  contextWindowTokens: 1_024_000,
+  maxOutputTokens: 32768,
+  safetyTokens: 20480,
+});
+async function checkAsync(name: string, fn: () => Promise<void>) {
+  try {
+    await fn();
+    passed++;
+    console.log(`  [PASS] ${name}`);
+  } catch (err) {
+    failed++;
+    console.log(`  [FAIL] ${name} — ${(err as Error).message}`);
+  }
+}
+await checkAsync(
+  'Harness：79条工具结果在充裕预算下保留正文，不把已读代码变成400字节提示',
+  async () => {
+    const h = new DefaultContextHarness({
+      permissionMode: 'workspace-write',
+      modelContext: replayContext,
+      executionBudget: false,
+    });
+    const history = investigationHistory();
+    const canonical = h.createTranscript('实现草稿保存并验证');
+    canonical.push(...history.slice(1));
+    const original = structuredClone(canonical);
+    const old = projectStaleToolOutputs(canonical);
+    assert.ok(old.projectedCount > 0, '该轨迹应复现旧的按条数投影');
+    assert.ok(
+      !old.messages
+        .find((m) => m.tool_call_id === 'read-0')
+        ?.content.includes('function handleSend'),
+    );
+    const view = await h.prepareTurn(canonical, createScratchpad('继续处理'), []);
+    assert.equal(view.toolProjection?.projectedCount, 0);
+    assert.ok(
+      view.messages
+        .find((m) => m.tool_call_id === 'read-0')
+        ?.content.includes('function handleSend'),
+    );
+    assert.deepEqual(canonical, original);
+  },
+);
+await checkAsync('Harness：达到既有压力线才做有损投影，单独记录投影数量与字节', async () => {
+  const h = new DefaultContextHarness({
+    permissionMode: 'workspace-write',
+    modelContext: replayContext,
+    executionBudget: false,
+    compaction: { ...DEFAULT_COMPACTION_POLICY, triggerTokens: 8000 },
+  });
+  const canonical = h.createTranscript('单个任务', []);
+  canonical.push(...investigationHistory().slice(1));
+  const original = structuredClone(canonical);
+  const view = await h.prepareTurn(canonical, createScratchpad('单个任务'), []);
+  assert.ok((view.toolProjection?.projectedCount ?? 0) > 0);
+  assert.ok((view.toolProjection?.savedBytes ?? 0) > 0);
+  assert.ok((view.toolProjection?.unprojectedInputTokens ?? 0) > 8000);
+  assert.equal(view.usage.trimmedMessages, 0, '正文投影和删除消息必须区分');
+  assert.deepEqual(canonical, original);
+});
+await checkAsync('Runtime：context_usage 留痕正文投影，不再把0条裁剪误当作没有丢信息', async () => {
+  const root = createTestWorkspaceRoot('projection-observe-');
+  const previousFetch = globalThis.fetch;
+  const traces: TraceEvent[] = [];
+  const bodies: unknown[] = [];
+  globalThis.fetch = scriptedFetch([() => textResponse('已交付')], (body) =>
+    bodies.push(body),
+  ).fetch;
+  try {
+    await runAgent('继续处理', undefined, {
+      executionContext: createAgentExecutionContext({
+        runId: 'projection-observe',
+        workspaceRoot: root,
+      }),
+      modelConfig: MOCK_MODEL_CONFIG,
+      contextHarness: new DefaultContextHarness({
+        permissionMode: 'workspace-write',
+        modelContext: replayContext,
+        executionBudget: false,
+      }),
+      conversationHistory: investigationHistory(),
+      checkpointWriter: { save: () => 'memory://projection-observe' },
+      observer: silentRuntimeObserver,
+      onTrace: (event) => traces.push(event),
+    });
+    const usage = traces.find((event) => event.type === 'context_usage');
+    assert.ok(usage?.type === 'context_usage');
+    assert.equal(usage.projectedToolResults, 0);
+    assert.equal(usage.projectedToolBytesSaved, 0);
+    assert.ok((usage.unprojectedInputTokens ?? 0) > 0);
+    assert.equal(bodies.length, 1);
+    const request = bodies[0] as { messages: ChatMessage[] };
+    assert.ok(
+      request.messages
+        .find((m) => m.tool_call_id === 'read-0')
+        ?.content.includes('function handleSend'),
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 console.log(`\n工具输出投影汇总: ${passed} PASS / ${failed} FAIL`);

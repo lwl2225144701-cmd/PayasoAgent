@@ -22,6 +22,7 @@ import { executeCheck } from '../src/tools/check.js';
 import {
   BASELINE_MAX_FILES,
   type BiomeRunResult,
+  biomeInputFingerprint,
   buildHeadViews,
   compareDiagnosticMultisets,
   diagnosticFingerprint,
@@ -29,6 +30,7 @@ import {
   parseBiomeJsonReport,
   resolveBiomeInstall,
   runBiomeBaseline,
+  runBiomeLint,
 } from '../src/tools/check-baseline.js';
 import { normalizeToolResult, type ToolContext } from '../src/tools/tools.js';
 
@@ -95,7 +97,7 @@ function biomeReport(diagnostics: FakeDiag[]): string {
     command: 'lint',
     summary: {
       changed: 0,
-      unchanged: 0,
+      unchanged: 1,
       duration: 1,
       errors,
       warnings: diagnostics.length - errors,
@@ -124,7 +126,7 @@ function writeFakeBiome(currentJson: string, baselineJson: string = currentJson)
   fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
   fs.writeFileSync(
     path.join(pkgDir, 'package.json'),
-    JSON.stringify({ name: '@biomejs/biome', version: '1.9.4' }),
+    JSON.stringify({ name: '@biomejs/biome', version: '2.5.12' }),
   );
   const bin = path.join(pkgDir, 'bin/biome');
   fs.writeFileSync(bin, biomeScript(currentJson, baselineJson));
@@ -234,6 +236,18 @@ async function main(): Promise<void> {
     if (omitted.state !== 'valid') return;
     assert.equal(omitted.reportComplete, false, '被省略的诊断 → 报告不完整');
   });
+  await test('B03 错误命令、目标未检查、严重性与计数矛盾都不可比较', () => {
+    const report = JSON.parse(biomeReport([WARNINGS[0]]));
+    for (const broken of [
+      { ...report, command: 'format' },
+      { ...report, summary: { ...report.summary, unchanged: 0 } },
+      { ...report, summary: { ...report.summary, errors: 1, warnings: 0 } },
+    ]) {
+      const parsed = parseBiomeJsonReport(JSON.stringify(broken), { allowedPaths: [CSS_PATH] });
+      assert.equal(parsed.state, 'valid');
+      if (parsed.state === 'valid') assert.equal(parsed.reportComplete, false);
+    }
+  });
   await test('B04 相对 extends / 绝对路径 / npm 包 → 明确不支持', () => {
     assert.deepEqual(inspectBiomeConfigSupport(null), { ok: true });
     assert.equal(inspectBiomeConfigSupport('{"extends":["../shared/biome.json"]}').ok, false);
@@ -261,11 +275,11 @@ async function main(): Promise<void> {
     const install = resolveBiomeInstall(WORKSPACE);
     assert.equal(install.ok, true);
     if (!install.ok) return;
-    assert.equal(install.version, '1.9.4');
+    assert.equal(install.version, '2.5.12');
     assert.ok(install.program.startsWith(fs.realpathSync(WORKSPACE)), '入口必须在工作区内');
     writeWorkspaceFile(
       'node_modules/@biomejs/biome/package.json',
-      JSON.stringify({ name: '@biomejs/biome', version: '2.0.0' }),
+      JSON.stringify({ name: '@biomejs/biome', version: '99.0.0' }),
     );
     assert.equal(resolveBiomeInstall(WORKSPACE).ok, false, '跨大版本不比较');
     writeFakeBiome(biomeReport(WARNINGS));
@@ -403,6 +417,112 @@ async function main(): Promise<void> {
     assert.match(result.text, /biome_not_installed/);
   });
 
+  await test('B06 真实 Biome 2 JSON：完整报告、行号移动稳定、相关片段变化可区分', async () => {
+    const program = path.resolve('node_modules/@biomejs/biome/bin/biome');
+    const nativeRoot = fs.mkdtempSync(path.join(TEST_ROOT, 'native-'));
+    const source = '.parent .child { color: red; }\n.child { color: blue; }\n';
+    fs.writeFileSync(
+      path.join(nativeRoot, 'biome.json'),
+      JSON.stringify({
+        linter: { enabled: true },
+        vcs: { enabled: false },
+      }),
+    );
+    fs.writeFileSync(path.join(nativeRoot, 'a.css'), source);
+    const readReport = (text: string) => {
+      fs.writeFileSync(path.join(nativeRoot, 'a.css'), text);
+      const stdout = execFileSync(process.execPath, [program, 'lint', '--reporter=json', 'a.css'], {
+        cwd: nativeRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return parseBiomeJsonReport(stdout, {
+        allowedPaths: ['a.css'],
+        sourceTexts: { 'a.css': text },
+        sourceRoot: nativeRoot,
+      });
+    };
+    const original = readReport(source);
+    assert.equal(original.state, 'valid');
+    if (original.state !== 'valid') return;
+    assert.equal(original.reportComplete, true, original.reasons.join(','));
+    assert.ok(original.diagnostics.length > 0, '必须实际解析原生诊断，不能空报告通过');
+    const moved = readReport(`\n\n${source}`);
+    const relatedChanged = readReport(source.replace('.parent .child', '.ancestor .child'));
+    assert.equal(moved.state, 'valid');
+    assert.equal(relatedChanged.state, 'valid');
+    if (moved.state !== 'valid' || relatedChanged.state !== 'valid') return;
+    assert.equal(
+      compareDiagnosticMultisets(moved.diagnostics, original.diagnostics).introduced.length,
+      0,
+    );
+    assert.ok(
+      compareDiagnosticMultisets(relatedChanged.diagnostics, original.diagnostics).introduced
+        .length > 0,
+      '相关选择器改变应改变指纹，即使主选择器相同',
+    );
+    const run = await runBiomeLint({
+      context: { ...context(), workspaceRoot: nativeRoot },
+      program,
+      workspaceRoot: nativeRoot,
+      viewRoot: nativeRoot,
+      viewDisplay: '.',
+      files: ['a.css'],
+      timeoutMs: 30_000,
+      deps: DEPS,
+    });
+    assert.equal(run.conclusion, 'passed', (run.reasons ?? []).join(','));
+    assert.equal(run.reportComplete, true);
+    assert.ok(run.diagnostics.length > 0);
+  });
+
+  await test('B07 指纹保守边界：未知安装、VCS、扩展配置不进入复用通路', async () => {
+    writeFakeBiome(biomeReport([]));
+    writeWorkspaceFile('biome.json', JSON.stringify({ vcs: { enabled: true } }));
+    assert.equal(await biomeInputFingerprint(context(), [CSS_PATH], 30_000), null);
+    writeWorkspaceFile('biome.json', JSON.stringify({ extends: ['./base.json'] }));
+    assert.equal(await biomeInputFingerprint(context(), [CSS_PATH], 30_000), null);
+    writeWorkspaceFile('biome.json', JSON.stringify({ linter: { enabled: true } }));
+    assert.equal(
+      await biomeInputFingerprint(context(), [CSS_PATH], 30_000),
+      null,
+      '缺原生二进制也不能仅按入口版本确认闭包',
+    );
+  });
+
+  await test('B07 真实安装指纹：源码、逐级配置、锁文件变化均使版本失效', () => {
+    const root = fs.mkdtempSync(path.join(TEST_ROOT, 'fingerprint-'));
+    const packageRoot = 'node_modules/@biomejs';
+    for (const name of [
+      'biome',
+      ...fs
+        .readdirSync(path.resolve(packageRoot))
+        .filter((n) => n.startsWith(`cli-${process.platform}-${process.arch}`)),
+    ]) {
+      const source = path.resolve(packageRoot, name);
+      const target = path.join(root, packageRoot, name);
+      fs.cpSync(source, target, { recursive: true });
+    }
+    fs.mkdirSync(path.join(root, 'work'));
+    fs.writeFileSync(path.join(root, 'biome.json'), '{"vcs":{"enabled":false}}');
+    fs.writeFileSync(path.join(root, CSS_PATH), 'a { color: red; }');
+    const ctx = { ...context(), workspaceRoot: root };
+    const first = biomeInputFingerprint(ctx, [CSS_PATH], 30_000);
+    assert.ok(first, '真实本机安装与自洽配置应产生可用版本指纹');
+    assert.equal(biomeInputFingerprint(ctx, [CSS_PATH], 30_000), first);
+    fs.writeFileSync(path.join(root, CSS_PATH), 'a { color: blue; }');
+    const sourceChanged = biomeInputFingerprint(ctx, [CSS_PATH], 30_000);
+    assert.ok(sourceChanged);
+    assert.notEqual(sourceChanged, first);
+    fs.writeFileSync(path.join(root, 'work/biome.json'), '{"linter":{"enabled":false}}');
+    const configChanged = biomeInputFingerprint(ctx, [CSS_PATH], 30_000);
+    assert.notEqual(configChanged, sourceChanged);
+    fs.writeFileSync(path.join(root, 'package-lock.json'), '{"lockfileVersion":3}');
+    assert.notEqual(biomeInputFingerprint(ctx, [CSS_PATH], 30_000), configChanged);
+    fs.writeFileSync(path.join(root, 'biome.json'), '{"vcs":{"enabled":true}}');
+    assert.equal(biomeInputFingerprint(ctx, [CSS_PATH], 30_000), null);
+  });
+
   console.log('========================================================');
   console.log(`汇总: ${passes} PASS / ${failures} FAIL`);
   fs.rmSync(TEST_ROOT, { recursive: true, force: true });
@@ -410,7 +530,7 @@ async function main(): Promise<void> {
     console.log('验收：Biome 适配/基线比较存在失败用例 ✗');
     process.exit(1);
   }
-  console.log('验收：B01-B05 行为与不变量成立（真实 git + 假 biome；未验证真实 Biome 输出）✓');
+  console.log('验收：B01-B07 行为与不变量成立（真实 git + 原生 Biome 2 输出 + 边界夹具）✓');
 }
 
 function scratchForTest(): { path: string; dispose: () => void } {

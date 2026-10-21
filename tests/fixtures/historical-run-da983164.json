@@ -1,0 +1,822 @@
+{
+  "runId": "da983164-37ac-47f6-9ef2-f8eb87fd9b86",
+  "source": "2026-10-20 原始事件按 llm_call 划分；移除正文、宿主路径和命令，只保留工具身份、实际行范围和结果摘要。原轮无源码修改，同路径源版本在回放中保持一致。",
+  "goal": "给消息输入框增加草稿自动保存与恢复：\n\n1. 每个任务独立保存文字草稿，新建任务页面也有独立草稿，互不串用。\n2. 切换任务、刷新页面后自动恢复。\n3. 发送成功清除对应草稿；发送失败保留，不能覆盖用户后来输入的内容。\n4. 仅保存文字，附件保持现有行为。\n5. 本地存储不可用时，输入和发送仍能正常使用。\n\n保留已有修改，补充任务隔离、刷新恢复、发送成功与失败的测试，完成类型检查和前端构建。",
+  "toolCalls": 62,
+  "turns": [
+    {
+      "iteration": 1,
+      "durationMs": 3025.2099999999996,
+      "calls": [
+        {
+          "tool": "ls",
+          "args": {
+            "path": "."
+          },
+          "resultHash": "cca1f9b40a79fd2463dbef0ad05d1cf5"
+        },
+        {
+          "tool": "glob",
+          "args": {
+            "pattern": "src/**/*.{ts,tsx}"
+          },
+          "resultHash": "8cbe4340d65a5a93a62f6f9381fa8350"
+        }
+      ]
+    },
+    {
+      "iteration": 2,
+      "durationMs": 3140.62,
+      "calls": [
+        {
+          "tool": "ls",
+          "args": {
+            "path": "web"
+          },
+          "resultHash": "52acdbc8c119f047ee2d70b13c7d37a6"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web",
+            "pattern": "draft|Draft"
+          },
+          "resultHash": "82c7b2e059c2130651ab51d97cda6eae"
+        }
+      ]
+    },
+    {
+      "iteration": 3,
+      "durationMs": 2727.73,
+      "calls": [
+        {
+          "tool": "ls",
+          "args": {
+            "path": "web/src"
+          },
+          "resultHash": "84631312050eb117c048d63cb1d44512"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx"
+          },
+          "range": [
+            1,
+            334
+          ],
+          "resultHash": "8839c19fba73d871595df8510a5d4de2"
+        }
+      ]
+    },
+    {
+      "iteration": 4,
+      "durationMs": 3447.66,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 335
+          },
+          "range": [
+            335,
+            644
+          ],
+          "resultHash": "41047e03697b33f474c71189193a6460"
+        },
+        {
+          "tool": "ls",
+          "args": {
+            "path": "web/src/components"
+          },
+          "resultHash": "5f54dd9615a3b01277292981d1267a04"
+        }
+      ]
+    },
+    {
+      "iteration": 5,
+      "durationMs": 4001.82,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 645
+          },
+          "range": [
+            645,
+            812
+          ],
+          "resultHash": "8ed89ae9101a12b878212401fcdf74ce"
+        },
+        {
+          "tool": "ls",
+          "args": {
+            "path": "web/src/components/InputBar"
+          },
+          "resultHash": "d55fe2a203e597087111f81f71e0135f"
+        }
+      ]
+    },
+    {
+      "iteration": 6,
+      "durationMs": 6484.41,
+      "calls": [
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/src/App.tsx",
+            "pattern": "InputBar|variant=|sessionId|activeSession|newTask"
+          },
+          "resultHash": "a6563c7f5183611e53684b73f27b9eb4"
+        },
+        {
+          "tool": "ls",
+          "args": {
+            "path": "tests"
+          },
+          "resultHash": "9d3d9ed972acdcdc58ed0cfa04a893c1"
+        }
+      ]
+    },
+    {
+      "iteration": 7,
+      "durationMs": 4139.7300000000005,
+      "calls": [
+        {
+          "tool": "shell",
+          "args": {},
+          "resultHash": "a09890be8da8442e47c82b4b302518fd"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 1080,
+            "limit": 120
+          },
+          "range": [
+            1080,
+            1199
+          ],
+          "resultHash": "ddcf3dee7c7747639cefe6fc05ba74d4"
+        }
+      ]
+    },
+    {
+      "iteration": 8,
+      "durationMs": 5610.259999999999,
+      "calls": [
+        {
+          "tool": "ls",
+          "args": {
+            "path": "web/src/utils"
+          },
+          "resultHash": "0a81739b13ae2f720c3b2e72a35e8f56"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/preferences.ts"
+          },
+          "range": [
+            1,
+            113
+          ],
+          "resultHash": "a4d819c2ed52e2915f047a57b2d86237"
+        }
+      ]
+    },
+    {
+      "iteration": 9,
+      "durationMs": 4285.58,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/frontend-last-session.test.ts"
+          },
+          "range": [
+            1,
+            96
+          ],
+          "resultHash": "0423bba06fceb15783926d7107218005"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/frontend-enter-key.test.ts"
+          },
+          "range": [
+            1,
+            149
+          ],
+          "resultHash": "e1e3d2dac3e41a7d8feec6f988f1873f"
+        }
+      ]
+    },
+    {
+      "iteration": 10,
+      "durationMs": 4643.63,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 380,
+            "limit": 180
+          },
+          "range": [
+            380,
+            559
+          ],
+          "resultHash": "6f9d08d94c7e3b50963d68f2f603b14d"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 480,
+            "limit": 120
+          },
+          "range": [
+            480,
+            599
+          ],
+          "resultHash": "4a28c6e0f9fd606cfd605101ac7ea8c8"
+        }
+      ]
+    },
+    {
+      "iteration": 11,
+      "durationMs": 19109.95,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/suite-count-contract.test.ts"
+          },
+          "range": [
+            1,
+            134
+          ],
+          "resultHash": "68c9656aef70ab9c69e1b1471120c641"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/frontend-stats-bar.test.ts",
+            "limit": 60
+          },
+          "range": [
+            1,
+            60
+          ],
+          "resultHash": "3ae876b6b5f788bf07695d5483cdb244"
+        }
+      ]
+    },
+    {
+      "iteration": 12,
+      "durationMs": 34398.520000000004,
+      "calls": [
+        {
+          "tool": "grep",
+          "args": {
+            "path": "tests/run-all.ts",
+            "pattern": "frontend-"
+          },
+          "resultHash": "c327103a41c71bbd051da07d5496a02a"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/docs-code-paths.test.ts"
+          },
+          "range": [
+            1,
+            250
+          ],
+          "resultHash": "1d61edc1c8c867cb65221add26936a5d"
+        }
+      ]
+    },
+    {
+      "iteration": 13,
+      "durationMs": 40960.380000000005,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 1000,
+            "limit": 80
+          },
+          "range": [
+            1000,
+            1079
+          ],
+          "resultHash": "b8bfe219cc547a95f0627a53745a756c"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": ".",
+            "pattern": "确定性套件（无 LLM，\\d+ 个）|(\\d+)\\s*个确定性套件|确定性\\s*(\\d+)\\s*套件|(\\d+)\\s*套件全绿"
+          },
+          "resultHash": "8b444bae167192217a6b35f191922280"
+        }
+      ]
+    },
+    {
+      "iteration": 14,
+      "durationMs": 6556.67,
+      "calls": [
+        {
+          "tool": "grep",
+          "args": {
+            "path": "README.md",
+            "pattern": "\\d+\\s*个确定性套件"
+          },
+          "resultHash": "bcaff365a53b278db27d364d19b39b23"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "docs/architecture-current.md",
+            "pattern": "\\d+\\s*个确定性套件|确定性\\s*\\d+\\s*套件|\\d+\\s*套件全绿"
+          },
+          "resultHash": "5eb3188678e8b49d80b063d1129754a4"
+        }
+      ]
+    },
+    {
+      "iteration": 15,
+      "durationMs": 172645.34,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/main.tsx"
+          },
+          "range": [
+            1,
+            17
+          ],
+          "resultHash": "9a8752ec7ec85b714f2e9c0585071dc1"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "pattern": "setText\\("
+          },
+          "resultHash": "6dac69dec56884b9fb64364fa166754c"
+        }
+      ]
+    },
+    {
+      "iteration": 16,
+      "durationMs": 4947.57,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 1,
+            "limit": 120
+          },
+          "range": [
+            1,
+            120
+          ],
+          "resultHash": "77344f085fc7772f13200ac4cfd92398"
+        }
+      ]
+    },
+    {
+      "iteration": 17,
+      "durationMs": 2896.96,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 121,
+            "limit": 180
+          },
+          "range": [
+            121,
+            300
+          ],
+          "resultHash": "d17c4786ecf348855f570697a448f323"
+        }
+      ]
+    },
+    {
+      "iteration": 18,
+      "durationMs": 3141.78,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 301,
+            "limit": 160
+          },
+          "range": [
+            301,
+            460
+          ],
+          "resultHash": "df5aa2ceddacc50a8e0774323ddbb5df"
+        }
+      ]
+    },
+    {
+      "iteration": 19,
+      "durationMs": 3840.67,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 460,
+            "limit": 120
+          },
+          "range": [
+            460,
+            579
+          ],
+          "resultHash": "1effa55340cbdc6f3386192bd90582c9"
+        }
+      ]
+    },
+    {
+      "iteration": 20,
+      "durationMs": 12537.970000000001,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 580,
+            "limit": 233
+          },
+          "range": [
+            580,
+            812
+          ],
+          "resultHash": "a4e57310ed5f2fef1cc72acc21261696"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/ComposerParts.tsx"
+          },
+          "range": [
+            1,
+            328
+          ],
+          "resultHash": "5b373858e075acfaf0382e663ba639ec"
+        }
+      ]
+    },
+    {
+      "iteration": 21,
+      "durationMs": 224237.33,
+      "calls": [
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/src/App.tsx",
+            "pattern": "handleNewTask|const handleSelectSession"
+          },
+          "resultHash": "ad105c857002e9ba502c16f903a317ff"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/PromptPreview.tsx"
+          },
+          "range": [
+            1,
+            67
+          ],
+          "resultHash": "1a19c669f7efeab6dc55cbe070f5d784"
+        }
+      ]
+    },
+    {
+      "iteration": 22,
+      "durationMs": 6006.92,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 820,
+            "limit": 100
+          },
+          "range": [
+            820,
+            919
+          ],
+          "resultHash": "f3aaa2f7bc3f07b879d5f8392a234a57"
+        }
+      ]
+    },
+    {
+      "iteration": 23,
+      "durationMs": 52342.64,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/frontend-portal-root.test.ts"
+          },
+          "range": [
+            1,
+            157
+          ],
+          "resultHash": "1d3eec496f122f7a7c1cc5ca956fa53e"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/frontend-plan-state.test.ts",
+            "limit": 60
+          },
+          "range": [
+            1,
+            60
+          ],
+          "resultHash": "406acd52121397951bcbb1a006798370"
+        }
+      ]
+    },
+    {
+      "iteration": 24,
+      "durationMs": 7471.290000000001,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 1105,
+            "limit": 90
+          },
+          "range": [
+            1105,
+            1194
+          ],
+          "resultHash": "fdc020955146315da01329a10121980c"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/preferences.ts"
+          },
+          "range": [
+            1,
+            113
+          ],
+          "resultHash": "a4d819c2ed52e2915f047a57b2d86237"
+        }
+      ]
+    },
+    {
+      "iteration": 25,
+      "durationMs": 99665.53,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/theme.ts"
+          },
+          "range": [
+            1,
+            85
+          ],
+          "resultHash": "8875a20bc2d4d60ee57c6263d278730f"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/frontend-last-session.test.ts"
+          },
+          "range": [
+            1,
+            96
+          ],
+          "resultHash": "0423bba06fceb15783926d7107218005"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tests/run-all.ts",
+            "offset": 150,
+            "limit": 40
+          },
+          "range": [
+            150,
+            189
+          ],
+          "resultHash": "6dfd169485ebc83e25c2de9b37ea5722"
+        }
+      ]
+    },
+    {
+      "iteration": 26,
+      "durationMs": 144868.35,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/package.json"
+          },
+          "range": [
+            1,
+            32
+          ],
+          "resultHash": "3408f2e1d08988be26e8d471ad1cbff8"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/package.json",
+            "pattern": "testing-library|jsdom|happy-dom|vitest|react-dom"
+          },
+          "resultHash": "a889f26f1e939abdf57b419127ad900c"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "docs/architecture-current.md",
+            "pattern": "preferences\\.ts|web/src/"
+          },
+          "resultHash": "88a16dbe6238e3ecaff2c90e849d201e"
+        }
+      ]
+    },
+    {
+      "iteration": 27,
+      "durationMs": 249534.82,
+      "calls": [
+        {
+          "tool": "shell",
+          "args": {},
+          "resultHash": "57adfb05c2ca069fdfd5b2a9417a9a43"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/src",
+            "pattern": "localStorage|sessionStorage"
+          },
+          "resultHash": "ff454d7ef8ad7ca708d0421694b2d7a8"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "tsconfig.json"
+          },
+          "range": [
+            1,
+            14
+          ],
+          "resultHash": "c7f5a5b38e1567611bc3c913c72803a8"
+        }
+      ]
+    },
+    {
+      "iteration": 28,
+      "durationMs": 189065.03000000003,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 490,
+            "limit": 120
+          },
+          "range": [
+            490,
+            609
+          ],
+          "resultHash": "f72041e90c6f92400c04b5f3f7d15f77"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 1,
+            "limit": 45
+          },
+          "range": [
+            1,
+            45
+          ],
+          "resultHash": "21f405160c6cad291ab9ba3b7bf658ad"
+        }
+      ]
+    },
+    {
+      "iteration": 29,
+      "durationMs": 217500.68999999997,
+      "calls": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/App.tsx",
+            "offset": 1040,
+            "limit": 75
+          },
+          "range": [
+            1040,
+            1114
+          ],
+          "resultHash": "a0b08500bdfa7fea0a9d69e26f0c0d44"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/src",
+            "pattern": "&lt;InputBar"
+          },
+          "resultHash": "72fd4f34eb48588e936a270443380fac"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/tsconfig.json"
+          },
+          "range": [
+            1,
+            22
+          ],
+          "resultHash": "45e568cc646c356738c223e4902a70de"
+        }
+      ]
+    },
+    {
+      "iteration": 30,
+      "durationMs": 126960.88,
+      "calls": [
+        {
+          "tool": "grep",
+          "args": {
+            "path": "web/src",
+            "pattern": "InputBar"
+          },
+          "resultHash": "66f0de1093cc8a51dec3ca4f92e6aa6b"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "docs/architecture-current.md",
+            "offset": 185,
+            "limit": 40
+          },
+          "range": [
+            185,
+            224
+          ],
+          "resultHash": "a7c1961dd9bd9d09dce3d1f13ac54714"
+        },
+        {
+          "tool": "grep",
+          "args": {
+            "path": ".",
+            "pattern": "142"
+          },
+          "resultHash": "a99e1cc0e9eefc42110447dc1d053450"
+        }
+      ]
+    },
+    {
+      "iteration": 31,
+      "durationMs": 12527.289999999999,
+      "calls": [
+        {
+          "tool": "shell",
+          "args": {},
+          "resultHash": "f820ac3ed29cc079e4403e57795bb177"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "web/src/components/InputBar/index.tsx",
+            "offset": 57,
+            "limit": 70
+          },
+          "range": [
+            57,
+            126
+          ],
+          "resultHash": "34947b7dea28349f848a8ab36a152909"
+        }
+      ]
+    }
+  ]
+}

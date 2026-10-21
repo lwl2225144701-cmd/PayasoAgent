@@ -65,7 +65,7 @@ async function waitForTerminal(runId: string): Promise<void> {
 }
 
 try {
-  // ---- 1. 连接挂死 → LLM 层连接超时兜底，Run 落 failed（不重试） ----
+  // ---- 1. 连接持续挂死 → 有界重试后Run落failed，不遗留无界任务 ----
   globalThis.fetch = (async (_input, init) => {
     fetchCalls++;
     return new Promise<Response>((_resolve, reject) => {
@@ -87,10 +87,40 @@ try {
     createdRunIds.push(runId);
     await waitForTerminal(runId);
     const run = manager.get(runId);
-    assert.equal(fetchCalls, 1);
+    assert.equal(fetchCalls, 3);
     assert.equal(run?.status, 'failed');
     assert.match(run?.error ?? '', /LLM request timed out/);
     assert.ok(store.listEvents(runId).some((item) => item.event.type === 'run_failed'));
+    const events = store.listEvents(runId).map((item) => item.event);
+    assert.equal(events.filter((e) => e.type === 'llm_transport' && e.phase === 'retry').length, 2);
+    assert.equal(events.filter((e) => e.type === 'run_failed').length, 1);
+  }
+
+  // ---- 连接首轮超时、次轮恢复：保持同一个Run，不能先落failed再伪造completed ----
+  {
+    let calls = 0;
+    globalThis.fetch = (async (_input, init) => {
+      calls++;
+      if (calls === 1)
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      return jsonResponse({ role: 'assistant', content: 'recovered' });
+    }) as typeof fetch;
+    const { runId } = manager.createInSession('recover connection', undefined, {
+      providerId: provider.id,
+      model: 'timeout-model',
+    });
+    createdRunIds.push(runId);
+    await waitForTerminal(runId);
+    assert.equal(calls, 2);
+    assert.equal(manager.get(runId)?.status, 'completed');
+    const events = store.listEvents(runId).map((item) => item.event);
+    assert.ok(!events.some((e) => e.type === 'run_failed'));
+    assert.ok(events.some((e) => e.type === 'llm_transport' && e.phase === 'retry'));
+    assert.ok(events.some((e) => e.type === 'run_completed'));
   }
 
   // ---- 2. 旧 AGENT_RUN_TIMEOUT_MS 保险丝已删除：超过它的 Run 正常完成 ----

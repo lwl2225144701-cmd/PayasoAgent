@@ -32,6 +32,7 @@ import {
   type CheckRunnerDeps,
   runCheckProcess,
 } from './check-runner.js';
+import { resolveAuthorizedPath } from './filesystem.js';
 import { factDigest } from './tool-facts.js';
 import type { ToolContext } from './tools.js';
 
@@ -40,7 +41,7 @@ export const BASELINE_MAX_FILES = 20_000;
 export const BASELINE_MAX_BYTES = 64 * 1024 * 1024;
 
 /** Biome 版本不探测就不比较：同一逻辑路径必须跑"同一工具版本"。 */
-export const BIOME_SUPPORTED_MAJOR = 1;
+export const BIOME_SUPPORTED_MAJOR = 2;
 
 export interface BiomeCommandSummary {
   errors: number;
@@ -118,7 +119,11 @@ export function diagnosticFingerprint(input: {
  */
 export function parseBiomeJsonReport(
   stdout: string,
-  options: { allowedPaths?: readonly string[] } = {},
+  options: {
+    allowedPaths?: readonly string[];
+    sourceTexts?: Readonly<Record<string, string>>;
+    sourceRoot?: string;
+  } = {},
 ): BiomeParseResult {
   const reasons: string[] = [];
   let parsed: unknown;
@@ -133,7 +138,7 @@ export function parseBiomeJsonReport(
   if (!isRecord(rawSummary)) return { state: 'invalid', reasons: ['biome_summary_missing'] };
   const numberField = (key: string): number | null => {
     const value = rawSummary[key];
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
   };
   const errors = numberField('errors');
   const warnings = numberField('warnings');
@@ -149,22 +154,64 @@ export function parseBiomeJsonReport(
   if (!Array.isArray(rawDiagnostics))
     return { state: 'invalid', reasons: ['biome_diagnostics_missing'] };
 
-  const allowed = options.allowedPaths ? new Set(options.allowedPaths) : null;
+  const allowed = options.allowedPaths
+    ? new Set(options.allowedPaths.map((item) => item.replace(/^\.\//, '')))
+    : null;
   const diagnostics: Diagnostic[] = [];
-  let reportComplete = notPrinted === 0;
+  let reportComplete = notPrinted === 0 && parsed.command === 'lint';
+  const checked = (numberField('changed') ?? 0) + (numberField('unchanged') ?? 0);
+  if (checked < (allowed?.size ?? 1) || (numberField('skipped') ?? 0) > 0) {
+    reportComplete = false;
+    reasons.push('biome_targets_not_fully_checked');
+  }
+  const snippetAt = (
+    source: string | undefined,
+    location: Record<string, unknown>,
+  ): string | null => {
+    const start = isRecord(location.start) ? location.start.line : null;
+    const end = isRecord(location.end) ? location.end.line : start;
+    if (
+      !source ||
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      (start as number) < 1 ||
+      (end as number) < (start as number)
+    )
+      return null;
+    return source
+      .split(/\r?\n/)
+      .slice((start as number) - 1, end as number)
+      .join('\n');
+  };
   for (const [index, raw] of rawDiagnostics.entries()) {
     if (!isRecord(raw))
       return { state: 'invalid', reasons: [`biome_diagnostic_${index}_not_object`] };
     const rule = typeof raw.category === 'string' ? raw.category : null;
     const severityRaw = raw.severity;
     const severity: DiagnosticSeverity | null =
-      severityRaw === 'error' || severityRaw === 'warning' || severityRaw === 'info'
-        ? severityRaw
-        : null;
+      severityRaw === 'fatal'
+        ? 'error'
+        : severityRaw === 'information'
+          ? 'info'
+          : severityRaw === 'error' || severityRaw === 'warning' || severityRaw === 'info'
+            ? severityRaw
+            : null;
     const location = isRecord(raw.location) ? raw.location : null;
-    const locationPath = location && isRecord(location.path) ? location.path.file : null;
+    const locationPath =
+      typeof location?.path === 'string'
+        ? location.path
+        : location && isRecord(location.path)
+          ? location.path.file
+          : null;
     const logicalPath =
-      typeof locationPath === 'string' ? locationPath.split(path.sep).join('/') : null;
+      typeof locationPath === 'string'
+        ? (path.isAbsolute(locationPath) && options.sourceRoot
+            ? path.relative(options.sourceRoot, locationPath)
+            : locationPath
+          )
+            .replace(/\\/g, '/')
+            .replace(/^\.\//, '')
+        : null;
     const message = messageText(raw.message) ?? messageText(raw.description);
     if (!rule || !severity || !logicalPath || !message) {
       return { state: 'invalid', reasons: [`biome_diagnostic_${index}_incomplete`] };
@@ -176,13 +223,26 @@ export function parseBiomeJsonReport(
       // 报告里出现未请求的文件：来源不可信，不能比较。
       return { state: 'invalid', reasons: [`biome_diagnostic_${index}_unrequested_path`] };
     }
+    const source = options.sourceTexts?.[logicalPath];
+    const actualSnippet = location ? snippetAt(source, location) : null;
     const primarySnippet =
-      typeof raw.sourceCode === 'string'
-        ? raw.sourceCode
-        : typeof raw.description === 'string'
-          ? raw.description
-          : message;
+      actualSnippet ?? (typeof raw.sourceCode === 'string' ? raw.sourceCode : message);
+    if (!actualSnippet && typeof raw.sourceCode !== 'string') {
+      reportComplete = false;
+      reasons.push('biome_source_snippet_unavailable');
+    }
     const relatedSnippets: string[] = [];
+    if (Array.isArray(raw.advices)) {
+      for (const advice of raw.advices) {
+        if (!isRecord(advice)) continue;
+        const related = snippetAt(source, advice);
+        if (related) relatedSnippets.push(related);
+        else if (advice.start || advice.end) {
+          reportComplete = false;
+          reasons.push('biome_related_snippet_unavailable');
+        } else if (typeof advice.text === 'string') relatedSnippets.push(advice.text);
+      }
+    }
     const advices = isRecord(raw.advices) ? raw.advices : null;
     if (advices) {
       for (const value of Object.values(advices)) {
@@ -212,8 +272,14 @@ export function parseBiomeJsonReport(
   }
 
   // 计数与诊断条数必须自洽：只得到计数而无完整诊断时不能比较来源（§7.2.6）。
-  const totalDiagnostics = errors + warnings;
-  if (totalDiagnostics !== diagnostics.length) {
+  const infos = numberField('infos') ?? 0;
+  const totalDiagnostics = errors + warnings + infos;
+  if (
+    totalDiagnostics !== diagnostics.length ||
+    diagnostics.filter((item) => item.severity === 'error').length !== errors ||
+    diagnostics.filter((item) => item.severity === 'warning').length !== warnings ||
+    diagnostics.filter((item) => item.severity === 'info').length !== infos
+  ) {
     reasons.push('biome_summary_count_mismatch');
     reportComplete = false;
   }
@@ -381,6 +447,120 @@ export function resolveBiomeInstall(workspaceRoot: string): BiomeInstall {
   return { ok: true, program, version, versionMajor: major };
 }
 
+/**
+ * 仅对依赖可封闭的普通 CSS 检查提供复用指纹。
+ * HEAD 比较、VCS忽略规则、extends/plugins及外部环境覆盖尚不能证明完整，保守重跑。
+ * 指纹覆盖实际源码、逐级配置/清单、入口与本平台原生二进制，以及执行环境。
+ */
+export function biomeInputFingerprint(
+  context: ToolContext,
+  files: readonly string[],
+  timeoutMs: number,
+): string | null {
+  if (
+    process.env.BIOME_BINARY ||
+    process.env.BIOME_CONFIG_PATH ||
+    process.env.NODE_OPTIONS ||
+    process.env.NODE_PATH
+  )
+    return null;
+  const install = resolveBiomeInstall(context.workspaceRoot);
+  if (!install.ok) return null;
+  const parts = [
+    `biome-css-fingerprint-v1:${install.version}:${timeoutMs}`,
+    process.platform,
+    process.arch,
+    process.version,
+  ];
+  let bytes = 0;
+  const add = (rel: string, limit = 1024 * 1024): string | null => {
+    const real = resolveAuthorizedPath(context, rel);
+    const stat = fs.statSync(real);
+    if (!stat.isFile() || stat.size > limit || bytes + stat.size > 128 * 1024 * 1024) {
+      throw new Error('fingerprint resource limit');
+    }
+    const data = fs.readFileSync(real);
+    bytes += data.length;
+    parts.push(`${rel}:${factDigest(data)}`);
+    return limit === 1024 * 1024 ? data.toString('utf8') : null;
+  };
+  const selfContained = (value: unknown): boolean => {
+    if (!value || typeof value !== 'object') return true;
+    return Object.entries(value).every(([key, child]) => {
+      if (
+        (key === 'extends' || key === 'plugins') &&
+        (Array.isArray(child) ? child.length > 0 : child != null)
+      )
+        return false;
+      if (key === 'root' && child === false) return false;
+      if (key === 'vcs' && isRecord(child) && child.enabled === true) return false;
+      return selfContained(child);
+    });
+  };
+  try {
+    const root = fs.realpathSync(context.workspaceRoot);
+    const rootConfig = ['biome.json', 'biome.jsonc'].find((name) =>
+      fs.existsSync(path.join(root, name)),
+    );
+    if (!rootConfig) return null; // 不复用从工作区外继承的未知配置。
+    const dirs = new Set<string>(['.']);
+    for (const file of [...new Set(files)].sort()) {
+      add(file);
+      let dir = path.posix.dirname(file);
+      while (dir !== '.') {
+        dirs.add(dir);
+        dir = path.posix.dirname(dir);
+      }
+    }
+    for (const dir of [...dirs].sort()) {
+      for (const name of [
+        'biome.json',
+        'biome.jsonc',
+        '.biome.json',
+        '.editorconfig',
+        '.gitignore',
+        '.ignore',
+        'package.json',
+        'package-lock.json',
+        'pnpm-lock.yaml',
+        'yarn.lock',
+      ]) {
+        const rel = dir === '.' ? name : `${dir}/${name}`;
+        if (!fs.existsSync(path.join(root, rel))) {
+          parts.push(`${rel}:missing`);
+          continue;
+        }
+        const text = add(rel);
+        if (
+          name.includes('biome.json') &&
+          text !== null &&
+          !selfContained(JSON.parse(text.replace(/^\s*\/\/.*$/gm, '')))
+        )
+          return null;
+      }
+    }
+    add('node_modules/@biomejs/biome/package.json');
+    const entry = path.relative(root, install.program).split(path.sep).join('/');
+    add(entry, 128 * 1024 * 1024);
+    const scope = path.join(root, 'node_modules/@biomejs');
+    const binaries = fs
+      .readdirSync(scope)
+      .filter((name) => name.startsWith(`cli-${process.platform}-${process.arch}`));
+    if (!binaries.length) return null;
+    for (const name of binaries.sort()) {
+      add(`node_modules/@biomejs/${name}/package.json`);
+      add(
+        `node_modules/@biomejs/${name}/biome${process.platform === 'win32' ? '.exe' : ''}`,
+        128 * 1024 * 1024,
+      );
+    }
+    parts.push(JSON.stringify(Object.entries(process.env).sort(([a], [b]) => a.localeCompare(b))));
+    return factDigest(parts.join('\0'));
+  } catch {
+    return null;
+  }
+}
+
 /** 单视图 lint 执行（文件模式，argv 固定由适配器构造）。 */
 export interface BiomeRunResult {
   conclusion: CheckConclusion;
@@ -388,6 +568,7 @@ export interface BiomeRunResult {
   reportComplete: boolean;
   reasons: string[];
   exitCode: number | null;
+  timedOut: boolean;
   stdoutRef?: string;
   stderrRef?: string;
   stdoutBytes: number;
@@ -409,10 +590,13 @@ export async function runBiomeLint(options: {
   deps?: CheckRunnerDeps;
 }): Promise<BiomeRunResult> {
   const args = ['lint', '--reporter=json', ...options.files];
+  const launcher =
+    path.basename(path.dirname(options.program)) === 'bin' &&
+    path.basename(options.program) === 'biome';
   const outcome = await runCheckProcess(
     {
-      program: options.program,
-      args,
+      program: launcher ? process.execPath : options.program,
+      args: launcher ? [options.program, ...args] : args,
       cwd: options.viewRoot,
       cwdDisplay: options.viewDisplay,
       timeoutMs: options.timeoutMs,
@@ -420,9 +604,30 @@ export async function runBiomeLint(options: {
     options.context,
     options.deps,
   );
-  const parsed = parseBiomeJsonReport(outcome.stdoutText, { allowedPaths: options.files });
+  const sourceTexts: Record<string, string> = {};
+  let sourceBytes = 0;
+  for (const file of options.files) {
+    try {
+      const real = resolveAuthorizedPath(
+        { ...options.context, workspaceRoot: options.viewRoot },
+        file,
+      );
+      const size = fs.statSync(real).size;
+      if (sourceBytes + size > BASELINE_MAX_BYTES) break;
+      sourceTexts[file.replace(/^\.\//, '')] = fs.readFileSync(real, 'utf8');
+      sourceBytes += size;
+    } catch {
+      /* 缺少源码时解析器将明确禁止诊断比较。 */
+    }
+  }
+  const parsed = parseBiomeJsonReport(outcome.stdoutText, {
+    allowedPaths: options.files,
+    sourceTexts,
+    sourceRoot: options.viewRoot,
+  });
   const base = {
     exitCode: outcome.exitCode,
+    timedOut: outcome.timedOut,
     ...(outcome.stdoutRef ? { stdoutRef: outcome.stdoutRef } : {}),
     ...(outcome.stderrRef ? { stderrRef: outcome.stderrRef } : {}),
     stdoutBytes: outcome.stdoutBytes,
@@ -441,14 +646,20 @@ export async function runBiomeLint(options: {
       reasons: [...parsed.reasons, 'biome_report_invalid'],
     };
   }
-  const conclusion = conclusionFromBiome(parsed);
+  const complete =
+    parsed.reportComplete &&
+    outcome.logsComplete &&
+    !outcome.timedOut &&
+    parsed.diagnostics.length <= 128 &&
+    (parsed.summary.errors > 0 ? outcome.exitCode === 1 : outcome.exitCode === 0);
+  const conclusion = complete ? conclusionFromBiome(parsed) : 'inconclusive';
   const reasons = [...parsed.reasons];
   if (conclusion === 'inconclusive') reasons.push('biome_report_incomplete');
   return {
     ...base,
     conclusion,
     diagnostics: parsed.diagnostics,
-    reportComplete: parsed.reportComplete,
+    reportComplete: complete,
     reasons,
   };
 }
@@ -720,10 +931,17 @@ export async function runBiomeBaseline(options: {
 export function biomeFacts(result: BiomeRunResult): ToolFacts {
   return {
     version: EXECUTION_EVIDENCE_VERSION,
+    process: {
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      logsComplete: result.logsComplete,
+      ...(result.stdoutRef ? { stdoutRef: result.stdoutRef } : {}),
+      ...(result.stderrRef ? { stderrRef: result.stderrRef } : {}),
+    },
     check: {
       profile: 'biome-lint',
       conclusion: result.conclusion,
-      diagnostics: result.diagnostics.slice(0, 128),
+      diagnostics: result.reportComplete ? result.diagnostics.slice(0, 128) : null,
       reportComplete: result.reportComplete,
     },
   };

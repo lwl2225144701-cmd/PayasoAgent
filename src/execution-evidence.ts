@@ -43,6 +43,31 @@ export type CheckConclusion = 'passed' | 'failed' | 'inconclusive';
 
 export type CheckProfileName = 'process' | 'biome-lint';
 
+/** Runtime 提供给 Harness 的有界只读投影，不携带日志正文或宿主路径。 */
+export interface EvidenceViewCheck {
+  checkId: string;
+  profile: CheckProfileName;
+  conclusion: CheckConclusion | null;
+  source: 'executed' | 'reused';
+  reusable: boolean;
+  validity: 'verified' | 'version-unknown' | 'stale';
+  finishedAt: string | null;
+  logRefs: { stdoutRef?: string; stderrRef?: string } | null;
+}
+
+export interface EvidenceView {
+  checks: EvidenceViewCheck[];
+  reads?: EvidenceViewRead[];
+}
+
+export interface EvidenceViewRead {
+  path: string;
+  versionKind: 'content' | 'stat';
+  version: string;
+  returnedRanges: ReadRange[];
+  complete: boolean;
+}
+
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
 export interface Diagnostic {
@@ -445,7 +470,11 @@ export function validateToolFacts(raw: unknown): ToolFactsValidation {
 
   const logsComplete = facts.process ? facts.process.logsComplete : true;
   const comparable = reportComplete && logsComplete && facts.check !== undefined;
-  const reusable = comparable && facts.check?.conclusion !== 'inconclusive';
+  // 通用进程没有可核实的依赖闭包；报告完整不等于输入版本已证明。
+  const reusable =
+    comparable &&
+    facts.check?.profile === 'biome-lint' &&
+    facts.check.conclusion !== 'inconclusive';
   const conclusion = facts.check?.conclusion ?? null;
 
   return {
@@ -456,7 +485,7 @@ export function validateToolFacts(raw: unknown): ToolFactsValidation {
     comparable,
     reusable,
     conclusion,
-    mayClaimPassed: reusable && conclusion === 'passed',
+    mayClaimPassed: comparable && conclusion === 'passed',
   };
 }
 

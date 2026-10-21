@@ -74,12 +74,8 @@ export function renderProgressReminder(state: ProgressReminderState | undefined)
   if (state?.reminder !== 'pending') return '';
   return (
     `\n\n[Progress review]\n` +
-    `You have completed ${state.readOnlyTurns} read-only tool turns over ` +
-    `${Math.floor(state.readOnlyMs / 1000)} seconds of active investigation. ` +
-    'Review the user goal and evidence already available. If they support the next action, carry it out and verify the result; ' +
-    'if the requested result is ready, deliver it. If more investigation is necessary, identify the specific unresolved question ' +
-    'and investigate that question without repeating broad searches or replanning settled decisions. ' +
-    'Complete the requested scope. For read-only tasks, continue gathering necessary evidence or answer; no edits are required. ' +
-    'This reminder does not establish that the task is complete or change any permission or user constraint.'
+    `${state.readOnlyTurns} read-only tool turns over ${Math.floor(state.readOnlyMs / 1000)} seconds. ` +
+    'Use established evidence for a concrete next step; investigate uncertainties that could change it. ' +
+    'Follow the requested scope. For read-only tasks, no edits are required.'
   );
 }

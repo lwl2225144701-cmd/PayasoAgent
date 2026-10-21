@@ -29,6 +29,8 @@ export interface BoundedScratchpadView {
 }
 
 export interface ScratchpadViewOptions {
+  /** 用户请求已单独投影时，不重复任务原文。 */
+  includeTask?: boolean;
   /** Completed steps rendered (most recent first). */
   maxCompletedSteps?: number;
   /** Clip length for a step's input / next step. */
@@ -40,7 +42,7 @@ export interface ScratchpadViewOptions {
 }
 
 const DEFAULTS = {
-  maxCompletedSteps: 12,
+  maxCompletedSteps: 4,
   maxFieldChars: 160,
   maxNoteChars: 200,
   maxTaskChars: 300,
@@ -59,6 +61,7 @@ export function renderBoundedScratchpadView(
   const maxFieldChars = options.maxFieldChars ?? DEFAULTS.maxFieldChars;
   const maxNoteChars = options.maxNoteChars ?? DEFAULTS.maxNoteChars;
   const maxTaskChars = options.maxTaskChars ?? DEFAULTS.maxTaskChars;
+  const includeTask = options.includeTask !== false;
 
   const keptSteps = pad.completedSteps.slice(-maxCompletedSteps);
   const omittedCompletedSteps = pad.completedSteps.length - keptSteps.length;
@@ -75,7 +78,7 @@ export function renderBoundedScratchpadView(
           .map(
             (failure) =>
               `  - ${failure.tool}("${clip(failure.input, maxFieldChars)}") 已失败 ${failure.retries} 次: ` +
-              `${clip(failure.error, maxNoteChars)}（禁止再次调用相同参数）`,
+              clip(failure.error, maxNoteChars),
           )
           .join('\n')
       : '  (无)';
@@ -86,32 +89,21 @@ export function renderBoundedScratchpadView(
           .map(
             (step) =>
               `  - ${step.tool}("${clip(step.input, maxFieldChars)}") 结果无效: ` +
-              `${clip(step.reason, maxNoteChars)}（已记录，不要重复依赖该结果）`,
+              clip(step.reason, maxNoteChars),
           )
           .join('\n')
       : '  (无)';
-  const next = pad.nextStep
-    ? `  ${pad.nextStep.tool}("${clip(pad.nextStep.input, maxFieldChars)}")`
-    : '  (等待 LLM 决策，请判断是否需要继续调用工具)';
-
-  const header =
-    omittedCompletedSteps > 0
-      ? `已完成步骤: 共 ${pad.completedSteps.length} 步（最近 ${keptSteps.length} 步）`
-      : '已完成步骤:';
-
   const text = [
-    '[执行进度 Scratchpad]',
-    `任务: ${clip(pad.task, maxTaskChars)}`,
-    header,
-    ...(omittedCompletedSteps > 0 ? [`  … 已省略更早 ${omittedCompletedSteps} 步`] : []),
+    '[工具执行记录]',
+    ...(includeTask ? [`任务: ${clip(pad.task, maxTaskChars)}`] : []),
+    `已执行 ${pad.completedSteps.length} 次调用（最近 ${keptSteps.length} 次）:`,
+    ...(omittedCompletedSteps > 0 ? [`  … 已省略更早 ${omittedCompletedSteps} 次调用`] : []),
     steps,
-    '失败记录:',
-    fails,
-    '无效结果记录:',
-    invalids,
-    '下一步:',
-    next,
-    '请基于以上进度继续：不要重复已完成的步骤，禁止重复调用失败记录中的相同参数，已记录为"无效结果"的步骤不要重复依赖，优先参考"下一步"。工具结果请以对话历史中的实际输出为准。',
+    ...(pad.failedSteps.length ? ['失败记录:', fails] : []),
+    ...(pad.invalidSteps.length ? ['无效结果记录:', invalids] : []),
+    ...(pad.nextStep
+      ? [`待执行调用: ${pad.nextStep.tool}("${clip(pad.nextStep.input, maxFieldChars)}")`]
+      : []),
   ].join('\n');
 
   return {
@@ -119,7 +111,7 @@ export function renderBoundedScratchpadView(
     omittedCompletedSteps,
     truncated:
       omittedCompletedSteps > 0 ||
-      pad.task.length > maxTaskChars ||
+      (includeTask && pad.task.length > maxTaskChars) ||
       pad.completedSteps.some((step) => step.input.length > maxFieldChars) ||
       pad.failedSteps.length > 10 ||
       pad.failedSteps.some(

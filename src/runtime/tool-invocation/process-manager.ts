@@ -9,11 +9,13 @@
 // 边界：只消费注入的 ToolInvocationContext（由 runAgent 装配），不反向依赖
 // agent.ts；本模块不拥有可变状态（State/Scratchpad/Messages 均为引用传入）。
 
+import fs from 'node:fs';
 import { validateToolFacts } from '../../execution-evidence.js';
 import type { AgentContextHarness } from '../../harness/context-harness.js';
 import type { ToolInvocationDisposition } from '../../harness/repeat-call-policy.js';
 import type { ChatMessage } from '../../llm/llm.js';
 import { getNetworkMode } from '../../network-mode.js';
+import { assertInsideRoot, resolveWorkspacePath } from '../../sandbox/sandbox-manager.js';
 import type { ToolchainPreparationPort } from '../../sandbox/toolchain-preparation.js';
 import { getToolchainPreparationPlan } from '../../sandbox/toolchain-preparation.js';
 import { formatToolArgumentIssues, validateToolArguments } from '../../tools/tool-arguments.js';
@@ -322,22 +324,66 @@ export async function invokeToolCall(
   // ---------------------------------------------------------------------------
   // v2.5（计划 §6 / P1-A）：执行事实与身份。
   // 固定顺序：参数与授权校验（已在上方完成）→ 查可复用结论 → 分配执行身份 →
-  // 沿原副作用保护实际执行。复用只发生在"已结算且可复用"的检查上，且 reusce=false
+  // 沿原副作用保护实际执行。复用只发生在"已结算且可复用"的检查上，且 reuse=false
   // 只绕过结论复用，不绕过 running/uncertain 保护。
   // ---------------------------------------------------------------------------
   const origin = ctx.toolCallOrigin ?? `iter:${state.iteration}:call:${call.id}`;
   let evidenceInvocation: ReturnType<ExecutionEvidenceStore['getOrCreateInvocation']> = null;
+  let inputFingerprint: string | null = null;
+  const fingerprint = async (): Promise<string | null> => {
+    try {
+      return (await toolDef.getEvidenceFingerprint?.(args, toolContext)) ?? null;
+    } catch {
+      return null;
+    }
+  };
   if (evidenceStore && toolDef.evidenceKind === 'check') {
     // 检查对象摘要：用工具自己声明的 operation key（不含 invocationId —— 身份在下一步注入）。
     const specHash = resolveOperationKey(toolDef, args, {
       ...toolContext,
       invocationId: undefined,
     });
-    const reuseIntent = args.reuse !== false;
-    const reusable = reuseIntent ? evidenceStore.findReusable(specHash, null) : null;
+    const unresolved = evidenceStore.findUnresolved(specHash, origin);
+    if (unresolved) {
+      observeDisposition('uncertain');
+      emit({ type: 'side_effect_uncertain', tool: toolName, key: unresolved.invocationId });
+      messages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content:
+          `[check-uncertain] 同一检查仍有未决执行（checkId=${unresolved.checkId}）。` +
+          '本次未启动进程；请先确认原执行及其副作用。reuse=false 或新调用身份不能绕过该保护。',
+      });
+      save();
+      return;
+    }
+    inputFingerprint = await fingerprint();
+    const reuseIntent =
+      args.reuse !== false &&
+      toolContext.checkReuse !== false &&
+      process.env.PAYASO_CHECK_REUSE !== 'off';
+    let reusable = reuseIntent ? evidenceStore.findReusable(specHash, inputFingerprint) : null;
+    if (reusable) {
+      const refs = Object.values(reusable.logRefs ?? {});
+      const logsAvailable =
+        refs.length > 0 &&
+        refs.every((ref) => {
+          try {
+            const logPath = resolveWorkspacePath(toolContext.workspaceRoot, ref);
+            assertInsideRoot(toolContext.workspaceRoot, logPath);
+            return fs.statSync(logPath).isFile();
+          } catch {
+            return false;
+          }
+        });
+      if (!logsAvailable) {
+        evidenceStore.invalidateCompleted('logs_unavailable');
+        reusable = null;
+      }
+    }
     if (reusable && reusable.conclusion !== null) {
       observeDisposition('replayed');
-      const profile = reusable.process !== null ? 'process' : 'biome-lint';
+      const profile = reusable.profile ?? 'biome-lint';
       emit({
         type: 'check_result',
         checkId: reusable.checkId,
@@ -353,11 +399,22 @@ export async function invokeToolCall(
         `conclusion=${reusable.conclusion}），本次未再次启动进程。` +
         `复用只证明"同一检查对象 + 同一输入版本"的结论，不代表用户任务已验收；需要强制重跑请传 reuse=false。`;
       messages.push({ role: 'tool', tool_call_id: call.id, content: reusedMsg });
-      return;
+      save();
+      return {
+        tool: toolName,
+        effect,
+        evidence: {
+          supported: true,
+          newReads: 0,
+          newMutations: 0,
+          newChecks: 0,
+          evidenceIds: [reusable.checkId],
+        },
+      };
     }
     evidenceInvocation = evidenceStore.getOrCreateInvocation(origin, {
       specHash,
-      inputFingerprint: null,
+      inputFingerprint,
     });
     if (!evidenceInvocation) {
       const capacityMsg =
@@ -531,27 +588,45 @@ export async function invokeToolCall(
       // （工作区相对路径）直接挂到 tool 消息与 trace，下轮物化进模型。
       const normalized = normalizeToolResult(rawResult);
       const attachedImages: ToolImage[] | undefined = normalized.images;
+      const validatedFacts =
+        normalized.facts === undefined ? undefined : validateToolFacts(normalized.facts);
+      // 未知写入可能影响任何检查依据；保守失效，不把旧验证投影成当前通过。
+      if (
+        evidenceStore &&
+        (toolDef.evidenceKind !== 'check' || args.profile === 'process') &&
+        toolName !== 'updatePlan' &&
+        effect !== 'read' &&
+        (!validatedFacts?.valid || !validatedFacts.facts?.mutations?.length)
+      ) {
+        evidenceStore.invalidateCompleted('unknown_write');
+      }
 
       // v2.5（计划 §5.3/§6.2）：facts 必须在原始结果归一化之后、文本截断与最终保存之前
       // 校验并记录；一次调用只上报一次（内部重试不重复累计）——本循环对
       // non_idempotent 的 effectiveRetries=0，天然满足。
       let callEvidence: ToolCallEvidenceFacts | undefined;
-      if (normalized.facts !== undefined) {
+      if (normalized.facts !== undefined && validatedFacts) {
         const rawFacts = normalized.facts;
         // 消费侧统一先过 validateToolFacts：版本/字段/路径/容量不认识的事实
         // 一律不产生"进展"（也不能被换成 passed）。
-        const validated = validateToolFacts(rawFacts);
+        const validated = validatedFacts;
         let newChecks = 0;
         const evidenceIds: string[] = [];
         if (evidenceStore && evidenceInvocation) {
           const record = evidenceStore.recordResult(evidenceInvocation.invocationId, rawFacts, {
             iteration: state.iteration,
             durationMs,
+            inputFingerprint: await fingerprint(),
           });
           if (record) {
             const profile = rawFacts.check?.profile ?? 'process';
             // 只有本次真实执行并结算出的结论才算"新出现"（复用旧结论不是新成果）。
-            if (record.source === 'executed' && record.conclusion !== null) {
+            if (
+              record.source === 'executed' &&
+              validated.reportComplete &&
+              (record.conclusion === 'passed' || record.conclusion === 'failed') &&
+              record.invalidationReason !== 'input_changed'
+            ) {
               newChecks = 1;
               evidenceIds.push(record.checkId);
             }
@@ -745,6 +820,15 @@ export async function invokeToolCall(
           content: deniedMsg,
         });
         return; // 政策性拒绝，不重试
+      }
+
+      // 执行抛错/取消仍可能已经写入，不能继续把此前检查投影为当前通过。
+      if (
+        (toolDef.evidenceKind !== 'check' || args.profile === 'process') &&
+        toolName !== 'updatePlan' &&
+        effect !== 'read'
+      ) {
+        evidenceStore?.invalidateCompleted('unknown_write');
       }
 
       // v2.3 工具级超时：deadline 在预算内到点（execute 仍挂在途）。

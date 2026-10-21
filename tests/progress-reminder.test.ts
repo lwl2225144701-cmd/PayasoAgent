@@ -66,7 +66,7 @@ const pad = {
 /** v2.5 起动态上下文（含进度提醒）位于尾部 [Context] 消息，不再进 system。 */
 function contextText(messages: Array<{ role: string; content: unknown }>): string {
   return String(
-    messages.find((message) => String(message.content).startsWith('[Context]'))?.content ?? '',
+    messages.find((message) => String(message.content).includes('[Context]'))?.content ?? '',
   );
 }
 const viewHarness = harness('read-only');
@@ -196,9 +196,7 @@ function script(messages: ChatMessage[], onRequest?: (index: number) => void) {
 const hasReminder = (messages: (typeof requests)[number]) =>
   messages.some(
     (m) =>
-      m.role === 'user' &&
-      String(m.content).startsWith('[Context]') &&
-      String(m.content).includes('[Progress review]'),
+      String(m.content).includes('[Context]') && String(m.content).includes('[Progress review]'),
   );
 function options(runId: string, contextHarness = harness()) {
   const root = path.join(ROOT, runId);

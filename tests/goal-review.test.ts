@@ -4,7 +4,7 @@
 //   1. 按全部工具回合计数（读/写/失败/中性都算）——"换个写法"不能重置周期
 //   2. 跨阈值触发一次并重置计数（下一周期从零开始）；pending 期间不重复触发
 //   3. 时间阈值独立生效（长耗时少回合也触发）
-//   4. 文案携带原始目标、近期结果、剩余预算；只陈述事实不代模型下结论
+//   4. 文案只提供周期事实和简短建议，不重复原文/工具结果/预算或宣判完成
 //   5. 归一化全量防御；env 可调可关
 import assert from 'node:assert/strict';
 import {
@@ -106,29 +106,24 @@ check('归一化：坏字段收敛到安全值', () => {
   });
 });
 
-check('文案携带原始目标、近期结果与剩余预算，只陈述事实', () => {
+check('常规回顾只保留周期事实和决策建议，不重复目标与结果', () => {
   const text = renderGoalReviewReminder({
-    goal: '清理远端过期 releases',
     toolTurns: 10,
     activeMs: 200_000,
-    recentResult: 'git ls-remote --tags → 17 tags',
-    budgetLines: ['model calls: 12 remaining (used 8 / 20)'],
   });
   assert.match(text, /\[Periodic goal review\]/);
   assert.match(text, /10 tool turns over 200 seconds/);
-  assert.match(text, /Original user goal: 清理远端过期 releases/);
-  assert.match(text, /Most recent tool result \(bounded\): git ls-remote/);
-  assert.match(text, /model calls: 12 remaining/);
-  assert.match(text, /which specific unresolved question/);
-  assert.match(text, /Long tasks are legitimate/);
+  assert.match(text, /change implementation, verification or the answer/);
+  assert.doesNotMatch(
+    text,
+    /Original user goal|Most recent tool result|Remaining execution budget|Long tasks/,
+  );
 });
 
 check('预算关闭时文案整段省略剩余预算（不虚构无限）', () => {
   const text = renderGoalReviewReminder({
-    goal: 'g',
     toolTurns: 3,
     activeMs: 0,
-    budgetLines: [],
   });
   assert.doesNotMatch(text, /Remaining execution budget/);
   assert.doesNotMatch(text, /unlimited/i);

@@ -232,18 +232,20 @@ export interface ModelWaitState {
 
 /**
  * 是否正在等待模型首 token：事件流最后一条是 llm_call_started 或
- * llm_request_sent（此后无任何后续事件）时成立。
- * 任何后续事件（reasoning/assistant delta、tool_call 等）都意味着等待结束。
+ * llm_request_sent时成立；传输观测事件不代表用户可见增量，不能结束等待。
+ * reasoning/assistant delta、tool_call 等意味着等待结束。
  * 运行态由调用方保证（只在 run.status === 'running' 时调用），这里保持纯事件判定。
  */
 export function deriveModelWaitState(events: HostEvent[], now: number): ModelWaitState | null {
-  const last = events[events.length - 1];
+  let lastIndex = events.length - 1;
+  while (lastIndex >= 0 && events[lastIndex].type === 'llm_transport') lastIndex--;
+  const last = events[lastIndex];
   if (last?.type === 'llm_request_sent') {
     const requestMs = Date.parse(last.timestamp);
     if (!Number.isFinite(requestMs) || now < requestMs) return null;
     // 回退找同一个迭代的 llm_call_started（估计输入 tokens 只有它有）。
     let callStarted: LlmCallStartedEvent | undefined;
-    for (let index = events.length - 2; index >= 0; index--) {
+    for (let index = lastIndex - 1; index >= 0; index--) {
       const ev = events[index];
       if (ev.type === 'llm_call_started' && ev.iteration === last.iteration) {
         callStarted = ev;

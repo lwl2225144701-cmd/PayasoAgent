@@ -78,7 +78,12 @@ function replayable(messages: ChatMessage[]): boolean {
  * 但摘要必然可用。
  */
 function forReplay(message: ChatMessage): ChatMessage {
-  const { images: _images, reasoning_content: _reasoning, ...rest } = message;
+  const {
+    images: _images,
+    reasoning_content: _reasoning,
+    providerContinuation: _continuation,
+    ...rest
+  } = message;
   return rest;
 }
 

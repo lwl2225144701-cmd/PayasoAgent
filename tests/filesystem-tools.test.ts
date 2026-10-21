@@ -269,6 +269,8 @@ test('read offset+limit 按行切片并给续读行号', async () => {
   assert.ok(res.includes('3→c'), `应含第3行: ${res}`);
   assert.ok(!res.includes('4→d'), 'limit=2 不应含第4行');
   assert.ok(res.includes('offset=4'), `应提示 offset=4 续读: ${res}`);
+  assert.ok(res.includes('本次输出中'), '分页提示只陈述本次返回范围');
+  assert.ok(!res.includes('其后内容尚未读取'), '不能把本页之外误说成此前未读');
 });
 
 test('read offset 超出行数 → 报错', async () => {
@@ -295,10 +297,18 @@ test('read 连续分页：唯一游标推进，完整遍历无跳行且不超预
   let offset = 1;
   const seen: number[] = [];
   while (offset <= lines.length) {
-    const res = await execute('read', { path: 'work/wide.txt', offset }, ctx);
+    const result = normalizeToolResult(
+      await executeRaw('read', { path: 'work/wide.txt', offset }, ctx),
+    );
+    const res = result.text;
     assert.ok(Buffer.byteLength(res, 'utf8') <= 16 * 1024);
     const returned = [...res.matchAll(/^\s*(\d+)→/gm)].map((m) => Number(m[1]));
     assert.ok(returned.length);
+    assert.deepEqual(
+      result.facts?.reads?.[0]?.returnedRanges,
+      [{ startLine: offset, endLine: returned.at(-1) }],
+      '读取账本必须记录实际返回范围，不能包含被切掉的行',
+    );
     assert.deepEqual(
       returned,
       Array.from({ length: returned.length }, (_, i) => offset + i),

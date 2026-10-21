@@ -8,7 +8,7 @@
 //   R05 输入闭包/检查对象/适配器版本变化 → 复用失效；相同命令 ≠ 相同检查。
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -22,7 +22,8 @@ import { createSideEffectGuard, resolveOperation } from '../src/runtime/side-eff
 import { createState } from '../src/runtime/state.js';
 import { invokeToolCall } from '../src/runtime/tool-invocation/process-manager.js';
 import type { TraceEventInput } from '../src/runtime/trace.js';
-import { checkSpecDigest, checkTool, registerCheckTool } from '../src/tools/check.js';
+import { checkSpecDigest, checkTool, executeCheck, registerCheckTool } from '../src/tools/check.js';
+import { readFacts } from '../src/tools/tool-facts.js';
 import type { ToolContext } from '../src/tools/tools.js';
 
 const tests: { name: string; fn: () => void | Promise<void> }[] = [];
@@ -72,17 +73,17 @@ test('R01 同 origin 复用同一个 invocationId，已结算记录可追溯', (
   assert.equal(settled?.invocationId, first.invocationId);
   assert.equal(settled?.conclusion, 'passed');
   assert.equal(settled?.executionState, 'settled');
-  assert.equal(settled?.reusable, true);
+  assert.equal(settled?.reusable, false, '通用进程的输入闭包未知，不能自动复用');
 
   const again = store.getOrCreateInvocation('iter:1:batch:0:call:c1', { specHash });
   assert.equal(again?.invocationId, first.invocationId, 'same origin must not allocate a new run');
   assert.equal(again?.reused, true);
   // 复用只更新访问，不复制检查实体
-  assert.equal(store.findReusable(specHash, null)?.checkId, settled?.checkId);
+  assert.equal(store.findReusable(specHash, null), null);
   assert.equal(store.snapshot().records.length, 1, 'reuse must not duplicate the check entity');
 });
 
-test('R01 端到端：可复用结论命中时不启动进程（用不存在的程序证伪）', async () => {
+test('R01 端到端：未知输入版本的旧 passed 不能掩盖不存在的程序', async () => {
   const store = createExecutionEvidenceStore();
   const args = { profile: 'process', program: 'definitely-not-a-real-binary-xyz', args: [] };
   const specHash = checkSpecDigest(args, workspaceContext());
@@ -92,8 +93,8 @@ test('R01 端到端：可复用结论命中时不启动进程（用不存在的�
 
   const messages = await runCheckThroughManager(store, args, 'iter:9:batch:0:call:next');
   const content = messages.join('\n');
-  assert.match(content, /check-reused/, 'reuse hit must answer from the recorded conclusion');
-  assert.doesNotMatch(content, /not found|ENOENT|未找到/i, 'reuse hit must NOT spawn the process');
+  assert.doesNotMatch(content, /check-reused/, '未知版本必须走实际执行通路');
+  assert.equal(store.snapshot().records.length, 2, '新调用具有自己的执行记录');
 });
 
 // ---- R02：源/输入变化必须重新执行 ----
@@ -104,7 +105,7 @@ test('R02 检查对象变化 → 新身份、不复用（旧副作用结果不�
   assert.ok(first);
   store.recordResult(first.invocationId, processFacts(true));
 
-  // 源文件变了 → 检查对象摘要变化（真实实现里由输入版本参与摘要）
+  // 参数变化只改变检查对象；真实文件变化在另一个端到端用例覆盖。
   const changedArgs = { ...processArgs, args: ['--version', '--changed'] };
   const specB = checkSpecDigest(changedArgs, workspaceContext());
   assert.notEqual(specB, specA);
@@ -155,6 +156,11 @@ test('R03 uncertain 不产生可复用结论，也不被 reuse=false 绕过', ()
   assert.equal(record?.executionState, 'uncertain');
   assert.equal(record?.conclusion, null, 'uncertain must never carry a conclusion');
   assert.equal(store.hasUnresolved(), true);
+  assert.equal(
+    store.getOrCreateInvocation('new-origin', { specHash }),
+    null,
+    '换 origin 不能绕过相同检查的未决保护',
+  );
 
   const guard = createSideEffectGuard([
     { key: `check::check:v2:invocation:${handle.invocationId}`, state: 'uncertain' },
@@ -167,6 +173,19 @@ test('R03 uncertain 不产生可复用结论，也不被 reuse=false 绕过', ()
     'non_idempotent',
   );
   assert.equal(disposition.kind, 'uncertain', 'uncertain protection must not be bypassed');
+});
+
+test('R03 端到端：新 origin + reuse=false 仍拦截同 spec 的 uncertain', async () => {
+  const store = createExecutionEvidenceStore();
+  const args = { profile: 'process', program: 'node', args: ['--version'] };
+  const specHash = checkSpecDigest(args, workspaceContext());
+  const handle = store.getOrCreateInvocation('old-origin', { specHash });
+  assert.ok(handle);
+  store.recordUncertain(handle.invocationId, 'interrupted');
+  const messages = await runCheckThroughManager(store, { ...args, reuse: false }, 'new-origin');
+  assert.match(messages.join('\n'), /check-uncertain/);
+  assert.equal(store.snapshot().records.length, 1, '不得创建第二次执行身份');
+  assert.equal(store.snapshot().records[0]?.executionState, 'uncertain');
 });
 
 // ---- R04：新 Run 清空 / 旧快照与未知版本按未知 ----
@@ -184,7 +203,9 @@ test('R04 新 Run 是空记录；快照往返保留结论；未知版本/坏字�
 
   const resumed = createExecutionEvidenceStore();
   resumed.restore(snapshot);
-  assert.equal(resumed.findReusable(specHash, null)?.conclusion, 'passed');
+  assert.equal(resumed.findReusable(specHash, null), null);
+  assert.equal(resumed.view().checks[0]?.conclusion, 'passed', '保留历史结论用于追溯');
+  assert.equal(resumed.view().checks[0]?.validity, 'version-unknown');
 
   const unknownVersion = createExecutionEvidenceStore();
   unknownVersion.restore({ ...snapshot, version: 999 });
@@ -217,12 +238,122 @@ test('R05 输入闭包变化 → 复用失效；相同命令不等于相同检�
   const specHash = checkSpecDigest(processArgs, workspaceContext());
   const handle = store.getOrCreateInvocation('o1', { specHash, inputFingerprint: 'fp-a' });
   assert.ok(handle);
-  store.recordResult(handle.invocationId, processFacts(true));
+  store.recordResult(handle.invocationId, {
+    ...processFacts(true),
+    check: { profile: 'biome-lint', conclusion: 'passed', diagnostics: [], reportComplete: true },
+  });
 
   assert.equal(store.findReusable(specHash, 'fp-a')?.conclusion, 'passed');
   assert.equal(store.findReusable(specHash, 'fp-b'), null, 'input closure change must invalidate');
   assert.equal(store.findReusable(specHash, null), null, 'unknown closure is not the same closure');
   assert.equal(store.findReusable(`${specHash}:adapter-v2`, 'fp-a'), null);
+  store.invalidateCompleted('workspace_changed');
+  assert.equal(store.findReusable(specHash, 'fp-a'), null);
+  assert.equal(store.view().checks[0]?.validity, 'stale');
+});
+
+test('R02 真实进程：同参数脚本从 exit 0 改成 exit 1 必须重新执行', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'evidence-source-'));
+  const previous = {
+    attachment: process.env.PAYASO_ATTACHMENT_STORE,
+    gate: process.env.PAYASO_SHELL_UNSANDBOXED,
+    path: process.env.PATH,
+  };
+  process.env.PAYASO_ATTACHMENT_STORE = path.join(root, 'attachments');
+  process.env.PAYASO_SHELL_UNSANDBOXED = '1';
+  process.env.PATH = `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}`;
+  let executions = 0;
+  registerCheckTool({
+    ...checkTool,
+    execute: (args, ctx) => {
+      executions++;
+      return executeCheck(args, ctx, { platform: 'linux' });
+    },
+  });
+  try {
+    const store = createExecutionEvidenceStore();
+    const args = { profile: 'process', program: 'node', args: ['case.cjs'] };
+    writeFileSync(path.join(root, 'case.cjs'), 'process.exit(0);');
+    await runCheckThroughManager(store, args, 'first', root);
+    assert.equal(store.view().checks[0]?.conclusion, 'passed');
+    writeFileSync(path.join(root, 'case.cjs'), 'process.exit(1);');
+    const output = await runCheckThroughManager(store, args, 'second', root);
+    assert.equal(executions, 2);
+    assert.doesNotMatch(output.join('\n'), /check-reused/);
+    assert.equal(store.view().checks[0]?.conclusion, 'failed');
+  } finally {
+    registerCheckTool();
+    if (previous.attachment === undefined) delete process.env.PAYASO_ATTACHMENT_STORE;
+    else process.env.PAYASO_ATTACHMENT_STORE = previous.attachment;
+    if (previous.gate === undefined) delete process.env.PAYASO_SHELL_UNSANDBOXED;
+    else process.env.PAYASO_SHELL_UNSANDBOXED = previous.gate;
+    if (previous.path === undefined) delete process.env.PATH;
+    else process.env.PATH = previous.path;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('R05 已验证指纹：相同版本复用，执行期间变化或日志缺失则重跑', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'evidence-verified-'));
+  const store = createExecutionEvidenceStore();
+  let fingerprint = 'v1';
+  let executions = 0;
+  const args = { profile: 'biome-lint', paths: ['a.css'] };
+  mkdirSync(path.join(root, 'input/spill'), { recursive: true });
+  writeFileSync(path.join(root, 'input/spill/run.log'), 'complete report');
+  registerCheckTool({
+    ...checkTool,
+    getEvidenceFingerprint: () => fingerprint,
+    execute: async () => {
+      executions++;
+      if (executions === 3) fingerprint = 'changed-during-execution';
+      return {
+        content: 'fixture report',
+        facts: {
+          ...processFacts(true),
+          version: 1,
+          check: {
+            profile: 'biome-lint',
+            conclusion: 'passed',
+            diagnostics: [],
+            reportComplete: true,
+          },
+        },
+      };
+    },
+  });
+  try {
+    await runCheckThroughManager(store, args, 'one', root);
+    assert.equal(store.view().checks[0]?.validity, 'verified');
+    const cached = await runCheckThroughManager(store, args, 'two', root);
+    assert.match(cached.join('\n'), /check-reused/);
+    assert.equal(executions, 1);
+    rmSync(path.join(root, 'input/spill/run.log'));
+    const noLog = await runCheckThroughManager(store, args, 'three', root);
+    assert.doesNotMatch(noLog.join('\n'), /check-reused/);
+    assert.equal(executions, 2, '日志不可访问时不得复用');
+    fingerprint = 'v2';
+    await runCheckThroughManager(store, args, 'four', root);
+    assert.equal(executions, 3);
+    assert.equal(store.view().checks[0]?.validity, 'stale', '前后指纹不同不得确认当前版本');
+    writeFileSync(path.join(root, 'input/spill/run.log'), 'complete report');
+    await runCheckThroughManager(store, args, 'five', root);
+    const beforeDisabled = executions;
+    await runCheckThroughManager(store, args, 'sdk-disabled', root, { checkReuse: false });
+    assert.equal(executions, beforeDisabled + 1, 'SDK 开关关闭复用，但仍记录事实');
+    const previousReuse = process.env.PAYASO_CHECK_REUSE;
+    try {
+      process.env.PAYASO_CHECK_REUSE = 'off';
+      await runCheckThroughManager(store, args, 'env-disabled', root);
+      assert.equal(executions, beforeDisabled + 2, '环境开关关闭复用');
+    } finally {
+      if (previousReuse === undefined) delete process.env.PAYASO_CHECK_REUSE;
+      else process.env.PAYASO_CHECK_REUSE = previousReuse;
+    }
+  } finally {
+    registerCheckTool();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ---- 容量与不可淘汰规则 ----
@@ -280,8 +411,10 @@ async function runCheckThroughManager(
   store: ReturnType<typeof createExecutionEvidenceStore>,
   args: Record<string, unknown>,
   origin: string,
+  workspaceRoot?: string,
+  options: Pick<ToolContext, 'checkReuse'> = {},
 ): Promise<string[]> {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'evidence-'));
+  const root = workspaceRoot ?? mkdtempSync(path.join(os.tmpdir(), 'evidence-'));
   const messages: { role: string; tool_call_id?: string; content: string }[] = [];
   const state = createState('evidence', 'evidence-run');
   const emitted: TraceEventInput[] = [];
@@ -289,7 +422,13 @@ async function runCheckThroughManager(
     await invokeToolCall(
       {
         runId: 'evidence-run',
-        toolContext: { runId: 'evidence-run', workspaceRoot: root },
+        toolContext: {
+          ...options,
+          runId: 'evidence-run',
+          workspaceRoot: root,
+          permissionMode: 'workspace-write',
+          networkMode: 'on',
+        },
         messages: messages as never,
         state,
         scratchpad: createScratchpad('evidence'),
@@ -313,12 +452,84 @@ async function runCheckThroughManager(
       },
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    if (!workspaceRoot) rmSync(root, { recursive: true, force: true });
   }
   return messages.map((message) => message.content ?? '');
 }
 
 // ---- runner ----
+test('行覆盖：真实 Run 的整文件读取后，换成五个切片重读均不是新增', () => {
+  const store = createExecutionEvidenceStore();
+  const read = (start: number, end: number, version = 'unchanged') =>
+    store.recordReads(
+      readFacts({
+        kind: 'file',
+        path: 'web/src/components/InputBar/index.tsx',
+        versionKind: 'content',
+        version,
+        returnedRanges: [{ startLine: start, endLine: end }],
+        returnedText: `same file lines ${start}-${end}`,
+        complete: false,
+      }).reads ?? [],
+    );
+  assert.equal(read(1, 334), 1);
+  assert.equal(read(335, 644), 1);
+  assert.equal(read(645, 812), 1);
+  for (const [start, end] of [
+    [1, 120],
+    [121, 300],
+    [301, 460],
+    [460, 579],
+    [580, 812],
+    [57, 126],
+  ]) {
+    assert.equal(read(start, end), 0, `${start}-${end} 已被此前读取覆盖`);
+  }
+  assert.deepEqual(store.snapshot().reads[0]?.returnedRanges, [{ startLine: 1, endLine: 812 }]);
+  const resumed = createExecutionEvidenceStore();
+  resumed.restore(store.snapshot());
+  assert.equal(
+    resumed.recordReads(
+      readFacts({
+        kind: 'file',
+        path: 'web/src/components/InputBar/index.tsx',
+        versionKind: 'content',
+        version: 'unchanged',
+        returnedRanges: [{ startLine: 3, endLine: 5 }],
+        returnedText: 'different slice',
+        complete: false,
+      }).reads ?? [],
+    ),
+    0,
+    '恢复后仍保留覆盖区间',
+  );
+  assert.equal(read(3, 5, 'changed'), 1, '版本变化才重新记作新读取');
+});
+
+test('行覆盖：部分重叠、空洞、不同文件与旧版记录都保守处理', () => {
+  const store = createExecutionEvidenceStore();
+  const fact = (path: string, start: number, end: number) => ({
+    kind: 'file',
+    path,
+    versionKind: 'content',
+    version: 'v1',
+    returnedHash: `${start}-${end}`,
+    returnedRanges: [{ startLine: start, endLine: end }],
+    complete: false,
+  });
+  assert.equal(store.recordReads([fact('a.ts', 1, 10), fact('a.ts', 20, 30)]), 2);
+  assert.equal(store.recordReads([fact('a.ts', 8, 22)]), 1, '间隙中的新行不可丢失');
+  assert.equal(store.recordReads([fact('a.ts', 4, 25)]), 0);
+  assert.equal(store.recordReads([fact('b.ts', 4, 25)]), 1, '不同文件不共用覆盖');
+  const snapshot = store.snapshot();
+  const old = createExecutionEvidenceStore();
+  old.restore({
+    ...snapshot,
+    reads: snapshot.reads.map(({ returnedRanges: _ranges, kind: _kind, ...read }) => read),
+  });
+  assert.equal(old.recordReads([fact('a.ts', 4, 25)]), 1, '旧快照没有行区间，不猜测覆盖');
+});
+
 for (const { name, fn } of tests) {
   try {
     await fn();

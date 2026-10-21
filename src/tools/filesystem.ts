@@ -563,8 +563,8 @@ register({
     const nextOffset = sliced.omittedLines ? sliced.resumeOffset : lastShownLine + 1;
     if (sliced.omittedLines || hasMoreLines) {
       hints.push(
-        `[READ 提示] 本页连续显示第 ${startLine}-${nextOffset - 1} 行，共 ${totalLines} 行；其后内容尚未读取。` +
-          `用 offset=${nextOffset} 续读剩余 ${totalLines - nextOffset + 1} 行。`,
+        `[READ 提示] 本页连续显示第 ${startLine}-${nextOffset - 1} 行，共 ${totalLines} 行；后续行未包含在本次输出中（不代表此前未读）。` +
+          `如需后续内容，可用 offset=${nextOffset} 读取其余 ${totalLines - nextOffset + 1} 行；无需为凑齐全文继续读取。`,
       );
     }
     // 文本读取成功即记录读取快照，供 edit 写前复核外部变更（v2.5）。
@@ -583,7 +583,7 @@ register({
         path: logicalPath,
         versionKind: snapshot.hash ? 'content' : 'stat',
         version: snapshot.hash ?? `${snapshot.size}:${Math.floor(snapshot.mtimeMs)}`,
-        returnedRanges: [{ startLine, endLine: lastShownLine }],
+        returnedRanges: [{ startLine, endLine: nextOffset - 1 }],
         returnedText: sliced.text,
         complete,
       }),

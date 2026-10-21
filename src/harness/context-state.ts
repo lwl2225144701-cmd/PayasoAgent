@@ -13,8 +13,10 @@ import {
   type RepeatCallReminder,
   type RepeatCallState,
 } from './repeat-call-policy.js';
+import { normalizeTaskFocus, type TaskFocus } from './task-focus.js';
 
 export interface ContextHarnessState {
+  taskFocus?: TaskFocus;
   conversationSummary: string;
   summarizedMessageCount: number;
   // Agent 自述的任务清单：由 Harness 持有，随 checkpoint 的 harnessState 一起持久化
@@ -137,7 +139,15 @@ export function normalizeContextHarnessState(
   value: ContextHarnessState | undefined,
 ): ContextHarnessState {
   if (!value) return createContextHarnessState();
+  // 旧版“实施阶段”计数与催改提示一并丢弃，避免恢复后继续带入已撤销的工作流约束。
+  const legacyImplementation =
+    (value.progressWatch as { mode?: unknown } | undefined)?.mode === 'implementation';
+  const pending = normalizePendingReminders(value.pending);
+  if (legacyImplementation && pending) delete pending.progressWatch;
   return {
+    ...(normalizeTaskFocus(value.taskFocus)
+      ? { taskFocus: normalizeTaskFocus(value.taskFocus) }
+      : {}),
     conversationSummary:
       typeof value.conversationSummary === 'string' ? value.conversationSummary : '',
     summarizedMessageCount:
@@ -145,7 +155,7 @@ export function normalizeContextHarnessState(
         ? value.summarizedMessageCount
         : 0,
     plan: normalizePlan((value as { plan?: unknown }).plan),
-    ...(value.progressWatch === undefined
+    ...(value.progressWatch === undefined || legacyImplementation
       ? {}
       : { progressWatch: normalizeProgressWatchState(value.progressWatch) }),
     ...(value.progressReminder === undefined
@@ -163,6 +173,6 @@ export function normalizeContextHarnessState(
     ...(value.goalReview === undefined
       ? {}
       : { goalReview: normalizeGoalReviewState(value.goalReview) }),
-    ...(value.pending === undefined ? {} : { pending: normalizePendingReminders(value.pending) }),
+    ...(pending === undefined ? {} : { pending }),
   };
 }

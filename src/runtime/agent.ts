@@ -5,6 +5,7 @@ import type { ContextHarnessState } from '../harness/context-state.js';
 import type { ExecutionBudgetDecision } from '../harness/execution-policy.js';
 import {
   type ChatMessage,
+  type ChatResponse,
   type ChatStreamDelta,
   chat,
   type MessageImage,
@@ -192,6 +193,7 @@ export async function runAgent(
     // Harness owns the model-visible projection. Host/tests may inject a
     // different implementation without changing Runtime execution semantics.
     contextHarness?: AgentContextHarness;
+    checkReuse?: boolean;
     // 会话级上下文延续（非 resume）：新 Run 复用上一轮 checkpoint 的完整
     // transcript + harness 摘要状态（conversationSummary / summarizedMessageCount），
     // 使模型视图跨轮累计而不是每轮重置。
@@ -224,6 +226,7 @@ export async function runAgent(
   // 装配：State / Harness / Scratchpad / Trace / Checkpoint / 观测闭包
   // 全部由 createAgentContext 完成（唯一 owner），主循环只消费解构出的符号。
   const {
+    executionGoal,
     toolContext,
     state,
     scratchpad,
@@ -330,6 +333,46 @@ export async function runAgent(
     return decision;
   };
 
+  const finish = (answer: string, totalSteps: number): string => {
+    // Trace: 计划收尾审计 —— 仍留有未完成项时留痕（不阻断收尾；Harness 只报告）。
+    const planReport = contextHarness.planReport?.();
+    if (planReport && planReport.unfinished.length > 0) {
+      emit({
+        type: 'plan_incomplete_at_finish',
+        revision: planReport.revision,
+        completed: planReport.completed,
+        total: planReport.total,
+        unfinished: planReport.unfinished.map((item) => ({
+          id: item.id,
+          title: item.title,
+          status: item.status === 'in_progress' ? 'in_progress' : 'pending',
+        })),
+      });
+    }
+
+    // Trace: 最终答案 + 总执行步骤数
+    emit({
+      type: 'final_answer',
+      content: answer,
+      totalSteps,
+    });
+
+    // State: 完成（清空当前错误与待执行动作；历史错误保留在 lastToolError / failedSteps / Trace）
+    updateState(state, {
+      status: 'completed',
+      currentStep: 'final_answer',
+      currentError: undefined,
+      pendingAction: undefined,
+    });
+    observeState('summary');
+    // Checkpoint: 完成时保存
+    save('completed');
+    observeState('full');
+    observeScratchpad();
+    observeTrace();
+    return answer;
+  };
+
   try {
     // No fixed iteration cap: a turn continues while the model keeps
     // producing tool calls. Cancellation, tool safety, and the optional
@@ -397,12 +440,19 @@ export async function runAgent(
       let modelDerived: ReturnType<typeof deriveModelCallSignal> | undefined;
       let ctx: PreparedModelTurn;
       let effectiveModelConfig: ModelConfig | undefined;
-      let assistantMsg: ChatMessage & { usage?: TokenUsage };
+      let assistantMsg: ChatResponse;
+      let modelCallStartedAt = 0;
       try {
         modelDerived = deriveModelCallSignal(opts.signal, hardStop, () => {
           budgetAborted = true;
         });
-        ctx = await contextHarness.prepareTurn(messages, scratchpad, schemas, modelDerived.signal);
+        ctx = await contextHarness.prepareTurn(
+          messages,
+          scratchpad,
+          schemas,
+          modelDerived.signal,
+          executionEvidenceStore.view(),
+        );
         // v2.6：压缩摘要发生在 prepareTurn 内部（Harness 自持的模型调用）——
         // 全部模型请求统一计量，这里的跨阈决策与主循环的 observeExecution 同路：
         // 发事件、随本轮 checkpoint 落盘。
@@ -440,6 +490,13 @@ export async function runAgent(
           toolSchemaTokens: ctx.usage.toolSchemaTokens,
           scratchpadTokens: ctx.scratchpadTokens,
           planTokens: ctx.planTokens,
+          ...(ctx.toolProjection
+            ? {
+                projectedToolResults: ctx.toolProjection.projectedCount,
+                projectedToolBytesSaved: ctx.toolProjection.savedBytes,
+                unprojectedInputTokens: ctx.toolProjection.unprojectedInputTokens,
+              }
+            : {}),
           estimatedInputTokens: ctx.usage.estimatedInputTokens,
           ...(lastRequestUsage === undefined
             ? {}
@@ -507,13 +564,14 @@ export async function runAgent(
                 ),
               }
             : opts.modelConfig;
+        modelCallStartedAt = performance.now();
         assistantMsg = await chat(
           modelMessages,
           schemas,
           contextHarness.reviewFinalAnswer ? undefined : opts.onStreamDelta,
           effectiveModelConfig,
           modelDerived.signal,
-          // Provider HTTP 请求真正发出的打点：把 llm_call_started → 首个 delta
+          // Provider fetch调用前打点：把 llm_call_started → 首个 delta
           // 拆成「Host 侧整理」与「Provider 首包/网络」两段。
           (attempt) => {
             // 每次真实 HTTP 请求（含 chat() 内部重试）都计入模型调用预算。
@@ -525,14 +583,16 @@ export async function runAgent(
               requestBodyBytes,
             });
           },
+          (event) => emit({ type: 'llm_transport', iteration: i + 1, ...event }),
         );
       } finally {
         modelDerived?.dispose();
       }
-      // Provider reasoning_content and inline <think> blocks are trace/display
-      // concerns only; neither is persisted into the next LLM context.
+      // 展示用 reasoning / inline think 不进入正文；已确认的 Provider 续传协议
+      // 单独保存，下一次仅回传到匹配端点/模型的专用字段。
       const { reasoning_content } = assistantMsg;
-      const { usage: requestUsage, ...messageForHistory } = assistantMsg;
+      const { usage: requestUsage, stopReason, ...messageForHistory } = assistantMsg;
+      const modelDurationMs = Math.round(performance.now() - modelCallStartedAt);
       const assistantHistoryMessage = contextHarness.sanitizeAssistantMessage(messageForHistory);
       messages.push(assistantHistoryMessage);
       // 成功响应后消费提醒；随本轮原有的工具/终态 checkpoint 保存。
@@ -589,6 +649,7 @@ export async function runAgent(
           : {}),
         reasoning: reasoning_content,
         usage: requestUsage,
+        stopReason,
         hasToolCalls: !!assistantMsg.tool_calls?.length,
       });
 
@@ -606,7 +667,14 @@ export async function runAgent(
         // 按 Harness 策略追加提示并重试（有界）；用尽后 fail loudly。
         // 预算判定归 TurnPolicy（纯函数）；副作用留在主循环。
         if (answer.trim() === '') {
-          const decision = decideEmptyTurn(contextHarness.emptyTurnPolicy?.(), emptyTurnRecoveries);
+          const decision = decideEmptyTurn(
+            contextHarness.emptyTurnPolicy?.({
+              stopReason,
+              durationMs: modelDurationMs,
+              outputTokens: requestUsage?.outputTokens,
+            }),
+            emptyTurnRecoveries,
+          );
           if (decision.kind === 'recover') {
             emptyTurnRecoveries = decision.attempt;
             observer.log(
@@ -724,6 +792,7 @@ export async function runAgent(
                       requestBodyBytes: JSON.stringify(reviewMessages).length,
                     });
                   },
+                  (event) => emit({ type: 'llm_transport', iteration: i + 1, ...event }),
                 );
               } catch (reviewErr) {
                 // 交付检查请求失败也入账（尝试次数 + 活动时长）——失败路径不漏账。
@@ -768,43 +837,7 @@ export async function runAgent(
           messages[messages.length - 1] = { role: 'assistant', content: answer };
         }
 
-        // Trace: 计划收尾审计 —— 仍留有未完成项时留痕（不阻断收尾；Harness 只报告）。
-        const planReport = contextHarness.planReport?.();
-        if (planReport && planReport.unfinished.length > 0) {
-          emit({
-            type: 'plan_incomplete_at_finish',
-            revision: planReport.revision,
-            completed: planReport.completed,
-            total: planReport.total,
-            unfinished: planReport.unfinished.map((item) => ({
-              id: item.id,
-              title: item.title,
-              status: item.status === 'in_progress' ? 'in_progress' : 'pending',
-            })),
-          });
-        }
-
-        // Trace: 最终答案 + 总执行步骤数
-        emit({
-          type: 'final_answer',
-          content: answer,
-          totalSteps: i + 1,
-        });
-
-        // State: 完成（清空当前错误与待执行动作；历史错误保留在 lastToolError / failedSteps / Trace）
-        updateState(state, {
-          status: 'completed',
-          currentStep: 'final_answer',
-          currentError: undefined,
-          pendingAction: undefined,
-        });
-        observeState('summary');
-        // Checkpoint: 完成时保存
-        save('completed');
-        observeState('full');
-        observeScratchpad();
-        observeTrace();
-        return answer;
+        return finish(answer, i + 1);
       }
 
       executionEvidenceStore.setIteration(state.iteration);
@@ -943,19 +976,23 @@ export async function runAgent(
         // v2.5（计划 §8.2）：本回合事实汇总。neutralOnly = 本回合只有中性动作
         // （如 updatePlan）：保留计数但不累积回合/时长，因此 coverage 视为完整。
         const neutralOnly = invokedCalls > 0 && neutralCalls === invokedCalls;
+        // 已明确失败的调用是“没有推进”的已知事实，不能冒充未知活动清零计数。
+        const hasNovelFacts = newReadCount + changedFileCount + newCheckCount > 0;
         const coverage: 'complete' | 'partial' | 'unknown' = neutralOnly
           ? 'complete'
-          : supportedCalls === 0
+          : unsupportedCalls > 0 && !hasNovelFacts
             ? 'unknown'
-            : unsupportedCalls > 0 || failedCalls > 0
-              ? 'partial'
-              : 'complete';
+            : supportedCalls + failedCalls > 0
+              ? unsupportedCalls > 0
+                ? 'partial'
+                : 'complete'
+              : 'unknown';
         // v2.6 周期性目标审查需要原始目标与近期结果：目标取 Run.task（模型改写
         // 计划不构成目标变更），近期结果取最后一条 tool 消息的有界摘要。
         const observations = contextHarness.observeToolTurn({
           activity: otherCalls > 0 ? 'other' : readCalls > 0 ? 'read' : 'neutral',
           durationMs: performance.now() - turnStartedAt,
-          goal: state.task,
+          goal: executionGoal,
           recentResult: lastToolResultDigest(messages),
           facts: {
             coverage,

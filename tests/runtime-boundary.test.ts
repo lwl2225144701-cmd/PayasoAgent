@@ -135,6 +135,9 @@ try {
     'context_usage',
     'llm_call_started',
     'llm_request_sent',
+    'llm_transport',
+    'llm_transport',
+    'llm_transport',
     'llm_call',
     'final_answer',
   ]);

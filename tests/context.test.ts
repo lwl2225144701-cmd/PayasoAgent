@@ -205,10 +205,10 @@ await test('Harness builds a temporary model view without mutating the transcrip
   assert.deepEqual(transcript, original, 'canonical transcript must remain unchanged');
   assert.match(view.messages[0].content, /Read Only/);
   assert.match(
-    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
-    /执行进度 Scratchpad/,
+    String(view.messages.find((m) => String(m.content).includes('[Context]'))?.content),
+    /工具执行记录/,
   );
-  assert.doesNotMatch(transcript[0].content, /执行进度 Scratchpad/);
+  assert.doesNotMatch(transcript[0].content, /工具执行记录/);
 });
 
 await test('Harness removes provider reasoning and inline think text from history', () => {
@@ -223,6 +223,37 @@ await test('Harness removes provider reasoning and inline think text from histor
   });
   assert.equal(sanitized.content, 'visible');
   assert.equal(sanitized.reasoning_content, undefined);
+});
+
+await test('工具协议续传计入上下文预算，不把推理复制成普通正文', () => {
+  const manager = new ContextManager();
+  const harness = new DefaultContextHarness({
+    permissionMode: 'workspace-write',
+    model: 'MiniMax-M3',
+  });
+  const message: ChatMessage = {
+    role: 'assistant',
+    content: '',
+    tool_calls: [{ id: 'protocol', type: 'function', function: { name: 'read', arguments: '{}' } }],
+    providerContinuation: {
+      version: 1,
+      identity: 'test',
+      field: 'reasoning_content',
+      text: 'private '.repeat(1000),
+    },
+  };
+  const sanitized = harness.sanitizeAssistantMessage(message);
+  assert.equal(sanitized.content, '');
+  assert.equal(sanitized.reasoning_content, undefined);
+  assert.equal(sanitized.providerContinuation?.text, message.providerContinuation?.text);
+  assert.ok(
+    manager.estimateMessageTokens(sanitized) >
+      manager.estimateMessageTokens({ ...sanitized, providerContinuation: undefined }) + 1000,
+  );
+  assert.equal(
+    harness.sanitizeAssistantMessage({ ...message, tool_calls: undefined }).providerContinuation,
+    undefined,
+  );
 });
 
 await test('Harness bounds the Scratchpad model view', async () => {
@@ -257,7 +288,7 @@ await test('Harness bounds the Scratchpad model view', async () => {
   assert.equal(view.scratchpadTruncated, true);
   assert.ok(view.scratchpadTokens <= 450, `scratchpad tokens=${view.scratchpadTokens}`);
   assert.match(
-    String(view.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    String(view.messages.find((m) => String(m.content).includes('[Context]'))?.content),
     /已省略更早/,
   );
 });
@@ -311,7 +342,7 @@ await test('Harness incrementally summarizes old complete turns and restores sum
   assert.ok(first.compaction && first.compaction.summarizedMessages > 0);
   assert.equal(requests.length, 1);
   const firstContext = String(
-    first.messages.find((m) => String(m.content).startsWith('[Context]'))?.content,
+    first.messages.find((m) => String(m.content).includes('[Context]'))?.content,
   );
   assert.match(firstContext, /\[Conversation Summary\]/);
   assert.match(firstContext, /compacted batch 1/);
@@ -344,7 +375,7 @@ await test('Harness incrementally summarizes old complete turns and restores sum
   );
   assert.deepEqual(restored.snapshotState(), savedState);
   assert.match(
-    String(restoredView.messages.find((m) => String(m.content).startsWith('[Context]'))?.content),
+    String(restoredView.messages.find((m) => String(m.content).includes('[Context]'))?.content),
     /compacted batch 2/,
   );
   assert.ok(!restoredView.messages.some((message) => message.content.includes('old-user-0')));

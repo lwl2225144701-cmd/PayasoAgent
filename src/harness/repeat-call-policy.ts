@@ -330,15 +330,15 @@ export function advanceRepeatCall(
 export function renderRepeatCallReminder(reminder: RepeatCallReminder): string {
   const guidance =
     reminder.level >= 3
-      ? 'This exact call has now been issued many times in a row. Stop repeating it: either verify the real outcome (state, remote, file) or report the blocker to the user.'
+      ? 'This exact call has now been issued many times in a row. Consider whether the underlying state can have changed, whether the result is uncertain, or whether another approach would be more useful.'
       : reminder.level >= 2
-        ? 'Repeating the same call rarely produces new information. State what is still unresolved and change the approach or the arguments.'
+        ? 'Repeating the same call rarely produces new information. Consider the unresolved question and whether another approach or different arguments would help.'
         : 'The same call has been issued repeatedly. If the result is already known, use it instead of calling again.';
   return (
     `\n\n[Repeated call review]\n` +
     `Tool ${reminder.tool} has been called ${reminder.count} times in a row with identical arguments ` +
     `(${reminder.preview}).\n${guidance}\n` +
-    'Legitimate polling is allowed: if the task is to wait for an external condition, keep polling but say so and report progress.'
+    'Legitimate polling is allowed. Decide whether waiting, repeating, changing approach or delivering best serves the user; this tip does not block the call.'
   );
 }
 
