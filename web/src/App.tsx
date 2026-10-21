@@ -1113,6 +1113,7 @@ export default function App() {
               )}
               <InputBar
                 variant="hero"
+                sessionId={currentSessionId}
                 onSend={handleCreateRun}
                 placeholder={t('app.heroPlaceholder')}
                 workspaceName={workspace?.name}
@@ -1131,6 +1132,7 @@ export default function App() {
 
           {currentSessionId && currentRun && (
             <InputBar
+              sessionId={currentSessionId}
               onSend={handleCreateRun}
               onStop={handleStopRun}
               isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}

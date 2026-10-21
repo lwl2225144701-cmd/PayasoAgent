@@ -158,6 +158,11 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-sse-contract', file: 'tests/frontend-sse-contract.test.ts' },
   { name: 'frontend-run-events', file: 'tests/frontend-run-events.test.ts' },
   { name: 'frontend-last-session', file: 'tests/frontend-last-session.test.ts' },
+  // 消息输入框草稿自动保存与恢复（按任务隔离 / 刷新恢复 / 发送成功清除 / 失败合并 / 存储降级）
+  { name: 'frontend-composer-draft', file: 'tests/frontend-composer-draft.test.ts' },
+  // 草稿功能真实组件交互回归（jsdom + 真实 React：发送等待期交错场景 / 成功失败路径 / 隔离 / 降级）
+  { name: 'frontend-composer-draft-dom', file: 'tests/frontend-composer-draft-dom.test.ts' },
+  { name: 'component-dom', file: 'tests/component-dom.test.ts' },
   { name: 'frontend-portal-root', file: 'tests/frontend-portal-root.test.ts' },
   { name: 'workspace-expansion', file: 'tests/workspace-expansion.test.ts' },
   // 历史任务搜索（侧栏任务列表：标题 + 工作区名筛选、分组保留、搜索期展开/恢复）

@@ -36,6 +36,12 @@ import {
   TrashIcon,
 } from '../icons';
 import { ComposerFooter, ComposerTextarea } from './ComposerParts';
+import {
+  clearComposerDraft,
+  mergeDraftOnSendFailure,
+  readComposerDraft,
+  saveComposerDraft,
+} from './composer-draft';
 import { isImeComposing, resolveEnterAction } from './enter-key';
 import styles from './InputBar.module.css';
 import { PromptPreview } from './PromptPreview';
@@ -55,6 +61,11 @@ export interface QueuedComposerMessage {
 }
 
 interface InputBarProps {
+  /**
+   * 草稿作用域：当前任务（会话）id。null/undefined = 新建任务页，用独立的 new-task 草稿。
+   * 每个作用域一份文字草稿，切换任务与刷新页面后自动恢复；发送成功即清除。
+   */
+  sessionId?: string | null;
   /** 返回 Promise<boolean> 时：resolve(false) = 创建失败（App 侧已提示），发送框据此还原草稿 */
   onSend: (text: string, attachments?: File[]) => Promise<boolean> | undefined;
   onStop?: () => void;
@@ -90,6 +101,7 @@ interface InputBarProps {
 }
 
 export function InputBar({
+  sessionId,
   onSend,
   onStop,
   isRunning,
@@ -123,7 +135,55 @@ export function InputBar({
     queuedMessages.length > 0
       ? t('composer.queue.steerPlaceholder')
       : (placeholder ?? t('composer.placeholder'));
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => readComposerDraft(sessionId));
+  // ===== 草稿自动保存与恢复 =====
+  // 时序要点（三个交错场景的共同基础，需求契约见 ./composer-draft.ts）：
+  //   1. 发送等待期不清空持久化草稿：发送只清空输入框，草稿键继续保留「已发送文本 +
+  //      期间新输入」——等待结果期间刷新、切走再回来，草稿都还在（场景 3）。
+  //   2. 发送成功只清理「已交付」的那份：期间的新输入单独留在键里，不被误删（场景 1）。
+  //   3. 发送失败只还原「原作用域」：已切换到别的任务时，失败草稿留在原任务的键里，
+  //      绝不写进当前任务的输入框或存储（场景 2）。
+  // sessionId 变化的那个提交里，text 还是上一个任务的草稿：必须先把旧作用域的文本
+  // 落盘、再恢复新作用域的草稿，否则会把旧草稿写进新任务的键里（任务之间串用）。
+  // 挂载时 initial state 已读过一次草稿，这里只负责「切换任务」的恢复。
+  const draftScopeRef = useRef<string | null | undefined>(undefined);
+  // 发送等待中的那次发送：作用域 + 已发送文本 + 期间新输入（成功清理 / 失败还原都靠它定位）
+  const pendingSendRef = useRef<{
+    scope: string | null | undefined;
+    draftText: string;
+    newerText: string;
+  } | null>(null);
+  useEffect(() => {
+    const pending = pendingSendRef.current;
+    if (draftScopeRef.current === sessionId) {
+      // 同作用域：正常自动保存；发送等待期把「已发送文本 + 期间新输入」合并落盘，
+      // 失败时原草稿不丢、成功时新输入可单独保留
+      if (pending && pending.scope === sessionId) {
+        pending.newerText = text;
+        saveComposerDraft(sessionId, mergeDraftOnSendFailure(pending.draftText, text));
+      } else {
+        saveComposerDraft(sessionId, text);
+      }
+      return;
+    }
+    // 作用域切换：先把当前文本存回旧作用域，再恢复新作用域的草稿
+    const prevScope = draftScopeRef.current;
+    draftScopeRef.current = sessionId;
+    if (prevScope !== undefined) {
+      if (pending && pending.scope === prevScope) {
+        pending.newerText = text;
+        saveComposerDraft(prevScope, mergeDraftOnSendFailure(pending.draftText, text));
+      } else {
+        saveComposerDraft(prevScope, text);
+      }
+    }
+    // 切回「发送等待中的作用域」时，输入框显示期间的新输入（不是含已发送文本的键内容）：
+    // 既不会把已发送的文本重新灌进输入框，也不会在再次落盘时重复拼接
+    setText(
+      pending && pending.scope === sessionId ? pending.newerText : readComposerDraft(sessionId),
+    );
+  }, [sessionId, text]);
+
   // 队列面板的折叠态（对齐 DSH：>1 条时折叠成一行标题，默认折叠）
   const [queueCollapsed, setQueueCollapsed] = useState(true);
   // 行内编辑：正在编辑哪一条 + 草稿文本
@@ -424,7 +484,10 @@ export function InputBar({
     const sentText = trimmed || (files.length > 0 ? t('composer.attachmentOnlyTask') : '');
 
     sendingRef.current = true;
-    // 发送后立即清空草稿；object URL 暂不释放，失败还原时预览仍可用
+    // 记录这次发送：等待结果期间草稿键保留「已发送文本 + 期间新输入」，
+    // 刷新或切走再回来都能恢复（不清空持久化内容，见上方草稿效应注释）
+    pendingSendRef.current = { scope: sessionId, draftText, newerText: '' };
+    // 发送后立即清空输入框；object URL 暂不释放，失败还原时预览仍可用
     setText('');
     commitAttachments([]);
 
@@ -433,11 +496,28 @@ export function InputBar({
       if (settled) return;
       settled = true;
       sendingRef.current = false;
+      const pending = pendingSendRef.current;
+      pendingSendRef.current = null;
+      if (!pending) return;
       if (failed) {
-        // 失败还原草稿：期间用户新输入的内容保留在后面，附件原样还回（URL 未释放，预览仍可用）
-        setText((prev) => (prev.length === 0 ? draftText : `${draftText}\n${prev}`));
-        commitAttachments([...sentAttachments, ...attachmentsRef.current]);
+        // 失败还原：仍在原作用域 → 输入框还原（期间新输入接在后面），附件原样还回
+        // （URL 未释放，预览仍可用）；已切换到别的任务 → 失败草稿留在原作用域的键里
+        // （等待期一直在维护），绝不写进当前任务的输入框或存储
+        if (draftScopeRef.current === pending.scope) {
+          setText((prev) => mergeDraftOnSendFailure(pending.draftText, prev));
+          commitAttachments([...sentAttachments, ...attachmentsRef.current]);
+        } else {
+          for (const item of sentAttachments) URL.revokeObjectURL(item.url);
+        }
         return;
+      }
+      // 发送成功（或已加入发送队列）：已交付的那份草稿清掉；期间的新输入保留下来
+      // （输入框里就是它，键也单独存一份，刷新后仍可恢复；组件随后卸载、效应来不及跑
+      // 也不会丢）
+      if (pending.newerText === '') {
+        clearComposerDraft(pending.scope);
+      } else {
+        saveComposerDraft(pending.scope, pending.newerText);
       }
       // 发送成功（或已加入发送队列）：预览不再需要，释放 object URL
       for (const item of sentAttachments) URL.revokeObjectURL(item.url);
