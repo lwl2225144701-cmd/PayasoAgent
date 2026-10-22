@@ -62,7 +62,7 @@ export async function startHost(
   });
   console.log(`Payaso Host API listening on http://localhost:${port}`);
 
-  // 启动后台探测内置 Provider 的远端 /models（第一层根治：目录自动更新，无需用户点刷新）。
+  // 启动后台探测已配置 Provider 的远端 /models，并把新的对话模型追加进已保存列表。
   // 刻意放在 listen 成功之后 fire-and-forget —— 就绪探针不等它，探测失败也只记 stale，
   // 不会把启动失败变成进程退出。详见 docs/plans/builtin-model-catalog-refresh.md §3。
   void refreshBuiltinModelCatalogs(manager).catch((error: unknown) => {

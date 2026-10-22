@@ -446,6 +446,18 @@ try {
   );
   assert.equal(live.closed, true, '收到终态事件后关闭 EventSource');
 
+  // 历史 task 字段异常时，轨迹页也沿用 glune 的安全取值，搜索和三视图继续可用。
+  for (const [index, task] of [null, 42, { invalid: true }].entries()) {
+    await fixture.render([{ ...run1, task }], `session-dirty-${index}`);
+    await fixture.tick(30);
+    for (const label of ['时长', '轮次', '调用']) {
+      await clickView(label);
+      await fixture.setSearch('shell');
+      assert.ok(doc.querySelector('input[type="search"]'), `异常 task 的${label}视图仍可搜索`);
+      await fixture.setSearch('');
+    }
+  }
+
   // ---- 场景 5：空会话 → 空态文案 ----
   await fixture.render([], 'session-empty');
   assert.ok($text().includes('本会话还没有执行记录'), '空会话显示空态文案');

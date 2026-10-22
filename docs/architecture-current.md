@@ -209,8 +209,9 @@ web/src/
 │   │                       （目录 = 白名单 id，文件 = 系统 .app 路径），且记忆值必须仍在当前列表里才认
 │   ├── FileActionBar.tsx   文件视图顶部操作栏（相对路径 + 刷新 + "在应用中打开"胶囊：默认应用真图标 | ⌄）
 │   ├── OpenInAppMenu.tsx   应用下拉菜单（Launcher 与操作栏共用；渲染系统 dataURL 图标 + 系统默认标记 + 文件目标末尾"显示文件位置"）
-│   ├── dock-home.ts        面板首页登记表（"开始"视图的入口卡片；当前只有"工作区文件"一张）
-│   ├── dock-tabs.ts         停靠标签状态机（"开始"/"文件"两类；三步交互序列：空态→卡片转文件→＋新建开始）
+│   ├── dock-home.ts        面板首页登记表（"浏览器"与"工作区文件"入口）
+│   ├── dock-tabs.ts         停靠标签状态机（"开始"/"文件"/"浏览器"）
+│   ├── WebBrowser/         内嵌网页：Electron webview；普通浏览器降级为受限 iframe
 │   ├── PreviewDock/        右侧停靠面板：标签条（停靠标签 + 文件标签 + ＋）+ 首页卡片 + viewer
 │   │                       容器 + 宽度拖拽（localStorage 持久化；⌘P 开关）
 │   ├── FileTree/           面包屑 + 单层懒加载目录树（忽略规则开关/过滤）
@@ -223,6 +224,8 @@ web/src/
                             Timeline/ 内附件相关：FileAttachment（按类型着色的文件卡片）、
                             MessageImage + message-image.ts（用户消息图片附件的尺寸决策纯函数）
 ```
+
+桌面内嵌网页使用独立分区 `persist:payaso-browser`。主进程的 `apps/desktop/src/browser-guest-security.ts` 校验初始地址与分区，强制访客页沙箱、禁用 Node 与 preload，并阻止非 HTTP/HTTPS 导航、重定向及弹窗；权限检查和权限请求默认拒绝。前端首次导航通过 `src` 属性发起，不在 `dom-ready` 前调用访客方法。普通浏览器的 iframe 降级受目标站点嵌入策略限制。
 
 ### 3.3 文档契约：工具清单与 Trace 事件清单
 
@@ -430,7 +433,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | POST     | `/open-in-app/open`                                         | Open-in-app：detached 启动外部工具打开目标（body: id + path? + runId? + action?）。文件目标**打开前用最新系统列表复验 id**（伪造/陈旧 → 400）；`action:'reveal'` = 显示文件位置；scrubbed 环境 + 早期失败观察窗 |
 | GET/POST | `/settings/models`，PATCH/DELETE `/settings/models/:id`      | 模型提供方 CRUD；**读 API 只回 hasApiKey/mask，key 绝不出 Host**（写入路径：key → SecretStore）         |
 | GET/POST | `/settings`，`/settings/default`                             | 默认模型查询 / 设置（providerId + modelId 成对校验）                                              |
-| GET      | `/settings/pi-ai/providers`                                 | 内置 Provider 公开目录（名称/地址/模型能力，**无任何凭证**）。叠加启动后台探测写入的远端目录缓存（`builtinRemoteCatalog`），供应商上新无需等 pi-ai 升级或用户点刷新；探测失败标 `catalogStale` 并沿用上次成功结果 |
+| GET      | `/settings/pi-ai/providers`                                 | 内置 Provider 公开目录（名称/地址/模型能力，**无任何凭证**）。叠加启动后台探测写入的远端目录缓存（`builtinRemoteCatalog`），供应商上新无需等 pi-ai 升级或用户点刷新；探测失败标 `catalogStale` 并沿用上次成功结果。启动探测还会把新对话模型追加到各已保存提供方，按各自凭据探测，不覆盖已有模型能力与默认模型 |
 | POST     | `/settings/available-models`                                | 拉取 OpenAI 兼容端点 `/models` 目录（可用存储密钥代拉，明文不出服务端）。**内置 Provider 走「远端 ∪ pi-ai 静态目录」合并**，远端结果同时记入该 Provider 的模型准入名单（`settings` blob 的 `builtinDiscoveredModels`）+ 目录缓存（`builtinRemoteCatalog`），使供应商上新模型在依赖升级前即可被识别与保存；`preview` 路径可传 `piProviderId` 复用同一合并逻辑 |
 | GET      | `/runtime/capabilities`                                     | 返回不含宿主路径的启动工具链能力快照                                                               |
 | POST     | `/runtime/capabilities/refresh`                             | 鉴权后显式重新发现宿主工具；不安装、不改变网络或既有 Sandbox 策略                                  |
@@ -450,7 +453,7 @@ cp .env.example .env      # OPENAI_BASE_URL/OPENAI_API_KEY/OPENAI_MODEL（也可
 npm run dev               # Host(4500) + Vite(5173)，开发模式
 npm start                 # build:web + Host，单端口 4500（UI+API）
 npm run cli "帮我计算 15*37"
-npm run test:all          # 146 个确定性套件（无 LLM，有界并发）
+npm run test:all          # 148 个确定性套件（无 LLM，有界并发）
 npm run test:host         # Host API 集成（需 LLM）
 npm test                  # Agent E2E（需 LLM）
 npm run test:stress       # 压测 26 场景（需 LLM）
@@ -482,7 +485,7 @@ npm run test:stress       # 压测 26 场景（需 LLM）
 
 | 套件                                                                                                                                                                                                                                                                                                                | 命令                               | 状态                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 确定性 146 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、分层超时与后台作业通知、Plan 状态机、Settings 六域、执行治理功能验收、历史任务搜索规则、套件数量契约、文档引用完整性、docs contract） | `npm run test:all` | 146 套件全绿为合并门槛（有界并发，完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
+| 确定性 148 套件（无真实 LLM；含静态依赖边界、工具调用状态机、Context Compaction、三档文件系统权限、macOS seatbelt 沙箱、跨平台 Shell 执行器、工具链发现/准备批准/能力刷新、Workspace 生命周期与软删除回收站、Host 启停/路由、SQLite 持久化、LLM transport mock、Run 模型绑定、Cancellation、Shell 网络隔离、Side-Effect、Provider/SecretStore、Malformed Tool Call 恢复、原子终态、Runtime Loop/Host timeout、分层超时与后台作业通知、Plan 状态机、Settings 六域、执行治理功能验收、历史任务搜索规则、套件数量契约、文档引用完整性、docs contract） | `npm run test:all` | 148 套件全绿为合并门槛（有界并发，完整日志落 `.payaso/logs/`）；workspace shell 用例依赖本机 sandbox-exec 可用性（受限环境按 fail-closed DENIED，见 §8 #8） |
 | Keychain 集成（独立运行，不进 run-all）                                                                                                                                                                                                                                                                                      | `npx tsx tests/keychain.test.ts` | 需 macOS + `security` CLI；随机测试账户，测后清理；不可用则如实 SKIP                                                |
 | Host 集成                                                                                                                                                                                                                                                                                                           | `npm run test:host`              | 需 LLM（`tsx --env-file=.env`）；CI 在配置 `OPENAI_API_KEY` secret 时自动执行，否则跳过                          |
 | Agent E2E                                                                                                                                                                                                                                                                                                         | `npm test`                       | 需 LLM                                                                                           |

@@ -11,13 +11,15 @@ import {
   CloseIcon,
   CompassIcon,
   ExpandIcon,
+  FileIcon,
   FolderIcon,
+  GlobeIcon,
   PlusIcon,
   ShrinkIcon,
 } from '../../components/icons';
 import { PanelToggleButton } from '../../components/PanelToggleButton';
 import { useI18n } from '../../i18n';
-import { isMacPlatform, PREVIEW_HOME_ACTIONS, shortcutLabel } from '../dock-home';
+import { PREVIEW_HOME_ACTIONS, type PreviewHomeActionId } from '../dock-home';
 import {
   addStartTab,
   browserTabLabel,
@@ -25,11 +27,14 @@ import {
   type DockTabs,
   initialDockTabs,
   openFilesTab,
+  openWebTab,
+  webTabLabel,
 } from '../dock-tabs';
 import FileActionBar from '../FileActionBar';
 import FileTree from '../FileTree';
 import type { PreviewTabs } from '../hooks/usePreviewTabs';
 import { FallbackViewer, FileIconFor, fileIconName, resolveViewer } from '../registry';
+import { WebBrowser } from '../WebBrowser';
 import styles from './PreviewDock.module.css';
 
 const WIDTH_KEY = 'payaso.preview.width';
@@ -76,7 +81,7 @@ export default function PreviewDock({
   // 文件标签不在这里（tabsApi，App 层）；strip 顺序 = 停靠标签 + 文件标签 + ＋。
   const [dockTabs, setDockTabs] = useState<DockTabs>(initialDockTabs);
   // 面板当前视图：首页卡片 / 某个停靠标签 / 某个文件标签。
-  const [activeKind, setActiveKind] = useState<'home' | 'browser' | 'file'>('home');
+  const [activeKind, setActiveKind] = useState<'home' | 'browser' | 'web' | 'file'>('home');
   // 手动重载令牌：操作栏"刷新"按下即 +1，viewer 的 key 带上它 → 重挂载重取
   const [manualReload, setManualReload] = useState(0);
   // 全屏：面板铺满整个窗口（窄屏媒体查询本来就是全屏，这里给宽屏手动开关）
@@ -154,7 +159,6 @@ export default function PreviewDock({
   );
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
-  const mac = isMacPlatform();
 
   // —— 变更流：外部写入 / agent 写入 → 预览自动刷新（版本失效即重载）——
   const [reloadNonce, setReloadNonce] = useState<Record<string, number>>({});
@@ -222,10 +226,17 @@ export default function PreviewDock({
     });
   };
 
-  // 首页卡片 → 文件视图：激活中的"开始"标签转成"文件"标签（没有就新建，全新目录树）。
-  const openFilesFromHome = () => {
-    setDockTabs(openFilesTab(dockTabs));
-    setActiveKind('browser');
+  // 首页卡片 → 文件视图或内嵌浏览器。
+  const openHomeAction = (id: PreviewHomeActionId) => {
+    if (id === 'workspace-files') {
+      setDockTabs(openFilesTab(dockTabs));
+      setActiveKind('browser');
+      return;
+    }
+    if (id === 'browser') {
+      setDockTabs(openWebTab(dockTabs));
+      setActiveKind('web');
+    }
   };
 
   return (
@@ -268,13 +279,20 @@ export default function PreviewDock({
           {dockTabs.tabs.map((tab) => {
             const active = activeKind !== 'file' && dockTabs.activeId === tab.id;
             const isHome = tab.kind === 'home';
+            const isWeb = tab.kind === 'web';
             const label = isHome
               ? null
-              : browserTabLabel(
-                  dockTabs.tabs
-                    .filter((item) => item.kind === 'browser')
-                    .findIndex((item) => item.id === tab.id),
-                );
+              : isWeb
+                ? webTabLabel(
+                    dockTabs.tabs
+                      .filter((item) => item.kind === 'web')
+                      .findIndex((item) => item.id === tab.id),
+                  )
+                : browserTabLabel(
+                    dockTabs.tabs
+                      .filter((item) => item.kind === 'browser')
+                      .findIndex((item) => item.id === tab.id),
+                  );
             return (
               <div key={tab.id} className={`${styles.tab} ${active ? styles.tabActive : ''}`}>
                 {/* role=tab 放在可聚焦按钮上（ARIA tab 模式：tablist > tab） */}
@@ -285,7 +303,13 @@ export default function PreviewDock({
                   role="tab"
                   aria-selected={active}
                 >
-                  {isHome ? <CompassIcon size={13} /> : <FolderIcon size={12} />}
+                  {isHome ? (
+                    <CompassIcon size={13} />
+                  ) : isWeb ? (
+                    <GlobeIcon size={13} />
+                  ) : (
+                    <FolderIcon size={12} />
+                  )}
                   <span className={styles.tabName}>
                     {isHome
                       ? t('preview.dock.home.title')
@@ -334,7 +358,7 @@ export default function PreviewDock({
               </div>
             );
           })}
-          {/* ＋：纯空态不显示（此时首页只有"工作区文件"一张卡，点卡片产生第一个标签） */}
+          {/* ＋：纯空态不显示；点首页卡片才产生第一个真标签 */}
           {(dockTabs.tabs.length > 0 || tabs.length > 0) && (
             <button
               type="button"
@@ -370,23 +394,19 @@ export default function PreviewDock({
       <div className={styles.body}>
         {activeKind === 'home' ? (
           <div className={styles.home}>
-            {PREVIEW_HOME_ACTIONS.map((action) => (
-              <button
-                key={action.id}
-                type="button"
-                className={styles.homeCard}
-                onClick={openFilesFromHome}
-              >
-                <span className={styles.homeCardIcon}>
-                  <FolderIcon size={20} />
-                </span>
-                <span className={styles.homeCardText}>
-                  <span className={styles.homeCardTitle}>{t(action.titleKey)}</span>
-                  <span className={styles.homeCardDesc}>{t(action.descriptionKey)}</span>
-                </span>
-                <span className={styles.homeCardShortcut}>{shortcutLabel(mac)}</span>
-              </button>
-            ))}
+            <div className={styles.homeGrid}>
+              {PREVIEW_HOME_ACTIONS.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className={styles.homeTile}
+                  onClick={() => openHomeAction(action.id)}
+                >
+                  <span className={styles.homeTileIcon}>{homeTileIcon(action.id)}</span>
+                  <span className={styles.homeTileLabel}>{t(action.titleKey)}</span>
+                </button>
+              ))}
+            </div>
           </div>
         ) : activeKind === 'file' && activeTab ? (
           <div className={styles.fileView}>
@@ -410,6 +430,20 @@ export default function PreviewDock({
           </div>
         ) : null}
         {dockTabs.tabs
+          .filter((tab) => tab.kind === 'web')
+          .map((tab) => {
+            const paneActive = activeKind === 'web' && dockTabs.activeId === tab.id;
+            return (
+              <div
+                key={tab.id}
+                className={`${styles.browserPane} ${paneActive ? '' : styles.paneHidden}`}
+                aria-hidden={!paneActive}
+              >
+                <WebBrowser />
+              </div>
+            );
+          })}
+        {dockTabs.tabs
           .filter((tab) => tab.kind === 'browser')
           .map((tab) => {
             // 所有"文件"标签保持挂载（各自的浏览位置/过滤词不丢），非激活的仅隐藏。
@@ -432,6 +466,11 @@ export default function PreviewDock({
       </div>
     </aside>
   );
+}
+
+function homeTileIcon(id: PreviewHomeActionId) {
+  if (id === 'browser') return <GlobeIcon size={22} />;
+  return <FileIcon size={22} />;
 }
 
 /** viewer 分发：registry 解析 → 懒加载组件；解析不到走 FallbackViewer。 */

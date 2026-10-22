@@ -41,8 +41,8 @@ export interface WindowsAclRunnerArgvInput {
 /**
  * 构造薄 runner 的完整 argv（纯函数，测试直接断言）：
  * [node, runner.mjs, --workspace, w, --scratch, s, --mode, m, --, ...carrierInvocation]
- * 权限模式映射：read-only → 'read-only'（工作区不授权，仅 scratch 可写）；
- * Full access 明确拒绝，不能静默映射为 workspace-write。
+ * 权限模式原样传入。full-access 不改写成 workspace-write；runner 对它使用
+ * 另一份 restricting SID 列表（见 docs/plans/windows-full-access-token-plan.md）。
  *
  * 载体不再硬编码 bash/-c：argv 尾段由载体决定（PowerShell 用 `-Command`，cmd 用 `/c`）。
  * 这是 2026-09-14 真机验收的结论 —— MSYS2 bash 在 WRITE_RESTRICTED 令牌下必然
@@ -50,10 +50,6 @@ export interface WindowsAclRunnerArgvInput {
  */
 export function buildWindowsAclRunnerArgv(input: WindowsAclRunnerArgvInput): string[] {
   const mode = storedPermissionMode(input.permissionMode);
-  if (mode === 'full-access')
-    throw new Error(
-      'Windows ACL does not support Full access; explicitly enable PAYASO_SHELL_UNSANDBOXED=1 to use uncontained Shell.',
-    );
   return [
     input.nodeExecutable,
     input.runnerPath ?? DEFAULT_RUNNER_PATH,

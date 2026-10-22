@@ -97,6 +97,7 @@ const SUITES: { name: string; file: string }[] = [
   { name: 'frontend-open-in-app', file: 'tests/frontend-open-in-app.test.ts' },
   { name: 'frontend-native-theme', file: 'tests/frontend-native-theme.test.ts' },
   { name: 'desktop-update', file: 'tests/desktop-update.test.ts' },
+  { name: 'browser-guest', file: 'tests/browser-guest.test.ts' },
   { name: 'frontend-tool-file-path', file: 'tests/frontend-tool-file-path.test.ts' },
   { name: 'frontend-streaming', file: 'tests/frontend-streaming.test.ts' },
   { name: 'streaming-markdown', file: 'tests/streaming-markdown.test.ts' },
@@ -166,6 +167,8 @@ const SUITES: { name: string; file: string }[] = [
   // 执行轨迹页组件交互回归（jsdom + 真实 React：展开收起 / 实时更新 / 会话切换 / 失败状态）
   { name: 'trace-view', file: 'tests/trace-view.test.ts' },
   { name: 'frontend-portal-root', file: 'tests/frontend-portal-root.test.ts' },
+  // 脏数据不白屏：Run 文本安全取值 + 根级 ErrorBoundary 接线不变量
+  { name: 'frontend-run-task', file: 'tests/frontend-run-task.test.ts' },
   { name: 'workspace-expansion', file: 'tests/workspace-expansion.test.ts' },
   // 历史任务搜索（侧栏任务列表：标题 + 工作区名筛选、分组保留、搜索期展开/恢复）
   { name: 'task-search', file: 'tests/task-search.test.ts' },

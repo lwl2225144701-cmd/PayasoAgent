@@ -18,6 +18,7 @@ import { formatDurationMs } from '../../format';
 import { useEventStream } from '../../hooks/useEventStream';
 import { useI18n } from '../../i18n';
 import type { MessageKey } from '../../i18n/messages';
+import { runTaskText } from '../../run-task';
 import type { HostRun, HostRunStatus } from '../../types';
 import { ClockIcon, ColumnsIcon, ListIcon, SearchIcon, UserIcon } from '../icons';
 import styles from './Trace.module.css';
@@ -210,7 +211,7 @@ function TraceRunGroup({
   }, [view, search]);
 
   return (
-    <section className={styles.group} aria-label={run.task}>
+    <section className={styles.group} aria-label={runTaskText(run)}>
       <header className={styles.groupHeader}>
         <div className={styles.groupTitleRow}>
           <span className={`${styles.groupStatus} ${GROUP_STATUS_CLASS[run.status] ?? ''}`}>
@@ -220,7 +221,7 @@ function TraceRunGroup({
             {t('trace.run.turn', { turn: run.turnIndex + 1 })}
           </span>
         </div>
-        <div className={styles.groupTask}>{run.task}</div>
+        <div className={styles.groupTask}>{runTaskText(run)}</div>
         <div className={styles.groupMeta}>
           <span>
             {t('trace.calls.summary', {
@@ -271,14 +272,14 @@ function TraceTurnRow({
 }) {
   const { t } = useI18n();
   return (
-    <section className={styles.turnSection} aria-label={run.task}>
+    <section className={styles.turnSection} aria-label={runTaskText(run)}>
       <button type="button" className={styles.turnRow} onClick={onToggle} aria-expanded={expanded}>
         <span className={styles.turnLabel}>{t('trace.run.turn', { turn: run.turnIndex + 1 })}</span>
         <span className={styles.turnBadge}>
           <UserIcon size={12} />
           <span>{t('trace.turn.user')}</span>
         </span>
-        <span className={styles.turnTask}>{run.task}</span>
+        <span className={styles.turnTask}>{runTaskText(run)}</span>
       </button>
       {entry && (
         <div className={styles.turnMeta}>

@@ -1,30 +1,21 @@
-// 预览面板首页（"开始"视图）的入口卡片登记表。
+// 预览面板首页（"开始"视图）的入口卡片。
 //
-// 参照 DeepSeek Harness 的右侧面板首页：面板打开时先给一张"工作区文件"卡片，
-// 点它才进入文件树 / viewer。**只登记文件这一张**——终端、浏览器明确不做
-// （面板只服务文件预览，见 docs/plans/preview-gui-调研报告.md 的范围收窄）。
+// 居中两格：浏览器进入内嵌页面，文件进入目录树。
 //
-// 为什么单独一个纯模块：卡片元数据要能脱离 React/CSS 单测（
-// tests/frontend-preview-registry.test.ts 断言"只有一张卡"且 key 在消息表里
-// 双语齐备）；新增一类面板 = 这里加一行 + 一个视图分支。
+// 为什么单独一个纯模块：卡片元数据要能脱离 React/CSS 单测。
 
 import type { MessageKey } from '../i18n/messages/index';
 
+export type PreviewHomeActionId = 'browser' | 'workspace-files';
+
 export interface PreviewHomeAction {
-  /** 视图身份（点击后由 PreviewDock 分发到对应视图）。 */
-  id: 'workspace-files';
-  /** 卡片标题（复用文件树根标签：同一个东西同一个说法）。 */
+  id: PreviewHomeActionId;
   titleKey: MessageKey;
-  /** 卡片副标题：说明这张卡能干什么。 */
-  descriptionKey: MessageKey;
 }
 
 export const PREVIEW_HOME_ACTIONS: readonly PreviewHomeAction[] = [
-  {
-    id: 'workspace-files',
-    titleKey: 'preview.tree.root',
-    descriptionKey: 'preview.dock.home.workspaceFiles.description',
-  },
+  { id: 'browser', titleKey: 'preview.dock.home.browser' },
+  { id: 'workspace-files', titleKey: 'preview.dock.filesTab' },
 ];
 
 /**

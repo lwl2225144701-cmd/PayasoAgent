@@ -10,6 +10,7 @@
 //   - 绝不用「Run 总耗时 − 工具耗时」倒推模型耗时。
 
 import type { MessageKey } from '../../i18n/messages';
+import { runTaskText } from '../../run-task';
 import type {
   HostEvent,
   HostRun,
@@ -412,16 +413,17 @@ export function buildTraceRunSummary(
     };
   });
   const q = search.trim().toLowerCase();
+  const task = runTaskText(run);
   return {
     runId: run.runId,
     status: run.status,
-    task: run.task,
+    task,
     runStartedAt: parseTs(view.runStartedAt),
     modelCallCount: view.modelCallCount,
     toolCallCount: view.toolCallCount,
     calls,
     ...(view.terminalError ? { terminalError: view.terminalError } : {}),
-    taskMatched: !q || run.task.toLowerCase().includes(q),
+    taskMatched: !q || task.toLowerCase().includes(q),
   };
 }
 

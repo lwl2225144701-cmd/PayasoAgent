@@ -99,3 +99,134 @@
     font-size: 14px;
   }
 }
+
+/* 应用内确认框：表面色走主题变量，浅色为白、深色为深，不跟系统原生对话框走。 */
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  color: var(--color-text-primary);
+}
+
+.confirmScrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: var(--color-overlay);
+  cursor: default;
+}
+
+.confirm {
+  position: relative;
+  z-index: 1;
+  width: min(440px, calc(100vw - 48px));
+  border: 1px solid var(--color-border-default);
+  border-radius: 16px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-overlay);
+}
+
+.confirmHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 12px 0 18px;
+}
+
+.confirmTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.confirmClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.confirmClose:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.confirmBody {
+  margin: 0;
+  padding: 12px 18px 0;
+  color: var(--color-text-secondary);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.confirmAsk {
+  margin: 10px 0 0;
+  padding: 0 18px;
+  color: var(--color-text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px;
+}
+
+.confirmPrimary,
+.confirmSecondary {
+  min-height: 32px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.confirmPrimary {
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+
+.confirmPrimary:hover {
+  border-color: var(--color-brand-hover);
+  background: var(--color-brand-hover);
+}
+
+.confirmSecondary {
+  border: 1px solid var(--color-border-default);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.confirmSecondary:hover {
+  background: var(--color-surface-hover);
+}
+
+.confirmPrimary:focus-visible,
+.confirmSecondary:focus-visible,
+.confirmClose:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}

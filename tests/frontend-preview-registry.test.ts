@@ -10,6 +10,7 @@ import {
   PreviewNetworkError,
   previewFileUrl,
 } from '../web/src/preview/api';
+import { normalizeBrowserUrl } from '../web/src/preview/browser-url';
 import { PREVIEW_HOME_ACTIONS, shortcutLabel } from '../web/src/preview/dock-home';
 import {
   addStartTab,
@@ -17,6 +18,7 @@ import {
   closeDockTab,
   initialDockTabs,
   openFilesTab,
+  openWebTab,
 } from '../web/src/preview/dock-tabs';
 import { previewQueryUrl } from '../web/src/preview/file-url';
 import { fileIconName, resolveViewer } from '../web/src/preview/registry';
@@ -36,25 +38,31 @@ function test(name: string, fn: () => void | Promise<void>): void {
 
 // ---- 面板首页（"开始"视图）----
 
-test('面板首页只有"工作区文件"一张卡（终端 / 浏览器明确不做）', () => {
+test('面板首页只有浏览器和文件两格', () => {
   assert.deepEqual(
     PREVIEW_HOME_ACTIONS.map((action) => action.id),
-    ['workspace-files'],
+    ['browser', 'workspace-files'],
   );
-  const card = PREVIEW_HOME_ACTIONS[0];
-  assert.equal(card.titleKey, 'preview.tree.root', '卡片标题与文件树根标签用同一个 key');
-  assert.equal(card.descriptionKey, 'preview.dock.home.workspaceFiles.description');
+  const files = PREVIEW_HOME_ACTIONS.find((action) => action.id === 'workspace-files');
+  assert.equal(files?.titleKey, 'preview.dock.filesTab');
 });
 
 test('面板首页卡片文案在消息表里双语齐备（防加了卡忘翻译）', () => {
   for (const action of PREVIEW_HOME_ACTIONS) {
-    for (const key of [action.titleKey, action.descriptionKey]) {
-      const entry = (MESSAGES as Record<string, Record<string, string>>)[key];
-      assert.ok(entry, `消息表缺 ${key}`);
-      assert.ok(entry['zh-CN']?.trim(), `${key} 缺 zh-CN`);
-      assert.ok(entry['en-US']?.trim(), `${key} 缺 en-US`);
-    }
+    const entry = (MESSAGES as Record<string, Record<string, string>>)[action.titleKey];
+    assert.ok(entry, `消息表缺 ${action.titleKey}`);
+    assert.ok(entry['zh-CN']?.trim(), `${action.titleKey} 缺 zh-CN`);
+    assert.ok(entry['en-US']?.trim(), `${action.titleKey} 缺 en-US`);
   }
+});
+
+test('内嵌浏览器只接受 http/https，本机地址补 http', () => {
+  assert.equal(normalizeBrowserUrl('example.com/docs'), 'https://example.com/docs');
+  assert.equal(normalizeBrowserUrl('localhost:5173/app'), 'http://localhost:5173/app');
+  assert.equal(normalizeBrowserUrl('https://example.com'), 'https://example.com/');
+  assert.equal(normalizeBrowserUrl('javascript:alert(1)'), null);
+  assert.equal(normalizeBrowserUrl('file:///tmp/a'), null);
+  assert.equal(normalizeBrowserUrl('   '), null);
 });
 
 test('面板首页快捷键提示：mac 显示 ⌘P，其它平台显示 Ctrl P', () => {
@@ -78,6 +86,15 @@ test('点"工作区文件"卡片：激活的"开始"标签转成"文件"标签�
   const withStart = addStartTab(initialDockTabs());
   assert.deepEqual(withStart, { tabs: [{ id: 1, kind: 'home' }], activeId: 1 });
   assert.deepEqual(openFilesTab(withStart), { tabs: [{ id: 1, kind: 'browser' }], activeId: 1 });
+});
+
+test('点"浏览器"卡片：空态 → 新建"浏览器"标签；激活的"开始"标签就地转成浏览器', () => {
+  assert.deepEqual(openWebTab(initialDockTabs()), {
+    tabs: [{ id: 1, kind: 'web' }],
+    activeId: 1,
+  });
+  const withStart = addStartTab(initialDockTabs());
+  assert.deepEqual(openWebTab(withStart), { tabs: [{ id: 1, kind: 'web' }], activeId: 1 });
 });
 
 test('点"工作区文件"卡片：激活的已是"文件"标签 → 追加一棵新目录树', () => {

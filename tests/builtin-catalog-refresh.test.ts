@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import type { Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   fetchAvailableModelCatalog,
   fetchBuiltinProviderCatalog,
@@ -33,7 +34,7 @@ import {
 } from '../src/host/pi-ai-providers.js';
 import type { ProviderModelInfo } from '../src/host/provider-url.js';
 import { RunManager } from '../src/host/run-manager.js';
-import { MemorySecretStore } from '../src/host/secrets/secret-store.js';
+import { MemorySecretStore, providerSecretKey } from '../src/host/secrets/secret-store.js';
 import { createHostServer } from '../src/host/server.js';
 
 const TOKEN = 'test-token-00000000000000000000000000000000';
@@ -416,7 +417,7 @@ const TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1';
     const dbPath = path.join(dir, 'payaso.db');
     const secrets = new MemorySecretStore();
     const originalFetch = globalThis.fetch;
-    let remoteIds = ['mimo-v2.5', 'mimo-v2.6-pro', 'mimo-v2.7-pro'];
+    let remoteIds = ['mimo-v2.5', 'mimo-v2.6-pro', 'mimo-v2.7-pro', 'tts-1'];
     let remoteStatus = 200;
     let store: SqliteRunStore | undefined;
     let server: Server | undefined;
@@ -485,6 +486,26 @@ const TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1';
       );
       assert.ok(!cnAfter?.catalogStale, '成功探测不应标 stale');
       assert.ok(cnAfter?.catalogFetchedAt, '应带上次成功时间');
+
+      const savedAfterProbe = store.listModelProviders()[0];
+      assert.ok(savedAfterProbe, '已保存提供方仍在');
+      assert.ok(
+        savedAfterProbe.models.includes('mimo-v2.6-pro'),
+        '启动探测不得清掉用户原来保存的模型',
+      );
+      assert.ok(
+        savedAfterProbe.models.includes('mimo-v2.7-pro'),
+        '启动探测必须把远端新的对话模型追加进已保存列表，下拉才读得到',
+      );
+      assert.equal(savedAfterProbe.models.includes('tts-1'), false, '非对话模型不得写进已保存列表');
+      assert.equal(manager.getCatalogProbeStatus().running, false, '探测结束后 running 必须落下');
+      assert.ok(manager.getCatalogProbeStatus().finishedAt, '探测结束要留下完成时间供前端再拉列表');
+
+      // 用户删掉的模型，只要供应商列表里还有，下一轮探测会再追加回来。
+      store.updateModelProvider(savedAfterProbe.id, { models: ['mimo-v2.6-pro'] });
+      await refreshBuiltinModelCatalogs(manager);
+      const restored = store.getModelProvider(savedAfterProbe.id);
+      assert.ok(restored?.models.includes('mimo-v2.7-pro'), '下一轮探测应把仍在远端的新模型加回');
 
       // 5c-2: 远端失败 → stale=true，且模型列表沿用上次成功结果（不被清空）
       remoteStatus = 500;
@@ -561,6 +582,11 @@ const TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1';
         /内置提供方不支持模型/,
         '首探失败后准入名单不得放宽',
       );
+      assert.deepEqual(
+        localStore.listModelProviders()[0]?.models,
+        ['mimo-v2.6-pro'],
+        '首探失败不得改已保存的模型列表',
+      );
     } finally {
       globalThis.fetch = originalFetch;
       store?.close();
@@ -572,6 +598,130 @@ const TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1';
         );
       }
     }
+  }
+}
+
+// ── 5e. 自定义端点：启动探测把远端对话模型追加进该提供方，非对话模型不进 ──
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-probe-custom-'));
+  const dbPath = path.join(dir, 'payaso.db');
+  const secrets = new MemorySecretStore();
+  const originalFetch = globalThis.fetch;
+  let store: SqliteRunStore | undefined;
+  try {
+    const localStore = new SqliteRunStore(dbPath, secrets);
+    store = localStore;
+    const custom = localStore.addModelProvider({
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-custom',
+      models: ['deepseek-chat'],
+    });
+    const full = localStore.addModelProvider({
+      name: 'Full',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-full',
+      models: Array.from({ length: 50 }, (_, index) => `model-${index}`),
+    });
+    const manager = new RunManager(localStore);
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'deepseek-chat' },
+            { id: 'deepseek-flash', context_length: 1_000_000, supports_vision: true },
+            { id: 'deepseek-v4-pro', context_length: 1_000_000 },
+            { id: 'text-embedding-3-large' },
+          ],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const results = await refreshBuiltinModelCatalogs(manager);
+    assert.equal(results.length, 2, '两家自定义端点都应被探测');
+    assert.ok(results.every((result) => result.ok));
+
+    const updated = localStore.getModelProvider(custom.id);
+    assert.deepEqual(updated?.models, ['deepseek-chat', 'deepseek-flash', 'deepseek-v4-pro']);
+    assert.equal(updated?.models.includes('text-embedding-3-large'), false);
+    assert.equal(updated?.modelCapabilities?.['deepseek-flash']?.contextWindow, 1_000_000);
+    assert.equal(updated?.modelCapabilities?.['deepseek-flash']?.vision, true);
+    assert.equal(updated?.modelCapabilities?.['deepseek-v4-pro']?.contextWindow, 1_000_000);
+    assert.equal(
+      updated?.modelCapabilities?.['deepseek-chat'],
+      undefined,
+      '已有模型的能力不被探测改写',
+    );
+
+    const capped = localStore.getModelProvider(full.id);
+    assert.equal(capped?.models.length, 50, '已满 50 条时不得再追加');
+    assert.equal(capped?.models.includes('deepseek-flash'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    store?.close();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (error) {
+      console.warn(
+        `[cleanup] 临时目录未清理干净（可手动删除）: ${dir} ${(error as Error).message}`,
+      );
+    }
+  }
+}
+
+// 普通新增接口禁止重复地址；兼容持久化历史配置时仍要逐账号隔离探测结果。
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-probe-accounts-'));
+  const originalFetch = globalThis.fetch;
+  const dbPath = path.join(dir, 'payaso.db');
+  const secrets = new MemorySecretStore();
+  const store = new SqliteRunStore(dbPath, secrets);
+  try {
+    const first = store.addModelProvider({
+      name: 'MiMo a',
+      piProviderId: 'xiaomi-token-plan-cn',
+      apiKey: 'sk-account-a',
+      models: ['mimo-v2.6-pro'],
+    });
+    const legacyId = 'legacy-account-b';
+    const settingsDb = new DatabaseSync(dbPath);
+    try {
+      const row = settingsDb.prepare("SELECT value FROM settings WHERE key = 'app'").get() as {
+        value: string;
+      };
+      const blob = JSON.parse(row.value) as { models: Array<Record<string, unknown>> };
+      const original = blob.models.find((model) => model.id === first.id);
+      assert.ok(original);
+      blob.models.push({ ...original, id: legacyId, name: 'MiMo b' });
+      settingsDb
+        .prepare("UPDATE settings SET value = ? WHERE key = 'app'")
+        .run(JSON.stringify(blob));
+      secrets.set(providerSecretKey(legacyId), 'sk-account-b');
+    } finally {
+      settingsDb.close();
+    }
+    const accounts = [first.id, legacyId];
+    const queried: string[] = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const auth = new Headers(init?.headers).get('authorization');
+      const id = auth === 'Bearer sk-account-a' ? 'a' : auth === 'Bearer sk-account-b' ? 'b' : null;
+      assert.ok(id, '每个请求必须携带对应账号的凭据');
+      queried.push(id);
+      return new Response(JSON.stringify({ data: [{ id: `mimo-account-${id}-only` }] }));
+    }) as typeof fetch;
+    const results = await refreshBuiltinModelCatalogs(new RunManager(store));
+    assert.equal(results.length, 2);
+    assert.ok(results.every((result) => result.ok));
+    assert.deepEqual(queried.sort(), ['a', 'b']);
+    for (const [index, id] of ['a', 'b'].entries()) {
+      const updated = store.getModelProvider(accounts[index]);
+      assert.ok(updated?.models.includes(`mimo-account-${id}-only`));
+      assert.equal(updated?.models.includes(`mimo-account-${id === 'a' ? 'b' : 'a'}-only`), false);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 

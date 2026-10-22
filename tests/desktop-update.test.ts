@@ -40,6 +40,13 @@ import {
   GuardedNsisUpdater,
   launchInstallerProcess,
 } from '../apps/desktop/src/update/windows-installer';
+import {
+  planShortcutRepair,
+  sameWindowsPath,
+  shouldRestoreMissingShortcut,
+  WINDOWS_APP_USER_MODEL_ID,
+  windowsShortcutDetails,
+} from '../apps/desktop/src/windows-shortcut';
 import { isCancellable } from '../src/host/run-types';
 import { normalizeUpdateStatus } from '../web/src/update-status';
 
@@ -522,6 +529,105 @@ test('页面：侧边栏条目 + i18n 都在（浏览器里没有桥 → 不显�
 });
 
 // ── 打包与 CI 契约（feed 没了 = 永远查不到更新）──────────────────────────
+
+test('Windows 快捷方式：更新后目标被改到临时路径时要重写，平时缺失不补建', () => {
+  const exe = 'C:\\Users\\小六\\AppData\\Local\\Programs\\@payasodesktop\\PayasoAgent.exe';
+  const temp = 'C:\\Users\\小六\\AppData\\Local\\Temp\\nsis\\old-install\\PayasoAgent.exe';
+  assert.equal(sameWindowsPath(exe, exe.toLowerCase()), true);
+  assert.equal(
+    planShortcutRepair({
+      existing: { target: temp, icon: temp, cwd: path.win32.dirname(temp) },
+      execPath: exe,
+      appUserModelId: 'com.payaso.agent',
+      restoreIfMissing: false,
+    }).action,
+    'write',
+  );
+  assert.equal(
+    planShortcutRepair({
+      existing: null,
+      execPath: exe,
+      appUserModelId: 'com.payaso.agent',
+      restoreIfMissing: false,
+    }).action,
+    'skip',
+  );
+  assert.deepEqual(
+    planShortcutRepair({
+      existing: null,
+      execPath: exe,
+      appUserModelId: 'com.payaso.agent',
+      restoreIfMissing: true,
+    }),
+    { action: 'write', reason: 'missing' },
+  );
+  assert.equal(
+    planShortcutRepair({
+      existing: { target: exe, icon: exe, iconIndex: 0, cwd: path.win32.dirname(exe) },
+      execPath: exe,
+      appUserModelId: 'com.payaso.agent',
+      restoreIfMissing: true,
+    }).action,
+    'skip',
+  );
+  assert.equal(
+    planShortcutRepair({
+      existing: { target: exe, icon: temp },
+      execPath: exe,
+      appUserModelId: 'com.payaso.agent',
+      restoreIfMissing: false,
+    }).action,
+    'write',
+  );
+  const details = windowsShortcutDetails(exe, 'com.payaso.agent', 'PayasoAgent');
+  assert.equal(details.target, exe);
+  assert.equal(details.icon, exe);
+  assert.equal(details.iconIndex, 0);
+  assert.equal(details.cwd, path.win32.dirname(exe));
+  assert.equal(
+    shouldRestoreMissingShortcut({
+      argv: ['PayasoAgent.exe', '--updated'],
+      seenVersion: '0.4.17',
+      currentVersion: '0.4.17',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRestoreMissingShortcut({
+      argv: ['PayasoAgent.exe'],
+      seenVersion: null,
+      currentVersion: '0.4.18',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRestoreMissingShortcut({
+      argv: ['PayasoAgent.exe'],
+      seenVersion: '0.4.18',
+      currentVersion: '0.4.18',
+    }),
+    false,
+  );
+});
+
+test('Windows 安装器：更新落盘后重写桌面和开始菜单快捷方式', () => {
+  const yml = shellSource('electron-builder.yml');
+  assert.match(yml, /include:\s*build\/installer\.nsh/);
+  const nsh = shellSource(path.join('build', 'installer.nsh'));
+  assert.match(nsh, /!macro customInstall/);
+  assert.match(nsh, /\$\{if\} \$\{isUpdated\}/);
+  assert.match(nsh, /CreateShortCut "\$newDesktopLink" "\$appExe"/);
+  assert.match(nsh, /CreateShortCut "\$newStartMenuLink" "\$appExe"/);
+  assert.match(nsh, /WinShell::SetLnkAUMI "\$newDesktopLink" "\$\{APP_ID\}"/);
+  assert.match(nsh, /WinShell::SetLnkAUMI "\$newStartMenuLink" "\$\{APP_ID\}"/);
+  assert.match(nsh, /SHChangeNotify/);
+  const main = shellSource(path.join('src', 'main.ts'));
+  assert.match(main, /setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/);
+  assert.match(main, /repairWindowsLaunchShortcuts\(\)/);
+  assert.match(main, /shouldRestoreMissingShortcut/);
+  const appId = /^appId:\s*(\S+)\s*$/m.exec(yml)?.[1];
+  assert.equal(appId, WINDOWS_APP_USER_MODEL_ID);
+});
 
 test('electron-builder：GitHub provider + updaterCacheDirName', () => {
   const yml = shellSource('electron-builder.yml');
