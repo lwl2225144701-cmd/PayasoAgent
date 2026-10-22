@@ -69,7 +69,7 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 │  trace.ts · side-effect.ts · output-guard.ts                  │
 │  llm.ts: OpenAI 兼容 chat/completions(fetch,无 SDK)          │
 │  tools/tools.ts: 注册表/执行/Schema/effect 契约              │
-│  builtin-tools.ts + plan-tools.ts + filesystem.ts + runtime-tools.ts: 14 个模型可见工具 │
+│  builtin-tools.ts + plan-tools.ts + filesystem.ts + runtime-tools.ts: 15 个模型可见工具（含 check 可信检查） │
 └───────────────┬─────────────────────────────────────────────┘
                 │ ToolContext{ runId, workspaceRoot, onSandboxEvent }
 ┌───────────────▼─────────────────────────────────────────────┐
@@ -105,12 +105,13 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/harness/context-state.ts`                    | 可恢复的 Harness 状态：conversation summary、已摘要前缀计数、Plan、只读连续性、重复调用计数与执行预算累计；随 checkpoint 保存                                                                                                                        |
 | `src/harness/conversation-summarizer.ts`          | 增量结构化摘要适配器；只总结即将从模型视图移出的完整旧轮，不删除 canonical transcript                                                                                                                       |
 | `src/harness/scratchpad-view.ts`                  | Scratchpad 的有界模型投影：最近步骤、字段截断与硬 token 上限                                                                                                                                          |
-| `src/harness/repeat-call-policy.ts`               | 重复调用观察策略（v2.6 纯函数）：调用身份=工具名+深度排序参数，3/5/8 分级，全部处置计数，参数预览脱敏有界；只提醒不阻断 |                                                                    |
+| `src/harness/repeat-call-policy.ts`               | 重复调用观察策略（v2.6 纯函数）：调用身份=工具名+深度排序参数，3/5/8 分级，全部处置计数，参数预览脱敏有界；只提醒不阻断 |
+| `src/harness/task-focus.ts`                       | 用户请求投影：本轮请求原话、最近历史请求与已读行区间（带版本）；不做意图分类，不替换用户目标 |
 | `src/harness/execution-policy.ts`                | 执行预算策略（v2.6 纯函数）：模型调用数/输出 token/活动时长三类机械预算，70% 预警/90% 收敛/耗尽，档位粘滞且每级只报一次 |                                                                |
 | `src/harness/model-context.ts`                    | 模型上下文能力配置：显式 Run 模型优先（source=`run_model`），环境变量仅 CLI/legacy fallback；保守 token 估算                                                                                                |
 | `src/bootstrap/runtime-bootstrap.ts`              | 默认本地 Runtime 装配：注册 File/Shell Tool，创建 legacy Run sandbox，canonicalize Host 授权的 Workspace，并注入执行上下文、checkpoint writer 与 Console Observer                                                    |
 | `src/runtime/contracts.ts`                        | Runtime 输入契约：Host/bootstrap 注入 `runId + workspaceRoot + permissionMode`，模型不可覆盖                                                                                                                   |
-| `src/runtime/trace.ts`                            | 结构化事件轨迹（31 类事件，见 §3.3）                                                                                                                                                         |
+| `src/runtime/trace.ts`                            | 结构化事件轨迹（34 类事件，见 §3.3）                                                                                                                                                         |
 | `src/runtime/checkpoint-port.ts`                  | Runtime checkpoint 快照契约与 `CheckpointWriter` 持久化端口，不含文件系统实现                                                                                                                        |
 | `src/persistence/file-checkpoint-store.ts`        | 默认本地 JSON checkpoint 适配器：`.checkpoints/<runId>.json` 原子写、读取与路径管理                                                                                                                |
 | `src/runtime/observer-port.ts`                    | Runtime 诊断观察端口；接收隔离快照，Observer 修改或抛错均不影响执行语义                                                                                                                                    |
@@ -133,7 +134,9 @@ PayasoAgent 是一个自研的 **LLM 驱动工具调用 Agent 运行时**：`LLM
 | `src/sandbox/shell-command-effect.ts`             | shell 命令级副作用分类（只读命令免回放；不确定即 non_idempotent）
 | `src/sandbox/background-jobs.ts`                  | 后台作业注册表（执行器端口注入、并发上限、输出预算；v2.3 起 Session 级所有权 + 增量输出 + 完成通知） |
 | `src/runtime/tool-error-classifier.ts`            | 工具错误分类（默认不重试；瞬时错误白名单；未分类错误为 uncertain 第四态——不自动重试，也不谎报为确定性）
-| `src/tools/runtime-tools.ts`                      | grep / glob / moveFile / deleteFile / shell / shellJob / loadSkill（另有 hidden 别名 createDir，不进 LLM 可见 schema）                                                                                                                        |
+| `src/tools/runtime-tools.ts`                      | grep / glob / moveFile / deleteFile / shell / shellJob / loadSkill / check（另有 hidden 别名 createDir，不进 LLM 可见 schema）                                                                                                                        |
+| `src/tools/check.ts` + `check-runner.ts` + `check-baseline.ts` | check 可信检查：process（可执行程序+字面 argv，拒 Shell 解释器承载脚本）与 biome-lint（首版仅 CSS，baseline=HEAD 比较）两 profile；单进程 runner、原始日志采集与完整日志发布；Biome 基线指纹复用判定 |
+| `src/execution-evidence.ts`                       | 执行证据 facts 协议 DTO 与校验（版本/路径不合法时拒绝，超容量标为不完整，null≠[]）；定义持久化、复用与模型投影所用的数据契约 |
 | `src/sandbox/sandbox-manager.ts`                  | 工作区生命周期、resolveWorkspacePath、assertInsideRoot、cleanupWorkspace                                                                                                                 |
 | `src/sandbox/macos-sandbox.ts`                    | macOS `sandbox-exec` 启动器（输出限 64KB）+ **能力探测**（probeSandboxAvailability，fail-closed 门）
 | `src/sandbox/shell-executor.ts`                   | 统一 Shell 执行入口与平台选择（darwin→Seatbelt / win32+gate→Windows ACL / 其余→无沙箱门控）；结果附 executor/enforcement；`shellIsolationCapabilities()` 诚实分级能力报告（GET /runtime/capabilities 的 shellIsolation 字段）
@@ -199,10 +202,12 @@ web/src/
 ├── api.ts                  fetch 封装（含 settings/模型配置）+ SSE EventSource
 ├── hooks/useEventStream.ts SSE 连接/重连/按 seq 去重
 ├── types.ts                HostSession / HostRun / HostEvent / ModelProviderView / FileEntry
+├── run-task.ts             Run 任务与结果文本的安全取值纯函数（异常字段降级为空串）
 ├── format.ts               时间/大小格式化
 ├── preview/                文件预览模块（自包含；设计见 docs/plans/preview-module-plan.md）
 │   ├── registry.tsx        viewer 注册表：扩展名 → 懒加载 viewer + 图标（新增类型只加一行）
 │   ├── api.ts              /preview/* 客户端 + PreviewApiError（按错误码分叉）
+│   ├── browser-url.ts      浏览器入口 URL 归一化纯函数（补协议、仅接受 HTTP/HTTPS；空地址无效）
 │   ├── Launcher.tsx        ShellBar 预览入口胶囊（图标开关 + ⌄ 下拉：open-in-app 列表）
 │   ├── open-in-app.ts      open-in-app 客户端 controller（按「runId+路径」缓存带 10s TTL + POST；effectiveDefaultId / openInAppItemIconUrl / scopeOfTarget 纯函数）
 │   │                       默认应用的记忆**按作用域分键**（folder / file）：两个目标 id 空间不通用
@@ -220,6 +225,8 @@ web/src/
 │   └── hooks/              usePreviewTabs / useFileTree / useOpenInApps
 └── components/             Sidebar / SessionItem / WorkspaceSection / Timeline(思考/工具卡片/压缩提示)
                             / InputBar(ComposerParts, 逐模型下拉) / ShellBar / SettingsModal
+                            / Trace(执行轨迹页：事件分组展开、TraceCallRow、会话切换；结构归一在 trace-structure.ts)
+                            / TurnNavigator / ErrorBoundary(根级) / UpdateStatus / ModelSyncDialog 等
                             （Timeline 工具行的"在预览面板中打开"与附件预览入口见 preview/）
                             Timeline/ 内附件相关：FileAttachment（按类型着色的文件卡片）、
                             MessageImage + message-image.ts（用户消息图片附件的尺寸决策纯函数）
@@ -374,7 +381,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 
 ***
 
-## 5. 工具全景（14 个，模型可见）
+## 5. 工具全景（15 个，模型可见）
 
 > 与 §3.3 机器契约一致（`getSchemas()` 视角，排除 hidden 别名）。`createDir` 等旧工具保留 hidden 别名（`write` 已支持自动创建父目录），不占 LLM 可见 schema。
 
@@ -394,6 +401,7 @@ Runtime 不设置固定 `MAX_ITERATIONS`；`MAX_RETRY=2` 是**瞬时错误的**�
 | `moveFile`   | **non\_idempotent** | `src:<canonical>:dst:<canonical>`                     | 移动/重命名，拒绝覆盖已存在目标                                                                                                                                                        |
 | `deleteFile` | idempotent          | `path:<canonical>`                                    | 删除文件，不存在幂等返回                                                                                                                                                              |
 | `updatePlan` | idempotent          | fallback JSON(args)                                   | 全量替换任务清单（pending/in_progress/completed，同时最多一项 in_progress）；Harness 持有状态、随 checkpoint 恢复、有界投影注入；收尾时未完成项只发审计事件，不阻断                                          |
+| `check`      | **non\_idempotent** | `check:v2:invocation:<invocationId>`；旧调用路径回退到 `check:v1:profile:<p>:cwd:<canonical>…` 检查对象摘要 | 可信检查：`process`（可执行程序+字面参数数组，拒绝 Shell 解释器承载脚本与宿主绝对路径）或 `biome-lint`（首版仅 CSS；可与 HEAD 基线比较 introduced/resolved，不改真实工作区）；结果 passed/failed/inconclusive 保留真实退出码，完整日志另发布可 read 读回。执行身份区分同一次调用的恢复与同参数的新执行；Biome 检查复用另按输入指纹判定 |
 
 **写区权限**：`input/` 只读、仅 `work/` 与 `output/` 可写 —— 仅对 legacy per-run sandbox 生效（见 §8 已知缺口 #2）。
 
