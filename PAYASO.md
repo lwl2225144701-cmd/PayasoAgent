@@ -5,7 +5,7 @@
 | 目的 | 命令 |
 | --- | --- |
 | 单个确定性套件 | `node --import tsx tests/<suite>.test.ts` |
-| 全量确定性套件（无 LLM，145 个） | `npm run test:all` |
+| 全量确定性套件（无 LLM，146 个） | `npm run test:all` |
 | 类型检查 | `npx tsc --noEmit` |
 | 界面文案检查 | `npx tsx tests/helpers/i18n-check.ts [文件…]` |
 | 前端生产构建 | `npm run build:web` |

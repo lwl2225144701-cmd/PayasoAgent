@@ -61,10 +61,7 @@
           "args": {
             "path": "web/src/components/InputBar/index.tsx"
           },
-          "range": [
-            1,
-            334
-          ],
+          "range": [1, 334],
           "resultHash": "8839c19fba73d871595df8510a5d4de2"
         }
       ]
@@ -79,10 +76,7 @@
             "path": "web/src/components/InputBar/index.tsx",
             "offset": 335
           },
-          "range": [
-            335,
-            644
-          ],
+          "range": [335, 644],
           "resultHash": "41047e03697b33f474c71189193a6460"
         },
         {
@@ -104,10 +98,7 @@
             "path": "web/src/components/InputBar/index.tsx",
             "offset": 645
           },
-          "range": [
-            645,
-            812
-          ],
+          "range": [645, 812],
           "resultHash": "8ed89ae9101a12b878212401fcdf74ce"
         },
         {
@@ -156,10 +147,7 @@
             "offset": 1080,
             "limit": 120
           },
-          "range": [
-            1080,
-            1199
-          ],
+          "range": [1080, 1199],
           "resultHash": "ddcf3dee7c7747639cefe6fc05ba74d4"
         }
       ]
@@ -180,10 +168,7 @@
           "args": {
             "path": "web/src/preferences.ts"
           },
-          "range": [
-            1,
-            113
-          ],
+          "range": [1, 113],
           "resultHash": "a4d819c2ed52e2915f047a57b2d86237"
         }
       ]
@@ -197,10 +182,7 @@
           "args": {
             "path": "tests/frontend-last-session.test.ts"
           },
-          "range": [
-            1,
-            96
-          ],
+          "range": [1, 96],
           "resultHash": "0423bba06fceb15783926d7107218005"
         },
         {
@@ -208,10 +190,7 @@
           "args": {
             "path": "tests/frontend-enter-key.test.ts"
           },
-          "range": [
-            1,
-            149
-          ],
+          "range": [1, 149],
           "resultHash": "e1e3d2dac3e41a7d8feec6f988f1873f"
         }
       ]
@@ -227,10 +206,7 @@
             "offset": 380,
             "limit": 180
           },
-          "range": [
-            380,
-            559
-          ],
+          "range": [380, 559],
           "resultHash": "6f9d08d94c7e3b50963d68f2f603b14d"
         },
         {
@@ -240,10 +216,7 @@
             "offset": 480,
             "limit": 120
           },
-          "range": [
-            480,
-            599
-          ],
+          "range": [480, 599],
           "resultHash": "4a28c6e0f9fd606cfd605101ac7ea8c8"
         }
       ]
@@ -257,10 +230,7 @@
           "args": {
             "path": "tests/suite-count-contract.test.ts"
           },
-          "range": [
-            1,
-            134
-          ],
+          "range": [1, 134],
           "resultHash": "68c9656aef70ab9c69e1b1471120c641"
         },
         {
@@ -269,10 +239,7 @@
             "path": "tests/frontend-stats-bar.test.ts",
             "limit": 60
           },
-          "range": [
-            1,
-            60
-          ],
+          "range": [1, 60],
           "resultHash": "3ae876b6b5f788bf07695d5483cdb244"
         }
       ]
@@ -294,10 +261,7 @@
           "args": {
             "path": "tests/docs-code-paths.test.ts"
           },
-          "range": [
-            1,
-            250
-          ],
+          "range": [1, 250],
           "resultHash": "1d61edc1c8c867cb65221add26936a5d"
         }
       ]
@@ -313,10 +277,7 @@
             "offset": 1000,
             "limit": 80
           },
-          "range": [
-            1000,
-            1079
-          ],
+          "range": [1000, 1079],
           "resultHash": "b8bfe219cc547a95f0627a53745a756c"
         },
         {
@@ -360,10 +321,7 @@
           "args": {
             "path": "web/src/main.tsx"
           },
-          "range": [
-            1,
-            17
-          ],
+          "range": [1, 17],
           "resultHash": "9a8752ec7ec85b714f2e9c0585071dc1"
         },
         {
@@ -387,10 +345,7 @@
             "offset": 1,
             "limit": 120
           },
-          "range": [
-            1,
-            120
-          ],
+          "range": [1, 120],
           "resultHash": "77344f085fc7772f13200ac4cfd92398"
         }
       ]
@@ -406,10 +361,7 @@
             "offset": 121,
             "limit": 180
           },
-          "range": [
-            121,
-            300
-          ],
+          "range": [121, 300],
           "resultHash": "d17c4786ecf348855f570697a448f323"
         }
       ]
@@ -425,10 +377,7 @@
             "offset": 301,
             "limit": 160
           },
-          "range": [
-            301,
-            460
-          ],
+          "range": [301, 460],
           "resultHash": "df5aa2ceddacc50a8e0774323ddbb5df"
         }
       ]
@@ -444,10 +393,7 @@
             "offset": 460,
             "limit": 120
           },
-          "range": [
-            460,
-            579
-          ],
+          "range": [460, 579],
           "resultHash": "1effa55340cbdc6f3386192bd90582c9"
         }
       ]
@@ -463,10 +409,7 @@
             "offset": 580,
             "limit": 233
           },
-          "range": [
-            580,
-            812
-          ],
+          "range": [580, 812],
           "resultHash": "a4e57310ed5f2fef1cc72acc21261696"
         },
         {
@@ -474,10 +417,7 @@
           "args": {
             "path": "web/src/components/InputBar/ComposerParts.tsx"
           },
-          "range": [
-            1,
-            328
-          ],
+          "range": [1, 328],
           "resultHash": "5b373858e075acfaf0382e663ba639ec"
         }
       ]
@@ -499,10 +439,7 @@
           "args": {
             "path": "web/src/components/InputBar/PromptPreview.tsx"
           },
-          "range": [
-            1,
-            67
-          ],
+          "range": [1, 67],
           "resultHash": "1a19c669f7efeab6dc55cbe070f5d784"
         }
       ]
@@ -518,10 +455,7 @@
             "offset": 820,
             "limit": 100
           },
-          "range": [
-            820,
-            919
-          ],
+          "range": [820, 919],
           "resultHash": "f3aaa2f7bc3f07b879d5f8392a234a57"
         }
       ]
@@ -535,10 +469,7 @@
           "args": {
             "path": "tests/frontend-portal-root.test.ts"
           },
-          "range": [
-            1,
-            157
-          ],
+          "range": [1, 157],
           "resultHash": "1d3eec496f122f7a7c1cc5ca956fa53e"
         },
         {
@@ -547,10 +478,7 @@
             "path": "tests/frontend-plan-state.test.ts",
             "limit": 60
           },
-          "range": [
-            1,
-            60
-          ],
+          "range": [1, 60],
           "resultHash": "406acd52121397951bcbb1a006798370"
         }
       ]
@@ -566,10 +494,7 @@
             "offset": 1105,
             "limit": 90
           },
-          "range": [
-            1105,
-            1194
-          ],
+          "range": [1105, 1194],
           "resultHash": "fdc020955146315da01329a10121980c"
         },
         {
@@ -577,10 +502,7 @@
           "args": {
             "path": "web/src/preferences.ts"
           },
-          "range": [
-            1,
-            113
-          ],
+          "range": [1, 113],
           "resultHash": "a4d819c2ed52e2915f047a57b2d86237"
         }
       ]
@@ -594,10 +516,7 @@
           "args": {
             "path": "web/src/theme.ts"
           },
-          "range": [
-            1,
-            85
-          ],
+          "range": [1, 85],
           "resultHash": "8875a20bc2d4d60ee57c6263d278730f"
         },
         {
@@ -605,10 +524,7 @@
           "args": {
             "path": "tests/frontend-last-session.test.ts"
           },
-          "range": [
-            1,
-            96
-          ],
+          "range": [1, 96],
           "resultHash": "0423bba06fceb15783926d7107218005"
         },
         {
@@ -618,10 +534,7 @@
             "offset": 150,
             "limit": 40
           },
-          "range": [
-            150,
-            189
-          ],
+          "range": [150, 189],
           "resultHash": "6dfd169485ebc83e25c2de9b37ea5722"
         }
       ]
@@ -635,10 +548,7 @@
           "args": {
             "path": "web/package.json"
           },
-          "range": [
-            1,
-            32
-          ],
+          "range": [1, 32],
           "resultHash": "3408f2e1d08988be26e8d471ad1cbff8"
         },
         {
@@ -681,10 +591,7 @@
           "args": {
             "path": "tsconfig.json"
           },
-          "range": [
-            1,
-            14
-          ],
+          "range": [1, 14],
           "resultHash": "c7f5a5b38e1567611bc3c913c72803a8"
         }
       ]
@@ -700,10 +607,7 @@
             "offset": 490,
             "limit": 120
           },
-          "range": [
-            490,
-            609
-          ],
+          "range": [490, 609],
           "resultHash": "f72041e90c6f92400c04b5f3f7d15f77"
         },
         {
@@ -713,10 +617,7 @@
             "offset": 1,
             "limit": 45
           },
-          "range": [
-            1,
-            45
-          ],
+          "range": [1, 45],
           "resultHash": "21f405160c6cad291ab9ba3b7bf658ad"
         }
       ]
@@ -732,10 +633,7 @@
             "offset": 1040,
             "limit": 75
           },
-          "range": [
-            1040,
-            1114
-          ],
+          "range": [1040, 1114],
           "resultHash": "a0b08500bdfa7fea0a9d69e26f0c0d44"
         },
         {
@@ -751,10 +649,7 @@
           "args": {
             "path": "web/tsconfig.json"
           },
-          "range": [
-            1,
-            22
-          ],
+          "range": [1, 22],
           "resultHash": "45e568cc646c356738c223e4902a70de"
         }
       ]
@@ -778,10 +673,7 @@
             "offset": 185,
             "limit": 40
           },
-          "range": [
-            185,
-            224
-          ],
+          "range": [185, 224],
           "resultHash": "a7c1961dd9bd9d09dce3d1f13ac54714"
         },
         {
@@ -810,10 +702,7 @@
             "offset": 57,
             "limit": 70
           },
-          "range": [
-            57,
-            126
-          ],
+          "range": [57, 126],
           "resultHash": "34947b7dea28349f848a8ab36a152909"
         }
       ]

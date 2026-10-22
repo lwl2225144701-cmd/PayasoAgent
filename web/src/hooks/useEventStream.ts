@@ -82,6 +82,8 @@ export function useEventStream(
   runId: string | null,
   mode: EventStreamMode = 'live',
   onTerminal?: (event: HostEvent) => void,
+  /** 快照取回的替身（Trace 页的缓存层用）；缺省走既有 fetchRunEvents。 */
+  fetchSnapshot?: (runId: string) => Promise<HostEvent[]>,
 ) {
   const [events, setEvents] = useState<HostEvent[]>([]);
   // 增量累计的 assistant_delta 全文：只在有新增 delta 时更新引用（无 delta 的事件
@@ -99,6 +101,9 @@ export function useEventStream(
   const loadedRunIdRef = useRef<string | null>(null);
   const onTerminalRef = useRef(onTerminal);
   onTerminalRef.current = onTerminal;
+  // fetchSnapshot 只在快照分支调用：放进 ref 避免身份变化把 effect 反复重启。
+  const fetchSnapshotRef = useRef(fetchSnapshot);
+  fetchSnapshotRef.current = fetchSnapshot;
 
   useEffect(() => {
     // 清理旧连接
@@ -133,8 +138,12 @@ export function useEventStream(
     // ---- 已终态 Run：一次性取回 ----
     if (mode === 'snapshot') {
       let cancelled = false;
-      void fetchRunEvents(runId)
-        .then(({ events: incoming }) => {
+      // 快照取回可注入替身（Trace 页缓存层）；统一归一成 HostEvent[]。
+      const request: Promise<HostEvent[]> = fetchSnapshotRef.current
+        ? fetchSnapshotRef.current(runId)
+        : fetchRunEvents(runId).then((resp) => resp.events);
+      void request
+        .then((incoming) => {
           if (cancelled) return;
           setEvents(mergeStreamingEvents([], incoming));
           // 快照路径一次性拿全量：直接全量回扫，不需要引用状态。

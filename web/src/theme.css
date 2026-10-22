@@ -1,50 +1,64 @@
-/* Payaso — ink, blue and clear glass. Shared semantic palette for every page. */
+/* 鹿、湖泊与蓝色光带：两套主题共用语义色，壁纸只在应用根层绘制。 */
 :root {
   color-scheme: dark;
 
+  --workspace-wallpaper: url("/wallpapers/payaso-deer-dark.jpg");
+  --workspace-reading-surface: linear-gradient(
+    90deg,
+    rgba(8, 20, 39, 0.28),
+    rgba(9, 22, 42, 0.38) 52%,
+    rgba(9, 22, 42, 0.24)
+  );
+  --color-sidebar-glass: rgba(7, 23, 46, 0.12);
+  --color-toolbar-glass: rgba(14, 30, 52, 0.08);
+  --color-trace-surface: transparent;
+  --color-trace-model: #a99ae6;
+  --brand-logo-filter: brightness(0) invert(1);
+
   /* Surfaces */
-  --color-canvas: #10141b;
-  --color-surface: rgba(22, 28, 38, 0.74);
-  --color-surface-subtle: rgba(34, 43, 57, 0.42);
-  --color-surface-raised: rgba(28, 35, 47, 0.97);
-  --color-surface-hover: rgba(57, 71, 92, 0.46);
-  --color-surface-selected: rgba(79, 127, 240, 0.12);
+  --color-canvas: #0c1b30;
+  --color-surface: rgba(19, 37, 61, 0.84);
+  --color-surface-subtle: rgba(123, 164, 214, 0.08);
+  --color-surface-raised: rgba(20, 38, 61, 0.98);
+  --color-surface-hover: rgba(150, 185, 227, 0.12);
+  --color-surface-selected: rgba(139, 185, 250, 0.16);
 
   /* Text */
-  --color-text-primary: #e9edf5;
-  --color-text-secondary: #b0bacb;
-  --color-text-tertiary: #8e9bb0;
-  --color-text-muted: #78869b;
-  --color-text-on-brand: #ffffff;
+  --color-text-primary: #eaf2fc;
+  --color-text-secondary: #bccce0;
+  --color-text-tertiary: #99afc9;
+  --color-text-muted: #8da3be;
+  --color-text-on-brand: #102843;
+  --color-on-brand: var(--color-text-on-brand);
 
   /* Borders */
-  --color-border-subtle: rgba(164, 185, 216, 0.09);
-  --color-border-default: rgba(164, 185, 216, 0.16);
-  --color-border-strong: rgba(164, 185, 216, 0.3);
+  --color-border-subtle: rgba(172, 201, 236, 0.1);
+  --color-border-default: rgba(172, 201, 236, 0.18);
+  --color-border-strong: rgba(188, 216, 250, 0.34);
 
   /* Brand */
-  --color-brand: #4f7ff0;
-  --color-brand-hover: #6b94f4;
-  --color-brand-soft: rgba(79, 127, 240, 0.11);
-  --color-brand-border: rgba(79, 127, 240, 0.24);
-  --color-brand-ring: rgba(79, 127, 240, 0.16);
+  --color-brand: #88b9fc;
+  --color-brand-hover: #b0d2ff;
+  --color-brand-soft: rgba(136, 185, 252, 0.12);
+  --color-brand-border: rgba(136, 185, 252, 0.36);
+  --color-brand-ring: rgba(136, 185, 252, 0.18);
 
   /* Component surfaces */
-  --color-message-user: rgba(49, 65, 89, 0.48);
-  --color-message-user-border: rgba(151, 176, 211, 0.14);
-  --color-composer: rgba(24, 32, 44, 0.36);
-  --glass-composer-blur: 3px;
-  --shadow-composer: 0 12px 36px rgba(0, 0, 0, 0.16);
-  --color-composer-control: rgba(35, 35, 40, 0.66);
-  --color-code: rgba(27, 35, 48, 0.84);
+  --color-message-user: rgba(46, 70, 104, 0.38);
+  --color-message-user-border: rgba(151, 186, 230, 0.18);
+  --color-composer: rgba(22, 36, 56, 0.64);
+  --glass-composer-blur: 6px;
+  --shadow-composer: 0 8px 24px rgba(2, 11, 25, 0.14);
+  --color-composer-control: rgba(32, 55, 85, 0.9);
+  --color-code: rgba(13, 29, 49, 0.94);
   --color-overlay: rgba(4, 6, 10, 0.44);
-  --color-header-glass: rgba(16, 20, 27, 0.64);
+  --color-header-glass: rgba(13, 29, 50, 0.08);
   --color-canvas-glow: rgba(79, 127, 240, 0.07);
-  --color-modal-glass: rgba(23, 30, 41, 0.96);
-  --color-modal-nav: rgba(16, 22, 32, 0.6);
-  --color-card-glass: rgba(36, 46, 62, 0.46);
-  --color-card-glass-hover: rgba(45, 58, 77, 0.64);
-  --color-glass-highlight: rgba(255, 255, 255, 0.045);
+  --color-modal-glass: rgba(18, 35, 57, 0.98);
+  --color-modal-nav: rgba(12, 27, 47, 0.88);
+  --color-card-glass: rgba(32, 52, 79, 0.36);
+  --color-card-glass-hover: rgba(45, 68, 99, 0.48);
+  --color-glass-highlight: rgba(219, 236, 255, 0.055);
 
   /* Status */
   --color-danger: #f47b7b;
@@ -95,43 +109,56 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --color-canvas: #f4f6fa;
-  --color-surface: rgba(253, 253, 255, 0.74);
-  --color-surface-subtle: rgba(234, 240, 251, 0.64);
-  --color-surface-raised: rgba(255, 255, 255, 0.97);
-  --color-surface-hover: rgba(227, 234, 248, 0.72);
-  --color-surface-selected: rgba(219, 230, 255, 0.7);
+  --workspace-wallpaper: url("/wallpapers/payaso-deer-light.jpg");
+  --workspace-reading-surface: linear-gradient(
+    90deg,
+    rgba(240, 248, 255, 0.26),
+    rgba(245, 250, 255, 0.4) 52%,
+    rgba(240, 248, 255, 0.24)
+  );
+  --color-sidebar-glass: rgba(225, 242, 255, 0.2);
+  --color-toolbar-glass: rgba(234, 245, 255, 0.1);
+  --color-trace-surface: transparent;
+  --color-trace-model: #8271b6;
+  --brand-logo-filter: none;
 
-  --color-text-primary: #1c2535;
-  --color-text-secondary: #526174;
-  --color-text-tertiary: #64748b;
-  --color-text-muted: #718096;
+  --color-canvas: #eaf4fe;
+  --color-surface: rgba(246, 251, 255, 0.88);
+  --color-surface-subtle: rgba(107, 157, 208, 0.08);
+  --color-surface-raised: rgba(249, 252, 255, 0.98);
+  --color-surface-hover: rgba(88, 139, 195, 0.1);
+  --color-surface-selected: rgba(114, 170, 230, 0.18);
+
+  --color-text-primary: #20364e;
+  --color-text-secondary: #45617c;
+  --color-text-tertiary: #57738f;
+  --color-text-muted: #627e98;
   --color-text-on-brand: #ffffff;
 
-  --color-border-subtle: #e2e7ef;
-  --color-border-default: #d5dce7;
-  --color-border-strong: #b6c1d1;
+  --color-border-subtle: rgba(54, 96, 142, 0.1);
+  --color-border-default: rgba(54, 96, 142, 0.19);
+  --color-border-strong: rgba(54, 96, 142, 0.32);
 
-  --color-brand: #426bd8;
-  --color-brand-hover: #3159c5;
-  --color-brand-soft: rgba(66, 107, 216, 0.09);
-  --color-brand-border: rgba(66, 107, 216, 0.23);
-  --color-brand-ring: rgba(66, 107, 216, 0.15);
+  --color-brand: #397ac7;
+  --color-brand-hover: #245e9f;
+  --color-brand-soft: rgba(57, 122, 199, 0.1);
+  --color-brand-border: rgba(57, 122, 199, 0.3);
+  --color-brand-ring: rgba(57, 122, 199, 0.14);
 
-  --color-message-user: rgba(219, 229, 246, 0.62);
-  --color-message-user-border: rgba(99, 127, 173, 0.18);
-  --color-composer: rgba(255, 255, 255, 0.42);
-  --shadow-composer: 0 12px 36px rgba(49, 66, 97, 0.08);
-  --color-composer-control: rgba(238, 242, 248, 0.68);
-  --color-code: #eef1f6;
+  --color-message-user: rgba(217, 234, 252, 0.48);
+  --color-message-user-border: rgba(81, 128, 178, 0.18);
+  --color-composer: rgba(248, 252, 255, 0.64);
+  --shadow-composer: 0 8px 24px rgba(39, 83, 128, 0.08);
+  --color-composer-control: rgba(229, 240, 253, 0.9);
+  --color-code: rgba(229, 240, 252, 0.95);
   --color-overlay: rgba(32, 42, 60, 0.2);
-  --color-header-glass: rgba(245, 247, 251, 0.74);
+  --color-header-glass: rgba(235, 246, 255, 0.1);
   --color-canvas-glow: rgba(66, 105, 232, 0.06);
-  --color-modal-glass: rgba(250, 252, 255, 0.96);
-  --color-modal-nav: rgba(237, 241, 248, 0.78);
-  --color-card-glass: rgba(245, 248, 252, 0.72);
-  --color-card-glass-hover: rgba(233, 239, 248, 0.82);
-  --color-glass-highlight: rgba(255, 255, 255, 0.8);
+  --color-modal-glass: rgba(247, 251, 255, 0.98);
+  --color-modal-nav: rgba(228, 240, 253, 0.9);
+  --color-card-glass: rgba(239, 247, 255, 0.42);
+  --color-card-glass-hover: rgba(225, 239, 254, 0.54);
+  --color-glass-highlight: rgba(255, 255, 255, 0.58);
 
   --color-danger: #d84d5c;
   --color-danger-text: #b93646;

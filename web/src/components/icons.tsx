@@ -518,3 +518,25 @@ export function PreviewIcon({ size, ...p }: IconProps) {
     p,
   );
 }
+
+export function ClockIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3.2 2" />
+    </>,
+    p,
+  );
+}
+
+export function ColumnsIcon({ size, ...p }: IconProps) {
+  return base(
+    size,
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M9.2 4.5v15M14.8 4.5v15" />
+    </>,
+    p,
+  );
+}

@@ -6,9 +6,9 @@
   width: 100%;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--color-surface-subtle) 60%, transparent);
+  background: var(--color-card-glass);
 }
 
 .header {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import styles from './App.module.css';
 import {
   archiveSession as apiArchiveSession,
@@ -42,6 +42,7 @@ import {
 } from './components/Timeline/context-gauge';
 import { PlanPanel } from './components/Timeline/PlanPanel';
 import type { PlanView } from './components/Timeline/plan-state';
+import { TraceView } from './components/Trace';
 import { TurnNavigator } from './components/TurnNavigator';
 import { useConversationScroll } from './hooks/useConversationScroll';
 import { useGeneralSettings } from './hooks/useGeneralSettings';
@@ -146,6 +147,9 @@ export default function App() {
   }
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // 会话内容区视图：对话（默认）/ 执行轨迹。App 级状态 —— 切换会话/回合不重置，
+  // 两个内容面板都保持挂载（display:none 隐藏），切换标签互不丢状态。
+  const [contentView, setContentView] = useState<'chat' | 'trace'>('chat');
   const toggleSidebarCollapsed = useCallback(() => {
     sidebarUserOverrideRef.current = true;
     setSidebarCollapsed((value) => !value);
@@ -465,6 +469,47 @@ export default function App() {
     contentRef: conversationContentRef,
     stopFollowing: stopConversationFollow,
   } = useConversationScroll(currentSessionId, sentRunId);
+
+  // 仅同步悬浮输入区的布局高度；正文可从背后经过，末尾仍能完整滚到输入框上方。
+  const composerDockRef = useRef<HTMLDivElement>(null);
+  const hasConversationComposer = Boolean(currentSessionId && currentRun);
+  useLayoutEffect(() => {
+    if (!hasConversationComposer) return;
+    const dock = composerDockRef.current;
+    const scroller = conversationScrollRef.current;
+    if (!dock || !scroller) return;
+    const syncHeight = () => {
+      const height = `${Math.ceil(dock.getBoundingClientRect().height)}px`;
+      if (scroller.style.getPropertyValue('--composer-overlay-height') !== height) {
+        scroller.style.setProperty('--composer-overlay-height', height);
+      }
+    };
+    syncHeight();
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(dock);
+    return () => {
+      observer.disconnect();
+      scroller.style.removeProperty('--composer-overlay-height');
+    };
+  }, [hasConversationComposer, conversationScrollRef]);
+
+  // ---- 标签切换的滚动位置保留 ----
+  // 对话与轨迹共用同一个滚动容器；display:none 会丢 scrollTop，所以在「提交前」
+  // （旧内容仍有布局时）保存当前滚动位置，切回对话后在布局恢复时还原。
+  // 渲染期检测上次视图（与上方 previewScopeRunId 同 pattern），effect 在提交后还原。
+  const contentViewPrevRef = useRef(contentView);
+  const chatScrollTopRef = useRef(0);
+  if (contentViewPrevRef.current !== contentView) {
+    if (contentViewPrevRef.current === 'chat') {
+      chatScrollTopRef.current = conversationScrollRef.current?.scrollTop ?? 0;
+    }
+    contentViewPrevRef.current = contentView;
+  }
+  useLayoutEffect(() => {
+    if (contentView !== 'chat') return;
+    const el = conversationScrollRef.current;
+    if (el) el.scrollTop = chatScrollTopRef.current;
+  }, [contentView, conversationScrollRef]);
 
   // Poll run files (kept for future "附件" row; not displayed inline).
   useEffect(() => {
@@ -1049,47 +1094,94 @@ export default function App() {
 
           {currentSessionId ? (
             <div className={styles.workspace}>
+              {/* 对话 / 轨迹切换：两个面板都常挂，隐藏的只是布局（状态不丢） */}
+              <div className={styles.contentTabs} role="tablist" aria-label={t('trace.tabsLabel')}>
+                <button
+                  type="button"
+                  role="tab"
+                  id="content-tab-chat"
+                  aria-selected={contentView === 'chat'}
+                  aria-controls="content-pane-chat"
+                  className={`${styles.contentTab} ${contentView === 'chat' ? styles.contentTabActive : ''}`}
+                  onClick={() => setContentView('chat')}
+                >
+                  {t('trace.tab.chat')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  id="content-tab-trace"
+                  aria-selected={contentView === 'trace'}
+                  aria-controls="content-pane-trace"
+                  className={`${styles.contentTab} ${contentView === 'trace' ? styles.contentTabActive : ''}`}
+                  onClick={() => setContentView('trace')}
+                >
+                  {t('trace.tab.trace')}
+                </button>
+              </div>
               <div className={styles.sessionTimeline} ref={conversationScrollRef}>
-                {/* 0 高 sticky 槽必须挂在滚动容器内部，rail 才能钉在可视带右缘 */}
-                <TurnNavigator
-                  runs={currentSessionRuns}
-                  activeRunId={currentRunId}
-                  onNavigate={handleNavigateRun}
-                />
-                <div ref={conversationContentRef}>
-                  {displayedSessionRuns.length > 0 ? (
-                    displayedSessionRuns.map((run) => (
-                      <Timeline
-                        key={run.runId}
-                        run={run}
-                        optimistic={run.runId === pendingRun?.runId}
-                        modelFallback={null}
-                        embedded
-                        onRunTerminal={handleRunTerminal}
-                        onRetryCommand={handleCreateRun}
-                        onContextUsage={
-                          run.runId === latestSessionRunId ? setContextUsage : undefined
-                        }
-                        // 计划只认"当前这一轮"：乐观 pending 窗口内不接受上一轮的再次上抛，
-                        // 保证点发送后旧计划不会回闪（新 Run 落库后才由它自己上抛）。
-                        onPlan={
-                          run.runId === latestSessionRunId && !pendingRun
-                            ? setActivePlan
-                            : undefined
-                        }
-                        onOpenPreview={openPreview}
-                      />
-                    ))
+                <div
+                  id="content-pane-chat"
+                  role="tabpanel"
+                  aria-labelledby="content-tab-chat"
+                  className={contentView === 'chat' ? styles.chatPane : styles.paneHidden}
+                >
+                  {/* 0 高 sticky 槽必须挂在滚动容器内部，rail 才能钉在可视带右缘 */}
+                  <TurnNavigator
+                    runs={currentSessionRuns}
+                    activeRunId={currentRunId}
+                    onNavigate={handleNavigateRun}
+                  />
+                  <div ref={conversationContentRef}>
+                    {displayedSessionRuns.length > 0 ? (
+                      displayedSessionRuns.map((run) => (
+                        <Timeline
+                          key={run.runId}
+                          run={run}
+                          optimistic={run.runId === pendingRun?.runId}
+                          modelFallback={null}
+                          embedded
+                          onRunTerminal={handleRunTerminal}
+                          onRetryCommand={handleCreateRun}
+                          onContextUsage={
+                            run.runId === latestSessionRunId ? setContextUsage : undefined
+                          }
+                          // 计划只认"当前这一轮"：乐观 pending 窗口内不接受上一轮的再次上抛，
+                          // 保证点发送后旧计划不会回闪（新 Run 落库后才由它自己上抛）。
+                          onPlan={
+                            run.runId === latestSessionRunId && !pendingRun
+                              ? setActivePlan
+                              : undefined
+                          }
+                          onOpenPreview={openPreview}
+                        />
+                      ))
+                    ) : (
+                      <div className={styles.sessionTimelineEmpty}>
+                        <p>{t('app.preparingWorkspace')}</p>
+                      </div>
+                    )}
+                    {compactStatus && (
+                      <div className={styles.compactStatus} role="status">
+                        <span className={styles.compactCmd}>compact</span>
+                        <span className={styles.compactSep}>·</span>
+                        {compactStatusText(compactStatus, language)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* 轨迹面板：key 绑定会话 —— 切换会话整体重挂，事件流与展开状态不跨会话残留 */}
+                <div
+                  id="content-pane-trace"
+                  role="tabpanel"
+                  aria-labelledby="content-tab-trace"
+                  className={contentView === 'trace' ? styles.tracePane : styles.paneHidden}
+                >
+                  {currentSessionRuns.length > 0 ? (
+                    <TraceView key={currentSessionId} runs={currentSessionRuns} />
                   ) : (
                     <div className={styles.sessionTimelineEmpty}>
                       <p>{t('app.preparingWorkspace')}</p>
-                    </div>
-                  )}
-                  {compactStatus && (
-                    <div className={styles.compactStatus} role="status">
-                      <span className={styles.compactCmd}>compact</span>
-                      <span className={styles.compactSep}>·</span>
-                      {compactStatusText(compactStatus, language)}
                     </div>
                   )}
                 </div>
@@ -1131,33 +1223,35 @@ export default function App() {
           )}
 
           {currentSessionId && currentRun && (
-            <InputBar
-              sessionId={currentSessionId}
-              onSend={handleCreateRun}
-              onStop={handleStopRun}
-              isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}
-              isStopping={currentRun.status === 'stopping'}
-              currentModel={currentModelSelection ?? undefined}
-              models={models}
-              onSelectModel={handleSelectModel}
-              visionSupported={currentModelVision}
-              queuedCount={sendQueue.length}
-              queuedMessages={sendQueue}
-              onSendQueuedNow={handleSendQueuedNow}
-              onDeleteQueued={handleDeleteQueued}
-              onUpdateQueued={handleUpdateQueued}
-              permissionMode={permissionMode}
-              onSelectPermission={setPermissionMode}
-              onBuiltinCommand={handleBuiltinCommand}
-              headerSlot={
-                activePlan ? (
-                  <PlanPanel plan={activePlan} running={latestSessionRun?.status === 'running'} />
-                ) : null
-              }
-              // 会话统计条贴着 composer 底部（原先在顶栏，读的时候和标题抢同一行）
-              // 上下文占用环也在这里（从 composer 移来，对齐 DSH 状态条）。
-              footerSlot={<StatsBar stats={sessionStats} contextUsage={contextUsage} />}
-            />
+            <div className={styles.composerDock} ref={composerDockRef}>
+              <InputBar
+                sessionId={currentSessionId}
+                onSend={handleCreateRun}
+                onStop={handleStopRun}
+                isRunning={currentRun.status === 'running' || currentRun.status === 'stopping'}
+                isStopping={currentRun.status === 'stopping'}
+                currentModel={currentModelSelection ?? undefined}
+                models={models}
+                onSelectModel={handleSelectModel}
+                visionSupported={currentModelVision}
+                queuedCount={sendQueue.length}
+                queuedMessages={sendQueue}
+                onSendQueuedNow={handleSendQueuedNow}
+                onDeleteQueued={handleDeleteQueued}
+                onUpdateQueued={handleUpdateQueued}
+                permissionMode={permissionMode}
+                onSelectPermission={setPermissionMode}
+                onBuiltinCommand={handleBuiltinCommand}
+                headerSlot={
+                  activePlan ? (
+                    <PlanPanel plan={activePlan} running={latestSessionRun?.status === 'running'} />
+                  ) : null
+                }
+                // 会话统计条贴着 composer 底部（原先在顶栏，读的时候和标题抢同一行）
+                // 上下文占用环也在这里（从 composer 移来，对齐 DSH 状态条）。
+                footerSlot={<StatsBar stats={sessionStats} contextUsage={contextUsage} />}
+              />
+            </div>
           )}
         </div>
 

@@ -279,11 +279,19 @@ check('InputBar 切换任务时恢复新任务的草稿', () => {
 });
 
 check('InputBar 发送成功清除草稿', () => {
-  assert.match(INPUT_BAR, /clearComposerDraft\(pending\.scope\)/, '发送成功分支要清草稿（按作用域，支持等待期切任务）');
+  assert.match(
+    INPUT_BAR,
+    /clearComposerDraft\(pending\.scope\)/,
+    '发送成功分支要清草稿（按作用域，支持等待期切任务）',
+  );
 });
 
 check('InputBar 发送失败用合并函数还原（不覆盖新输入）', () => {
-  assert.match(INPUT_BAR, /mergeDraftOnSendFailure\(pending\.draftText,\s*prev\)/, '失败还原必须走合并函数');
+  assert.match(
+    INPUT_BAR,
+    /mergeDraftOnSendFailure\(pending\.draftText,\s*prev\)/,
+    '失败还原必须走合并函数',
+  );
 });
 
 check('App 两处 InputBar 都传入 sessionId（会话页 + 新建任务页）', () => {

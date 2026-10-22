@@ -423,9 +423,9 @@ export async function chat(
       const connectTimeout = reason instanceof TimeoutAbortError && reason.source === 'llm-connect';
       // 只吐了思考（无正文/工具调用）时的瞬时传输/服务端错误可安全重放；一旦产出过内容，
       // 重放会重复副作用，维持"不重放半截响应"的旧语义不变。
-      const replayableTransient = !emittedContent && isTransientStreamError(
-        error instanceof Error ? error.message : String(error),
-      );
+      const replayableTransient =
+        !emittedContent &&
+        isTransientStreamError(error instanceof Error ? error.message : String(error));
       if (!(connectTimeout || replayableTransient) || attempt >= MAX_RETRIES) throw error;
     } finally {
       // 无论成功、失败还是被中止：清理本尝试的空闲看门狗与用户取消监听。

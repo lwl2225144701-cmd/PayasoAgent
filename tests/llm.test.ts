@@ -419,14 +419,15 @@ try {
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(
-            new TextEncoder().encode(
-              'data: {"choices":[{"delta":{"content":"部分"}}]}\n\n',
-            ),
+            new TextEncoder().encode('data: {"choices":[{"delta":{"content":"部分"}}]}\n\n'),
           );
           setTimeout(() => controller.error(new Error('terminated')), 20);
         },
       });
-      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
     };
     await assert.rejects(() => chat([{ role: 'user', content: 'hello' }]), /terminated/);
     assert.equal(calls, 1);

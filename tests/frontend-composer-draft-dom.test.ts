@@ -126,7 +126,9 @@ function snapshotStorage(dom: { window: { localStorage: Storage } }): [string, s
   return entries;
 }
 
-async function openRestoredDom(entries: [string, string][]): Promise<Awaited<ReturnType<typeof createComponentDom>>> {
+async function openRestoredDom(
+  entries: [string, string][],
+): Promise<Awaited<ReturnType<typeof createComponentDom>>> {
   return createComponentDom(HARNESS_SOURCE, {
     beforeEvaluate(window) {
       for (const [key, value] of entries) window.localStorage.setItem(key, value);
@@ -215,11 +217,7 @@ console.log('── 场景 3：发送等待期间刷新不丢草稿 ──');
     f.newSendControl();
     await f.pressEnter();
     assert.equal(f.value(), '', '发送后输入框清空');
-    assert.equal(
-      draftOf(pendingDom, 'task-a'),
-      '未确认的草稿',
-      '清空输入框不得提前删除持久化草稿',
-    );
+    assert.equal(draftOf(pendingDom, 'task-a'), '未确认的草稿', '清空输入框不得提前删除持久化草稿');
     entries = snapshotStorage(pendingDom);
   } finally {
     pendingDom.window.close();

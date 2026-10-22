@@ -10,6 +10,7 @@ import { previewMessages } from './preview';
 import { settingsMessages } from './settings';
 import { shellMessages } from './shell';
 import { timelineMessages } from './timeline';
+import { traceMessages } from './trace';
 import { widgetsMessages } from './widgets';
 
 export const MESSAGES = {
@@ -20,6 +21,7 @@ export const MESSAGES = {
   ...settingsMessages,
   ...shellMessages,
   ...timelineMessages,
+  ...traceMessages,
   ...widgetsMessages,
 } as const;
 

@@ -60,14 +60,10 @@
 .userText {
   margin: 0;
   padding: 10px 15px;
-  background:
-    linear-gradient(135deg, var(--color-glass-highlight), transparent 50%),
-    color-mix(in srgb, var(--color-message-user) 94%, transparent);
+  background: var(--color-message-user);
   border: 1px solid var(--color-message-user-border);
   border-radius: 15px 15px 5px 15px;
   box-shadow: none;
-  backdrop-filter: blur(10px) saturate(115%);
-  -webkit-backdrop-filter: blur(10px) saturate(115%);
   color: var(--text-primary);
   font-size: var(--conversation-font-size, 14px);
   font-weight: 400;
