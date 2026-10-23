@@ -8,12 +8,24 @@
 //   其余未预期错误原样上抛，冒泡到 server.ts 既有顶层 catch → 500，不猜不吞。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  normalizePreviewBrowserUrl,
+  publishBrowserOpen,
+  subscribeBrowserOpen,
+} from '../preview/browser-open.js';
 import { subscribeWorkspaceChanges } from '../preview/changes.js';
 import { listTree, type PreviewScope, readFile, statFile } from '../preview/preview-service.js';
 import { PreviewError } from '../preview/types.js';
 import type { RunManager } from '../run-manager.js';
 import { getWorkspace } from '../workspace.js';
-import { checkOrigin, notFound, requireAuth, sendJson } from './route-context.js';
+import {
+  checkOrigin,
+  notFound,
+  readBody,
+  RequestBodyTooLargeError,
+  requireAuth,
+  sendJson,
+} from './route-context.js';
 
 function queryParams(req: IncomingMessage): URLSearchParams {
   return new URLSearchParams((req.url ?? '').split('?')[1] ?? '');
@@ -51,6 +63,43 @@ export async function handlePreview(
   manager: RunManager,
   port: number,
 ): Promise<void> {
+  // POST /preview/browser —— 请求 GUI 打开内嵌浏览器（Agent/curl 用）。
+  // 必须在「仅 GET」闸门之前处理；校验口径与前端 normalizeBrowserUrl 一致。
+  // 无 Origin 的本机请求（shell/curl）即使配置了 Host token 也放行：只推送
+  // 已归一化的 http(s) URL，不写工作区、不扩大其它写面。
+  if (s.length === 2 && s[1] === 'browser' && method === 'POST') {
+    const origin = req.headers.origin;
+    if (origin === 'null') {
+      return sendJson(res, 400, { error: 'bad_request', message: 'untrusted origin' });
+    }
+    if (origin) {
+      try {
+        checkOrigin(req, port);
+        requireAuth(req);
+      } catch (err) {
+        return sendJson(res, 400, { error: 'bad_request', message: (err as Error).message });
+      }
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof RequestBodyTooLargeError) {
+        return sendJson(res, 413, { error: 'payload_too_large' });
+      }
+      throw err;
+    }
+    const url = normalizePreviewBrowserUrl(body.url);
+    if (!url) {
+      return sendJson(res, 400, {
+        error: 'invalid_url',
+        message: 'url must be http or https',
+      });
+    }
+    publishBrowserOpen(url);
+    return sendJson(res, 200, { ok: true, url });
+  }
+
   // M1 只读：POST 写回（/preview/file）属 M5，届时在此域内扩展。
   if (method !== 'GET') return notFound(res);
   // 只读 GET 按 /runs·/workspace GET 先例不强制鉴权（localhost 绑定；
@@ -63,6 +112,26 @@ export async function handlePreview(
   } catch (err) {
     // 与 server.ts 顶层对同款错误的既有处理保持一致：400 + 原消息
     return sendJson(res, 400, { error: 'bad_request', message: (err as Error).message });
+  }
+
+  // GET /preview/browser/events —— SSE：收到 POST /preview/browser 后推给 GUI。
+  if (s.length === 3 && s[1] === 'browser' && s[2] === 'events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-store',
+      Connection: 'keep-alive',
+    });
+    const sendEvent = (payload: Record<string, unknown>): void => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    sendEvent({ type: 'ready' });
+    const unsubscribe = subscribeBrowserOpen((url) => sendEvent({ type: 'open', url }));
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), 20000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+    return;
   }
 
   if (s.length === 2 && s[1] === 'tree') {

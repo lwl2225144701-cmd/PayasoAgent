@@ -177,19 +177,48 @@ export default function App() {
     setTimeout(() => setToast(null), 2000);
   }, []);
 
-  // M4 快捷键：⌘P / Ctrl+P 切换预览面板（接管浏览器打印快捷键；模态打开时不抢）
+  // 预览坞快捷键：⌘P 开关面板；⌘T 打开内嵌浏览器（模态打开时不抢）
+  const [browserLaunch, setBrowserLaunch] = useState<{ url: string; nonce: number } | null>(null);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'p' && event.key !== 'P') return;
       if (!event.metaKey && !event.ctrlKey) return;
       if (event.altKey || event.shiftKey) return;
       if (settingsOpen) return;
-      event.preventDefault();
-      setPreviewOpen((open) => !open);
+      if (event.key === 'p' || event.key === 'P') {
+        event.preventDefault();
+        setPreviewOpen((open) => !open);
+        return;
+      }
+      if (event.key === 't' || event.key === 'T') {
+        event.preventDefault();
+        setPreviewOpen(true);
+        setPreviewWasOpened(true);
+        setBrowserLaunch((prev) => ({ url: '', nonce: (prev?.nonce ?? 0) + 1 }));
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [settingsOpen]);
+
+  // Host POST /preview/browser → SSE 推送 → 自动打开预览坞并导航
+  useEffect(() => {
+    const source = new EventSource('/preview/browser/events');
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { type?: string; url?: string };
+        if (payload.type !== 'open' || typeof payload.url !== 'string') return;
+        setPreviewOpen(true);
+        setPreviewWasOpened(true);
+        setBrowserLaunch((prev) => ({
+          url: payload.url as string,
+          nonce: (prev?.nonce ?? 0) + 1,
+        }));
+      } catch {
+        // 忽略畸形帧
+      }
+    };
+    return () => source.close();
+  }, []);
 
   const handleSelectModel = useCallback(
     (providerId: string, model: string) => {
@@ -1296,6 +1325,7 @@ export default function App() {
             onRequestWorkspace={() => void handleOpenWorkspace()}
             // 会话级作用域：直接点开历史会话也能浏览它自己的工作区（不必先切工作区）
             runId={previewRunId}
+            browserLaunch={browserLaunch}
           />
         )}
 

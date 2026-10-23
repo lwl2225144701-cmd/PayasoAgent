@@ -14,8 +14,25 @@ export const previewMessages = {
   'preview.dock.restore': { 'zh-CN': '还原', 'en-US': 'Restore' },
   'preview.dock.closeTab': { 'zh-CN': '关闭标签', 'en-US': 'Close tab' },
   'preview.dock.open': { 'zh-CN': '打开文件预览', 'en-US': 'Open file preview' },
-  // 面板首页两格：浏览器、文件。
+  // 面板首页入口：工作区文件、新建终端、浏览器（横向卡片：标题 + 描述）。
   'preview.dock.home.browser': { 'zh-CN': '浏览器', 'en-US': 'Browser' },
+  'preview.dock.home.browser.description': {
+    'zh-CN': '浏览网页',
+    'en-US': 'Browse the web',
+  },
+  'preview.dock.home.terminal': { 'zh-CN': '新建终端', 'en-US': 'New Terminal' },
+  'preview.dock.home.terminal.description': {
+    'zh-CN': '在会话工作区运行命令',
+    'en-US': 'Run commands in the session workspace',
+  },
+  'preview.dock.home.terminalOpened': {
+    'zh-CN': '已在系统终端中打开工作区',
+    'en-US': 'Opened workspace in system terminal',
+  },
+  'preview.dock.home.workspaceFiles.description': {
+    'zh-CN': '浏览会话工作区的文件',
+    'en-US': 'Browse files in the session workspace',
+  },
   'preview.dock.home.title': { 'zh-CN': '开始', 'en-US': 'Start' },
   // 标签条：一个"文件"标签 = 一棵独立的目录树（对齐 DSH 的面板标签形态）
   'preview.dock.filesTab': { 'zh-CN': '文件', 'en-US': 'Files' },

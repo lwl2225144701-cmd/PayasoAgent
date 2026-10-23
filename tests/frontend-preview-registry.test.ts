@@ -10,8 +10,15 @@ import {
   PreviewNetworkError,
   previewFileUrl,
 } from '../web/src/preview/api';
+import { normalizePreviewBrowserUrl } from '../src/host/preview/browser-open';
 import { normalizeBrowserUrl } from '../web/src/preview/browser-url';
-import { PREVIEW_HOME_ACTIONS, shortcutLabel } from '../web/src/preview/dock-home';
+import {
+  actionShortcut,
+  browserShortcutLabel,
+  PREVIEW_HOME_ACTIONS,
+  shortcutLabel,
+  terminalShortcutLabel,
+} from '../web/src/preview/dock-home';
 import {
   addStartTab,
   browserTabLabel,
@@ -38,21 +45,24 @@ function test(name: string, fn: () => void | Promise<void>): void {
 
 // ---- 面板首页（"开始"视图）----
 
-test('面板首页只有浏览器和文件两格', () => {
+test('面板首页三张卡：工作区文件、新建终端、浏览器', () => {
   assert.deepEqual(
     PREVIEW_HOME_ACTIONS.map((action) => action.id),
-    ['browser', 'workspace-files'],
+    ['workspace-files', 'terminal', 'browser'],
   );
   const files = PREVIEW_HOME_ACTIONS.find((action) => action.id === 'workspace-files');
-  assert.equal(files?.titleKey, 'preview.dock.filesTab');
+  assert.equal(files?.titleKey, 'preview.tree.root');
+  assert.equal(files?.descriptionKey, 'preview.dock.home.workspaceFiles.description');
 });
 
 test('面板首页卡片文案在消息表里双语齐备（防加了卡忘翻译）', () => {
   for (const action of PREVIEW_HOME_ACTIONS) {
-    const entry = (MESSAGES as Record<string, Record<string, string>>)[action.titleKey];
-    assert.ok(entry, `消息表缺 ${action.titleKey}`);
-    assert.ok(entry['zh-CN']?.trim(), `${action.titleKey} 缺 zh-CN`);
-    assert.ok(entry['en-US']?.trim(), `${action.titleKey} 缺 en-US`);
+    for (const key of [action.titleKey, action.descriptionKey]) {
+      const entry = (MESSAGES as Record<string, Record<string, string>>)[key];
+      assert.ok(entry, `消息表缺 ${key}`);
+      assert.ok(entry['zh-CN']?.trim(), `${key} 缺 zh-CN`);
+      assert.ok(entry['en-US']?.trim(), `${key} 缺 en-US`);
+    }
   }
 });
 
@@ -63,11 +73,21 @@ test('内嵌浏览器只接受 http/https，本机地址补 http', () => {
   assert.equal(normalizeBrowserUrl('javascript:alert(1)'), null);
   assert.equal(normalizeBrowserUrl('file:///tmp/a'), null);
   assert.equal(normalizeBrowserUrl('   '), null);
+  // Host 侧与前端同口径（Agent POST /preview/browser 用）
+  assert.equal(normalizePreviewBrowserUrl('127.0.0.1:8900'), 'http://127.0.0.1:8900/');
+  assert.equal(normalizePreviewBrowserUrl('javascript:alert(1)'), null);
 });
 
-test('面板首页快捷键提示：mac 显示 ⌘P，其它平台显示 Ctrl P', () => {
+test('面板首页快捷键提示：文件 ⌘P、终端 Ctrl `、浏览器 ⌘T', () => {
   assert.equal(shortcutLabel(true), '⌘ P');
   assert.equal(shortcutLabel(false), 'Ctrl P');
+  assert.equal(browserShortcutLabel(true), '⌘ T');
+  assert.equal(browserShortcutLabel(false), 'Ctrl T');
+  assert.equal(terminalShortcutLabel(true), '⌃ `');
+  assert.equal(terminalShortcutLabel(false), 'Ctrl `');
+  assert.equal(actionShortcut('workspace-files', true), '⌘ P');
+  assert.equal(actionShortcut('terminal', false), 'Ctrl `');
+  assert.equal(actionShortcut('browser', false), 'Ctrl T');
 });
 
 // ---- 面板停靠标签（"开始"/"文件"；三步交互序列见 dock-tabs.ts 头注）----

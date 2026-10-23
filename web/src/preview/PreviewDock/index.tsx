@@ -11,15 +11,20 @@ import {
   CloseIcon,
   CompassIcon,
   ExpandIcon,
-  FileIcon,
   FolderIcon,
   GlobeIcon,
   PlusIcon,
   ShrinkIcon,
+  TerminalIcon,
 } from '../../components/icons';
 import { PanelToggleButton } from '../../components/PanelToggleButton';
 import { useI18n } from '../../i18n';
-import { PREVIEW_HOME_ACTIONS, type PreviewHomeActionId } from '../dock-home';
+import {
+  actionShortcut,
+  isMacPlatform,
+  PREVIEW_HOME_ACTIONS,
+  type PreviewHomeActionId,
+} from '../dock-home';
 import {
   addStartTab,
   browserTabLabel,
@@ -33,8 +38,9 @@ import {
 import FileActionBar from '../FileActionBar';
 import FileTree from '../FileTree';
 import type { PreviewTabs } from '../hooks/usePreviewTabs';
+import { openInApp } from '../open-in-app';
 import { FallbackViewer, FileIconFor, fileIconName, resolveViewer } from '../registry';
-import { WebBrowser } from '../WebBrowser';
+import { type BrowserLaunch, WebBrowser } from '../WebBrowser';
 import styles from './PreviewDock.module.css';
 
 const WIDTH_KEY = 'payaso.preview.width';
@@ -64,6 +70,11 @@ export interface PreviewDockProps {
   runId?: string | null;
   /** 宿主 toast（"在应用中打开"的成功/失败文案；缺省则不提示）。 */
   onToast?: (message: string) => void;
+  /**
+   * App 层注入的「打开内嵌浏览器」请求（⌘T / Host POST /preview/browser）。
+   * nonce 变化即执行；url 为空串 = 只开空浏览器标签。
+   */
+  browserLaunch?: BrowserLaunch | null;
 }
 
 export default function PreviewDock({
@@ -73,8 +84,10 @@ export default function PreviewDock({
   onRequestWorkspace,
   runId,
   onToast,
+  browserLaunch = null,
 }: PreviewDockProps) {
   const { t } = useI18n();
+  const mac = isMacPlatform();
   const { tabs, activePath, open, close, setActive } = tabsApi;
   const [width, setWidth] = useState(loadWidth);
   // 停靠标签（"开始"/"文件"）：空数组 = 首页占位（strip 只显示"开始"入口）。
@@ -86,6 +99,9 @@ export default function PreviewDock({
   const [manualReload, setManualReload] = useState(0);
   // 全屏：面板铺满整个窗口（窄屏媒体查询本来就是全屏，这里给宽屏手动开关）
   const [fullscreen, setFullscreen] = useState(false);
+  // 注入给当前 web 标签的导航（来自 App 的 browserLaunch）
+  const [webLaunch, setWebLaunch] = useState<BrowserLaunch | null>(null);
+  const appliedBrowserLaunch = useRef(0);
 
   // 文件被打开（含 Timeline/附件入口）→ 自动切到该文件标签；
   // 最后一个文件标签被关掉 → 回到刚才的停靠标签（没有则首页）。
@@ -226,11 +242,30 @@ export default function PreviewDock({
     });
   };
 
-  // 首页卡片 → 文件视图或内嵌浏览器。
+  // App 注入：打开（并可选导航）内嵌浏览器。
+  useEffect(() => {
+    if (!browserLaunch || browserLaunch.nonce === appliedBrowserLaunch.current) return;
+    appliedBrowserLaunch.current = browserLaunch.nonce;
+    setDockTabs((prev) => openWebTab(prev));
+    setActiveKind('web');
+    if (browserLaunch.url.trim()) {
+      setWebLaunch({ url: browserLaunch.url, nonce: browserLaunch.nonce });
+    }
+  }, [browserLaunch]);
+
+  // 首页卡片 → 文件视图 / 系统终端 / 内嵌浏览器。
   const openHomeAction = (id: PreviewHomeActionId) => {
     if (id === 'workspace-files') {
       setDockTabs(openFilesTab(dockTabs));
       setActiveKind('browser');
+      return;
+    }
+    if (id === 'terminal') {
+      openInApp('terminal', { runId })
+        .then(() => onToast?.(t('preview.dock.home.terminalOpened')))
+        .catch((err: unknown) =>
+          onToast?.(err instanceof Error ? err.message : String(err)),
+        );
       return;
     }
     if (id === 'browser') {
@@ -394,19 +429,26 @@ export default function PreviewDock({
       <div className={styles.body}>
         {activeKind === 'home' ? (
           <div className={styles.home}>
-            <div className={styles.homeGrid}>
-              {PREVIEW_HOME_ACTIONS.map((action) => (
+            {PREVIEW_HOME_ACTIONS.map((action) => {
+              const shortcut = actionShortcut(action.id, mac);
+              return (
                 <button
                   key={action.id}
                   type="button"
-                  className={styles.homeTile}
+                  className={styles.homeCard}
                   onClick={() => openHomeAction(action.id)}
                 >
-                  <span className={styles.homeTileIcon}>{homeTileIcon(action.id)}</span>
-                  <span className={styles.homeTileLabel}>{t(action.titleKey)}</span>
+                  <span className={`${styles.homeCardIcon} ${homeCardIconClass(action.id)}`}>
+                    {homeCardIcon(action.id)}
+                  </span>
+                  <span className={styles.homeCardText}>
+                    <span className={styles.homeCardTitle}>{t(action.titleKey)}</span>
+                    <span className={styles.homeCardDesc}>{t(action.descriptionKey)}</span>
+                  </span>
+                  {shortcut ? <span className={styles.homeCardShortcut}>{shortcut}</span> : null}
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
         ) : activeKind === 'file' && activeTab ? (
           <div className={styles.fileView}>
@@ -439,7 +481,7 @@ export default function PreviewDock({
                 className={`${styles.browserPane} ${paneActive ? '' : styles.paneHidden}`}
                 aria-hidden={!paneActive}
               >
-                <WebBrowser />
+                <WebBrowser launch={paneActive ? webLaunch : null} />
               </div>
             );
           })}
@@ -468,9 +510,16 @@ export default function PreviewDock({
   );
 }
 
-function homeTileIcon(id: PreviewHomeActionId) {
-  if (id === 'browser') return <GlobeIcon size={22} />;
-  return <FileIcon size={22} />;
+function homeCardIcon(id: PreviewHomeActionId) {
+  if (id === 'browser') return <GlobeIcon size={20} />;
+  if (id === 'terminal') return <TerminalIcon size={20} />;
+  return <FolderIcon size={20} />;
+}
+
+function homeCardIconClass(id: PreviewHomeActionId): string {
+  if (id === 'browser') return styles.homeCardIconBrowser;
+  if (id === 'terminal') return styles.homeCardIconTerminal;
+  return styles.homeCardIconFiles;
 }
 
 /** viewer 分发：registry 解析 → 懒加载组件；解析不到走 FallbackViewer。 */
