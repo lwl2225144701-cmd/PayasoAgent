@@ -50,4 +50,6 @@ contextBridge.exposeInMainWorld('payasoDesktop', {
   startUpdateDownload: (): void => {
     ipcRenderer.send('payaso:updateDownload');
   },
+  /** 当前壳版本（侧边栏底部「设置」旁展示；更新重启后应变成新号）。 */
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('payaso:getAppVersion'),
 });

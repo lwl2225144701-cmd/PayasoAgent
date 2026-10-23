@@ -30,6 +30,7 @@ export const IDLE_UPDATE_STATUS: UpdateStatus = { phase: 'idle', version: '', pe
 interface DesktopUpdateBridge {
   onUpdateStatus?: (listener: (status: unknown) => void) => (() => void) | void;
   startUpdateDownload?: () => void;
+  getAppVersion?: () => Promise<string>;
 }
 
 function bridge(): DesktopUpdateBridge | undefined {
@@ -89,5 +90,15 @@ export function startUpdateDownload(): void {
     bridge()?.startUpdateDownload?.();
   } catch {
     // 桥不可用/被拒：忽略（页面只是少了一个入口）
+  }
+}
+
+/** 读当前壳版本；浏览器 / 老壳没有桥时返回空串。 */
+export async function readAppVersion(): Promise<string> {
+  try {
+    const version = await bridge()?.getAppVersion?.();
+    return typeof version === 'string' ? version.trim() : '';
+  } catch {
+    return '';
   }
 }

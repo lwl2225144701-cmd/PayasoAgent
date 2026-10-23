@@ -25,6 +25,8 @@ interface PayasoDesktopBridge {
   onUpdateStatus: (listener: (status: unknown) => void) => () => void;
   /** 点侧边栏「新版本」→ 让壳开始下载（安装确认仍走原生对话框）。 */
   startUpdateDownload: () => void;
+  /** 当前壳版本号（不含 v）；浏览器直开时无此方法。 */
+  getAppVersion: () => Promise<string>;
 }
 
 interface Window {

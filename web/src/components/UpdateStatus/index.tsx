@@ -1,9 +1,10 @@
 // 侧边栏底部「设置」同一行右侧的更新条目：检查、下载、已下载和安装进度。
 //
 // 数据来自桌面壳（preload 桥 → ipc）：
+//   - idle       → 「v0.4.19」当前版本（更新重启后应变成新号）
 //   - available   → 「⬇ 新版本」+ 点击开始下载（tooltip 带版本号）
 //   - downloading → 「⬇ 45%」（真机要求：按百分比显示）
-// 浏览器里没有壳的桥 → 状态永远 idle → 这个组件不渲染任何东西。
+// 浏览器里没有壳的桥 → 读不到版本、状态永远 idle → 不渲染。
 // 为什么塞进设置那一行：单独占一行会跟「设置」抢视觉重量、且左右留白对不齐
 // （v0.4.12 真机反馈：「放在这里行不」）。
 
@@ -11,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
 import {
   IDLE_UPDATE_STATUS,
+  readAppVersion,
   startUpdateDownload,
   subscribeUpdateStatus,
   type UpdateStatus,
@@ -21,10 +23,32 @@ import styles from './UpdateStatus.module.css';
 export function UpdateStatusRow() {
   const { t } = useI18n();
   const [status, setStatus] = useState<UpdateStatus>(IDLE_UPDATE_STATUS);
+  const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => subscribeUpdateStatus(setStatus), []);
+  useEffect(() => {
+    let cancelled = false;
+    void readAppVersion().then((version) => {
+      if (!cancelled) setAppVersion(version);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  if (status.phase === 'idle') return null;
+  if (status.phase === 'idle') {
+    if (!appVersion) return null;
+    return (
+      <span
+        className={`${styles.row} ${styles.version}`}
+        title={t('shell.update.currentVersionHint', { version: appVersion })}
+        aria-label={t('shell.update.currentVersionHint', { version: appVersion })}
+      >
+        <span className={styles.label}>v{appVersion}</span>
+      </span>
+    );
+  }
+
   const busy = ['checking', 'downloading', 'installing'].includes(status.phase);
   const hint =
     status.phase === 'downloading'

@@ -27,6 +27,17 @@
   cursor: default;
 }
 
+.version {
+  color: var(--text-secondary);
+  font-weight: 500;
+  cursor: default;
+}
+
+.version:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
 .label {
   font-variant-numeric: tabular-nums;
 }

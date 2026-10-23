@@ -140,6 +140,10 @@ export const shellMessages = {
 
   // 侧边栏更新条目（自更新；只在桌面壳里有桥，浏览器里永远不显示）
   // 放在底部「设置」同一行右侧，已下载的更新保留操作入口。
+  'shell.update.currentVersionHint': {
+    'zh-CN': '当前版本 v{version}',
+    'en-US': 'Current version v{version}',
+  },
   'shell.update.available': { 'zh-CN': '新版本', 'en-US': 'Update' },
   'shell.update.checking': { 'zh-CN': '检查中…', 'en-US': 'Checking…' },
   'shell.update.installing': { 'zh-CN': '准备安装…', 'en-US': 'Preparing…' },

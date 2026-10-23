@@ -510,9 +510,11 @@ test('壳 ↔ 页面：ipc 通道与 preload 桥对齐（改名即断）', () =>
     '页面刷新后要补发状态',
   );
   assert.match(mainSrc, /ipcMain\.on\('payaso:updateDownload'/, '页面点下载的入口');
+  assert.match(mainSrc, /ipcMain\.handle\('payaso:getAppVersion'/, '页面读当前版本');
   assert.match(mainSrc, /onStatus: pushUpdateStatus/);
   assert.match(preload, /ipcRenderer\.on\(channel, handler\)/);
   assert.match(preload, /ipcRenderer\.send\('payaso:updateDownload'\)/);
+  assert.match(preload, /ipcRenderer\.invoke\('payaso:getAppVersion'\)/);
   assert.match(preload, /channel = 'payaso:updateStatus'/);
   assert.match(preload, /ipcRenderer\.send\('payaso:updateStatusRequest'\)/);
   assert.match(mainSrc, /ipcMain\.on\('payaso:updateStatusRequest'/);
@@ -530,7 +532,8 @@ test('页面：侧边栏条目 + i18n 都在（浏览器里没有桥 → 不显�
     /shell\.update\.availableHint', \{ version: status\.version \}/,
     'tooltip 带版本号',
   );
-  assert.match(row, /status\.phase === 'idle'\) return null/, '没有更新时不渲染');
+  assert.match(row, /readAppVersion/, 'idle 时展示当前壳版本');
+  assert.match(row, /v\{appVersion\}/, '格式为 v0.4.x');
   const sidebar = fs.readFileSync(
     path.join('web', 'src', 'components', 'Sidebar', 'index.tsx'),
     'utf8',
@@ -538,6 +541,7 @@ test('页面：侧边栏条目 + i18n 都在（浏览器里没有桥 → 不显�
   assert.match(sidebar, /<UpdateStatusRow \/>/, '条目要挂在侧边栏（设置旁边）');
   const messages = fs.readFileSync(path.join('web', 'src', 'i18n', 'messages', 'shell.ts'), 'utf8');
   for (const key of [
+    'shell.update.currentVersionHint',
     'shell.update.available',
     'shell.update.availableHint',
     'shell.update.downloadingHint',

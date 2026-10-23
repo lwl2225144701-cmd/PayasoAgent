@@ -492,6 +492,10 @@ function pushUpdateStatus(status: UpdateStatus): void {
  * 下载完成后的安装确认仍然走原生对话框（含"有任务在跑"的检查）。
  */
 function registerUpdateBridge(): void {
+  ipcMain.handle('payaso:getAppVersion', (event): string => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return '';
+    return app.getVersion();
+  });
   ipcMain.on('payaso:updateStatusRequest', (event): void => {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
     event.sender.send('payaso:updateStatus', lastUpdateStatus);
