@@ -345,7 +345,11 @@ test('coordinator：不自动下载/退出不自动装/不降级，且挂了 err
   assert.match(src, /autoUpdater\.autoDownload = false/, '下载必须用户点');
   assert.match(src, /autoUpdater\.autoInstallOnAppQuit = false/, '退出时不许偷偷装');
   assert.match(src, /autoUpdater\.allowDowngrade = false/);
-  assert.match(src, /autoUpdater\.disableDifferentialDownload = true/, '避免差分假 100% 再全量重下');
+  assert.match(
+    src,
+    /autoUpdater\.disableDifferentialDownload = true/,
+    '避免差分假 100% 再全量重下',
+  );
   assert.match(src, /DOWNLOAD_ATTEMPTS/, '下载断线自动重试');
   assert.match(src, /isNetworkFailure\(message\)/, '只对网络失败重试');
   assert.match(src, /resetInstallAttempt/, '安装超时后须释放 NSIS 安装门闩');
