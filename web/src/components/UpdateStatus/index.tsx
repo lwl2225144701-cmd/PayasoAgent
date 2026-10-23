@@ -38,12 +38,9 @@ export function UpdateStatusRow() {
 
   if (status.phase === 'idle') {
     if (!appVersion) return null;
+    const currentHint = t('shell.update.currentVersionHint', { version: appVersion });
     return (
-      <span
-        className={`${styles.row} ${styles.version}`}
-        title={t('shell.update.currentVersionHint', { version: appVersion })}
-        aria-label={t('shell.update.currentVersionHint', { version: appVersion })}
-      >
+      <span className={`${styles.row} ${styles.version}`} title={currentHint} role="status">
         <span className={styles.label}>v{appVersion}</span>
       </span>
     );
