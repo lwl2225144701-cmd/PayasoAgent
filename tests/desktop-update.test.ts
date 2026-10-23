@@ -178,6 +178,7 @@ function windowsUpdaterFixture() {
       return gate.promise;
     }
   }
+  // AppAdapter 无 releaseSingleInstanceLock；真机走 ElectronAppAdapter.app，测试挂嵌套 app。
   const updater = new Probe(undefined, {
     version: '0.4.13',
     name: 'PayasoAgent',
@@ -188,14 +189,16 @@ function windowsUpdaterFixture() {
     whenReady: async () => {},
     relaunch: () => {},
     onQuit: () => {},
-    releaseSingleInstanceLock: () => {
-      unlockCount++;
-    },
     quit: () => {
       quitCount++;
       exits.emit('will-quit');
     },
-  });
+    app: {
+      releaseSingleInstanceLock: () => {
+        unlockCount++;
+      },
+    },
+  } as ConstructorParameters<typeof GuardedNsisUpdater>[1]);
   updater.logger = null;
   updater.autoInstallOnAppQuit = false;
   updater.on('error', (error) => errors.push(error));
