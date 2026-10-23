@@ -13,7 +13,7 @@ import {
 import electronUpdater from 'electron-updater';
 import { createUpdateFlow, type UpdateBackendBridge } from './flow.js';
 import { requiresManualMacInstall, waitForUpdateEvent } from './lifecycle.js';
-import { nextCheckDelay } from './policy.js';
+import { isNetworkFailure, nextCheckDelay } from './policy.js';
 import { clampPercent, type UpdateStatus } from './status.js';
 import { GuardedNsisUpdater } from './windows-installer.js';
 
@@ -25,6 +25,9 @@ const CHECK_JITTER_RATIO = 0.2;
 const FIRST_CHECK_DELAY_MS = 20 * 1000;
 const RESUME_CHECK_DELAY_MS = 5_000;
 const INSTALL_TIMEOUT_MS = 60_000;
+/** 全量下载遇 GitHub 断线时自动重试；每次从 0 开始（electron-updater 无断点续传）。 */
+const DOWNLOAD_ATTEMPTS = 3;
+const DOWNLOAD_RETRY_DELAY_MS = 3_000;
 
 export interface UpdateCoordinatorOptions {
   currentVersion: string;
@@ -131,7 +134,22 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
         autoUpdater.on('download-progress', onProgress);
         nativePrepared = false;
         try {
-          return await autoUpdater.downloadUpdate();
+          let lastError: unknown;
+          for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+            try {
+              if (attempt > 1) progress(0);
+              return await autoUpdater.downloadUpdate();
+            } catch (error) {
+              lastError = error;
+              const message = error instanceof Error ? error.message : String(error);
+              if (!isNetworkFailure(message) || attempt >= DOWNLOAD_ATTEMPTS) throw error;
+              log(
+                `download interrupted (${message}); retry ${attempt}/${DOWNLOAD_ATTEMPTS - 1} after ${DOWNLOAD_RETRY_DELAY_MS}ms`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_RETRY_DELAY_MS));
+            }
+          }
+          throw lastError;
         } finally {
           autoUpdater.off('download-progress', onProgress);
         }
@@ -149,15 +167,21 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
         });
         nativePrepared = true;
       },
-      install: () =>
-        waitForUpdateEvent({
-          errors: autoUpdater,
-          success: app,
-          event: 'will-quit',
-          trigger: () => autoUpdater.quitAndInstall(true, true),
-          timeoutMs: INSTALL_TIMEOUT_MS,
-          timeoutMessage: '安装器没有完成重启交接，已恢复当前版本，可以重试安装',
-        }),
+      install: async () => {
+        try {
+          await waitForUpdateEvent({
+            errors: autoUpdater,
+            success: app,
+            event: 'will-quit',
+            trigger: () => autoUpdater.quitAndInstall(true, true),
+            timeoutMs: INSTALL_TIMEOUT_MS,
+            timeoutMessage: '安装器没有完成重启交接，已恢复当前版本，可以重试安装',
+          });
+        } catch (error) {
+          if (autoUpdater instanceof GuardedNsisUpdater) autoUpdater.resetInstallAttempt();
+          throw error;
+        }
+      },
       openPackage: async (file) => {
         const error = await shell.openPath(file);
         if (error) throw new Error(error);
@@ -215,6 +239,9 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
       autoUpdater.autoDownload = false;
       autoUpdater.autoInstallOnAppQuit = false;
       autoUpdater.allowDowngrade = false;
+      // 差分以本机缓存的旧安装包为底；它与线上旧版不一致时（本地打包安装、缓存被清），
+      // 差分会下满 100% 才校验失败，再从 0 全量重下。直接全量下载。
+      autoUpdater.disableDifferentialDownload = true;
       log(`updater started; current version ${options.currentVersion}`);
       firstTimer = setTimeout(() => {
         void flow.check(false);

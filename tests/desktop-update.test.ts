@@ -160,6 +160,7 @@ function windowsUpdaterFixture() {
   const launches: ReturnType<typeof deferred<void>>[] = [];
   const errors: Error[] = [];
   let quitCount = 0;
+  let unlockCount = 0;
   class Probe extends GuardedNsisUpdater {
     override get installerPath() {
       return 'C:\\Users\\测试 用户\\Downloads\\setup.exe';
@@ -187,6 +188,9 @@ function windowsUpdaterFixture() {
     whenReady: async () => {},
     relaunch: () => {},
     onQuit: () => {},
+    releaseSingleInstanceLock: () => {
+      unlockCount++;
+    },
     quit: () => {
       quitCount++;
       exits.emit('will-quit');
@@ -196,7 +200,15 @@ function windowsUpdaterFixture() {
   updater.autoInstallOnAppQuit = false;
   updater.on('error', (error) => errors.push(error));
   updater.seed();
-  return { updater, exits, calls, launches, errors, quitCount: () => quitCount };
+  return {
+    updater,
+    exits,
+    calls,
+    launches,
+    errors,
+    quitCount: () => quitCount,
+    unlockCount: () => unlockCount,
+  };
 }
 
 /**
@@ -330,6 +342,12 @@ test('coordinator：不自动下载/退出不自动装/不降级，且挂了 err
   assert.match(src, /autoUpdater\.autoDownload = false/, '下载必须用户点');
   assert.match(src, /autoUpdater\.autoInstallOnAppQuit = false/, '退出时不许偷偷装');
   assert.match(src, /autoUpdater\.allowDowngrade = false/);
+  assert.match(src, /autoUpdater\.disableDifferentialDownload = true/, '避免差分假 100% 再全量重下');
+  assert.match(src, /DOWNLOAD_ATTEMPTS/, '下载断线自动重试');
+  assert.match(src, /isNetworkFailure\(message\)/, '只对网络失败重试');
+  assert.match(src, /resetInstallAttempt/, '安装超时后须释放 NSIS 安装门闩');
+  const main = shellSource(path.join('src', 'main.ts'));
+  assert.match(main, /quitForUpdate/, '装更新时 before-quit 不得 preventDefault');
   assert.match(
     src,
     /autoUpdater\.on\('error'/,
@@ -382,13 +400,13 @@ test('main.ts：后端桥接现成端点 —— GET /runs + 优雅关停，后�
   const src = shellSource(path.join('src', 'main.ts'));
   assert.match(src, /fetch\(`\$\{BACKEND_URL\}\/runs`/);
   assert.match(src, /return activeTasks\(await res\.json\(\)\)/);
-  assert.match(src, /listActiveTasks,\n\s+stop: stopBackend/);
+  assert.match(src, /await stopBackend\(\);\n\s+quitForUpdate = true/);
   assert.match(src, /if \(ownsBackend && !\(await backendResponds\(\)\)\) await startBackend\(\)/);
   assert.match(src, /label: '检查更新…'/, '菜单要有手动入口');
   assert.match(src, /updates = createUpdateCoordinator\(/, 'boot 里要真的建协调器');
   assert.match(src, /updates\.startAutoCheck\(\)/);
-  // 已经停过后端时退出别再 preventDefault（否则会拖住 quitAndInstall 的替换时机）
-  assert.match(src, /if \(quitting \|\| backend === null\) return;/);
+  // 已经停过后端 / 装更新交接时退出别再 preventDefault（否则会拖住 will-quit）
+  assert.match(src, /if \(quitting \|\| backend === null \|\| quitForUpdate\) return;/);
 });
 
 test('coordinator：后台检查失败不弹窗 + 唤醒补查要推迟', () => {
@@ -948,8 +966,19 @@ test('Windows 真实 NSIS 接线：启动未确认前不退出，失败后可恢
   win.launches[1].resolve();
   await retry;
   assert.equal(win.quitCount(), 1);
+  assert.equal(win.unlockCount(), 1, '退出前须放开单实例锁，否则 --force-run 新进程会被顶回旧窗口');
   assert.deepEqual(win.calls[0].args, ['--updated', '/S', '--force-run']);
   assert.ok(win.calls[0].command.includes('测试 用户'), '中文和空格路径不能被 shell 重新解析');
+});
+
+test('Windows NSIS：安装超时后 resetInstallAttempt，再次点击才能真正重试', () => {
+  const win = windowsUpdaterFixture();
+  win.updater.quitAndInstall(true, true);
+  assert.equal(win.launches.length, 1);
+  // 模拟交接超时：不 resolve launch，直接复位（与 coordinator catch 路径一致）
+  win.updater.resetInstallAttempt();
+  win.updater.quitAndInstall(true, true);
+  assert.equal(win.launches.length, 2, '复位后必须能再次发起安装');
 });
 
 test('Windows 缺失安装器：立即报错，保持客户端，不进入无反馈的 openPath 回退', async () => {

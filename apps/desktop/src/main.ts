@@ -85,6 +85,11 @@ let mainWindow: BrowserWindow | null = null;
 let stderrTail = '';
 let quitting = false;
 /**
+ * 装更新前已停后端，即将 quitAndInstall。before-quit 必须直接放行，
+ * 不能再 preventDefault 去异步停后端，否则会拖住 will-quit，安装界面像卡住。
+ */
+let quitForUpdate = false;
+/**
  * 是不是我们自己发起的关停（退出或"装更新前优雅停后端"）。
  *
  * 真事故（v0.4.11 → v0.4.12，用户截图）：点「下载 → 安装」后，安装交接会先
@@ -700,8 +705,12 @@ async function boot(): Promise<void> {
     onStatus: pushUpdateStatus,
     backend: {
       listActiveTasks,
-      stop: stopBackend,
+      stop: async () => {
+        await stopBackend();
+        quitForUpdate = true;
+      },
       start: async () => {
+        quitForUpdate = false;
         if (ownsBackend && !(await backendResponds())) await startBackend();
       },
     },
@@ -738,8 +747,8 @@ if (!app.requestSingleInstanceLock()) {
 app.on('before-quit', (event) => {
   // 已经没有后端子进程（安装更新前已经优雅停过，或复用了外部后端）→ 直接放手。
   // electron-updater 的 quitAndInstall 也走这条退出路径，别再 preventDefault 拖住它，
-  // 否则 Squirrel/NSIS 的替换时机可能被推迟。
-  if (quitting || backend === null) return;
+  // 否则 will-quit 迟迟不来，用户会看到「安装并重启」没反应。
+  if (quitting || backend === null || quitForUpdate) return;
   event.preventDefault();
   quitting = true;
   void stopBackend().finally(() => app.quit());

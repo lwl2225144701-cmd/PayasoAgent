@@ -66,10 +66,15 @@ export class GuardedNsisUpdater extends NsisUpdater {
   private launching = false;
 
   private readonly launchFailed = () => {
+    this.resetInstallAttempt();
+  };
+
+  /** 安装失败/超时后允许再次 quitAndInstall；否则会直接 return，界面像没反应。 */
+  resetInstallAttempt(): void {
     this.launching = false;
     this.quitAndInstallCalled = false;
     this.off('error', this.launchFailed);
-  };
+  }
 
   override quitAndInstall(isSilent = false, isForceRunAfter = false): void {
     if (this.launching || this.quitAndInstallCalled) return;
@@ -93,6 +98,20 @@ export class GuardedNsisUpdater extends NsisUpdater {
     return launchInstallerProcess(command, args, { env, stdio });
   }
 
+  /** ElectronAppAdapter 包着真 app；测试 fixture 可能直接挂方法。 */
+  private releaseInstanceLock(): void {
+    const adapter = this.app as {
+      releaseSingleInstanceLock?: () => void;
+      app?: { releaseSingleInstanceLock?: () => void };
+    };
+    try {
+      adapter.releaseSingleInstanceLock?.();
+      adapter.app?.releaseSingleInstanceLock?.();
+    } catch {
+      // 放开锁失败不应阻断退出；最坏仍是旧的单实例竞态。
+    }
+  }
+
   protected override async spawnLog(
     command: string,
     args: string[] = [],
@@ -114,6 +133,9 @@ export class GuardedNsisUpdater extends NsisUpdater {
     if (this.launching) {
       this.launching = false;
       this.off('error', this.launchFailed);
+      // NSIS --force-run 常在旧进程尚未退出时拉起新进程；不先放开单实例锁，
+      // 新进程会把焦点交回旧窗口并自己退出，表现为「安装并重启没反应」。
+      this.releaseInstanceLock();
       setImmediate(() => this.app.quit());
     }
     return true;
