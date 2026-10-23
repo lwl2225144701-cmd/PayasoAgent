@@ -67,7 +67,7 @@ export function applyThemeMode(mode: ThemeMode): ResolvedTheme {
   root.style.colorScheme = resolved;
 
   const themeColor = document.querySelector('meta[name="theme-color"]');
-  themeColor?.setAttribute('content', resolved === 'dark' ? '#0f1115' : '#f5f7fb');
+  themeColor?.setAttribute('content', resolved === 'dark' ? '#0c1b30' : '#eaf4fe');
   publishNativeTheme(mode, resolved);
   return resolved;
 }

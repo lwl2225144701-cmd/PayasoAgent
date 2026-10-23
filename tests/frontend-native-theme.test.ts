@@ -83,7 +83,7 @@ test('dark 模式：报给桥的是 dark，且 data-theme / colorScheme 同步',
   assert.equal(env.dataset.theme, 'dark');
   assert.equal(env.dataset.themeMode, 'dark');
   assert.equal(env.style.colorScheme, 'dark');
-  assert.equal(env.themeColorMeta.value, '#0f1115');
+  assert.equal(env.themeColorMeta.value, '#0c1b30');
 });
 
 test('light 模式：报给桥的是 light（原生 chrome 要跟着变浅）', () => {
@@ -92,7 +92,7 @@ test('light 模式：报给桥的是 light（原生 chrome 要跟着变浅）', 
   assert.deepEqual(env.bridgeCalls, ['light:light']);
   assert.equal(env.dataset.theme, 'light');
   assert.equal(env.style.colorScheme, 'light');
-  assert.equal(env.themeColorMeta.value, '#f5f7fb');
+  assert.equal(env.themeColorMeta.value, '#eaf4fe');
 });
 
 test('system 模式：报的是 system 本身 + 解析值，而不是只报解析后的 dark', () => {

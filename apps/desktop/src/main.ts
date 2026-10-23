@@ -258,9 +258,11 @@ const WCO_RESERVE_CSS = `
  * 不认系统外观：一张皮，两处都刷它。
  */
 function windowChromePalette(useDarkColors: boolean): { color: string; symbolColor: string } {
+  // 按钮区底色透明：底下就是页面壁纸全图，不再盖一块实色条。
+  // symbolColor 仍跟主题走，保证最小化/最大化/关闭看得见。
   return useDarkColors
-    ? { color: '#0f1115', symbolColor: '#e6e8ec' } // 同前端深色底 / 浅色符号
-    : { color: '#f5f7fb', symbolColor: '#0f1115' };
+    ? { color: '#00000000', symbolColor: '#eaf2fc' }
+    : { color: '#00000000', symbolColor: '#20364e' };
 }
 
 /** 最近一次从页面收到的主题（模式 + 解析值）。null = 还没收到过（用系统色兜底）。 */
@@ -277,14 +279,22 @@ function refreshWindowsChrome(): void {
   mainWindow.setTitleBarOverlay(windowChromePalette(dark));
 }
 
+/** 开发态 `electron .` 不会带安装包图标，显式挂上，避免任务栏/标题栏变成 Electron 原子标。 */
+function windowIconPath(): string | undefined {
+  const icon = path.join(here, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
+  return existsSync(icon) ? icon : undefined;
+}
+
 function createWindow(): void {
+  const icon = windowIconPath();
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 900,
     minHeight: 600,
     title: 'PayasoAgent',
-    backgroundColor: '#0f1115', // 与前端深色主题一致，避免首帧白闪
+    backgroundColor: '#0c1b30', // 与前端 --color-canvas 一致，避免首帧白闪
+    ...(icon ? { icon } : {}),
     // macOS：无标题栏 + 红绿灯内嵌（与 DeepSeek Harness 同款，位置也是抄它的）。
     // hiddenInset 让内容顶到窗口上沿。**拖拽面由前端 data-window-drag 显式声明**
     // （DSH 同款配方，见 web/src/index.css）——实测系统拖拽带拖不动窗口（坑 11），
