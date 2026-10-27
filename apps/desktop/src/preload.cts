@@ -52,4 +52,15 @@ contextBridge.exposeInMainWorld('payasoDesktop', {
   },
   /** 当前壳版本（侧边栏底部「设置」旁展示；更新重启后应变成新号）。 */
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('payaso:getAppVersion'),
+
+  // ---- 自绘「应用」菜单（Windows）：原生菜单栏在无边框窗口上不可用 ----
+  /** 运行平台直通，页面据此只在 Windows 渲染自绘菜单。 */
+  platform: process.platform,
+  /** 手动检查更新（结果由主进程用原生对话框反馈）。 */
+  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('payaso:checkForUpdates'),
+  /** 退出应用（走 before-quit：先优雅停后端）。 */
+  quitApp: (): void => ipcRenderer.send('payaso:quitApp'),
+  /** 「关于」弹窗需要的版本信息。 */
+  getAppInfo: (): Promise<{ version: string; electron: string; node: string } | null> =>
+    ipcRenderer.invoke('payaso:getAppInfo'),
 });

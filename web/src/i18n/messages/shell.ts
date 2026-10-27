@@ -165,4 +165,20 @@ export const shellMessages = {
     'zh-CN': '正在下载 v{version}，完成后会询问是否重启安装',
     'en-US': 'Downloading v{version}. You will be asked to restart and install.',
   },
+
+  // 顶栏「应用」菜单（Windows 壳专属；macOS 用系统菜单栏）
+  'shell.menu.app': { 'zh-CN': '应用', 'en-US': 'App' },
+  'shell.menu.about': { 'zh-CN': '关于 PayasoAgent', 'en-US': 'About PayasoAgent' },
+  'shell.menu.checkUpdate': { 'zh-CN': '检查更新…', 'en-US': 'Check for updates…' },
+  'shell.menu.checking': { 'zh-CN': '正在检查更新…', 'en-US': 'Checking for updates…' },
+  'shell.menu.quit': { 'zh-CN': '退出', 'en-US': 'Quit' },
+
+  // 关于弹窗
+  'shell.about.title': { 'zh-CN': '关于 PayasoAgent', 'en-US': 'About PayasoAgent' },
+  'shell.about.version': { 'zh-CN': '版本 {version}', 'en-US': 'Version {version}' },
+  'shell.about.runtime': {
+    'zh-CN': 'Electron {electron} · Node {node}',
+    'en-US': 'Electron {electron} · Node {node}',
+  },
+  'shell.about.close': { 'zh-CN': '确定', 'en-US': 'OK' },
 } as const;

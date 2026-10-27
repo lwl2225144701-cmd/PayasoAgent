@@ -27,6 +27,23 @@ interface PayasoDesktopBridge {
   startUpdateDownload: () => void;
   /** 当前壳版本号（不含 v）；浏览器直开时无此方法。 */
   getAppVersion: () => Promise<string>;
+
+  /**
+   * 运行平台（`process.platform` 的直通，如 `win32` / `darwin`）。
+   * 页面据此决定要不要渲染自绘「应用」菜单：Windows 的无边框窗口挂不上原生菜单，
+   * macOS 用系统菜单栏、不重复渲染。
+   */
+  platform?: string;
+  /** 触发一次交互式检查更新；结果由壳用原生对话框反馈。 */
+  checkForUpdates?: () => Promise<void>;
+  /** 退出应用（壳会先优雅停后端）。 */
+  quitApp?: () => void;
+  /** 「关于」弹窗的版本信息；老壳没有该方法时页面只显示应用版本。 */
+  getAppInfo?: () => Promise<{
+    version: string;
+    electron: string;
+    node: string;
+  } | null>;
 }
 
 interface Window {

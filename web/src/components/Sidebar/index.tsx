@@ -45,9 +45,6 @@ export function Sidebar({
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
       <div className={styles.headerArea} data-window-drag>
-        {/* 参考 DSH 的窗口左上角：红绿灯那一行只放折叠按钮，品牌（🦌 Payaso）在
-            红绿灯下面一行。红绿灯由 macOS 画、不占布局，壳把"chrome 行高"注入成
-            CSS 变量（--sidebar-chrome-height），浏览器里为 0 → 品牌行直接贴顶。 */}
         <div className={styles.brandRow}>
           <img
             className={styles.logoImage}

@@ -27,6 +27,38 @@
   position: relative;
   z-index: 1;
   background: var(--workspace-reading-surface);
+  /* Windows：第一行是自绘「应用」菜单栏（fixed，壳注入 --window-menu-bar-height=36），
+     主区整体下移让位，右侧控件才能与侧边栏 logo 行保持同一水平线。
+     macOS 不注入该变量 → 0，布局不变（那一行归系统红绿灯，浮在左上角不占布局）；
+     浏览器同样为 0。 */
+  padding-top: var(--window-menu-bar-height, 0px);
+}
+
+/* 侧栏收起时的第一行（fixed 横跨整窗）：「展开侧栏」按钮 + 「应用」菜单。
+   两个都必须待在这一行 —— 掉到第二行会明显比右端窗口按钮低一截（真机反馈）。
+   垂直居中：按钮高 28、行高 36，上下各留 4px，贴着顶边会显"顶格"（真机反馈）；
+   右端窗口按钮区由壳画，保持原位不动。
+   容器不吃事件（只让两个按钮可点），避免挡住下面主区顶栏的拖拽面。 */
+.windowRow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--sidebar-chrome-height, 36px);
+  padding: 0 12px;
+  padding-right: calc(var(--wco-reserve, 0px) + 12px);
+  background: var(--color-header-glass);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border-color) 62%, transparent);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.windowRow > * {
+  pointer-events: auto;
 }
 
 /* 收起侧栏时顶栏里的「展开侧栏」按钮（红绿灯那一行右端，位置由顶栏 padding 控制） */

@@ -37,6 +37,19 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * 应用名必须显式钉成 productName。
+ *
+ * 未打包时 Electron 用 package.json 的 `name` 作 app.name，而这里是 `@payaso/desktop` ——
+ * 带一个斜杠，Chromium 会在 `%APPDATA%\@payaso\desktop` 下建 profile、Crashpad 与单实例锁，
+ * 实测创建失败（Access denied），主进程启动即退出；因为 electron.exe 是 GUI 子系统，
+ * 终端里看不到任何报错，`npm run desktop` 表现为「编译完就没反应」。
+ *
+ * 打包态本来就用 productName（PayasoAgent），这里统一成同一个名字，两条路径行为一致。
+ * 必须在 app ready / 首次取 userData 之前调用。
+ */
+app.setName('PayasoAgent');
+
 /** 打包后 = Resources/app；开发时 = 仓库根（apps/desktop/dist 的上三级）。 */
 const appRoot = app.isPackaged
   ? path.join(process.resourcesPath, 'app')
@@ -225,10 +238,15 @@ async function stopBackend(): Promise<void> {
  * Windows 上它是窗口按钮叠加层（WCO）的高度，按钮就叠在顶栏这一条里。
  */
 const WINDOW_CHROME_HEIGHT = 50;
+/** Windows 自绘「应用」菜单行的高度（DSH 同款一行；同时是侧边栏顶部预留行高）。 */
+const APP_MENU_BAR_HEIGHT = 36;
 
 /**
  * Windows：给窗口按钮让位的注入脚本 —— 用 WCO API 量出按钮区宽度写进
  * `--wco-reserve`（量不到就用 138px 兜底：三个标题栏按钮 × 46 DIP）。
+ *
+ * 窗口按钮画在**第一行**（DSH 同款：菜单行右端），所以需要让位的是那一行
+ * （页面的 `[data-app-menu-bar]`），下面的主区顶栏终于能一路贴到右缘。
  */
 const WCO_RESERVE_SCRIPT = `(() => {
   let reserve = 138;
@@ -240,16 +258,12 @@ const WCO_RESERVE_SCRIPT = `(() => {
 })();`;
 
 /**
- * Windows：主区顶栏与预览头部右侧留出窗口按钮的宽度。预览打开/全屏后它位于
- * 窗口最右侧，也必须让位。由壳注入而不是页面 CSS —— 见 createWindow 里的注释。
+ * Windows：只给第一行（窗口按钮所在行）留出按钮宽度。主区顶栏不再让位 ——
+ * 按钮已经不在那一行了，再让位就会在右上角空出一大块（真机反馈）。
  */
 const WCO_RESERVE_CSS = `
-  #root > :first-child > :not(aside) > [data-shell-bar] {
-    box-sizing: border-box;
-    padding-right: calc(var(--wco-reserve, 138px) + 14px);
-  }
-  #root [data-preview-header] {
-    padding-right: calc(var(--wco-reserve, 138px) + 14px);
+  #root [data-app-menu-bar] {
+    padding-right: calc(var(--wco-reserve, 138px) + 10px);
   }
 `;
 
@@ -281,7 +295,12 @@ function refreshWindowsChrome(): void {
 
 /** 开发态 `electron .` 不会带安装包图标，显式挂上，避免任务栏/标题栏变成 Electron 原子标。 */
 function windowIconPath(): string | undefined {
-  const icon = path.join(here, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
+  const icon = path.join(
+    here,
+    '..',
+    'build',
+    process.platform === 'win32' ? 'icon.ico' : 'icon.png',
+  );
   return existsSync(icon) ? icon : undefined;
 }
 
@@ -319,7 +338,8 @@ function createWindow(): void {
       ? {
           titleBarStyle: 'hidden' as const,
           titleBarOverlay: {
-            height: WINDOW_CHROME_HEIGHT,
+            // 按钮落在第一行（菜单行）——与 DSH 一致；这样下面主区顶栏右侧不必让位
+            height: APP_MENU_BAR_HEIGHT,
             ...windowChromePalette(nativeTheme.shouldUseDarkColors),
           },
         }
@@ -382,6 +402,20 @@ function createWindow(): void {
   } else {
     win.webContents.on('did-finish-load', () => {
       win.setTitle('PayasoAgent');
+      // Windows：自绘「应用」菜单独占窗口最顶一行（DSH 同款，横跨整个窗口）。
+      // 侧边栏顶部要留出这一行的高度、品牌行据此下移 —— 复用 macOS 红绿灯那一行的
+      // 同一个 CSS 变量。macOS 不渲染自绘菜单，那一行仍归系统红绿灯。
+      if (process.platform === 'win32') {
+        // 两个变量分工不同：
+        //   --window-menu-bar-height   主区整体下移（让右侧控件与侧栏 logo 行同水平）
+        //   --sidebar-chrome-height    侧边栏顶部预留行高（品牌行据此下移）
+        // macOS 只注入后者（那一行是系统红绿灯，浮在左上角不占布局），浏览器两个都没有。
+        void win.webContents
+          .insertCSS(
+            `:root { --window-menu-bar-height: ${APP_MENU_BAR_HEIGHT}px; --sidebar-chrome-height: ${APP_MENU_BAR_HEIGHT}px; }`,
+          )
+          .catch(() => undefined);
+      }
     });
   }
 
@@ -514,6 +548,27 @@ function registerUpdateBridge(): void {
     if (mainWindow === null || event.sender !== mainWindow.webContents) return;
     void updates?.downloadNow();
   });
+
+  // ---- 自绘「应用」菜单（Windows）：原生菜单栏在无边框窗口上挂不上 ----
+  ipcMain.handle('payaso:checkForUpdates', async (event): Promise<void> => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    await updates?.checkInteractively();
+  });
+  ipcMain.on('payaso:quitApp', (event): void => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return;
+    app.quit();
+  });
+  ipcMain.handle(
+    'payaso:getAppInfo',
+    (event): { version: string; electron: string; node: string } | null => {
+      if (mainWindow === null || event.sender !== mainWindow.webContents) return null;
+      return {
+        version: app.getVersion(),
+        electron: process.versions.electron ?? '',
+        node: process.versions.node,
+      };
+    },
+  );
 }
 
 function registerNativeTheme(): void {

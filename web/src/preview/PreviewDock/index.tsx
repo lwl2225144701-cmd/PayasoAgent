@@ -263,9 +263,7 @@ export default function PreviewDock({
     if (id === 'terminal') {
       openInApp('terminal', { runId })
         .then(() => onToast?.(t('preview.dock.home.terminalOpened')))
-        .catch((err: unknown) =>
-          onToast?.(err instanceof Error ? err.message : String(err)),
-        );
+        .catch((err: unknown) => onToast?.(err instanceof Error ? err.message : String(err)));
       return;
     }
     if (id === 'browser') {

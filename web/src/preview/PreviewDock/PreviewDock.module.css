@@ -10,6 +10,11 @@
   position: relative;
   z-index: 2;
   min-width: 0;
+  /* Windows：dock 是 .main 的**兄弟**节点，拿不到 .main 的 padding-top，所以自己也要
+     下移第一行菜单栏的高度 —— 否则它的头部会顶到窗口最顶、和菜单行挤在一起
+     （真机反馈"这里打开的也要修复"）。macOS / 浏览器没有该变量 → 0，布局不变。 */
+  padding-top: var(--window-menu-bar-height, 0px);
+  box-sizing: border-box;
 }
 
 /* 显式覆盖 .dock 的 display:flex；原生 hidden 规则的优先级不足。 */

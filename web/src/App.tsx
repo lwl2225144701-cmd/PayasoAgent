@@ -29,6 +29,7 @@ import {
   stopRun,
 } from './api';
 import { matchModelByQuery, matchPermissionMode } from './commands/builtin-commands';
+import { AppMenu } from './components/AppMenu';
 import { InputBar } from './components/InputBar';
 import { PanelToggleButton } from './components/PanelToggleButton';
 import { SettingsModal } from './components/SettingsModal';
@@ -1099,6 +1100,26 @@ export default function App() {
   return (
     <I18nProvider language={language}>
       <div className={`${styles.app} ${currentRun ? '' : styles.landing}`}>
+        {/* 窗口最顶一行（DSH 同款，fixed 横跨整窗）：里面放「展开侧栏」和「应用」。
+            侧边栏顶部由壳注入 --sidebar-chrome-height 留出这一行。
+            - 侧栏展开：侧栏自己的品牌行在第二行，这一行只有「应用」；
+            - 侧栏收起：侧栏宽 0，「展开侧栏」按钮必须和「应用」一起上到这一行，
+              与右端窗口按钮保持水平 —— 掉到第二行会明显比右边低一截（真机反馈）。 */}
+        {sidebarCollapsed ? (
+          <div className={styles.windowRow}>
+            <PanelToggleButton
+              side="left"
+              className={styles.sidebarToggleLead}
+              data-sidebar-toggle
+              title={t('shell.sidebar.expand')}
+              aria-label={t('shell.sidebar.expand')}
+              onClick={toggleSidebarCollapsed}
+            />
+            <AppMenu variant="row" />
+          </div>
+        ) : (
+          <AppMenu variant="window" />
+        )}
         <Sidebar
           sessions={sessions}
           currentSessionId={currentSessionId}
@@ -1129,19 +1150,6 @@ export default function App() {
             resuming={resumingRun}
             planMode={planMode}
             collapsed={sidebarCollapsed}
-            // 收起侧栏后侧栏宽 0，展开按钮必须由顶栏提供（红绿灯那一行的右端）
-            leading={
-              sidebarCollapsed ? (
-                <PanelToggleButton
-                  side="left"
-                  className={styles.sidebarToggleLead}
-                  data-sidebar-toggle
-                  title={t('shell.sidebar.expand')}
-                  aria-label={t('shell.sidebar.expand')}
-                  onClick={toggleSidebarCollapsed}
-                />
-              ) : null
-            }
             actions={
               <PreviewLauncher
                 open={previewOpen}

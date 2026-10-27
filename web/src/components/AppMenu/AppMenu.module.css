@@ -1,0 +1,170 @@
+/* AppMenu：Windows 顶栏「应用」菜单 + 关于弹窗。
+   视觉沿用 OpenInAppMenu 的配方（同一个 --bg-primary / --border-color 令牌），
+   但更窄、更"系统菜单"一点；关于弹窗则贴近 DSH 的关于卡片。 */
+
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  /* 侧栏品牌行里紧贴 logo 文本；顶栏实例靠父容器 gap，2px 不会显得空 */
+  margin-left: 2px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* 窗口级一行（DSH 同款）：fixed 在窗口最顶部、横跨整个窗口，窗口按钮（WCO）就在
+   这一行的右端，所以右侧要按壳注入的 --wco-reserve 让位。
+   容器 pointer-events:none —— 只让按钮可点，避免盖住下面主区域顶栏的拖拽面与按钮。
+   高度与壳注入的 --sidebar-chrome-height（Windows 36px）一致，侧边栏品牌行据此下移。 */
+.wrapWindow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  /* 顶对齐：右侧原生窗口按钮（WCO）是顶天立地的 caption 按钮，「应用」必须跟着顶对齐，
+     垂直居中会显得比右边低一截（真机反馈"往上挪，与右侧对齐"）。 */
+  align-items: flex-start;
+  width: 100%;
+  height: var(--sidebar-chrome-height, 36px);
+  padding: 0 12px;
+  padding-right: calc(var(--wco-reserve, 0px) + 12px);
+  /* 有一条底：这才像 DSH 的菜单栏行，而不是浮在空处的一个按钮 */
+  background: var(--color-header-glass);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border-color) 62%, transparent);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* 与右侧原生 caption 按钮同高（32px）并顶对齐 —— 侧栏展开时「应用」独占第一行，
+   要和右端窗口按钮在一条线上。 */
+.wrapWindow .trigger {
+  pointer-events: auto;
+  height: 32px;
+  border-radius: 6px;
+}
+
+/* 侧栏收起时「应用」与「展开侧栏」按钮并排：必须和 PanelToggleButton 同高（28px），
+   否则并排会出现一个高一个低（真机反馈）。 */
+.wrapRow .trigger {
+  pointer-events: auto;
+  height: 28px;
+  border-radius: 6px;
+}
+
+/* row 变体：嵌在调用方的第一行容器里（侧栏收起时与「展开侧栏」按钮同行），
+   自身不定位、不吃满宽度；随容器垂直居中 —— 与并排的展开按钮同大且同一水平线，
+   同时不贴窗口顶边（真机反馈"太顶格了"）。 */
+.wrapRow {
+  align-self: center;
+  margin-left: 4px;
+}
+
+.trigger {
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.menu {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  width: 208px;
+  padding: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover:not(:disabled) {
+  background: var(--bg-secondary);
+}
+
+.item:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.separator {
+  height: 0;
+  margin: 4px 6px;
+  border: none;
+  border-top: 1px solid var(--border-color);
+}
+
+/* ---------- 关于弹窗 ---------- */
+
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 24px 20px;
+}
+
+.aboutTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.aboutVersion {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.aboutMeta {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.aboutOk {
+  margin-top: 10px;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.aboutOk:hover {
+  filter: brightness(0.92);
+}
