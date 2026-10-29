@@ -11,6 +11,7 @@ import {
   shell,
 } from 'electron';
 import electronUpdater from 'electron-updater';
+import { createResumingHttpExecutor } from './download-resume.js';
 import { createUpdateFlow, type UpdateBackendBridge } from './flow.js';
 import { requiresManualMacInstall, waitForUpdateEvent } from './lifecycle.js';
 import { isNetworkFailure, nextCheckDelay } from './policy.js';
@@ -68,6 +69,17 @@ export function updateLogger(message: string): void {
 
 export function createUpdateCoordinator(options: UpdateCoordinatorOptions): UpdateCoordinator {
   const log = options.log ?? updateLogger;
+  // Windows 的 NSIS 更新包下载换成带 Range 续传 + 真实进度的实现。
+  // disableDifferentialDownload=true 保证只会调 download()，鸭子类型注入足够。
+  // Mac 走上游 MacUpdater（zip + Squirrel），不动。
+  // `httpExecutor` 在上游标了 @internal，公开 d.ts 里查不到，按结构注入。
+  if (autoUpdater instanceof GuardedNsisUpdater) {
+    (autoUpdater as unknown as { httpExecutor: unknown }).httpExecutor = createResumingHttpExecutor(
+      {
+        log: (message) => log(message),
+      },
+    );
+  }
   let timer: NodeJS.Timeout | null = null;
   let firstTimer: NodeJS.Timeout | null = null;
   let resumeTimer: NodeJS.Timeout | null = null;
@@ -128,7 +140,20 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
       check: async () => (await autoUpdater.checkForUpdates())?.updateInfo.version ?? '',
       requiresManualInstall: detectManualInstall,
       download: async (progress) => {
-        const onProgress = (value: { percent?: number }) => {
+        // 进度说真话：上游 ProgressCallbackTransform 会在流提前结束时无条件报 100%
+        // （percent/transferred 直接写成 total），网络一断就是「假 100% → 校验失败 →
+        // 归零重来」。这里自己按 已接收/总长 算，并且只在两者相等时才可能是 100。
+        const onProgress = (value: { percent?: number; transferred?: number; total?: number }) => {
+          const { transferred, total } = value;
+          if (
+            typeof transferred === 'number' &&
+            typeof total === 'number' &&
+            Number.isFinite(total) &&
+            total > 0
+          ) {
+            progress(Math.min(100, (transferred / total) * 100));
+            return;
+          }
           if (typeof value.percent === 'number') progress(value.percent);
         };
         autoUpdater.on('download-progress', onProgress);
@@ -137,7 +162,7 @@ export function createUpdateCoordinator(options: UpdateCoordinatorOptions): Upda
           let lastError: unknown;
           for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
             try {
-              if (attempt > 1) progress(0);
+              // 不再 progress(0)：续传在 downloadWithResume 内部完成，进度只增不减。
               return await autoUpdater.downloadUpdate();
             } catch (error) {
               lastError = error;
