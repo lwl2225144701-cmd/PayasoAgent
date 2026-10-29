@@ -1,6 +1,6 @@
 # Windows 更新后快捷方式失效排查（2026-10-29）
 
-> 状态：修复提交为 `772f511`，已授权随 v0.4.22 发布；实际构建及资产状态以 [Release](https://github.com/lwl2225144701-cmd/PayasoAgent/releases/tag/v0.4.22) 为准。v0.4.21 不包含本次修正。Windows 实机跨版本更新仍待验收。
+> 状态：修复提交为 `772f511`，已随 [v0.4.22](https://github.com/lwl2225144701-cmd/PayasoAgent/releases/tag/v0.4.22) 发布，双平台构建成功。v0.4.21 不包含本次修正。Windows 实机跨版本更新仍待验收。
 >
 > 本文记录“更新成功后快捷方式失效”。此前“安装并重启无反馈”的排查见 [桌面更新安装无反馈排查](desktop-update-故障排查-20261018.md)。
 
@@ -79,6 +79,13 @@ Windows 提示内容为：该快捷方式指向的项目“PayasoAgent.exe”已
 5. 本版本成功核验后主动删除桌面图标，再正常启动程序，确认不会被重新创建。
 
 只有完成上述实机验证，才能认定本次现场问题已解决。构建成功、安装包上传成功或自动化测试通过均不替代这一步。
+
+## v0.4.22 发布验证（2026-10-29）
+
+- 主分支发布准备提交为 `53bd4df`，[CI](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40810984892) 已通过；发版流程中的 148 套确定性测试通过。
+- [发版流程](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40811030175) 已完成 Mac 打包、上传及 Homebrew cask 更新。
+- Windows 首次构建已完成 NSIS 编译及产物自检，上传 Release 时出现 GitHub 502 和 `ECONNRESET`，EXE 未成功上传。仅重试失败的 Windows 任务后，构建、上传和 feed 检查全部成功；Release 已包含 Mac DMG/ZIP、Windows EXE/ZIP、blockmap 以及两份自动更新文件。
+- 以上新增了 Windows 安装器实际编译证据，尚不包含 Windows 实机 v0.4.21 → v0.4.22 的升级验收。
 
 ## 回退与发布状态
 
