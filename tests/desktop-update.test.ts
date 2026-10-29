@@ -7,9 +7,10 @@
 // 背景：docs/plans/auto-update-调研报告.md §5（DSH 逆向结论 + 裁剪方案）。
 
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn, type spawn as spawnType } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync, type spawn as spawnType } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import type { Socket } from 'node:net';
 import path from 'node:path';
 import { stopManagedBackend } from '../apps/desktop/src/backend-process';
 import { createUpdateFlow, type UpdateFlowOptions } from '../apps/desktop/src/update/flow';
@@ -49,6 +50,10 @@ import {
   WINDOWS_APP_USER_MODEL_ID,
   windowsShortcutDetails,
 } from '../apps/desktop/src/windows-shortcut';
+import {
+  reportWindowsUpdateReady,
+  updateHandoffToken,
+} from '../apps/desktop/src/windows-update-handoff';
 import { isCancellable } from '../src/host/run-types';
 import { normalizeUpdateStatus } from '../web/src/update-status';
 
@@ -764,26 +769,75 @@ test('快捷方式：末次失败不记版本，退出取消复查，普通启�
   assert.equal(shortcutRetryFixture(false).pending.length, 0);
 });
 
-test('Windows 安装器：更新落盘后重写桌面和开始菜单快捷方式', () => {
+test('更新就绪回执：只接受本轮格式正确的 token，包含版本、EXE 和 PID', async () => {
+  const token = 'a'.repeat(32);
+  assert.equal(updateHandoffToken([`--payaso-update-token=${token}`]), token);
+  assert.equal(updateHandoffToken(['--payaso-update-token=../other']), null);
+  await assert.rejects(
+    reportWindowsUpdateReady({ token: 'bad', version: '0.4.23', exe: 'x', pid: 1 }),
+    /Invalid/,
+  );
+  const events = new EventEmitter();
+  let payload = '';
+  const fake = Object.assign(events, {
+    setTimeout: () => fake,
+    end: (data: string, done: () => void) => {
+      payload = data;
+      done();
+    },
+    destroy: (error: Error) => {
+      events.emit('error', error);
+    },
+  });
+  const ready = reportWindowsUpdateReady({
+    token,
+    version: '0.4.23',
+    exe: 'C:\\Programs\\PayasoAgent.exe',
+    pid: 123,
+    connect: ((pipe: string) => {
+      assert.equal(pipe, `\\\\.\\pipe\\PayasoAgent-update-${token}`);
+      return fake as unknown as Socket;
+    }) as typeof import('node:net').createConnection,
+  });
+  events.emit('connect');
+  await ready;
+  assert.deepEqual(JSON.parse(payload), {
+    token,
+    version: '0.4.23',
+    exe: 'C:\\Programs\\PayasoAgent.exe',
+    pid: 123,
+  });
+});
+
+test('Windows 安装器：旧卸载前分离链接，直接创建新进程并等待就绪', () => {
   const yml = shellSource('electron-builder.yml');
   assert.match(yml, /include:\s*build\/installer\.nsh/);
+  assert.match(yml, /to: PayasoUpdate\.exe/);
+  const result = spawnSync(
+    process.execPath,
+    ['apps/desktop/scripts/package-windows.mjs', '--check'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
   const nsh = shellSource(path.join('build', 'installer.nsh'));
-  assert.match(nsh, /!macro customInstall/);
-  assert.match(nsh, /\$\{if\} \$\{isUpdated\}/);
-  assert.match(nsh, /CreateShortCut "\$newDesktopLink" "\$appExe"/);
-  assert.match(nsh, /CreateShortCut "\$newStartMenuLink" "\$appExe"/);
-  assert.match(nsh, /WinShell::SetLnkAUMI "\$newDesktopLink" "\$\{APP_ID\}"/);
-  assert.match(nsh, /WinShell::SetLnkAUMI "\$newStartMenuLink" "\$\{APP_ID\}"/);
-  assert.match(nsh, /SHChangeNotify/);
-  assert.match(nsh, /StrCpy \$launchLink "\$appExe"/, '自动重启不依赖快捷方式');
-  assert.match(nsh, /\$\{ifNot\} \$\{FileExists\} "\$appExe"/);
-  assert.match(nsh, /shortcut-repair\.log/, '静默安装失败必须留下诊断');
+  assert.match(nsh, /!macro payasoPrepareUpdate/);
+  assert.match(nsh, /nsExec::ExecToStack.* prepare /);
+  assert.match(nsh, /nsExec::ExecToStack.* finish /);
+  assert.match(nsh, /nsExec::ExecToStack.* launch /);
+  assert.ok(!nsh.includes('ExecShellAsUser'), '自动重启不得通过 Shell 解析快捷方式');
   const main = shellSource(path.join('src', 'main.ts'));
   assert.match(main, /setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/);
-  assert.match(main, /repairWindowsLaunchShortcuts\(\)/);
-  assert.match(main, /shouldRestoreMissingShortcut/);
-  const appId = /^appId:\s*(\S+)\s*$/m.exec(yml)?.[1];
-  assert.equal(appId, WINDOWS_APP_USER_MODEL_ID);
+  assert.match(main, /reportWindowsUpdateReady/);
+  assert.match(main, /repairInstalledWindowsShortcuts/);
+  assert.ok(!main.includes('writeShortcutLink'), '程序兜底不能覆盖禁跟踪标志');
+  if (process.platform === 'win32') {
+    const native = spawnSync(process.execPath, ['tests/windows-update-native.mjs'], {
+      encoding: 'utf8',
+      timeout: 120000,
+    });
+    assert.equal(native.status, 0, native.stdout + native.stderr);
+    console.log(native.stdout);
+  }
 });
 
 test('electron-builder：GitHub provider + updaterCacheDirName', () => {

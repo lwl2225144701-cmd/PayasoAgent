@@ -25,6 +25,38 @@ jobs:
       - name: Windows updater and process regression
         run: npx tsx tests/desktop-update.test.ts
 
+  windows-update-candidate:
+    if: github.event_name == 'pull_request' && contains(github.head_ref, 'windows-update')
+    needs: windows-updater
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install candidate dependencies
+        run: |
+          npm ci
+          npm ci --prefix web
+          npm ci --prefix apps/desktop
+      - name: Prepare desktop payload
+        run: npm run desktop:setup
+      - name: Build candidate installer without publishing
+        run: npm run desktop:win
+      - name: Packaged window and backend readiness smoke test
+        run: node tests/windows-update-ui.mjs
+      - name: Upload Windows candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayasoAgent-Windows-update-candidate
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
+          if-no-files-found: error
+
   build-and-test:
     # macOS runner：shell 沙箱（sandbox-exec）与 Keychain 相关套件均为 darwin 能力；
     # 沙箱不可用的环境下 shell 用例按 fail-closed 预期走 DENIED 分支。

@@ -14,6 +14,7 @@
 | 验收执行不收敛治理改造 | [完整测试场景与执行交接](./guides/execution-governance-acceptance.md) |
 | 查发布 / 打包怎么操作 | [`distribute/npm-publish-runbook.md`](./distribute/npm-publish-runbook.md) |
 | 排查 Windows 更新后图标无法启动 | [更新后快捷方式失效排查](./plans/windows-update-shortcut-故障排查-20261029.md) |
+| 查看 Windows 更新与自动重启的后续修复方案 | [快捷方式与自动重启修复方案](./plans/windows-update-shortcut-修复方案-20261029.md) |
 | 查看 Windows 应用菜单与顶部布局方案 | [桌面应用菜单方案](./plans/desktop-app-menu-plan.md) |
 | 查第三方库用法 | [`guides/pi-ai-使用指南.md`](./guides/pi-ai-使用指南.md) |
 
@@ -57,6 +58,7 @@ docs/
 │   ├── desktop-app-menu-plan.md
 │   ├── desktop-update-故障排查-20261018.md
 │   ├── windows-update-shortcut-故障排查-20261029.md
+│   ├── windows-update-shortcut-修复方案-20261029.md
 │   ├── windows-full-access-token-plan.md
 │   ├── builtin-model-catalog-refresh.md
 │   ├── preview-gui-调研报告.md / preview-module-plan.md

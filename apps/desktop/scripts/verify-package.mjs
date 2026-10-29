@@ -211,6 +211,10 @@ function main() {
 
   // 3) 自更新 feed（CI 硬门禁；本地 --dir 不生成，只提示）
   const feedPath = path.join(path.dirname(asarPath), 'app-update.yml');
+  if (!asarPath.includes('.app/')) {
+    const helper = path.join(path.dirname(asarPath), 'PayasoUpdate.exe');
+    if (!existsSync(helper)) errors.push('Windows 安装包缺少独立更新交接工具 PayasoUpdate.exe');
+  }
   if (!existsSync(feedPath)) {
     const message = `缺少 ${feedPath}（publish 没生效 / 打包没走到最后）`;
     if (requireFeed) errors.push(message);

@@ -1,6 +1,6 @@
 {
   "name": "@payaso/desktop",
-  "version": "0.4.22",
+  "version": "0.4.23",
   "private": true,
   "author": "PayasoAgent",
   "description": "PayasoAgent 桌面壳：安装后自动拉起自带 Node 跑的后端，并直接打开 Web UI",
@@ -13,7 +13,7 @@
     "dev": "npm run build && electron .",
     "dist:mac": "npm run build && electron-builder --mac --dir --publish never && node scripts/verify-package.mjs",
     "dist:dmg": "npm run build && electron-builder --mac dmg zip --publish never && node scripts/verify-package.mjs --require-feed",
-    "dist:win": "npm run build && electron-builder --win nsis zip --publish never && node scripts/verify-package.mjs --require-feed",
+    "dist:win": "node scripts/build-windows-helper.mjs && npm run build && node scripts/package-windows.mjs && node scripts/verify-package.mjs --require-feed",
     "typecheck": "tsc -p . --noEmit",
     "verify:package": "node scripts/verify-package.mjs"
   },
