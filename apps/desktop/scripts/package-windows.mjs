@@ -33,6 +33,12 @@ section = section.replace(
   '!insertmacro payasoPrepareUpdate\n\nVar /GLOBAL keepShortcuts',
 );
 section = section.replace('!insertmacro StartApp', '!insertmacro payasoStartVerifiedApp');
+// 上游失败分支使用 Quit 而不是 Abort，不会触发 .onInstFailed；必须先恢复链接。
+for (const scope of ['SHELL_CONTEXT', 'HKEY_CURRENT_USER']) {
+  const call = `!insertmacro uninstallOldVersion ${scope}`;
+  if (!section.includes(call)) throw new Error(`Missing uninstall call for ${scope}`);
+  section = section.replace(call, `${call}\n!insertmacro payasoCheckUninstall`);
+}
 if (
   (section.match(/payasoPrepareUpdate/g) ?? []).length !== 1 ||
   (section.match(/payasoStartVerifiedApp/g) ?? []).length !== 1

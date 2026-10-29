@@ -37,6 +37,16 @@ Var payasoUpdateHelper
   ${endIf}
 !macroend
 
+!macro payasoCheckUninstall
+  ${if} ${Errors}
+  ${orIf} $R0 != 0
+    nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" restore "$payasoUpdateState"'
+    Pop $R9
+    Pop $R8
+    Abort "The previous application could not be uninstalled. See logs/windows-install.log."
+  ${endIf}
+!macroend
+
 !macro payasoStartVerifiedApp
   HideWindow
   ClearErrors
