@@ -253,14 +253,18 @@ public static class PayasoUpdate {
         } finally { if (userToken != IntPtr.Zero) CloseHandle(userToken); }
     }
     static int StartAsUser(string exe, string args, IntPtr token) {
+        var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)), Desktop = "winsta0\\default" };
+        ProcessInformation process;
         if (token == IntPtr.Zero) {
-            using (Process process = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) })) return process.Id;
+            // 不继承 nsExec 的输出管道，防止新应用存活导致安装器误等管道 EOF。
+            if (!CreateProcessW(exe, new StringBuilder("\"" + exe + "\" " + args), IntPtr.Zero, IntPtr.Zero, false, 0x08000400, IntPtr.Zero, Path.GetDirectoryName(exe), ref startup, out process)) throw new Win32Exception();
+            CloseHandle(process.Thread);
+            CloseHandle(process.Process);
+            return process.Pid;
         }
         IntPtr environment = IntPtr.Zero;
         try {
             if (!CreateEnvironmentBlock(out environment, token, false)) throw new Win32Exception();
-            var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)), Desktop = "winsta0\\default" };
-            ProcessInformation process;
             if (!CreateProcessWithTokenW(token, 1, exe, new StringBuilder("\"" + exe + "\" " + args), 0x400, environment, Path.GetDirectoryName(exe), ref startup, out process)) throw new Win32Exception();
             CloseHandle(process.Thread);
             CloseHandle(process.Process);
@@ -320,6 +324,7 @@ public static class PayasoUpdate {
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool DuplicateTokenEx(IntPtr source, uint access, IntPtr attributes, int level, int type, out IntPtr token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessWithTokenW(IntPtr token, uint flags, string application, StringBuilder command, uint creationFlags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInformation process);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessW(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint creationFlags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInformation process);
     [DllImport("userenv.dll", SetLastError = true)] static extern bool CreateEnvironmentBlock(out IntPtr environment, IntPtr token, bool inherit);
     [DllImport("userenv.dll")] static extern bool DestroyEnvironmentBlock(IntPtr environment);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);

@@ -43,6 +43,9 @@ if (
   section.indexOf('payasoPrepareUpdate') > section.indexOf('!insertmacro uninstallOldVersion')
 )
   throw new Error('Unsafe NSIS update ordering');
+// 先初始化公共入口，避免先加载内部 NsisTarget 触发上游循环依赖。
+const { build, Platform } = require('electron-builder');
+const { NsisTarget } = require('app-builder-lib/out/targets/nsis/NsisTarget.js');
 if (process.argv.includes('--check')) {
   console.log('NSIS template hashes and transaction insertion points verified');
 } else {
@@ -50,7 +53,6 @@ if (process.argv.includes('--check')) {
   const output = path.join(root, 'build', 'nsis-generated');
   mkdirSync(output, { recursive: true });
   writeFileSync(path.join(output, 'installSection.nsh'), section);
-  const { NsisTarget } = require('app-builder-lib/out/targets/nsis/NsisTarget.js');
   const original = NsisTarget.prototype.executeMakensis;
   NsisTarget.prototype.executeMakensis = function (defines, commands, script, options) {
     const include = '!include "installSection.nsh"';
@@ -66,7 +68,6 @@ if (process.argv.includes('--check')) {
       options,
     );
   };
-  const { build, Platform } = require('electron-builder');
   try {
     await build({
       projectDir: root,

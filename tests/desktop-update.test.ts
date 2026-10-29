@@ -821,9 +821,9 @@ test('Windows 安装器：旧卸载前分离链接，直接创建新进程并等
   assert.equal(result.status, 0, result.stderr);
   const nsh = shellSource(path.join('build', 'installer.nsh'));
   assert.match(nsh, /!macro payasoPrepareUpdate/);
-  assert.match(nsh, /ExecWait.* prepare /);
-  assert.match(nsh, /ExecWait.* finish /);
-  assert.match(nsh, /ExecWait.* launch /);
+  assert.match(nsh, /nsExec::ExecToStack.* prepare /);
+  assert.match(nsh, /nsExec::ExecToStack.* finish /);
+  assert.match(nsh, /nsExec::ExecToStack.* launch /);
   assert.ok(!nsh.includes('ExecShellAsUser'), '自动重启不得通过 Shell 解析快捷方式');
   const main = shellSource(path.join('src', 'main.ts'));
   assert.match(main, /setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/);

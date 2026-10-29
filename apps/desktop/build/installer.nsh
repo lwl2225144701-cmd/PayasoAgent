@@ -14,7 +14,9 @@ Var payasoUpdateHelper
     StrCpy $R8 "-"
   ${endIf}
   ClearErrors
-  ExecWait '"$payasoUpdateHelper" prepare "$payasoUpdateState" "$appExe" "$R8" "$newStartMenuLink"' $R9
+  nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" prepare "$payasoUpdateState" "$appExe" "$R8" "$newStartMenuLink"'
+  Pop $R9
+  Pop $R8
   ${if} ${Errors}
   ${orIf} $R9 != 0
     Abort "Cannot prepare Windows update. See PayasoAgent logs/windows-install.log."
@@ -26,7 +28,9 @@ Var payasoUpdateHelper
     Abort "Updated application executable is missing: $appExe"
   ${endIf}
   ClearErrors
-  ExecWait '"$payasoUpdateHelper" finish "$payasoUpdateState" "$appExe"' $R9
+  nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" finish "$payasoUpdateState" "$appExe"'
+  Pop $R9
+  Pop $R8
   ${if} ${Errors}
   ${orIf} $R9 != 0
     DetailPrint "Shortcut verification failed; see windows-install.log"
@@ -36,7 +40,9 @@ Var payasoUpdateHelper
 !macro payasoStartVerifiedApp
   HideWindow
   ClearErrors
-  ExecWait '"$payasoUpdateHelper" launch "$appExe" "${VERSION}"' $R9
+  nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" launch "$appExe" "${VERSION}"'
+  Pop $R9
+  Pop $R8
   ${if} ${Errors}
   ${orIf} $R9 != 0
     MessageBox MB_OK|MB_ICONEXCLAMATION "PayasoAgent is installed, but automatic restart was not confirmed. See logs/windows-install.log."
@@ -44,7 +50,9 @@ Var payasoUpdateHelper
     Quit
   ${endIf}
   ClearErrors
-  ExecWait '"$payasoUpdateHelper" finish "$payasoUpdateState" "$appExe"' $R9
+  nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" finish "$payasoUpdateState" "$appExe"'
+  Pop $R9
+  Pop $R8
   ${if} ${Errors}
   ${orIf} $R9 != 0
     MessageBox MB_OK|MB_ICONEXCLAMATION "PayasoAgent has restarted, but shortcut verification failed. See logs/windows-install.log."
@@ -55,13 +63,17 @@ Var payasoUpdateHelper
 
 Function .onInstFailed
   ${if} ${FileExists} "$payasoUpdateState"
-    ExecWait '"$payasoUpdateHelper" restore "$payasoUpdateState"' $R9
+    nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" restore "$payasoUpdateState"'
+    Pop $R9
+    Pop $R8
   ${endIf}
 FunctionEnd
 
 Function .onUserAbort
   ${if} ${FileExists} "$payasoUpdateState"
-    ExecWait '"$payasoUpdateHelper" restore "$payasoUpdateState"' $R9
+    nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" restore "$payasoUpdateState"'
+    Pop $R9
+    Pop $R8
   ${endIf}
 FunctionEnd
 !endif
