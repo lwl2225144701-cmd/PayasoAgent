@@ -79,7 +79,8 @@ Function .onInstFailed
   ${endIf}
 FunctionEnd
 
-Function .onUserAbort
+!define MUI_CUSTOMFUNCTION_ABORT payasoRollbackOnAbort
+Function payasoRollbackOnAbort
   ${if} ${FileExists} "$payasoUpdateState"
     nsExec::ExecToStack /TIMEOUT=200000 '"$payasoUpdateHelper" restore "$payasoUpdateState"'
     Pop $R9
