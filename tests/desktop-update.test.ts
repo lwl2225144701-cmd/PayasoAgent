@@ -11,6 +11,7 @@ import { type ChildProcess, spawn, spawnSync, type spawn as spawnType } from 'no
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import type { Socket } from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { stopManagedBackend } from '../apps/desktop/src/backend-process';
 import { createUpdateFlow, type UpdateFlowOptions } from '../apps/desktop/src/update/flow';
@@ -37,6 +38,11 @@ import {
   type UpdateStatus,
 } from '../apps/desktop/src/update/status';
 import { ACTIVE_RUN_STATUSES, activeTasks } from '../apps/desktop/src/update/tasks';
+import {
+  resolveUpdateProgressScripts,
+  spawnUpdateProgressWindow,
+  updateProgressMessages,
+} from '../apps/desktop/src/update/update-progress-window';
 import {
   GuardedNsisUpdater,
   launchInstallerProcess,
@@ -837,6 +843,104 @@ test('Windows 安装器：旧卸载前分离链接，直接创建新进程并等
     });
     assert.equal(native.status, 0, native.stdout + native.stderr);
     console.log(native.stdout);
+  }
+});
+
+test('Windows 更新过渡窗：安装器启动前弹出，新主窗口出现即关闭', () => {
+  // v0.4.23 实机：静默安装 3 分 48 秒，期间应用已退、无任何可见状态，
+  // 用户等不到一分钟就手动启动，把成功的自动重启记成"没生效"。
+  const installer = shellSource(path.join('src', 'update', 'windows-installer.ts'));
+  const spawnAt = installer.indexOf('this.spawnUpdateProgressWindow(command)');
+  const launchAt = installer.indexOf('await this.launchInstaller(command, args, env, stdio)');
+  assert.ok(spawnAt > 0, 'spawnLog 必须调用过渡窗');
+  assert.ok(launchAt > spawnAt, '过渡窗必须在安装器启动之前弹出，否则仍是空桌面');
+  assert.match(installer, /app\?\.exit\?\.\(0\)/, 'quit 被拖住时须强退，别让安装器干等');
+  const yml = shellSource('electron-builder.yml');
+  assert.match(yml, /from: resources\/scripts/, '过渡窗脚本必须随包发布');
+  for (const name of ['update-progress.ps1', 'launch-update-progress.vbs']) {
+    assert.ok(
+      fs.existsSync(path.join('apps', 'desktop', 'resources', 'scripts', name)),
+      `缺少过渡窗脚本 ${name}`,
+    );
+  }
+  assert.match(
+    fs.readFileSync(
+      path.join('apps', 'desktop', 'resources', 'scripts', 'launch-update-progress.vbs'),
+      'utf8',
+    ),
+    /shell\.Run cmd, 0, False/,
+    '必须用 wscript 隐藏中继，否则会闪控制台黑窗',
+  );
+  assert.match(
+    fs.readFileSync(
+      path.join('apps', 'desktop', 'resources', 'scripts', 'update-progress.ps1'),
+      'utf8',
+    ),
+    /MainWindowHandle -ne \[IntPtr\]::Zero/,
+    '关闭条件必须是新应用出现可见主窗口，不能只看安装器退出',
+  );
+});
+
+test('Windows 过渡窗：wscript 中继参数、本地化文案与缺失资源时静默跳过', () => {
+  assert.equal(updateProgressMessages('zh-CN').title, '正在安装更新');
+  assert.equal(updateProgressMessages('zh-TW').title, '正在安裝更新');
+  assert.equal(updateProgressMessages('en-US').title, 'Installing Update');
+  assert.equal(updateProgressMessages('ja-JP').title, 'Installing Update', '非中文回落英文');
+  assert.equal(updateProgressMessages('zh').title, '正在安装更新');
+  assert.equal(resolveUpdateProgressScripts(undefined), null, '未打包时不得尝试弹窗');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'payaso-过渡窗-'));
+  try {
+    const onlyScript = path.join(dir, 'only-script');
+    fs.mkdirSync(path.join(onlyScript, 'scripts'), { recursive: true });
+    fs.copyFileSync(
+      path.join('apps', 'desktop', 'resources', 'scripts', 'update-progress.ps1'),
+      path.join(onlyScript, 'scripts', 'update-progress.ps1'),
+    );
+    assert.equal(resolveUpdateProgressScripts(onlyScript), null, '中继缺失时整体跳过');
+
+    fs.copyFileSync(
+      path.join('apps', 'desktop', 'resources', 'scripts', 'launch-update-progress.vbs'),
+      path.join(onlyScript, 'scripts', 'launch-update-progress.vbs'),
+    );
+    const resolved = resolveUpdateProgressScripts(onlyScript);
+    assert.ok(resolved?.script.endsWith('update-progress.ps1'));
+    assert.ok(resolved?.launcher.endsWith('launch-update-progress.vbs'));
+
+    const spawned: { command: string; args: string[] }[] = [];
+    spawnUpdateProgressWindow({
+      installerPath:
+        'C:\\Users\\测试 用户\\AppData\\Local\\@payasodesktop-updater\\pending\\setup.exe',
+      resourcesPath: onlyScript,
+      appProcessName: 'PayasoAgent',
+      oldAppProcessId: 4242,
+      locale: 'zh-CN',
+      spawnProcess: ((command: string, args: string[]) => {
+        spawned.push({ command, args });
+        return { on: () => {}, unref: () => {}, pid: 7 } as never;
+      }) as never,
+    });
+    assert.equal(spawned.length, 1);
+    assert.match(spawned[0].command, /wscript\.exe$/i, '必须走 GUI 子系统中继，避免闪控制台');
+    assert.ok(spawned[0].args[0].endsWith('launch-update-progress.vbs'));
+    assert.ok(spawned[0].args[1].endsWith('update-progress.ps1'));
+    assert.ok(spawned[0].args.includes('-InstallerPath'));
+    assert.ok(spawned[0].args.some((arg) => arg.endsWith('pending\\setup.exe')));
+    assert.ok(spawned[0].args.includes('4242'), '旧 PID 必须传入，否则旧窗口会被当成新就绪');
+    assert.ok(spawned[0].args.includes('PayasoAgent'));
+    assert.ok(spawned[0].args.includes('正在安装更新'));
+    assert.ok(spawned[0].args.includes('更新即将完成，应用将自动重启，请稍候...'));
+
+    // 资源缺失只记录不抛出：过渡窗是体验增强，不能反过来阻断安装。
+    const logs: string[] = [];
+    spawnUpdateProgressWindow({
+      installerPath: 'C:\\setup.exe',
+      resourcesPath: undefined,
+      log: (message) => logs.push(message),
+    });
+    assert.ok(logs.some((line) => line.includes('skipping transition window')));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

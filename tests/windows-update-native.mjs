@@ -54,8 +54,13 @@ try {
   }
   const backup = readFileSync(desktop);
   run(helper, ['prepare', state, exe, desktop, menu]);
-  assert.equal(existsSync(desktop), false, '旧文件移动前必须已分离链接');
-  assert.equal(existsSync(menu), false);
+  // 旧文件移动前不再删除链接：原地重写成禁跟踪链接，目标路径不变，图标全程在位。
+  // （v0.4.23 实机：删除链接要等 3 分 48 秒后 customInstall 才补建，图标凭空消失。）
+  assert.equal(existsSync(desktop), true, '旧文件移动前链接必须仍在位');
+  assert.equal(existsSync(menu), true);
+  const detached = inspect(desktop);
+  assert.equal(detached.target.toLowerCase(), exe.toLowerCase(), '分离后目标必须仍是当前 EXE');
+  assert.equal(detached.flags & flags, flags, '分离后必须已禁用链接跟踪');
   run(helper, ['restore', state]);
   assert.deepEqual(readFileSync(desktop), backup, '失败回滚恢复旧链接快照');
   run(helper, ['prepare', state, exe, desktop, menu]);
