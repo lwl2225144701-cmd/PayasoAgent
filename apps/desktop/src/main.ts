@@ -29,16 +29,12 @@ import {
 } from './update/coordinator.js';
 import { IDLE_UPDATE_STATUS, type UpdateStatus } from './update/status.js';
 import { activeTasks } from './update/tasks.js';
+import { WINDOWS_APP_USER_MODEL_ID, WINDOWS_SHORTCUT_NAME } from './windows-shortcut.js';
 import {
-  repairWindowsShortcut,
-  type ShortcutLink,
-  shouldRestoreMissingShortcut,
-  startWindowsShortcutRepair,
-  WINDOWS_APP_USER_MODEL_ID,
-  WINDOWS_SHORTCUT_DESCRIPTION,
-  WINDOWS_SHORTCUT_NAME,
-  windowsShortcutDetails,
-} from './windows-shortcut.js';
+  repairInstalledWindowsShortcuts,
+  reportWindowsUpdateReady,
+  updateHandoffToken,
+} from './windows-update-handoff.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -433,6 +429,32 @@ function createWindow(): void {
     void warnIfBackendMismatch(win);
     // 页面刷新后补发：侧边栏的更新条目不能因为刷新就丢了
     win.webContents.send('payaso:updateStatus', lastUpdateStatus);
+    const token = process.platform === 'win32' ? updateHandoffToken(process.argv) : null;
+    if (token) {
+      void (async () => {
+        const mounted = await win.webContents.executeJavaScript(`new Promise(resolve => {
+          const deadline = Date.now() + 10000;
+          const check = () => {
+            if (document.getElementById('root')?.childElementCount) resolve(true);
+            else if (Date.now() >= deadline) resolve(false);
+            else setTimeout(check, 100);
+          };
+          check();
+        })`);
+        if (!mounted || !(await backendResponds()) || win.isDestroyed())
+          throw new Error('Updated window/backend not ready');
+        if (!win.isVisible()) win.show();
+        await reportWindowsUpdateReady({
+          token,
+          version: app.getVersion(),
+          exe: process.execPath,
+          pid: process.pid,
+        });
+        updateLogger(
+          `[handoff] ready pid=${process.pid} version=${app.getVersion()} exe=${process.execPath}`,
+        );
+      })().catch((error: unknown) => updateLogger(`[handoff] failed: ${String(error)}`));
+    }
   });
 
   win.on('closed', () => {
@@ -653,93 +675,26 @@ async function warnIfBackendMismatch(win: BrowserWindow): Promise<void> {
   }
 }
 
-const WINDOWS_SHORTCUT_VERSION_FILE = 'windows-shortcut-version';
-
-function readSeenShortcutVersion(): string | null {
-  try {
-    const file = path.join(app.getPath('userData'), WINDOWS_SHORTCUT_VERSION_FILE);
-    if (!existsSync(file)) return null;
-    const text = readFileSync(file, 'utf8').trim();
-    return text || null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberShortcutVersion(version: string): void {
-  const file = path.join(app.getPath('userData'), WINDOWS_SHORTCUT_VERSION_FILE);
-  writeFileSync(file, `${version}\n`, 'utf8');
-}
-
-function readInstalledShortcut(file: string): ShortcutLink | null {
-  if (!existsSync(file)) return null;
-  try {
-    const read = shell.readShortcutLink(file);
-    return {
-      target: read.target,
-      cwd: read.cwd,
-      icon: read.icon,
-      iconIndex: read.iconIndex,
-      appUserModelId: read.appUserModelId,
-    };
-  } catch {
-    // 读不出来的 .lnk 按失效处理，下面会按当前 exe 重写。
-    return { target: '' };
-  }
-}
-
-/** 重写桌面和开始菜单快捷方式。返回 false 表示有条目没写成功，调用方不要记下「这个版本已经核对过」。 */
-function repairWindowsShortcuts(restoreIfMissing: boolean, refreshExisting: boolean): boolean {
-  const locations = [
-    app.getPath('desktop'),
-    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-  ];
-  let ok = true;
-  for (const dir of locations) {
-    const file = path.join(dir, WINDOWS_SHORTCUT_NAME);
-    const repaired = repairWindowsShortcut({
-      file,
-      details: windowsShortcutDetails(
-        process.execPath,
-        WINDOWS_APP_USER_MODEL_ID,
-        WINDOWS_SHORTCUT_DESCRIPTION,
-      ),
-      restoreIfMissing,
-      refreshExisting,
-      read: readInstalledShortcut,
-      write: (link, details) => shell.writeShortcutLink(link, 'create', details),
-      log: updateLogger,
-    });
-    if (!repaired) ok = false;
-  }
-  return ok;
-}
-
-/**
- * 打包后的 Windows 客户端核对快捷方式。
- *
- * 安装器在新文件落盘后会重写 .lnk；这里再兜一层，因为资源管理器可能在安装器退出后
- * 才根据链接跟踪把桌面图标改到已删除的临时路径。更新后的第一次启动（或带着 --updated）
- * 会在 30 秒内核验并补回丢失图标，末次成功才记版本；普通启动不补回用户删除的图标。
- */
+/** 安装器已在文件替换前分离链接；运行时只用相同原生工具修复已有链接。 */
 function repairWindowsLaunchShortcuts(): void {
   if (process.platform !== 'win32' || !app.isPackaged) return;
-  const version = app.getVersion();
-  const restoreIfMissing = shouldRestoreMissingShortcut({
-    argv: process.argv,
-    seenVersion: readSeenShortcutVersion(),
-    currentVersion: version,
+  // 安装事务由独立工具持有，避免新程序兜底与安装器同时重建同一链接。
+  if (updateHandoffToken(process.argv)) return;
+  const helper = path.join(process.resourcesPath, 'PayasoUpdate.exe');
+  const links = [
+    path.join(app.getPath('desktop'), WINDOWS_SHORTCUT_NAME),
+    path.join(
+      app.getPath('appData'),
+      'Microsoft',
+      'Windows',
+      'Start Menu',
+      'Programs',
+      WINDOWS_SHORTCUT_NAME,
+    ),
+  ];
+  void repairInstalledWindowsShortcuts(helper, process.execPath, links).catch((error: unknown) => {
+    updateLogger(`[shortcut] native repair failed: ${String(error)}`);
   });
-  updateLogger(
-    `[shortcut] checking version=${version} exe=${process.execPath} afterUpdate=${restoreIfMissing}`,
-  );
-  const cancel = startWindowsShortcutRepair({
-    afterUpdate: restoreIfMissing,
-    repair: repairWindowsShortcuts,
-    remember: () => rememberShortcutVersion(version),
-    log: updateLogger,
-  });
-  app.once('before-quit', cancel);
 }
 
 async function boot(): Promise<void> {

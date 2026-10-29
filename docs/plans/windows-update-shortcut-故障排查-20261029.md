@@ -1,10 +1,12 @@
 # Windows 更新后快捷方式失效排查（2026-10-29）
 
-> 状态：修复提交为 `772f511`，已随 [v0.4.22](https://github.com/lwl2225144701-cmd/PayasoAgent/releases/tag/v0.4.22) 发布，双平台构建成功。v0.4.21 不包含本次修正。Windows 实机跨版本更新仍待验收。
+> 状态：修复提交为 `772f511`，已随 [v0.4.22](https://github.com/lwl2225144701-cmd/PayasoAgent/releases/tag/v0.4.22) 发布，双平台构建成功。**Windows 实机 v0.4.21 → v0.4.22 验收未通过**：快捷方式恢复后仍需手动启动。后续见 [修复方案](windows-update-shortcut-修复方案-20261029.md)。
 >
 > 本文记录“更新成功后快捷方式失效”。此前“安装并重启无反馈”的排查见 [桌面更新安装无反馈排查](desktop-update-故障排查-20261018.md)。
 
 ## 现场证据
+
+**发布后实机反馈补充**：用户明确确认版本为 v0.4.21 → v0.4.22，安装后的自动启动阶段出现路径已改变、询问删除快捷方式的提示；删除后图标稍后恢复，仍需手动双击才能打开，打开后显示 0.4.22。此结果证明图标恢复不能等同于自动重启成功；下列首次描述保留作历史记录，当前结论以本段为准。
 
 用户描述的操作顺序为：点击新版本下载 → 安装并重启 → 新程序正常启动且显示正确版本 → 再双击图标时提示快捷方式无法正常工作。
 
@@ -85,7 +87,7 @@ Windows 提示内容为：该快捷方式指向的项目“PayasoAgent.exe”已
 - 主分支发布准备提交为 `53bd4df`，[CI](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40810984892) 已通过；发版流程中的 148 套确定性测试通过。
 - [发版流程](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40811030175) 已完成 Mac 打包、上传及 Homebrew cask 更新。
 - Windows 首次构建已完成 NSIS 编译及产物自检，上传 Release 时出现 GitHub 502 和 `ECONNRESET`，EXE 未成功上传。仅重试失败的 Windows 任务后，构建、上传和 feed 检查全部成功；Release 已包含 Mac DMG/ZIP、Windows EXE/ZIP、blockmap 以及两份自动更新文件。
-- 以上新增了 Windows 安装器实际编译证据，尚不包含 Windows 实机 v0.4.21 → v0.4.22 的升级验收。
+- 以上新增了 Windows 安装器实际编译证据。后续 Windows 实机 v0.4.21 → v0.4.22 验收未通过：仍有快捷方式错误提示和自动启动失败，见本文现场证据补充及后续修复方案。
 
 ## 回退与发布状态
 

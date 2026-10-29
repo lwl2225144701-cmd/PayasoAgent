@@ -7,3 +7,5 @@ runtime/.tmp/
 *.tsbuildinfo
 build/icon.icns
 build/icon.iconset/
+build/PayasoUpdate.exe
+build/nsis-generated/

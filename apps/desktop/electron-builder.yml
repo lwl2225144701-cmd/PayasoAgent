@@ -62,13 +62,13 @@ win:
   extraResources:
     - from: runtime/bin/node.exe
       to: runtime/bin/node.exe
+    - from: build/PayasoUpdate.exe
+      to: PayasoUpdate.exe
 
 nsis:
   oneClick: true
   perMachine: false
-  # 更新时默认保留旧 .lnk 且不改目标。卸载会把 exe 改名挪到临时目录，桌面快捷方式
-  # 会被链接跟踪改到失效路径，Windows 随后提示路径不对并删掉图标。
-  # build/installer.nsh 在新文件落盘后把快捷方式指回 $INSTDIR 里的 exe。
+  # 受控安装段在旧卸载前分离旧链接；helper 重建禁跟踪链接并监督新窗口就绪。
   include: build/installer.nsh
   artifactName: PayasoAgent-${version}-setup.${ext} # 安装器: PayasoAgent-x.y.z-setup.exe
 
