@@ -249,6 +249,9 @@ public static class PayasoUpdate {
                     throw new IOException("New application readiness identity did not match this update");
                 using (Process process = Process.GetProcessById(pid)) if (process.HasExited) throw new IOException("New application exited before verification");
                 Log("READY " + Json.Serialize(ack));
+#if PAYASO_TESTING
+                Console.WriteLine(Json.Serialize(ack));
+#endif
             }
         } finally { if (userToken != IntPtr.Zero) CloseHandle(userToken); }
     }

@@ -44,6 +44,8 @@ jobs:
         run: npm run desktop:setup
       - name: Build candidate installer without publishing
         run: npm run desktop:win
+      - name: Packaged window and backend readiness smoke test
+        run: node tests/windows-update-ui.mjs
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4
         with:
