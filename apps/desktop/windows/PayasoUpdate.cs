@@ -130,10 +130,29 @@ public static class PayasoUpdate {
                 catch (Exception error) { Log("unreadable shortcut (bytes backed up): " + link + " " + error.Message); }
             }
         }
-        // 先落盘完整快照，部分删除失败也能恢复此前删除的链接。
+        // 先落盘完整快照，部分失败也能恢复此前处理的链接。
         File.WriteAllText(state, Json.Serialize(snapshot), Encoding.UTF8);
         try {
-            foreach (LinkSnapshot link in snapshot.Links) if (link.Bytes != null) File.Delete(link.Path);
+            // 不再删除链接：原地重写成禁跟踪链接，目标路径不变，图标全程在位。
+            //
+            // 旧实现在这里 File.Delete，指盼 customInstall 的 finish 补建；但上游模板的
+            // addDesktopLink/addStartMenuLink 在 keepShortcuts=true（注册表 KeepShortcuts
+            // + 旧 EXE 仍在）时只处理改名搬迁、不创建，于是链接只能等整个「旧卸载 + 写新文件」
+            // 结束才补建。v0.4.23 实机：图标凭空消失 3 分 48 秒，用户以为更新失败。
+            //
+            // 原地重写后，旧卸载器带 --keep-shortcuts 不会删它，禁跟踪标志也保证整目录搬移
+            // 时链接不跟随旧 EXE；文件路径全程有效，Explorer 无需重新解析。
+            // 重写失败只记录：链接保持原样仍在位，Finish 仍会重建并读回校验，
+            // 不因为一条链接写不进去就阻断整个更新。
+            foreach (LinkSnapshot link in snapshot.Links) {
+                if (link.Bytes == null || !File.Exists(link.Path)) continue;
+                try {
+                    CreateLink(link.Path, snapshot.Exe);
+                    Log("detached " + Json.Serialize(Inspect(link.Path)));
+                } catch (Exception error) {
+                    Log("detach failed (link kept in place): " + link.Path + " " + error.Message);
+                }
+            }
             NotifyShell();
         } catch { Restore(state); throw; }
     }

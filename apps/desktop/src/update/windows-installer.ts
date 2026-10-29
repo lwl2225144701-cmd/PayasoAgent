@@ -2,8 +2,16 @@
 import { type StdioOptions, spawn } from 'node:child_process';
 import path from 'node:path';
 import electronUpdater from 'electron-updater';
+import { spawnUpdateProgressWindow } from './update-progress-window.js';
 
 const { NsisUpdater } = electronUpdater;
+
+/**
+ * 旧应用退出的兜底上限。quit() 被 before-quit 拖住时（后端停不掉、窗口句柄泄漏），
+ * 安装器会一直等旧进程让位，用户看到的就是「安装并重启没反应」。
+ * quit() 正常结束时进程已经没了，这个定时器永远不会触发。
+ */
+const QUIT_BACKSTOP_MS = 20_000;
 
 export function launchInstallerProcess(
   command: string,
@@ -118,6 +126,9 @@ export class GuardedNsisUpdater extends NsisUpdater {
     env?: NodeJS.ProcessEnv,
     stdio: StdioOptions = 'ignore',
   ): Promise<boolean> {
+    // 安装器一旦启动，应用立刻退出；静默安装要几分钟，先弹出过渡窗，
+    // 否则用户对着空桌面和（曾在的）图标干等，会以为失败并手动启动。
+    this.spawnUpdateProgressWindow(command);
     try {
       await this.launchInstaller(command, args, env, stdio);
     } catch (error) {
@@ -137,7 +148,25 @@ export class GuardedNsisUpdater extends NsisUpdater {
       // 新进程会把焦点交回旧窗口并自己退出，表现为「安装并重启没反应」。
       this.releaseInstanceLock();
       setImmediate(() => this.app.quit());
+      // 兜底：quit() 被拖住时强退，别让安装器干等旧进程让位。
+      // unref 保证正常退出后不会把进程吊住；quit 成功时进程已亡，定时器作废。
+      const backstop = setTimeout(() => {
+        const target = this.app as { app?: { exit?: (code: number) => void } };
+        target.app?.exit?.(0);
+      }, QUIT_BACKSTOP_MS);
+      backstop.unref?.();
     }
     return true;
+  }
+
+  /** 过渡窗：缺失/失败只记录，不阻断安装。测试可覆盖。 */
+  protected spawnUpdateProgressWindow(installerPath: string): void {
+    spawnUpdateProgressWindow({
+      installerPath,
+      resourcesPath: process.resourcesPath,
+      log: (message) => {
+        this.logger?.info(message);
+      },
+    });
   }
 }

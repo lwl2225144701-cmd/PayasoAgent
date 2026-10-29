@@ -214,6 +214,11 @@ function main() {
   if (!asarPath.includes('.app/')) {
     const helper = path.join(path.dirname(asarPath), 'PayasoUpdate.exe');
     if (!existsSync(helper)) errors.push('Windows 安装包缺少独立更新交接工具 PayasoUpdate.exe');
+    // 过渡窗：静默安装要几分钟，缺了它用户对着空桌面干等，实机被当成更新失败。
+    for (const name of ['update-progress.ps1', 'launch-update-progress.vbs']) {
+      const script = path.join(path.dirname(asarPath), 'scripts', name);
+      if (!existsSync(script)) errors.push(`Windows 安装包缺少更新过渡窗脚本 scripts/${name}`);
+    }
   }
   if (!existsSync(feedPath)) {
     const message = `缺少 ${feedPath}（publish 没生效 / 打包没走到最后）`;

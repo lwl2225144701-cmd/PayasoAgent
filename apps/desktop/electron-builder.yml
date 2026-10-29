@@ -64,11 +64,19 @@ win:
       to: runtime/bin/node.exe
     - from: build/PayasoUpdate.exe
       to: PayasoUpdate.exe
+    # 更新过渡窗：静默安装要几分钟，没有它用户对着空桌面干等，实机被当成更新失败。
+    # 由 src/update/update-progress-window.ts 在安装器启动前按 <resources>/scripts 查找。
+    - from: resources/scripts
+      to: scripts
+    # 过渡窗图标；取不到时脚本退化成无图标，不影响功能。
+    - from: build/icon.ico
+      to: icon.ico
 
 nsis:
   oneClick: true
   perMachine: false
-  # 受控安装段在旧卸载前分离旧链接；helper 重建禁跟踪链接并监督新窗口就绪。
+  # 受控安装段在旧卸载前把链接原地重写成禁跟踪链接（不删除，图标全程在位）；
+  # helper 重建禁跟踪链接并监督新窗口就绪。
   include: build/installer.nsh
   artifactName: PayasoAgent-${version}-setup.${ext} # 安装器: PayasoAgent-x.y.z-setup.exe
 
