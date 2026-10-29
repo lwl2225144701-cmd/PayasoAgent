@@ -752,6 +752,7 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(boot)
     .catch((error: unknown) => {
+      updateLogger(`[boot] failed: ${String(error)}`);
       dialog.showErrorBox(
         'PayasoAgent 启动失败',
         error instanceof Error ? error.message : String(error),
