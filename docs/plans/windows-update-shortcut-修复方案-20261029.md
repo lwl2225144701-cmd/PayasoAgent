@@ -1,6 +1,6 @@
 # Windows 更新后快捷方式与自动重启修复方案（2026-10-29）
 
-> 状态：v0.4.23 已正式发布，Windows 原生机制和打包后窗口就绪测试通过，真实桌面的 v0.4.22 → v0.4.23 完整升级待验收。v0.4.21 → v0.4.22 的 Windows 实机验收未通过：新版本安装成功，但更新后的自动启动被快捷方式错误提示打断，需要手动双击恢复后的图标才能打开。
+> 状态：修复已合入 main，v0.4.24 已从 main 正式发布。Windows 原生机制和打包后窗口就绪测试通过，真实桌面的完整跨版本升级仍待验收。v0.4.21 → v0.4.22 的 Windows 实机验收未通过：新版本安装成功，但更新后的自动启动被快捷方式错误提示打断，需要手动双击恢复后的图标才能打开。
 >
 > 前轮修复及发布证据见 [故障排查记录](windows-update-shortcut-故障排查-20261029.md)。本方案不把“图标后来补回”作为更新完成。
 
@@ -100,8 +100,16 @@ Windows 快捷方式可以按对象标识跟踪目标。微软说明，重命名
 
 ## 8. v0.4.23 正式发布（2026-10-29）
 
-- 用户明确要求发新包后，从已通过候选 CI 的 `fab68b7` 创建并推送 `v0.4.23` 标签；修复代码仍在 PR #2，未合入 main。
+- 用户明确要求发新包后，从已通过候选 CI 的 `fab68b7` 创建并推送 `v0.4.23` 标签；修复代码在该次发版时尚未合入 main，后续合并见第 9 节。
 - [正式发布流程](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40840368474) 的 macOS 和 Windows 任务均成功。发布流程重新通过 148 个确定性测试套件、Windows 更新专项和产物检查。
 - [Release](https://github.com/lwl2225144701-cmd/PayasoAgent/releases/tag/v0.4.23) 已公开发布 macOS DMG/ZIP、Windows NSIS/ZIP、对应 blockmap、`latest-mac.yml` 和 `latest.yml`；两份更新配置均为 0.4.23，GitHub latest 已指向本版。
 - Homebrew cask 由发布流程更新为 0.4.23，自动提交 `5761681`。DMG SHA-256 为 `ff1f385726a6ff1d3105a0236ce8227de93905187da031ccc889cd24e591fd02`，与 Release 资产摘要一致。
 - 发布说明已明确保留真实交互桌面升级及管理员安装降权待验收状态。发布成功不改变第 7 节的实机验证边界。
+
+## 9. 合入 main 并发布 v0.4.24（2026-10-29）
+
+- 用户授权将 PR #2 合入 main，合并提交为 `6108e74`。随后按用户要求从 main 再发一个包，提交 `6354dcf` 将 desktop package 与 lock 版本同步为 0.4.24，并从该提交创建 `v0.4.24` 标签。
+- [main CI](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40860667333) 和 [双平台正式发布流程](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40860667345) 均成功；发布流程的 148 套确定性测试、Windows 更新专项 56 项、打包产物与更新配置检查通过。
+- [v0.4.24 Release](https://github.com/lwl2225144701-cmd/PayasoAgent/releases/tag/v0.4.24) 已包含 macOS DMG/ZIP、Windows NSIS/ZIP、blockmap 和两份版本为 0.4.24 的更新配置；GitHub latest 已指向本版。
+- Homebrew 自动提交 `fa68608` 同步版本及 DMG SHA-256：`dd1c27d66df2a9a7d8fd8948ad5a300c016c0661bf480d2f95e04b3f16334907`，与 Release 资产摘要一致。
+- 本版沿用 v0.4.23 的修复，可用于 0.4.23 → 0.4.24 连续升级验收。完整下载安装、自动重启、快捷方式无错误提示及管理员降权仍须真实 Windows 桌面确认，不能以发布成功替代。

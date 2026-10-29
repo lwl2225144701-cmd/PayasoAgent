@@ -16,6 +16,10 @@
 
 ## 0. 当前进展（截至 2026-10-08）
 
+> **2026-10-29 补：修复合入 main 后发布 v0.4.24**。
+> PR #2 已在 `6108e74` 合并；按用户要求，从 main 的 `6354dcf` 再次发包，desktop package 与 lock 均为 0.4.24。
+> [main CI](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40860667333) 和 [正式发布流程](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40860667345) 成功，双平台安装包、更新配置和 Homebrew cask 已同步。可继续验证 0.4.23 → 0.4.24 更新；实机验收边界见 [修复与发布记录](windows-update-shortcut-修复方案-20261029.md)。
+
 > **2026-10-29 补：Windows 更新安装顺序与自动重启修复（已发布 v0.4.23）**。
 > 从 `fab68b7` 发版；旧卸载前分离快捷方式，安装后统一重建禁跟踪链接，并直接启动新程序、等待窗口及后端就绪回执。
 > [正式发布流程](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40840368474) 的双平台任务成功，148 套件、Windows 更新专项和更新配置检查通过，Homebrew cask 已同步。Windows 完整 v0.4.22 → v0.4.23 实机升级仍待验收，详见 [修复方案与发布记录](windows-update-shortcut-修复方案-20261029.md)。
