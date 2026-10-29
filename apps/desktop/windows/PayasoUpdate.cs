@@ -315,7 +315,14 @@ public static class PayasoUpdate {
             Marshal.Copy(bytes, 0, sid, bytes.Length);
             var deny = new SidAndAttributes[] { new SidAndAttributes { Sid = sid } };
             if (!CreateRestrictedToken(source, 1, 1, deny, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted)) throw new Win32Exception();
-            int pid = StartAsUser(installer, args, restricted);
+            // 受限的当前主 token 使用 CreateProcessAsUser；不能经二次登录服务
+            // 重新加载内置管理员 profile（headless runner 会拒绝这一操作）。
+            var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)) };
+            ProcessInformation child;
+            if (!CreateProcessAsUserW(restricted, installer, new StringBuilder("\"" + installer + "\" " + args), IntPtr.Zero, IntPtr.Zero, false, 0x08000400, IntPtr.Zero, Path.GetDirectoryName(installer), ref startup, out child)) throw new Win32Exception();
+            CloseHandle(child.Thread);
+            CloseHandle(child.Process);
+            int pid = child.Pid;
             using (Process process = Process.GetProcessById(pid)) {
                 if (!process.WaitForExit(180000)) throw new TimeoutException("Installer did not finish");
                 if (process.ExitCode != 0) throw new IOException("Installer failed with code " + process.ExitCode);
@@ -332,6 +339,7 @@ public static class PayasoUpdate {
     [DllImport("user32.dll")] static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int count);
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool CreateRestrictedToken(IntPtr source, uint flags, uint disabledCount, SidAndAttributes[] disabled, uint deleteCount, IntPtr deleted, uint restrictedCount, IntPtr restrictions, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInformation process);
 #endif
 
     [ComImport, Guid("00021401-0000-0000-C000-000000000046")] class ShellLink { }
