@@ -22,13 +22,18 @@ import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell } from 'electron';
 import { stopManagedBackend } from './backend-process.js';
 import { BROWSER_PARTITION, installBrowserGuestSecurity } from './browser-guest-security.js';
-import { createUpdateCoordinator, type UpdateCoordinator } from './update/coordinator.js';
+import {
+  createUpdateCoordinator,
+  type UpdateCoordinator,
+  updateLogger,
+} from './update/coordinator.js';
 import { IDLE_UPDATE_STATUS, type UpdateStatus } from './update/status.js';
 import { activeTasks } from './update/tasks.js';
 import {
-  planShortcutRepair,
+  repairWindowsShortcut,
   type ShortcutLink,
   shouldRestoreMissingShortcut,
+  startWindowsShortcutRepair,
   WINDOWS_APP_USER_MODEL_ID,
   WINDOWS_SHORTCUT_DESCRIPTION,
   WINDOWS_SHORTCUT_NAME,
@@ -684,7 +689,7 @@ function readInstalledShortcut(file: string): ShortcutLink | null {
 }
 
 /** 重写桌面和开始菜单快捷方式。返回 false 表示有条目没写成功，调用方不要记下「这个版本已经核对过」。 */
-function repairWindowsShortcuts(restoreIfMissing: boolean): boolean {
+function repairWindowsShortcuts(restoreIfMissing: boolean, refreshExisting: boolean): boolean {
   const locations = [
     app.getPath('desktop'),
     path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
@@ -692,31 +697,20 @@ function repairWindowsShortcuts(restoreIfMissing: boolean): boolean {
   let ok = true;
   for (const dir of locations) {
     const file = path.join(dir, WINDOWS_SHORTCUT_NAME);
-    try {
-      const plan = planShortcutRepair({
-        existing: readInstalledShortcut(file),
-        execPath: process.execPath,
-        appUserModelId: WINDOWS_APP_USER_MODEL_ID,
-        restoreIfMissing,
-      });
-      if (plan.action === 'skip') continue;
-      const wrote = shell.writeShortcutLink(
-        file,
-        'create',
-        windowsShortcutDetails(
-          process.execPath,
-          WINDOWS_APP_USER_MODEL_ID,
-          WINDOWS_SHORTCUT_DESCRIPTION,
-        ),
-      );
-      if (!wrote) ok = false;
-      console.log(`[shortcut] ${plan.reason} ${wrote ? 'updated' : 'failed'} ${file}`);
-    } catch (error) {
-      ok = false;
-      console.log(
-        `[shortcut] repair failed ${file}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const repaired = repairWindowsShortcut({
+      file,
+      details: windowsShortcutDetails(
+        process.execPath,
+        WINDOWS_APP_USER_MODEL_ID,
+        WINDOWS_SHORTCUT_DESCRIPTION,
+      ),
+      restoreIfMissing,
+      refreshExisting,
+      read: readInstalledShortcut,
+      write: (link, details) => shell.writeShortcutLink(link, 'create', details),
+      log: updateLogger,
+    });
+    if (!repaired) ok = false;
   }
   return ok;
 }
@@ -726,7 +720,7 @@ function repairWindowsShortcuts(restoreIfMissing: boolean): boolean {
  *
  * 安装器在新文件落盘后会重写 .lnk；这里再兜一层，因为资源管理器可能在安装器退出后
  * 才根据链接跟踪把桌面图标改到已删除的临时路径。更新后的第一次启动（或带着 --updated）
- * 会把已经被系统删掉的图标补回。同一版本里用户再删掉桌面图标，则不再自动加回。
+ * 会在 30 秒内核验并补回丢失图标，末次成功才记版本；普通启动不补回用户删除的图标。
  */
 function repairWindowsLaunchShortcuts(): void {
   if (process.platform !== 'win32' || !app.isPackaged) return;
@@ -736,18 +730,16 @@ function repairWindowsLaunchShortcuts(): void {
     seenVersion: readSeenShortcutVersion(),
     currentVersion: version,
   });
-  repairWindowsShortcuts(restoreIfMissing);
-  if (!restoreIfMissing) return;
-  const timer = setTimeout(() => {
-    if (repairWindowsShortcuts(true)) {
-      try {
-        rememberShortcutVersion(version);
-      } catch {
-        // 版本文件写失败就下次启动再核对，不能挡住窗口。
-      }
-    }
-  }, 3_000);
-  timer.unref?.();
+  updateLogger(
+    `[shortcut] checking version=${version} exe=${process.execPath} afterUpdate=${restoreIfMissing}`,
+  );
+  const cancel = startWindowsShortcutRepair({
+    afterUpdate: restoreIfMissing,
+    repair: repairWindowsShortcuts,
+    remember: () => rememberShortcutVersion(version),
+    log: updateLogger,
+  });
+  app.once('before-quit', cancel);
 }
 
 async function boot(): Promise<void> {

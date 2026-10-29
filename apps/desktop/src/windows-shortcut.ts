@@ -28,7 +28,9 @@ export interface ShortcutDetails {
   description: string;
 }
 
-export type ShortcutRepair = { action: 'skip' } | { action: 'write'; reason: 'missing' | 'stale' };
+export type ShortcutRepair =
+  | { action: 'skip' }
+  | { action: 'write'; reason: 'missing' | 'stale' | 'refresh' };
 
 export function sameWindowsPath(left: string, right: string): boolean {
   const norm = (value: string) =>
@@ -62,6 +64,7 @@ export function planShortcutRepair(options: {
   execPath: string;
   appUserModelId: string;
   restoreIfMissing: boolean;
+  refreshExisting?: boolean;
 }): ShortcutRepair {
   if (!options.existing) {
     return options.restoreIfMissing ? { action: 'write', reason: 'missing' } : { action: 'skip' };
@@ -69,7 +72,92 @@ export function planShortcutRepair(options: {
   if (!shortcutMatchesInstall(options.existing, options.execPath, options.appUserModelId)) {
     return { action: 'write', reason: 'stale' };
   }
+  // 更新后的首次检查重建一次：路径字段相同不能证明旧 .lnk 的全部元数据健康。
+  if (options.refreshExisting) return { action: 'write', reason: 'refresh' };
   return { action: 'skip' };
+}
+
+/** 写成功还必须读回目标；失败记录实际路径，不能把壳 API 的 true 当成修复完成。 */
+export function repairWindowsShortcut(options: {
+  file: string;
+  details: ShortcutDetails;
+  restoreIfMissing: boolean;
+  refreshExisting: boolean;
+  read: (file: string) => ShortcutLink | null;
+  write: (file: string, details: ShortcutDetails) => boolean;
+  log: (message: string) => void;
+}): boolean {
+  const { file, details, read, write, log } = options;
+  try {
+    const existing = read(file);
+    const plan = planShortcutRepair({
+      existing,
+      execPath: details.target,
+      appUserModelId: details.appUserModelId,
+      restoreIfMissing: options.restoreIfMissing,
+      refreshExisting: options.refreshExisting,
+    });
+    if (plan.action === 'skip') return true;
+    const wrote = write(file, details);
+    const actual = read(file);
+    const verified =
+      wrote &&
+      actual !== null &&
+      shortcutMatchesInstall(actual, details.target, details.appUserModelId);
+    log(
+      `[shortcut] ${plan.reason} ${verified ? 'verified' : 'failed'} link=${file} before=${existing?.target ?? '(missing)'} actual=${actual?.target ?? '(missing)'} expected=${details.target}`,
+    );
+    return verified;
+  } catch (error) {
+    log(`[shortcut] repair failed link=${file} expected=${details.target}: ${String(error)}`);
+    return false;
+  }
+}
+
+/**
+ * 更新后给资源管理器延迟改写留出有界复查窗口，最后一次核验成功才记版本。
+ * 3/10/30 秒是重试策略，不是 Windows 对链接跟踪完成时间的保证。
+ * 普通启动只修失效链接；更新窗口沿用原有语义，允许补回丢失的快捷方式。
+ */
+export function startWindowsShortcutRepair(options: {
+  afterUpdate: boolean;
+  repair: (restoreIfMissing: boolean, refreshExisting: boolean) => boolean;
+  remember: () => void;
+  log: (message: string) => void;
+  schedule?: (callback: () => void, delayMs: number) => () => void;
+}): () => void {
+  const schedule =
+    options.schedule ??
+    ((callback, delayMs) => {
+      const timer = setTimeout(callback, delayMs);
+      timer.unref();
+      return () => clearTimeout(timer);
+    });
+  options.repair(options.afterUpdate, options.afterUpdate);
+  if (!options.afterUpdate) return () => {};
+  let cancelled = false;
+  const delays = [3_000, 10_000, 30_000];
+  const cancellations = delays.map((delayMs, index) =>
+    schedule(() => {
+      if (cancelled) return;
+      const ok = options.repair(true, false);
+      if (index !== delays.length - 1) return;
+      if (!ok) {
+        options.log('[shortcut] final verification failed; retry on next launch');
+        return;
+      }
+      try {
+        options.remember();
+        options.log('[shortcut] update verification completed');
+      } catch (error) {
+        options.log(`[shortcut] could not remember verification: ${String(error)}`);
+      }
+    }, delayMs),
+  );
+  return () => {
+    cancelled = true;
+    for (const cancel of cancellations) cancel();
+  };
 }
 
 /** 安装器带着 --updated 拉起，或这个版本还没成功核对过快捷方式时，允许把被系统删掉的图标补回来。 */

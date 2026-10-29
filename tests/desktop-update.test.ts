@@ -42,8 +42,10 @@ import {
 } from '../apps/desktop/src/update/windows-installer';
 import {
   planShortcutRepair,
+  repairWindowsShortcut,
   sameWindowsPath,
   shouldRestoreMissingShortcut,
+  startWindowsShortcutRepair,
   WINDOWS_APP_USER_MODEL_ID,
   windowsShortcutDetails,
 } from '../apps/desktop/src/windows-shortcut';
@@ -639,6 +641,129 @@ test('Windows 快捷方式：更新后目标被改到临时路径时要重写，
   );
 });
 
+function shortcutFixture() {
+  const exe = 'C:\\Program Files\\PayasoAgent\\PayasoAgent.exe';
+  const details = windowsShortcutDetails(exe, 'com.payaso.agent', 'PayasoAgent');
+  let link: Parameters<typeof planShortcutRepair>[0]['existing'] = { ...details };
+  const logs: string[] = [];
+  let writes = 0;
+  const options: Parameters<typeof repairWindowsShortcut>[0] = {
+    file: 'C:\\Users\\测试\\Desktop\\PayasoAgent.lnk',
+    details,
+    restoreIfMissing: true,
+    refreshExisting: false,
+    read: () => link,
+    write: (_file, value) => {
+      writes++;
+      link = { ...value };
+      return true;
+    },
+    log: (message) => logs.push(message),
+  };
+  return {
+    options,
+    logs,
+    writes: () => writes,
+    corrupt: () => {
+      link = { target: 'C:\\Temp\\old-install\\PayasoAgent.exe' };
+    },
+    remove: () => {
+      link = null;
+    },
+  };
+}
+
+test('快捷方式：写入返回成功但读回仍旧目标，必须判失败并记录诊断', () => {
+  const f = shortcutFixture();
+  f.corrupt();
+  f.options.write = () => true;
+  assert.equal(repairWindowsShortcut(f.options), false);
+  assert.match(f.logs[0], /actual=C:\\Temp\\old-install/);
+  assert.ok(f.logs[0].includes(`expected=${f.options.details.target}`));
+});
+
+test('快捷方式：更新首次刷新正确路径，普通检查不反复重写', () => {
+  const f = shortcutFixture();
+  assert.equal(repairWindowsShortcut(f.options), true);
+  assert.equal(f.writes(), 0);
+  f.options.refreshExisting = true;
+  assert.equal(repairWindowsShortcut(f.options), true);
+  assert.equal(f.writes(), 1);
+  f.options.refreshExisting = false;
+  f.remove();
+  f.options.restoreIfMissing = false;
+  assert.equal(repairWindowsShortcut(f.options), true);
+  assert.equal(f.writes(), 1, '普通启动不恢复用户主动删除的图标');
+});
+
+test('快捷方式：写入失败或读取异常不冒泡，也不能报告修复完成', () => {
+  const f = shortcutFixture();
+  f.corrupt();
+  f.options.write = () => false;
+  assert.equal(repairWindowsShortcut(f.options), false);
+  f.options.read = () => {
+    throw new Error('Access denied');
+  };
+  assert.equal(repairWindowsShortcut(f.options), false);
+  assert.match(f.logs.at(-1) ?? '', /Access denied/);
+});
+
+function shortcutRetryFixture(afterUpdate = true) {
+  const f = shortcutFixture();
+  const pending: { callback: () => void; delay: number; cancelled: boolean }[] = [];
+  let remembered = 0;
+  const cancel = startWindowsShortcutRepair({
+    afterUpdate,
+    repair: (restoreIfMissing, refreshExisting) =>
+      repairWindowsShortcut({ ...f.options, restoreIfMissing, refreshExisting }),
+    remember: () => {
+      remembered++;
+    },
+    log: (message) => f.logs.push(message),
+    schedule: (callback, delay) => {
+      const item = { callback, delay, cancelled: false };
+      pending.push(item);
+      return () => {
+        item.cancelled = true;
+      };
+    },
+  });
+  return { ...f, pending, cancel, remembered: () => remembered };
+}
+
+test('快捷方式：3 秒核验后再次变坏，10/30 秒仍修复并仅在末次成功记版本', () => {
+  const f = shortcutRetryFixture();
+  assert.deepEqual(
+    f.pending.map((item) => item.delay),
+    [3000, 10000, 30000],
+  );
+  f.pending[0].callback();
+  assert.equal(f.remembered(), 0);
+  f.corrupt();
+  f.pending[1].callback();
+  assert.equal(f.writes(), 2);
+  f.corrupt();
+  f.pending[2].callback();
+  assert.equal(f.writes(), 3);
+  assert.equal(f.remembered(), 1);
+});
+
+test('快捷方式：末次失败不记版本，退出取消复查，普通启动不创建定时器', () => {
+  const f = shortcutRetryFixture();
+  f.corrupt();
+  f.options.write = () => false;
+  f.pending[2].callback();
+  assert.equal(f.remembered(), 0);
+  assert.match(f.logs.at(-1) ?? '', /final verification failed/);
+  f.cancel();
+  assert.ok(f.pending.every((item) => item.cancelled));
+  const before = f.writes();
+  for (const item of f.pending) item.callback();
+  assert.equal(f.writes(), before);
+  assert.equal(f.remembered(), 0);
+  assert.equal(shortcutRetryFixture(false).pending.length, 0);
+});
+
 test('Windows 安装器：更新落盘后重写桌面和开始菜单快捷方式', () => {
   const yml = shellSource('electron-builder.yml');
   assert.match(yml, /include:\s*build\/installer\.nsh/);
@@ -650,6 +775,9 @@ test('Windows 安装器：更新落盘后重写桌面和开始菜单快捷方式
   assert.match(nsh, /WinShell::SetLnkAUMI "\$newDesktopLink" "\$\{APP_ID\}"/);
   assert.match(nsh, /WinShell::SetLnkAUMI "\$newStartMenuLink" "\$\{APP_ID\}"/);
   assert.match(nsh, /SHChangeNotify/);
+  assert.match(nsh, /StrCpy \$launchLink "\$appExe"/, '自动重启不依赖快捷方式');
+  assert.match(nsh, /\$\{ifNot\} \$\{FileExists\} "\$appExe"/);
+  assert.match(nsh, /shortcut-repair\.log/, '静默安装失败必须留下诊断');
   const main = shellSource(path.join('src', 'main.ts'));
   assert.match(main, /setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/);
   assert.match(main, /repairWindowsLaunchShortcuts\(\)/);

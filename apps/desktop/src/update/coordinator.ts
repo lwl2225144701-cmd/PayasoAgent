@@ -53,7 +53,7 @@ export function updatesEnabled(): boolean {
   return app.isPackaged && existsSync(appUpdateConfigPath());
 }
 
-function updateLogger(message: string): void {
+export function updateLogger(message: string): void {
   console.log(`[updates] ${message}`);
   try {
     const dir = path.join(app.getPath('userData'), 'logs');
