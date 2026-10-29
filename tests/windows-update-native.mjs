@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -16,7 +17,7 @@ import path from 'node:path';
 
 if (process.platform !== 'win32') throw new Error('Run native update tests on Windows');
 const root = process.cwd();
-const dir = mkdtempSync(path.join(os.tmpdir(), 'payaso 更新测试 '));
+const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'payaso 更新测试 ')));
 const helper = path.join(root, 'apps', 'desktop', 'build', 'PayasoUpdate.exe');
 const compiler = path.join(
   process.env.WINDIR,

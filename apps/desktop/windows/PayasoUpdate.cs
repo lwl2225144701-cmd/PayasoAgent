@@ -36,6 +36,7 @@ public static class PayasoUpdate {
 
     [STAThread]
     public static int Main(string[] args) {
+        Console.OutputEncoding = new UTF8Encoding(false);
         LogPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PayasoAgent", "logs", "windows-install.log");
         try {
             if (args.Length < 1) throw new ArgumentException("Missing operation");
@@ -84,7 +85,13 @@ public static class PayasoUpdate {
         } catch { /* 诊断目录不可写不改变操作本身结果。 */ }
     }
     static bool SamePath(string a, string b) {
-        return String.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+        return String.Equals(CanonicalPath(a), CanonicalPath(b), StringComparison.OrdinalIgnoreCase);
+    }
+    static string CanonicalPath(string value) {
+        string full = Path.GetFullPath(value);
+        var expanded = new StringBuilder(32768);
+        uint length = GetLongPathNameW(full, expanded, (uint)expanded.Capacity);
+        return length > 0 && length < expanded.Capacity ? expanded.ToString() : full;
     }
     static void RequireExe(string exe) {
         if (!Path.IsPathRooted(exe) || !File.Exists(exe) || !String.Equals(Path.GetExtension(exe), ".exe", StringComparison.OrdinalIgnoreCase))
@@ -317,4 +324,5 @@ public static class PayasoUpdate {
     [DllImport("userenv.dll")] static extern bool DestroyEnvironmentBlock(IntPtr environment);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetNamedPipeClientProcessId(IntPtr pipe, out uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern uint GetLongPathNameW(string path, StringBuilder expanded, uint count);
 }
