@@ -221,7 +221,7 @@ public static class PayasoUpdate {
             security.SetAccessRuleProtection(true, false);
             security.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.ReadWrite, AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
-            using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, security)) {
+            using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, security)) {
                 IAsyncResult connection = pipe.BeginWaitForConnection(null, null);
                 string args = "--updated --payaso-update-token=" + token;
                 int pid = StartAsUser(exe, args, userToken);

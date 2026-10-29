@@ -95,7 +95,7 @@ class Fixture {
     if (Environment.GetEnvironmentVariable("PAYASO_FIXTURE_MODE") == "exit") return;
     string token = null;
     foreach(string arg in args) if(arg.StartsWith("--payaso-update-token=")) token = arg.Substring("--payaso-update-token=".Length);
-    using(var pipe = new NamedPipeClientStream(".", "PayasoAgent-update-" + token, PipeDirection.Out)) {
+    using(var pipe = new NamedPipeClientStream(".", "PayasoAgent-update-" + token, PipeDirection.InOut)) {
       pipe.Connect(5000);
       string version = Environment.GetEnvironmentVariable("PAYASO_FIXTURE_MODE") == "wrong" ? "0.0.0" : "0.4.23";
       string exe = Process.GetCurrentProcess().MainModule.FileName.Replace("\\\\", "\\\\\\\\");
