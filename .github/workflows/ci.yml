@@ -46,6 +46,8 @@ jobs:
         run: npm run desktop:win
       - name: Packaged window and backend readiness smoke test
         run: node tests/windows-update-ui.mjs
+      - name: Actual 0.4.22 installer upgrade and automatic restart
+        run: node tests/windows-update-upgrade.mjs
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4
         with:

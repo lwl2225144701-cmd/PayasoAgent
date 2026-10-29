@@ -45,6 +45,17 @@ public static class PayasoUpdate {
 #if PAYASO_TESTING
                 case "test-launch":
                     LaunchAndConfirm(args[1], args[2], Int32.Parse(args[3]), true); break;
+                case "test-install":
+                    TestInstall(args[1], args[2]); break;
+                case "test-dialogs":
+                    var titles = new List<string>();
+                    EnumWindows(delegate(IntPtr window, IntPtr unused) {
+                        var title = new StringBuilder(1024);
+                        GetWindowTextW(window, title, title.Capacity);
+                        if (title.Length > 0) titles.Add(title.ToString());
+                        return true;
+                    }, IntPtr.Zero);
+                    Console.WriteLine(Json.Serialize(titles)); break;
 #endif
                 case "prepare":
                     if (args.Length != 5) throw new ArgumentException("prepare state exe desktop startmenu");
@@ -288,6 +299,40 @@ public static class PayasoUpdate {
             } finally { CloseHandle(source); }
         }
     }
+
+#if PAYASO_TESTING
+    // CI 以管理员账户运行但没有 Explorer 桌面。将 Admin 组设为 deny-only，
+    // 使用相同用户的受限 token 跑真实 per-user NSIS；生产工具不包含此入口。
+    static void TestInstall(string installer, string args) {
+        RequireExe(installer);
+        IntPtr source = IntPtr.Zero, restricted = IntPtr.Zero, sid = IntPtr.Zero;
+        try {
+            if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x000B, out source)) throw new Win32Exception();
+            var admin = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            byte[] bytes = new byte[admin.BinaryLength];
+            admin.GetBinaryForm(bytes, 0);
+            sid = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, sid, bytes.Length);
+            var deny = new SidAndAttributes[] { new SidAndAttributes { Sid = sid } };
+            if (!CreateRestrictedToken(source, 1, 1, deny, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted)) throw new Win32Exception();
+            int pid = StartAsUser(installer, args, restricted);
+            using (Process process = Process.GetProcessById(pid)) {
+                if (!process.WaitForExit(180000)) throw new TimeoutException("Installer did not finish");
+                if (process.ExitCode != 0) throw new IOException("Installer failed with code " + process.ExitCode);
+            }
+            Console.WriteLine("{\"installed\":true}");
+        } finally {
+            if (sid != IntPtr.Zero) Marshal.FreeHGlobal(sid);
+            if (restricted != IntPtr.Zero) CloseHandle(restricted);
+            if (source != IntPtr.Zero) CloseHandle(source);
+        }
+    }
+    [StructLayout(LayoutKind.Sequential)] struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
+    delegate bool WindowCallback(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")] static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int count);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool CreateRestrictedToken(IntPtr source, uint flags, uint disabledCount, SidAndAttributes[] disabled, uint deleteCount, IntPtr deleted, uint restrictedCount, IntPtr restrictions, out IntPtr token);
+#endif
 
     [ComImport, Guid("00021401-0000-0000-C000-000000000046")] class ShellLink { }
     [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface IShellLinkW {
