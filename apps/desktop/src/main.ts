@@ -16,7 +16,7 @@
 // 所以 cwd 必须是「app 根」（含 web/dist 的那层），不能随便选。
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell } from 'electron';
@@ -121,11 +121,13 @@ let updates: UpdateCoordinator | null = null;
 let lastUpdateStatus: UpdateStatus = IDLE_UPDATE_STATUS;
 
 /** 就绪探针：用真实存在的只读端点，而不是"TCP 通了就算"（端口可能被别的进程占着）。 */
-async function backendResponds(): Promise<boolean> {
+async function backendResponds(diagnose = false): Promise<boolean> {
   try {
     const res = await fetch(`${BACKEND_URL}/workspace`, { signal: AbortSignal.timeout(1_500) });
+    if (diagnose && !res.ok) updateLogger(`[handoff] backend status=${res.status}`);
     return res.ok;
-  } catch {
+  } catch (error) {
+    if (diagnose) updateLogger(`[handoff] backend probe failed: ${String(error)}`);
     return false;
   }
 }
@@ -441,8 +443,17 @@ function createWindow(): void {
           };
           check();
         })`);
-        if (!mounted || !(await backendResponds()) || win.isDestroyed())
-          throw new Error('Updated window/backend not ready');
+        if (!mounted || win.isDestroyed())
+          throw new Error(
+            `Updated window not ready: mounted=${mounted} destroyed=${win.isDestroyed()}`,
+          );
+        // 页面挂载时可能同时发起首屏请求；后端探针短暂超时应在交接期限内重试。
+        const deadline = Date.now() + 15000;
+        while (!(await backendResponds(true))) {
+          if (Date.now() >= deadline || win.isDestroyed())
+            throw new Error(`Updated backend not ready: ${BACKEND_URL}`);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
         if (!win.isVisible()) win.show();
         await reportWindowsUpdateReady({
           token,
