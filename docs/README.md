@@ -13,6 +13,7 @@
 | 排查 Run 为什么慢 / LLM 为什么超时 | 根目录按日期命名的排查报告（如 [`llm-connect-timeout-2026-09-28.md`](./llm-connect-timeout-2026-09-28.md)） |
 | 验收执行不收敛治理改造 | [完整测试场景与执行交接](./guides/execution-governance-acceptance.md) |
 | 查发布 / 打包怎么操作 | [`distribute/npm-publish-runbook.md`](./distribute/npm-publish-runbook.md) |
+| 查看 Windows 应用菜单与顶部布局方案 | [桌面应用菜单方案](./plans/desktop-app-menu-plan.md) |
 | 查第三方库用法 | [`guides/pi-ai-使用指南.md`](./guides/pi-ai-使用指南.md) |
 
 ## 目录结构
@@ -52,6 +53,7 @@ docs/
 │   ├── desktop-client-plan.md
 │   ├── desktop-client-electron-plan.md
 │   ├── desktop-client-implementation-log.md
+│   ├── desktop-app-menu-plan.md
 │   ├── desktop-update-故障排查-20261018.md
 │   ├── windows-full-access-token-plan.md
 │   ├── builtin-model-catalog-refresh.md

@@ -2,6 +2,7 @@
 // 用法: npx tsx tests/frontend-preview-registry.test.ts（无浏览器/无网络；fetch 打桩）
 
 import assert from 'node:assert/strict';
+import { normalizePreviewBrowserUrl } from '../src/host/preview/browser-open';
 import { MESSAGES } from '../web/src/i18n/messages/index';
 import {
   fetchFileText,
@@ -10,7 +11,6 @@ import {
   PreviewNetworkError,
   previewFileUrl,
 } from '../web/src/preview/api';
-import { normalizePreviewBrowserUrl } from '../src/host/preview/browser-open';
 import { normalizeBrowserUrl } from '../web/src/preview/browser-url';
 import {
   actionShortcut,

@@ -276,7 +276,7 @@ test('Windows 壳源码契约：没有系统标题栏，窗口按钮叠加层跟
   );
 });
 
-test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住）', () => {
+test('窗口按钮让位由壳注入菜单行，主栏顶栏不重复让位', () => {
   const main = fs.readFileSync(path.join('apps', 'desktop', 'src', 'main.ts'), 'utf8');
   // 宽度：WCO API 量，量不到兜底 138px（46×3）
   assert.ok(/const WCO_RESERVE_SCRIPT = /.test(main), '壳必须内置 WCO 量宽脚本');
@@ -285,20 +285,24 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
     '必须用 getTitlebarAreaRect 量出按钮区宽度，并有 138px 兜底',
   );
   assert.ok(/--wco-reserve/.test(main), '量出来的宽度要落到 CSS 变量上');
-  // 选择器：认顶栏容器 data-shell-bar（0d44d44 起拖拽面收进顶栏内部的
-  // .left/.dragSpacer——data-window-drag 不再是横跨全宽的顶栏本身，按钮让位
-  // 必须作用于容器），并排除侧栏（aside 里有自己的拖拽面 data-window-drag）
+  // 窗口按钮已移到第一行菜单栏；只在那里让位，第二行主栏不能重复留白。
   assert.ok(
-    /#root > :first-child > :not\(aside\) > \[data-shell-bar\] \{[\s\S]{0,160}var\(--wco-reserve, 138px\)/.test(
-      main,
-    ),
-    '注入的 CSS 必须只命中主栏顶栏容器，并用 var(--wco-reserve, 138px) 兜底',
+    /#root \[data-app-menu-bar\] \{[\s\S]{0,160}var\(--wco-reserve, 138px\)/.test(main),
+    '注入的 CSS 必须命中菜单行，并用 var(--wco-reserve, 138px) 兜底',
   );
+  const reserveCss = main.match(/const WCO_RESERVE_CSS = `([\s\S]*?)`;/)?.[1];
+  assert.ok(reserveCss, '壳必须保留窗口按钮让位 CSS');
+  assert.ok(!/data-shell-bar|data-preview-header/.test(reserveCss), '第二行不能重复让位');
+  const appMenu = fs.readFileSync(
+    path.join('web', 'src', 'components', 'AppMenu', 'index.tsx'),
+    'utf8',
+  );
+  assert.ok(/data-app-menu-bar/.test(appMenu), '菜单行必须提供壳注入 CSS 的命中点');
   assert.ok(
     /process\.platform === 'win32'[\s\S]{0,300}insertCSS\(WCO_RESERVE_CSS\)/.test(main),
     'win32 才注入让位 CSS',
   );
-  // 页面侧契约：壳注入的选择器要有东西可命中，且拖拽面不能回到容器本身
+  // 主栏拖拽面仍不能回到容器本身
   //（0d44d44 的修复要点：Windows 上右上角胶囊才点得动——容器整条可拖时
   //  胶囊点击会被拖拽面吃掉）
   const shellTsx = fs.readFileSync(
@@ -306,7 +310,7 @@ test('窗口按钮让位由壳注入（页面版本不匹配也不会被压住�
     'utf8',
   );
   const containerLine = shellTsx.split('\n').find((line) => line.includes('data-shell-bar'));
-  assert.ok(containerLine, '顶栏容器必须带 data-shell-bar（壳注入 CSS 的命中点）');
+  assert.ok(containerLine, '顶栏容器必须带 data-shell-bar');
   assert.ok(
     containerLine && !containerLine.includes('data-window-drag'),
     '顶栏容器本身不能再是拖拽面（否则 Windows 胶囊点不动）',
@@ -434,13 +438,10 @@ test('DSH 对齐：侧栏宽 278，四个面板开关入口共用按钮与正方
     path.join('web', 'src', 'components', 'ShellBar', 'ShellBar.module.css'),
     'utf8',
   );
-  // 右侧留位消费壳注入的同一个变量（非 Windows 时变量未注入 → 0px 兜底，
-  // 与旧固定 14px 等价）；左侧仍是 2.2vw —— 一套真值源，页面不自己量几何
+  // 窗口按钮在第一行菜单栏，主栏右侧固定 14px，左侧仍是 2.2vw。
   assert.ok(
-    /padding: 0 calc\(var\(--wco-reserve, 0px\) \+ 14px\) 0 clamp\(22px, 2\.2vw, 32px\);/.test(
-      shellCss,
-    ),
-    '顶栏左内边距按 2.2vw（1279 宽 = 28）→ 标题落在侧栏右缘 +28；右侧消费 --wco-reserve',
+    /padding: 0 14px 0 clamp\(22px, 2\.2vw, 32px\);/.test(shellCss),
+    '顶栏左内边距按 2.2vw；右侧只留 14px，不再给第一行的窗口按钮让位',
   );
 });
 

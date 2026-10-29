@@ -1,6 +1,6 @@
 {
   "name": "@payaso/desktop",
-  "version": "0.4.20",
+  "version": "0.4.21",
   "private": true,
   "author": "PayasoAgent",
   "description": "PayasoAgent 桌面壳：安装后自动拉起自带 Node 跑的后端，并直接打开 Web UI",
