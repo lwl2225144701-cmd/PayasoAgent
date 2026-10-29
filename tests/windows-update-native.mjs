@@ -85,8 +85,6 @@ try {
     `/out:${probe}`,
     path.join(root, 'apps/desktop/windows/PayasoUpdate.cs'),
   ]);
-  run(probe, ['test-install', path.join(process.env.WINDIR, 'System32', 'whoami.exe'), '']);
-  console.log('PASS headless installer test uses a restricted current-user process');
   const fixture = path.join(dir, 'Fixture.cs');
   const fixtureExe = path.join(dir, 'Fixture.exe');
   writeFileSync(

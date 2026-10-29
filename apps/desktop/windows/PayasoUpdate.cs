@@ -301,47 +301,28 @@ public static class PayasoUpdate {
     }
 
 #if PAYASO_TESTING
-    // CI 以管理员账户运行但没有 Explorer 桌面。将 Admin 组设为 deny-only，
-    // 使用相同用户的受限 token 跑真实 per-user NSIS；生产工具不包含此入口。
+    // 仅供一次性 Windows 桌面验收机使用；不在无交互桌面的 CI 中模拟用户身份。
     static void TestInstall(string installer, string args) {
         RequireExe(installer);
-        IntPtr source = IntPtr.Zero, restricted = IntPtr.Zero, sid = IntPtr.Zero;
+        if (GetShellWindow() == IntPtr.Zero || new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new IOException("Run upgrade acceptance from a non-elevated interactive Windows desktop");
+        var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)), Desktop = "winsta0\\default" };
+        ProcessInformation child;
+        if (!CreateProcessW(installer, new StringBuilder("\"" + installer + "\" " + args), IntPtr.Zero, IntPtr.Zero, false, 0x08000400, IntPtr.Zero, Path.GetDirectoryName(installer), ref startup, out child)) throw new Win32Exception();
+        CloseHandle(child.Thread);
         try {
-            if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x000B, out source)) throw new Win32Exception();
-            var admin = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-            byte[] bytes = new byte[admin.BinaryLength];
-            admin.GetBinaryForm(bytes, 0);
-            sid = Marshal.AllocHGlobal(bytes.Length);
-            Marshal.Copy(bytes, 0, sid, bytes.Length);
-            var deny = new SidAndAttributes[] { new SidAndAttributes { Sid = sid } };
-            if (!CreateRestrictedToken(source, 1, 1, deny, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted)) throw new Win32Exception();
-            // 受限的当前主 token 使用 CreateProcessAsUser；不能经二次登录服务
-            // 重新加载内置管理员 profile（headless runner 会拒绝这一操作）。
-            var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)) };
-            ProcessInformation child;
-            if (!CreateProcessAsUserW(restricted, installer, new StringBuilder("\"" + installer + "\" " + args), IntPtr.Zero, IntPtr.Zero, false, 0x08000400, IntPtr.Zero, Path.GetDirectoryName(installer), ref startup, out child)) throw new Win32Exception();
-            CloseHandle(child.Thread);
-            try {
-                uint waited = WaitForSingleObject(child.Process, 180000);
-                if (waited == 0x102) throw new TimeoutException("Installer did not finish");
-                if (waited != 0) throw new Win32Exception();
-                uint exitCode;
-                if (!GetExitCodeProcess(child.Process, out exitCode)) throw new Win32Exception();
-                if (exitCode != 0) throw new IOException("Installer failed with code " + exitCode);
-            } finally { CloseHandle(child.Process); }
+            uint waited = WaitForSingleObject(child.Process, 180000);
+            if (waited == 0x102) throw new TimeoutException("Installer did not finish");
+            if (waited != 0) throw new Win32Exception();
+            uint exitCode;
+            if (!GetExitCodeProcess(child.Process, out exitCode)) throw new Win32Exception();
+            if (exitCode != 0) throw new IOException("Installer failed with code " + exitCode);
             Console.WriteLine("{\"installed\":true}");
-        } finally {
-            if (sid != IntPtr.Zero) Marshal.FreeHGlobal(sid);
-            if (restricted != IntPtr.Zero) CloseHandle(restricted);
-            if (source != IntPtr.Zero) CloseHandle(source);
-        }
+        } finally { CloseHandle(child.Process); }
     }
-    [StructLayout(LayoutKind.Sequential)] struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
     delegate bool WindowCallback(IntPtr window, IntPtr parameter);
     [DllImport("user32.dll")] static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int count);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool CreateRestrictedToken(IntPtr source, uint flags, uint disabledCount, SidAndAttributes[] disabled, uint deleteCount, IntPtr deleted, uint restrictedCount, IntPtr restrictions, out IntPtr token);
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInformation process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
 #endif

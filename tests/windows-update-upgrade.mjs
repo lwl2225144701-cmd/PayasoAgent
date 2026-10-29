@@ -1,5 +1,5 @@
 // 在临时安装目录实际安装已发布 0.4.22，然后用候选 NSIS 完成更新、重启与就绪核验。
-// 仅用于一次性 Windows runner：会建立本应用的 HKCU 安装记录和当前用户快捷方式。
+// 仅用于一次性 Windows 桌面验收机：会建立 HKCU 安装记录和当前用户快捷方式。
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
@@ -7,7 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 assert.equal(process.platform, 'win32');
-assert.equal(process.env.GITHUB_ACTIONS, 'true', '真实安装测试仅在一次性 CI runner 执行');
+assert.ok(
+  process.argv.includes('--allow-test-install'),
+  '仅在专用 Windows 验收机的普通用户桌面运行，并显式传入 --allow-test-install',
+);
 const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'payaso-upgrade-')));
 const probe = path.join(dir, 'UpdateProbe.exe');
 const compiler = path.join(

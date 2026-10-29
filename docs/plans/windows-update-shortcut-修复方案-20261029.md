@@ -1,6 +1,6 @@
 # Windows 更新后快捷方式与自动重启修复方案（2026-10-29）
 
-> 状态：已按本方案实现 v0.4.23 候选代码，正在验证，尚未正式发布。v0.4.21 → v0.4.22 的 Windows 实机验收未通过：新版本安装成功，但更新后的自动启动被快捷方式错误提示打断，需要手动双击恢复后的图标才能打开。
+> 状态：已实现 v0.4.23 候选代码，Windows 原生机制和打包后窗口就绪测试通过，真实桌面的 v0.4.22 → 候选版完整升级待验收，尚未正式发布。v0.4.21 → v0.4.22 的 Windows 实机验收未通过：新版本安装成功，但更新后的自动启动被快捷方式错误提示打断，需要手动双击恢复后的图标才能打开。
 >
 > 前轮修复及发布证据见 [故障排查记录](windows-update-shortcut-故障排查-20261029.md)。本方案不把“图标后来补回”作为更新完成。
 
@@ -49,7 +49,7 @@ Windows 快捷方式可以按对象标识跟踪目标。微软说明，重命名
 
 使用 Windows Shell COM 接口统一创建、保存并读回本安装管理的链接，明确设置目标 EXE、工作目录、图标和 AppUserModelID。使用 `IShellLinkDataList` 设置禁用目标对象/路径跟踪的标志，保存后验证标志及目标。
 
-微软提供 `SLDF_FORCE_NO_LINKTRACK` 和 `SLDF_DISABLE_LINK_PATH_TRACKING`；具体标志组合需通过真实文件移动试验确认，见 [Microsoft：SHELL_LINK_DATA_FLAGS](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/ne-shlobj_core-shell_link_data_flags)。这属于拟实施方案，尚未验证其在当前 NSIS/Electron 环境中的效果。
+微软提供 `SLDF_FORCE_NO_LINKTRACK` 和 `SLDF_DISABLE_LINK_PATH_TRACKING`，见 [Microsoft：SHELL_LINK_DATA_FLAGS](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/ne-shlobj_core-shell_link_data_flags)。候选版已实现并通过真实 Shell COM、文件移动与标志读回测试；Explorer 在真实更新现场的行为仍待验收。
 
 安装器和程序兜底必须使用同一套创建方式，避免程序侧后续调用普通 `writeShortcutLink()` 又生成未带相同标志的链接。只操作本应用管理的链接，不修改系统链接跟踪服务、组策略或其他应用快捷方式。公共链接按真实安装范围处理，不能在无权限时留下同名错误副本却记成功；用户改名和任务栏固定副本单独列验收范围，不盲目扫描覆盖。
 
@@ -88,4 +88,12 @@ Windows 快捷方式可以按对象标识跟踪目标。微软说明，重命名
 - 当前用户安装以当前用户直接创建进程；提权安装从同会话 Explorer 取得交互用户 token，再以该用户身份启动。找不到交互会话或权限不足时明确失败，不回退到管理员身份启动应用。
 - 程序兜底复用相同原生工具，只处理已有链接；安装交接期间由安装器独占链接事务，避免新旧修复方式同时覆写。
 - 新增 `tests/windows-update-native.mjs`，在 Windows CI 中编译真实工具，验证链接标志、卸载前分离、文件移动后重建、失败恢复、用户删除图标，以及真实进程/管道的就绪、错误版本和提前退出。CI 测试构建仅跳过 headless runner 的管理员降权路径；该路径仍需真实交互会话验收。
-- 候选 CI 生成 Windows 安装器与更新文件到 Actions artifacts，不推送版本标签、不上传正式 Release。真实 v0.4.22 → 候选包完整升级、管理员交互会话及 Explorer 弹窗行为仍待验收。
+- 候选 CI 构建真实 Windows 安装器，检查产物依赖与更新配置，并通过 `tests/windows-update-ui.mjs` 启动打包后的 Electron，等待自带后端、前端挂载及原生命名管道回执。成功后上传安装器与更新文件到 Actions artifacts，不推送版本标签、不上传正式 Release。
+
+## 7. 验证结果与边界
+
+- 本地更新专项 54 项、Windows 更新专项 56 项通过；Windows 原生测试覆盖中文和空格路径、链接禁跟踪标志、旧文件移动前分离、失败恢复、用户删除图标、启动身份回执和提前退出。全套 148 个确定性测试套件、类型检查、构建与格式检查通过。
+- [CI 40837237408](https://github.com/lwl2225144701-cmd/PayasoAgent/actions/runs/40837237408) 已成功生成候选安装器，通过真实 Electron 窗口和后端就绪测试。测试发现首屏加载期间后端探针可短暂超时，已改为在交接期限内重试，不能因一次探针失败中断自动启动确认。
+- 同次 CI 的完整安装升级测试未进入旧版安装：headless runner 以内置管理员账户运行，缺少普通用户交互桌面；尝试受限 token 后仍出现访问拒绝或桌面初始化失败。此结果属于验收环境限制，不能算升级通过，也不据此修改生产启动权限或系统桌面 ACL。
+- `tests/windows-update-upgrade.mjs` 保留为专用 Windows 桌面验收机脚本，以非提权用户执行 `node tests/windows-update-upgrade.mjs --allow-test-install`。它会安装已发布 0.4.22，再运行候选安装器，核对自动就绪回执、桌面/开始菜单链接、错误弹窗与 30 秒后稳定性。脚本会改变 HKCU 安装记录和本应用快捷方式，不能在日常开发机随意执行。
+- 仍须现场完成：从 0.4.22 客户端点击下载和安装后的全过程、普通用户 Explorer 行为、管理员安装降权、退出后再次双击和连续升级。候选构建通过不等于上述实机验收完成。
