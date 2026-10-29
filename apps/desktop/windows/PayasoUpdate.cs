@@ -321,12 +321,14 @@ public static class PayasoUpdate {
             ProcessInformation child;
             if (!CreateProcessAsUserW(restricted, installer, new StringBuilder("\"" + installer + "\" " + args), IntPtr.Zero, IntPtr.Zero, false, 0x08000400, IntPtr.Zero, Path.GetDirectoryName(installer), ref startup, out child)) throw new Win32Exception();
             CloseHandle(child.Thread);
-            CloseHandle(child.Process);
-            int pid = child.Pid;
-            using (Process process = Process.GetProcessById(pid)) {
-                if (!process.WaitForExit(180000)) throw new TimeoutException("Installer did not finish");
-                if (process.ExitCode != 0) throw new IOException("Installer failed with code " + process.ExitCode);
-            }
+            try {
+                uint waited = WaitForSingleObject(child.Process, 180000);
+                if (waited == 0x102) throw new TimeoutException("Installer did not finish");
+                if (waited != 0) throw new Win32Exception();
+                uint exitCode;
+                if (!GetExitCodeProcess(child.Process, out exitCode)) throw new Win32Exception();
+                if (exitCode != 0) throw new IOException("Installer failed with code " + exitCode);
+            } finally { CloseHandle(child.Process); }
             Console.WriteLine("{\"installed\":true}");
         } finally {
             if (sid != IntPtr.Zero) Marshal.FreeHGlobal(sid);
@@ -340,6 +342,8 @@ public static class PayasoUpdate {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int count);
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool CreateRestrictedToken(IntPtr source, uint flags, uint disabledCount, SidAndAttributes[] disabled, uint deleteCount, IntPtr deleted, uint restrictedCount, IntPtr restrictions, out IntPtr token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInformation process);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
 #endif
 
     [ComImport, Guid("00021401-0000-0000-C000-000000000046")] class ShellLink { }
